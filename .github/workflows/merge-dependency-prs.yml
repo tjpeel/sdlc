@@ -37,8 +37,9 @@ jobs:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
           TESTED_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
+          set -euo pipefail
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$BASE_BRANCH&per_page=100" \
-            --jq 'add' > "$RUNNER_TEMP/dependency-prs.json"
+            | jq 'add' > "$RUNNER_TEMP/dependency-prs.json"
           number=$(jq --arg repo "$GITHUB_REPOSITORY" --arg base "$BASE_BRANCH" \
             --arg sha "$TESTED_SHA" --arg branch "$TESTED_BRANCH" \
             -f .github/dependency-pr-filter.jq "$RUNNER_TEMP/dependency-prs.json")
@@ -49,7 +50,7 @@ jobs:
           author=$(jq -r --argjson number "$number" \
             '.[] | select(.number == $number) | .user.login' "$RUNNER_TEMP/dependency-prs.json")
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100" \
-            --jq 'add' > "$RUNNER_TEMP/dependency-files.json"
+            | jq 'add' > "$RUNNER_TEMP/dependency-files.json"
           if ! jq -e --arg author "$author" -f .github/dependency-files-filter.jq \
             "$RUNNER_TEMP/dependency-files.json"; then
             echo 'Dependency PR contains changes outside the automatic merge policy.'
