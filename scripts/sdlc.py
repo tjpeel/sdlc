@@ -55,6 +55,17 @@ def secret(filename):
     return value
 
 
+def build_arguments(env):
+    arguments = []
+    for name in ('SKILLS_REVISION', 'AGENTS_REVISION'):
+        value = env.get(f'SDLC_{name}')
+        if value is not None:
+            if not re.fullmatch(r'[0-9a-f]{40}', value):
+                raise ValueError(f'SDLC_{name} must be a full lowercase commit SHA.')
+            arguments += ['--build-arg', f'{name}={value}']
+    return arguments
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('build', 'login', 'init', 'cli', 'exec', 'results',
@@ -129,7 +140,7 @@ def main():
         env['SDLC_SSH_PUBLIC_KEY_FILE'] = str(resolve('ssh_public_key_file'))
 
     if args.action == 'build':
-        command += ['build', 'worker']
+        command += ['build', *build_arguments(env), 'worker']
     elif args.action == 'ssh-up':
         command += ['up', '-d', 'worker']
     elif args.action == 'ssh-down':

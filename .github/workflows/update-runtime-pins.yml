@@ -1,0 +1,86 @@
+name: Update runtime pins
+
+on:
+  schedule:
+    - cron: "43 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-runtime-pins
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Check for an existing runtime update PR
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          count=$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --state open --limit 100 \
+            --json headRefName,isCrossRepository --jq '[.[] | select(.isCrossRepository == false and (.headRefName | startswith("dependencies/runtime-pins-")))] | length')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Refresh the CLI releases and catalogue commits
+        if: steps.existing.outputs.count == '0'
+        id: pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/update_runtime_pins.py --write > "$RUNNER_TEMP/runtime-updates.txt"
+          cat "$RUNNER_TEMP/runtime-updates.txt"
+          if git diff --quiet -- runtime/Dockerfile; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run offline tests on the candidate pins
+        if: steps.pins.outputs.changed == 'true'
+        run: python3 -m unittest discover -s tests -v
+      - name: Build the candidate image
+        if: steps.pins.outputs.changed == 'true'
+        run: docker build --pull --no-cache --tag sdlc-codex-spike:local runtime
+      - name: Test the candidate container with disposable credentials
+        if: steps.pins.outputs.changed == 'true'
+        run: python3 tests/docker_smoke.py
+      - name: Open the tested update PR
+        if: steps.pins.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BRANCH: dependencies/runtime-pins-${{ github.run_id }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git switch -c "$UPDATE_BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add runtime/Dockerfile
+          git -c commit.gpgsign=false commit -m 'Update runtime dependency pins'
+          git -c credential.helper= -c credential.helper='!gh auth git-credential' \
+            push origin "HEAD:refs/heads/$UPDATE_BRANCH"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          folder = Path(os.environ['RUNNER_TEMP'])
+          changes = (folder / 'runtime-updates.txt').read_text()
+          (folder / 'runtime-pr.md').write_text(
+              'Update the pinned Codex and GitHub CLI releases and skills/agents source commits.\n\n'
+              '```text\n' + changes + '```\n\n'
+              'Validation passed: offline tests, an uncached Docker build, and the Docker/SSH smoke test '
+              'with disposable keys and a fake token. No model request or GitHub publication smoke test ran.\n'
+          )
+          PY
+          gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$UPDATE_BRANCH" \
+            --title 'Update runtime dependency pins' --body-file "$RUNNER_TEMP/runtime-pr.md"
