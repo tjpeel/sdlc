@@ -1,0 +1,58 @@
+name: Merge validated dependency PRs
+
+on:
+  workflow_run:
+    workflows: [Validate container]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-dependency-prs
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Load only the trusted base's filters. Never check out or execute PR code here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Merge the matching dependency PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TESTED_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$BASE_BRANCH&per_page=100" \
+            --jq 'add' > "$RUNNER_TEMP/dependency-prs.json"
+          number=$(jq --arg repo "$GITHUB_REPOSITORY" --arg base "$BASE_BRANCH" \
+            --arg sha "$TESTED_SHA" --arg branch "$TESTED_BRANCH" \
+            -f .github/dependency-pr-filter.jq "$RUNNER_TEMP/dependency-prs.json")
+          if [ -z "$number" ]; then
+            echo 'No matching dependency PR to merge.'
+            exit 0
+          fi
+          author=$(jq -r --argjson number "$number" \
+            '.[] | select(.number == $number) | .user.login' "$RUNNER_TEMP/dependency-prs.json")
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100" \
+            --jq 'add' > "$RUNNER_TEMP/dependency-files.json"
+          if ! jq -e --arg author "$author" -f .github/dependency-files-filter.jq \
+            "$RUNNER_TEMP/dependency-files.json"; then
+            echo 'Dependency PR contains changes outside the automatic merge policy.'
+            exit 1
+          fi
+          gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$TESTED_SHA"
