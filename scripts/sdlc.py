@@ -58,7 +58,15 @@ def main():
     parser.add_argument('--title')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without reading secrets.')
     parser.add_argument('--execute', action='store_true', help='Required to actually publish a draft PR.')
+    parser.add_argument('--verify-published', action='store_true',
+                        help='After publishing, verify the remote branch and draft PR.')
+    parser.add_argument('--smoke-checks', action='store_true',
+                        help='Before publishing, check the Docker smoke ticket acceptance criteria.')
     args = parser.parse_args()
+    if args.verify_published and args.action != 'publish':
+        parser.error('--verify-published is only valid for publish')
+    if args.smoke_checks and args.action != 'publish':
+        parser.error('--smoke-checks is only valid for publish')
     profile_file = args.profiles.resolve()
     profile = selected_profile(profile_file, args.profile, args.repo)
     if profile['base_branch'].startswith(('-', 'codex/')):
@@ -136,6 +144,10 @@ def main():
                 command += ['--ticket', '/input/ticket.md']
             if args.body:
                 command += ['--body', '/input/pr-body.md', '--title', args.title]
+            if args.verify_published:
+                command += ['--verify-published']
+            if args.smoke_checks:
+                command += ['--smoke-checks']
 
     print(f'Profile: {args.profile}; repository: {args.repo}; Docker project: {project}', flush=True)
     if args.dry_run or (args.action == 'publish' and not args.execute):

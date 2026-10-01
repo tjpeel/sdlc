@@ -103,6 +103,26 @@ With `--execute`, the helper checks the token's user, repository URL, clean chec
 
 A push can succeed before PR creation fails. Inspect GitHub before retrying; this spike does not deduplicate existing PRs or roll back published branches.
 
+### Test the complete flow
+
+The connected smoke test finishes the marker ticket in `examples/smoke-ticket.md` by checking its acceptance criteria, verifying its signed commit, pushing the branch and creating a draft PR. All checks, GitHub authentication, push, PR creation and remote verification happen in the container using the selected profile's credentials. The test does not use the host's `gh` login.
+
+Rebuild the image to install the publication checks, then preview the test:
+
+```sh
+python3 scripts/sdlc.py build --profile personal --repo YOUR_PERSONAL_LOGIN/example-repo
+python3 tests/github_smoke.py \
+  --profile personal --repo YOUR_PERSONAL_LOGIN/example-repo \
+  --branch spike/example-ticket \
+  --title 'Test Codex execution in Docker' --body examples/pr-body.md
+```
+
+Replace the PR body template with the actual change and validation results. Add `--execute` to run the connected test and make the GitHub writes. Supply `--profiles /path/to/profiles.local.json` for a custom configuration file. Without `--ticket`, the test reuses the signed branch already in the container and makes no model request. With `--ticket examples/smoke-ticket.md` and a fresh branch, it runs Codex first and automatically invokes the publish stage only after execution and local verification succeed.
+
+The connected test enables `--smoke-checks` on the publisher. Before any push, the helper independently requires Docker, user 1000, exactly one proposed commit, only `docs/codex-docker-smoke.md` changed, and its exact marker contents including the newline. A successful Codex exit alone does not satisfy these checks. This fixture-specific test is not a general acceptance runner for arbitrary tickets.
+
+`--verify-published` on the underlying `publish` command checks that the remote branch SHA matches the local commit and exactly one open draft PR has the expected head, base, commit and author. The connected test enables this check and prints the verified PR URL and commit hash. A failed execution or local verification stops publication. A failure during publication can leave a pushed branch or PR; inspect GitHub before retrying.
+
 ## 5. Try a desktop connection
 
 Generate a **separate control key** on the host. The container receives only its public half:

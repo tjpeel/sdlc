@@ -12,11 +12,13 @@ Checked on **1 October 2026** using macOS/arm64, OrbStack Docker Engine 29.4.0 a
 - Tools ran as uid 1000; `SSH_AUTH_SOCK` was absent.
 - SSH authentication with a separate control key and a verified generated server key. Both ordinary remote Bash commands and explicit login shells received `GH_TOKEN`, `CODEX_HOME` and Git signing settings. An SSH command verified the test commit and read the result helper.
 - Temporary test containers, volumes and network were removed. The built `sdlc-codex-spike:0.159.2` image remains available locally.
+- The updated host-only offline suite passed 34 tests, including failure boundaries for the connected runner, independent marker acceptance before publication, and remote branch/PR matching with synthetic GitHub responses. These checks make no Docker, model or GitHub requests.
 
 ## Still to test
 
 - Codex authentication and an actual `exec` ticket run, including JSON output, final-response persistence and resuming after interruption.
 - Private repository clone, selected-user API authentication, signed branch push, draft PR creation and GitHub's **Verified** display with real dedicated credentials.
+- The connected `tests/github_smoke.py` flow: use an existing signed branch or run a fresh ticket, then automatically publish and verify the remote branch and draft PR from inside the container. It is print-only unless `--execute` is supplied; rebuild the image before running it.
 - Two real GitHub profiles and organisation token policy.
 - Codex macOS app and T3 Code connections, UI-created signed commits, full-access thread permissions and client disconnect/reconnect behaviour.
 - WebSocket app-server transport (proposal only), Linux/amd64 build, task-specific language tools, credential expiry and reliable ticket-batch recovery.

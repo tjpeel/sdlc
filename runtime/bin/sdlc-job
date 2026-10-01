@@ -9,10 +9,13 @@ import re
 import subprocess
 import sys
 import threading
+from urllib.parse import quote
 
 WORKSPACE = Path('/workspace/repo')
 SIGN_PROGRAM = '/usr/local/bin/ssh-sign-file'
 ALLOWED_SIGNERS = '/run/sdlc/allowed-signers'
+SMOKE_FILE = 'docs/codex-docker-smoke.md'
+SMOKE_CONTENT = 'Codex completed this task inside Docker.\n'
 
 
 def run(*args, capture=False, cwd=None):
@@ -81,18 +84,70 @@ def commits_to_publish(branch):
     return commits
 
 
+def verify_publication(repo, branch):
+    head = run('git', 'rev-parse', 'HEAD', capture=True)
+    remote_head = run('gh', 'api', f'repos/{repo}/git/ref/heads/{quote(branch, safe="/")}',
+                      '--jq', '.object.sha', capture=True)
+    if remote_head != head:
+        raise ValueError('Published branch SHA does not match the local HEAD.')
+    base = os.environ['SDLC_BASE_BRANCH']
+    prs = json.loads(run('gh', 'pr', 'list', '--repo', repo, '--state', 'open',
+                         '--head', branch, '--base', base, '--limit', '100', '--json',
+                         'url,isDraft,headRefOid,headRefName,baseRefName,author', capture=True))
+    if not isinstance(prs, list) or len(prs) != 1 or not isinstance(prs[0], dict):
+        raise ValueError('Expected exactly one open draft PR for the published branch and base.')
+    pr = prs[0]
+    if (pr.get('headRefName') != branch or pr.get('baseRefName') != base
+            or pr.get('headRefOid') != head or pr.get('isDraft') is not True):
+        raise ValueError('Published PR does not match the branch, base, HEAD and draft status.')
+    author = pr.get('author')
+    login = author.get('login') if isinstance(author, dict) else None
+    if not isinstance(login, str) or login.casefold() != os.environ['SDLC_GITHUB_LOGIN'].casefold():
+        raise ValueError('Published PR was created by a different GitHub account.')
+    url = pr.get('url')
+    if not isinstance(url, str) or not re.fullmatch(
+            rf'https://github\.com/{re.escape(repo)}/pull/[1-9][0-9]*', url, re.IGNORECASE):
+        raise ValueError('Published PR has an unexpected URL.')
+    print(f'Verified publication: {url} (HEAD {head}).')
+    return url, head
+
+
+def check_smoke_acceptance(commits):
+    if not Path('/.dockerenv').exists() or os.getuid() != 1000:
+        raise ValueError('Smoke publication requires Docker and user 1000.')
+    if len(commits) != 1:
+        raise ValueError('Smoke publication requires exactly one proposed commit.')
+    base = os.environ['SDLC_BASE_BRANCH']
+    changed = run('git', 'diff', '--name-only', f'refs/remotes/origin/{base}...HEAD',
+                  capture=True).splitlines()
+    if changed != [SMOKE_FILE]:
+        raise ValueError(f'Smoke publication must change only {SMOKE_FILE}.')
+    target = WORKSPACE / SMOKE_FILE
+    if target.is_symlink() or not target.is_file():
+        raise ValueError('Smoke marker must be a regular file without a symlink.')
+    if target.read_bytes().decode('utf-8') != SMOKE_CONTENT:
+        raise ValueError('Smoke marker contents do not match the ticket.')
+    print(f'Smoke acceptance passed for commit {commits[0]}.')
+
+
 def main():
-    runtime_env = Path('/run/sdlc/environment.json')
-    if runtime_env.exists():
-        os.environ.update(json.loads(runtime_env.read_text()))
-        os.environ.pop('SSH_AUTH_SOCK', None)
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=('init', 'exec', 'verify', 'publish', 'results'))
     parser.add_argument('--branch')
     parser.add_argument('--ticket', type=Path)
     parser.add_argument('--body', type=Path)
     parser.add_argument('--title')
+    parser.add_argument('--verify-published', action='store_true')
+    parser.add_argument('--smoke-checks', action='store_true')
     args = parser.parse_args()
+    if args.verify_published and args.action != 'publish':
+        parser.error('--verify-published is only valid for publish')
+    if args.smoke_checks and args.action != 'publish':
+        parser.error('--smoke-checks is only valid for publish')
+    runtime_env = Path('/run/sdlc/environment.json')
+    if runtime_env.exists():
+        os.environ.update(json.loads(runtime_env.read_text()))
+        os.environ.pop('SSH_AUTH_SOCK', None)
     if args.action == 'results':
         results = Path('/workspace/results')
         jobs = sorted(results.iterdir(), reverse=True) if results.exists() else []
@@ -168,11 +223,15 @@ def main():
     commits = commits_to_publish(args.branch)
     print(f'Checked {len(commits)} signed commits for {repo}.')
     if args.action == 'publish':
+        if args.smoke_checks:
+            check_smoke_acceptance(commits)
         # No implicit fork, merge, force push, labels, assignees or gh auth switching.
         run('git', 'push', '--', url, f'HEAD:refs/heads/{args.branch}')
         run('gh', 'pr', 'create', '--repo', repo, '--base', os.environ['SDLC_BASE_BRANCH'],
             '--head', args.branch, '--draft', '--title', args.title,
             '--body-file', str(args.body))
+        if args.verify_published:
+            verify_publication(repo, args.branch)
 
 
 if __name__ == '__main__':
