@@ -21,3 +21,4 @@ tickets.local/
 results/
 *.log
 docker-*-ticket.md
+docker-*-pr-body.md
