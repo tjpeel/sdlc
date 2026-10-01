@@ -1,0 +1,18 @@
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /var/lib/sdlc-ssh/ssh_host_ed25519_key
+PidFile /run/sshd/sdlc.pid
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers node
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+UsePAM no
+AllowAgentForwarding no
+# T3's remote connection uses SSH port forwarding.
+AllowTcpForwarding local
+GatewayPorts no
+X11Forwarding no
+PrintMotd no
+Subsystem sftp internal-sftp

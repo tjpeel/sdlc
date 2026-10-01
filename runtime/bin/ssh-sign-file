@@ -1,0 +1,4 @@
+#!/bin/sh
+# OpenSSH may prefer the agent even when supplied a private-key filename.
+unset SSH_AUTH_SOCK
+exec /usr/bin/ssh-keygen "$@"

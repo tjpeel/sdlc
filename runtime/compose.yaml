@@ -1,0 +1,35 @@
+services:
+  worker:
+    build:
+      context: .
+      args:
+        CODEX_VERSION: "0.159.2"
+        GH_VERSION: "2.81.0"
+    image: sdlc-codex-spike:0.159.2
+    init: true
+    environment:
+      SDLC_REPOSITORY: ${SDLC_REPOSITORY:?Select a repository}
+      SDLC_GITHUB_LOGIN: ${SDLC_GITHUB_LOGIN:?Select a GitHub login}
+      SDLC_GIT_NAME: ${SDLC_GIT_NAME:?Set the author name}
+      SDLC_GIT_EMAIL: ${SDLC_GIT_EMAIL:?Set the author email}
+      SDLC_BASE_BRANCH: ${SDLC_BASE_BRANCH:-main}
+    volumes:
+      - workspace:/workspace
+      - codex-state:/home/node/.codex
+      - t3-state:/home/node/.t3
+    tmpfs:
+      - /run/sdlc:mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+
+volumes:
+  workspace:
+  codex-state:
+  t3-state:
