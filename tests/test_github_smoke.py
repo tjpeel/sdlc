@@ -71,6 +71,14 @@ class ConnectedSmokeChecks(unittest.TestCase):
         self.assertEqual([call.args[0][2] for call in run.call_args_list],
                          ['exec', 'verify', 'publish'])
 
+    def test_model_override_is_forwarded_to_container_launcher(self):
+        code, run = self.call(self.args + ['--ticket', str(self.ticket),
+                                         '--model', 'chosen-model', '--execute'])
+        self.assertEqual(code, 0)
+        for call in run.call_args_list:
+            command = call.args[0]
+            self.assertEqual(command[command.index('--model') + 1], 'chosen-model')
+
     def test_remote_publication_failure_does_not_report_success(self):
         failure = subprocess.CalledProcessError(1, ['publish'])
         code, run = self.call(self.args + ['--execute'], [None, failure])

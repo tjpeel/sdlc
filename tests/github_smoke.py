@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def commands(args):
     common = ['--profiles', str(args.profiles.resolve()), '--profile', args.profile,
               '--repo', args.repo, '--branch', args.branch]
+    if args.model is not None:
+        common += ['--model', args.model]
     launcher = [sys.executable, str(ROOT / 'scripts/sdlc.py')]
     plan = []
     if args.ticket:
@@ -38,6 +40,7 @@ def main(argv=None):
     parser.add_argument('--profiles', type=Path, default=ROOT / 'profiles.local.json')
     parser.add_argument('--profile', required=True)
     parser.add_argument('--repo', required=True)
+    parser.add_argument('--model', help='Codex model override for the container.')
     parser.add_argument('--branch', required=True)
     parser.add_argument('--title', required=True)
     parser.add_argument('--body', type=Path, required=True)

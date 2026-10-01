@@ -12,10 +12,14 @@ Checked on **1 October 2026** using macOS/arm64, OrbStack Docker Engine 29.4.0 a
 - Tools ran as uid 1000; `SSH_AUTH_SOCK` was absent.
 - SSH authentication with a separate control key and a verified generated server key. Both ordinary remote Bash commands and explicit login shells received `GH_TOKEN`, `CODEX_HOME` and Git signing settings. An SSH command verified the test commit and read the result helper.
 - Temporary test containers, volumes and network were removed. The built `sdlc-codex-spike:0.159.2` image remains available locally.
-- The updated host-only offline suite passed 34 tests, including failure boundaries for the connected runner, independent marker acceptance before publication, and remote branch/PR matching with synthetic GitHub responses. These checks make no Docker, model or GitHub requests.
+- The updated host-only offline suite passed 49 tests, including model selection and argument forwarding, per-container model defaults, failure boundaries for the connected runner, independent marker acceptance before publication, and remote branch/PR matching with synthetic GitHub responses. These checks make no Docker, model or GitHub requests.
+- The pinned public catalogue installers passed in an isolated temporary directory: 13 skills from skills commit `21801216eea73e9b75a2a6ac23e0df62b3cd6b8a` and five agents from agents commit `1965dbdea022f2c7bd2a7cec159d982dde59ae3e`. Both installers' `--check` modes passed and supporting file links resolved.
+- Compose rendered the new defaults and explicit catalogue revision overrides, with both selected and omitted model values. The Docker bootstrap shell passed a syntax check. These checks did not need daemon access.
+- An isolated Codex CLI 0.159.2 app-server probe discovered all 13 installed skills with zero skill errors through `skills/list`, and read its configuration without malformed-agent warnings. It used temporary state and made no model request. The pinned CLI source also confirms discovery of symlinked agent definitions beside an empty system configuration.
 
 ## Still to test
 
+- Rebuild the image with the bundled catalogues and model defaults, then run the updated `tests/docker_smoke.py`. This session cannot access the Docker socket. The earlier Docker results above cover the original image; the updated smoke test checks catalogue resources and model settings in disposable and SSH containers sharing an existing state volume.
 - Codex authentication and an actual `exec` ticket run, including JSON output, final-response persistence and resuming after interruption.
 - Private repository clone, selected-user API authentication, signed branch push, draft PR creation and GitHub's **Verified** display with real dedicated credentials.
 - The connected `tests/github_smoke.py` flow: use an existing signed branch or run a fresh ticket, then automatically publish and verify the remote branch and draft PR from inside the container. It is print-only unless `--execute` is supplied; rebuild the image before running it.

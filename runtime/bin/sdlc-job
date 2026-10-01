@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import threading
+import unicodedata
 from urllib.parse import quote
 
 WORKSPACE = Path('/workspace/repo')
@@ -16,6 +17,14 @@ SIGN_PROGRAM = '/usr/local/bin/ssh-sign-file'
 ALLOWED_SIGNERS = '/run/sdlc/allowed-signers'
 SMOKE_FILE = 'docs/codex-docker-smoke.md'
 SMOKE_CONTENT = 'Codex completed this task inside Docker.\n'
+
+
+def selected_model():
+    model = os.environ.get('SDLC_MODEL', '')
+    if model and (model.startswith('-')
+                  or any(c.isspace() or unicodedata.category(c).startswith('C') for c in model)):
+        raise ValueError('Model must be a nonempty name without whitespace, control characters or a leading dash.')
+    return model
 
 
 def run(*args, capture=False, cwd=None):
@@ -148,6 +157,7 @@ def main():
     if runtime_env.exists():
         os.environ.update(json.loads(runtime_env.read_text()))
         os.environ.pop('SSH_AUTH_SOCK', None)
+    model = selected_model()
     if args.action == 'results':
         results = Path('/workspace/results')
         jobs = sorted(results.iterdir(), reverse=True) if results.exists() else []
@@ -188,7 +198,10 @@ def main():
                   + args.ticket.read_text())
         command = ['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox',
                    '--json', '--output-last-message', str(results / 'summary.md'),
-                   '-C', str(WORKSPACE), '-']
+                   '-C', str(WORKSPACE)]
+        if model:
+            command += ['--model', model]
+        command += ['-']
         print(f'Job results: {results}', file=sys.stderr, flush=True)
         with (results / 'events.jsonl').open('w') as log, (results / 'stderr.log').open('w') as errors:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

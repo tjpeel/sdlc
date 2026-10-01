@@ -6,10 +6,22 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import unicodedata
 
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
+
+
+def codex_defaults(model, filename=Path('/etc/codex/config.toml')):
+    """Set this container's default without editing persisted user configuration."""
+    if model and (model.startswith('-')
+                  or any(c.isspace() or unicodedata.category(c).startswith('C') for c in model)):
+        raise ValueError('Invalid model identifier.')
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    # Keep Unicode literal: JSON surrogate escapes are not valid TOML escapes.
+    filename.write_text(f'model = {json.dumps(model, ensure_ascii=False)}\n' if model else '')
+    filename.chmod(0o644)
 
 
 def main():
@@ -29,7 +41,9 @@ def main():
     for key in ('SDLC_REPOSITORY', 'SDLC_GITHUB_LOGIN', 'SDLC_GIT_NAME',
                 'SDLC_GIT_EMAIL', 'SDLC_BASE_BRANCH'):
         env[key] = os.environ[key]
+    env['SDLC_MODEL'] = os.environ.get('SDLC_MODEL', '')
     os.environ.update(env)
+    codex_defaults(env['SDLC_MODEL'])
     os.environ.pop('SSH_AUTH_SOCK', None)
     config = context / 'gitconfig'
     config.touch(mode=0o600, exist_ok=True)

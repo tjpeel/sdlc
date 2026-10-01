@@ -5,6 +5,8 @@ services:
       args:
         CODEX_VERSION: "0.159.2"
         GH_VERSION: "2.81.0"
+        SKILLS_REVISION: ${SDLC_SKILLS_REVISION:-21801216eea73e9b75a2a6ac23e0df62b3cd6b8a}
+        AGENTS_REVISION: ${SDLC_AGENTS_REVISION:-1965dbdea022f2c7bd2a7cec159d982dde59ae3e}
     image: sdlc-codex-spike:0.159.2
     init: true
     environment:
@@ -13,6 +15,7 @@ services:
       SDLC_GIT_NAME: ${SDLC_GIT_NAME:?Set the author name}
       SDLC_GIT_EMAIL: ${SDLC_GIT_EMAIL:?Set the author email}
       SDLC_BASE_BRANCH: ${SDLC_BASE_BRANCH:-main}
+      SDLC_MODEL: ${SDLC_MODEL:-}
     volumes:
       - workspace:/workspace
       - codex-state:/home/node/.codex
