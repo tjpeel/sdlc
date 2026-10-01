@@ -11,6 +11,8 @@ This is a public repository. Examples contain placeholders; actual account setti
 ## What is included
 
 - A Debian/Node image with Codex CLI **0.159.2** and GitHub CLI **2.81.0**, pinned for repeatable CLI behaviour. Base images and apt packages are not pinned by digest.
+- Skills and custom agents from [tjpeel/skills](https://github.com/tjpeel/skills) and [tjpeel/agents](https://github.com/tjpeel/agents), pinned to source commits in the image.
+- Model selection for each launch, with an optional profile default.
 - Explicit account/repository profiles. Each pair gets separate workspace, Codex and T3 state volumes.
 - Dedicated SSH commit signing, separate from HTTPS Git and GitHub API authentication.
 - One ticket file per run; streamed JSON events and a saved final response.
@@ -55,7 +57,25 @@ python3 scripts/sdlc.py login --profile personal --repo YOUR_PERSONAL_LOGIN/exam
 python3 scripts/sdlc.py init --profile personal --repo YOUR_PERSONAL_LOGIN/example-repo
 ```
 
+The build runs each catalogue's Codex installer with the `tjpeel` prefix. Skills go in `/home/node/.agents/skills`; custom agents go in `/etc/codex/agents`. Their supporting files remain in `/opt/sdlc/catalogues`. These paths sit outside the mounted Codex state volume, so rebuilding also updates the catalogue for existing workspaces. The paths are supported by the pinned CLI's [skill discovery](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/ext/skills/src/host_roots.rs) and [agent discovery](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/agent-roles/src/loader.rs).
+
+The default source commits are skills [`21801216`](https://github.com/tjpeel/skills/commit/21801216eea73e9b75a2a6ac23e0df62b3cd6b8a) and agents [`1965dbde`](https://github.com/tjpeel/agents/commit/1965dbdea022f2c7bd2a7cec159d982dde59ae3e). To update either catalogue, set `SDLC_SKILLS_REVISION` or `SDLC_AGENTS_REVISION` when running `build`. Each value must be a full, lowercase 40-character commit SHA. Build downloads use the public repositories and need no GitHub credentials.
+
 Login uses `codex login --device-auth`; your ChatGPT workspace must allow device-code login. After bootstrap, unattended jobs use the stored authentication, subject to token validity and usage limits. API-key authentication is another option, documented in [Codex authentication](https://learn.chatgpt.com/docs/auth). Do not mount your whole host `.codex` directory.
+
+Choose a model when launching an interactive worker or ticket job:
+
+```sh
+python3 scripts/sdlc.py cli --profile personal --repo YOUR_PERSONAL_LOGIN/example-repo \
+  --model YOUR_CODEX_MODEL
+
+python3 scripts/sdlc.py exec --profile personal --repo YOUR_PERSONAL_LOGIN/example-repo \
+  --model YOUR_CODEX_MODEL --branch spike/example-ticket --ticket examples/ticket.md
+```
+
+Replace `YOUR_CODEX_MODEL` with a model available to the container's Codex account. You can also add an optional `"model": "YOUR_CODEX_MODEL"` field to a profile in `profiles.local.json`. `--model` takes precedence; omitting both leaves Codex to choose from its own configuration. Changing the model reuses the same workspace and authentication volumes.
+
+For `cli` and `exec`, the launcher passes the selected model explicitly to Codex. Each container also sets it as the machine default in `/etc/codex/config.toml`, including containers started with `ssh-up --model YOUR_CODEX_MODEL`. Persisted user configuration, trusted project configuration, and desktop or T3 session choices can override that machine default. See [Codex configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic). Custom agents retain the model and reasoning effort declared in their own definitions.
 
 ## 3. Run one supplied ticket
 
@@ -72,6 +92,8 @@ python3 scripts/sdlc.py exec --profile personal --repo YOUR_PERSONAL_LOGIN/examp
 This requires a clean checkout, fetches the configured base, creates a new branch, and runs `codex exec` with the ticket on stdin. Branch names are explicit and are not prefixed with `codex/`. JSON events stream to the terminal. `/workspace/results/<UTC timestamp>/` contains `events.jsonl`, `stderr.log`, `summary.md` when Codex writes it, and `exit-code.txt`.
 
 The prompt asks Codex to implement, test and create signed commits, leaving publication to the next step. **That is workflow guidance, not an enforced boundary:** the full-access worker already has a GitHub token and signing key. Exit code zero only establishes that the Codex process completed; inspect the result and checks before publishing.
+
+Ticket text can invoke a bundled skill by name, for example `$tjpeel-engineering-implement` or `$tjpeel-pr-review`. Ask for an agent by its declared name, such as `read_low` or `write_medium`; the `tjpeel-` prefix applies to its installed filename. Skills that use external tools still need those tools configured in the container. See [skill invocation](https://learn.chatgpt.com/docs/build-skills) and [custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 
 Read the latest saved response after a container exits, without supplying GitHub credentials:
 
@@ -117,7 +139,7 @@ python3 tests/github_smoke.py \
   --title 'Test Codex execution in Docker' --body examples/pr-body.md
 ```
 
-Replace the PR body template with the actual change and validation results. Add `--execute` to run the connected test and make the GitHub writes. Supply `--profiles /path/to/profiles.local.json` for a custom configuration file. Without `--ticket`, the test reuses the signed branch already in the container and makes no model request. With `--ticket examples/smoke-ticket.md` and a fresh branch, it runs Codex first and automatically invokes the publish stage only after execution and local verification succeed.
+Replace the PR body template with the actual change and validation results. Add `--execute` to run the connected test and make the GitHub writes. Supply `--profiles /path/to/profiles.local.json` for a custom configuration file and `--model YOUR_CODEX_MODEL` to override the profile model. Without `--ticket`, the test reuses the signed branch already in the container and makes no model request. With `--ticket examples/smoke-ticket.md` and a fresh branch, it runs Codex first and automatically invokes the publish stage only after execution and local verification succeed.
 
 The connected test enables `--smoke-checks` on the publisher. Before any push, the helper independently requires Docker, user 1000, exactly one proposed commit, only `docs/codex-docker-smoke.md` changed, and its exact marker contents including the newline. A successful Codex exit alone does not satisfy these checks. This fixture-specific test is not a general acceptance runner for arbitrary tickets.
 
@@ -170,7 +192,7 @@ Run the offline checks without credentials or Docker:
 python3 -m unittest discover -s tests -v
 ```
 
-The image build and generated-credential Docker/SSH smoke test passed on this Mac. [The validation record](docs/validation.md) separates those checks from the remaining real-account and desktop tests. To reproduce the container checks after building:
+The original image build and generated-credential Docker/SSH smoke test passed on this Mac. The catalogue and model additions pass the host checks; their updated Docker/SSH smoke test still needs Docker access. [The validation record](docs/validation.md) records the checks and remaining tests. To reproduce the container checks after building:
 
 ```sh
 python3 tests/docker_smoke.py

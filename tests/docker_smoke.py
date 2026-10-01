@@ -30,6 +30,7 @@ def main():
             'SDLC_REPOSITORY': 'example/offline-test', 'SDLC_GITHUB_LOGIN': 'example',
             'SDLC_GIT_NAME': 'Smoke Test', 'SDLC_GIT_EMAIL': 'smoke@example.invalid',
             'SDLC_BASE_BRANCH': 'main', 'SDLC_SIGNING_KEY': (folder / 'signing').read_text(),
+            'SDLC_MODEL': 'example-smoke-model',
             'SDLC_GITHUB_TOKEN': 'fake-offline-token',
             'SDLC_SSH_PUBLIC_KEY_FILE': str(folder / 'control.pub'), 'SDLC_SSH_PORT': str(port),
         })
@@ -46,6 +47,19 @@ test "$(id -u)" = 1000
 test -z "${SSH_AUTH_SOCK:-}"
 codex --version
 gh --version
+python3 - <<'PY'
+import os, pathlib, tomllib
+skills = pathlib.Path.home() / '.agents/skills'
+assert list(skills.glob('*/SKILL.md')), 'No bundled skills found'
+agents = list(pathlib.Path('/etc/codex/agents').glob('*.toml'))
+assert agents, 'No bundled agents found'
+assert 'read_low' in {tomllib.loads(agent.read_text())['name'] for agent in agents}
+assert tomllib.loads(pathlib.Path('/etc/codex/config.toml').read_text())['model'] == 'example-smoke-model'
+for skill in skills.iterdir():
+    for resource in skill.iterdir():
+        assert resource.exists(), f'Broken skill resource: {resource}'
+print('Bundled skills, agents, resources and model defaults are available.')
+PY
 python3 -B -m unittest discover -s /spike/tests -v
 git init -q -b main /workspace/repo
 printf 'offline smoke test\n' > /workspace/repo/example.txt
@@ -91,12 +105,16 @@ PY
                 call(ssh_compose + ['logs', '--tail', '30', 'worker'])
                 raise RuntimeError('SSH never became ready: ' + result.stderr)
             call(ssh + ['test -n "$GH_TOKEN" && test "$CODEX_HOME" = /home/node/.codex '
+                        '&& test "$SDLC_MODEL" = example-smoke-model '
+                        '&& test -r "$HOME/.agents/skills/tjpeel-writing-unslop/SKILL.md" '
+                        '&& test -r /etc/codex/agents/tjpeel-read-low.toml '
                         '&& test -z "${SSH_AUTH_SOCK:-}" && codex --version '
                         '&& git -C /workspace/repo verify-commit HEAD'])
             call(ssh + ['bash -lc \'test -n "$GH_TOKEN" && test "$(id -u)" = 1000\''])
             call(ssh + ['sdlc-job results'])
             print('Docker smoke test passed: non-root tools, file signing, token helper, '
-                  'ordinary SSH commands and login shells. No model/GitHub request made.')
+                  'bundled skills and agents, model defaults, ordinary SSH commands '
+                  'and login shells. No model/GitHub request made.')
         finally:
             call(ssh_compose + ['down', '--volumes', '--remove-orphans'])
 

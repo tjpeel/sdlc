@@ -10,8 +10,16 @@ import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def valid_model(model):
+    if (not isinstance(model, str) or not model or model.startswith('-')
+            or any(c.isspace() or unicodedata.category(c).startswith('C') for c in model)):
+        raise ValueError('Model must be a nonempty name without whitespace, control characters or a leading dash.')
+    return model
 
 
 def selected_profile(filename, name, repo):
@@ -31,6 +39,8 @@ def selected_profile(filename, name, repo):
         raise ValueError('Invalid GitHub login.')
     if any(c.isspace() for c in profile['git_email']):
         raise ValueError('Use one verified GitHub email address.')
+    if 'model' in profile:
+        valid_model(profile['model'])
     return profile
 
 
@@ -52,6 +62,8 @@ def main():
     parser.add_argument('--profiles', type=Path, default=ROOT / 'profiles.local.json')
     parser.add_argument('--profile', required=True)
     parser.add_argument('--repo', required=True)
+    parser.add_argument('--model', type=valid_model,
+                        help='Codex model; overrides the selected profile model.')
     parser.add_argument('--branch')
     parser.add_argument('--ticket', type=Path)
     parser.add_argument('--body', type=Path)
@@ -69,6 +81,7 @@ def main():
         parser.error('--smoke-checks is only valid for publish')
     profile_file = args.profiles.resolve()
     profile = selected_profile(profile_file, args.profile, args.repo)
+    model = args.model if args.model is not None else profile.get('model', '')
     if profile['base_branch'].startswith(('-', 'codex/')):
         parser.error('Invalid base branch in profile.')
     subprocess.run(['git', 'check-ref-format', '--branch', profile['base_branch']],
@@ -99,12 +112,13 @@ def main():
     # Avoid inherited account switching, shell agent sockets and Compose overrides.
     for key in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'SSH_AUTH_SOCK',
                 'SDLC_SIGNING_KEY', 'SDLC_GITHUB_TOKEN', 'COMPOSE_FILE',
-                'COMPOSE_PROJECT_NAME', 'COMPOSE_PROFILES'):
+                'COMPOSE_PROJECT_NAME', 'COMPOSE_PROFILES', 'SDLC_MODEL'):
         env.pop(key, None)
     env.update({
         'SDLC_REPOSITORY': args.repo, 'SDLC_GITHUB_LOGIN': profile['github_login'],
         'SDLC_GIT_NAME': profile['git_name'], 'SDLC_GIT_EMAIL': profile['git_email'],
         'SDLC_BASE_BRANCH': profile['base_branch'],
+        'SDLC_MODEL': model,
     })
     resolve = lambda key: (profile_file.parent / profile[key]).resolve()
     if args.action.startswith('ssh-'):
@@ -135,7 +149,10 @@ def main():
         if args.action == 'login':
             command += ['codex', 'login', '--device-auth']
         elif args.action == 'cli':
-            command += ['bash', '-lc', 'sdlc-job init && exec codex --dangerously-bypass-approvals-and-sandbox -C /workspace/repo']
+            codex = ['codex', '--dangerously-bypass-approvals-and-sandbox', '-C', '/workspace/repo']
+            if model:
+                codex += ['--model', model]
+            command += ['bash', '-lc', 'sdlc-job init && exec ' + shlex.join(codex)]
         else:
             command += ['sdlc-job', args.action]
             if args.branch:
@@ -149,7 +166,8 @@ def main():
             if args.smoke_checks:
                 command += ['--smoke-checks']
 
-    print(f'Profile: {args.profile}; repository: {args.repo}; Docker project: {project}', flush=True)
+    print(f'Profile: {args.profile}; repository: {args.repo}; Docker project: {project}; '
+          f'model: {model or "Codex default"}', flush=True)
     if args.dry_run or (args.action == 'publish' and not args.execute):
         print(shlex.join(command))
         print('Print only: no secrets read, containers started or GitHub writes.')
