@@ -1,0 +1,9 @@
+# Only these source files belong in the Docker build context.
+**
+!Dockerfile
+!entrypoint.py
+!sshd_config
+!bin/
+bin/**
+!bin/sdlc-job
+!bin/ssh-sign-file

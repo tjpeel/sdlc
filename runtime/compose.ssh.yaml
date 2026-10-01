@@ -1,0 +1,20 @@
+# Optional persistent host for Codex desktop and T3 Code. Validate both UIs.
+services:
+  worker:
+    command: ["sshd"]
+    ports:
+      - "127.0.0.1:${SDLC_SSH_PORT:-2222}:2222"
+    volumes:
+      - ssh-hostkeys:/var/lib/sdlc-ssh
+    secrets:
+      - source: ssh-public-key
+        target: ssh-public-key
+    cap_add:
+      - SYS_CHROOT
+
+secrets:
+  ssh-public-key:
+    file: ${SDLC_SSH_PUBLIC_KEY_FILE:?Select the container connection public key}
+
+volumes:
+  ssh-hostkeys:

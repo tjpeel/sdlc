@@ -1,0 +1,24 @@
+{
+  "personal": {
+    "github_login": "YOUR_PERSONAL_LOGIN",
+    "git_name": "Your Name",
+    "git_email": "YOUR_VERIFIED_PERSONAL_EMAIL",
+    "repositories": ["YOUR_PERSONAL_LOGIN/example-repo"],
+    "base_branch": "main",
+    "signing_key_file": ".secrets/personal/signing-key",
+    "github_token_file": ".secrets/personal/github-token",
+    "ssh_public_key_file": ".secrets/container-control.pub",
+    "ssh_port": 2222
+  },
+  "work": {
+    "github_login": "YOUR_WORK_LOGIN",
+    "git_name": "Your Name",
+    "git_email": "YOUR_VERIFIED_WORK_EMAIL",
+    "repositories": ["YOUR_WORK_ORG/example-repo"],
+    "base_branch": "main",
+    "signing_key_file": ".secrets/work/signing-key",
+    "github_token_file": ".secrets/work/github-token",
+    "ssh_public_key_file": ".secrets/container-control.pub",
+    "ssh_port": 2223
+  }
+}

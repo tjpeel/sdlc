@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Small, explicit job lifecycle. No scheduler and no arbitrary credential broker."""
+import argparse
+import json
+from datetime import datetime, timezone
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import threading
+
+WORKSPACE = Path('/workspace/repo')
+SIGN_PROGRAM = '/usr/local/bin/ssh-sign-file'
+ALLOWED_SIGNERS = '/run/sdlc/allowed-signers'
+
+
+def run(*args, capture=False, cwd=None):
+    result = subprocess.run(args, cwd=WORKSPACE if cwd is None else cwd, check=True, text=True,
+                            stdout=subprocess.PIPE if capture else None)
+    return result.stdout.strip() if capture else ''
+
+
+def repository():
+    repo = os.environ['SDLC_REPOSITORY']
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+        raise ValueError('Repository must be OWNER/REPO on github.com.')
+    return repo, f'https://github.com/{repo}.git'
+
+
+def initialize():
+    repo, url = repository()
+    if not WORKSPACE.exists():
+        run('git', 'clone', '--', url, str(WORKSPACE), cwd='/workspace')
+    if run('git', 'remote', 'get-url', 'origin', capture=True) != url:
+        raise ValueError(f'Workspace origin does not match the selected repository {repo}.')
+    # Reset critical local overrides from repository setup or earlier sessions.
+    for key, value in (
+        ('user.name', os.environ['SDLC_GIT_NAME']),
+        ('user.email', os.environ['SDLC_GIT_EMAIL']),
+        ('user.signingKey', '/run/secrets/signing-key'),
+        ('gpg.format', 'ssh'), ('gpg.ssh.program', SIGN_PROGRAM),
+        ('gpg.ssh.allowedSignersFile', ALLOWED_SIGNERS),
+        ('commit.gpgsign', 'true'), ('core.hooksPath', '/dev/null'),
+    ):
+        run('git', 'config', '--local', key, value)
+    return repo, url
+
+
+def valid_branch(branch):
+    if not branch or branch.startswith(('-', 'codex/')):
+        raise ValueError('Use an explicit branch name without a codex/ prefix.')
+    run('git', 'check-ref-format', '--branch', branch)
+
+
+def clean():
+    if run('git', 'status', '--porcelain', capture=True):
+        raise ValueError('Workspace has uncommitted changes; inspect it before continuing.')
+
+
+def commits_to_publish(branch):
+    valid_branch(branch)
+    base = os.environ['SDLC_BASE_BRANCH']
+    valid_branch(base)
+    if branch == base:
+        raise ValueError('Use a ticket branch, not the base branch.')
+    if run('git', 'branch', '--show-current', capture=True) != branch:
+        raise ValueError('Current branch does not match the requested branch.')
+    # Fixed verification settings cannot be replaced by local Git configuration.
+    commits = run('git', 'rev-list', f'refs/remotes/origin/{base}..HEAD', capture=True).splitlines()
+    if not commits:
+        raise ValueError('No commits to publish.')
+    for commit in commits:
+        emails = run('git', 'show', '-s', '--format=%ae%n%ce', commit, capture=True).splitlines()
+        if emails != [os.environ['SDLC_GIT_EMAIL']] * 2:
+            raise ValueError(f'Commit {commit[:12]} has an unexpected author or committer email.')
+        run('git', '-c', 'gpg.format=ssh',
+            '-c', f'gpg.ssh.program={SIGN_PROGRAM}',
+            '-c', f'gpg.ssh.allowedSignersFile={ALLOWED_SIGNERS}',
+            'verify-commit', commit)
+    return commits
+
+
+def main():
+    runtime_env = Path('/run/sdlc/environment.json')
+    if runtime_env.exists():
+        os.environ.update(json.loads(runtime_env.read_text()))
+        os.environ.pop('SSH_AUTH_SOCK', None)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('action', choices=('init', 'exec', 'verify', 'publish', 'results'))
+    parser.add_argument('--branch')
+    parser.add_argument('--ticket', type=Path)
+    parser.add_argument('--body', type=Path)
+    parser.add_argument('--title')
+    args = parser.parse_args()
+    if args.action == 'results':
+        results = Path('/workspace/results')
+        jobs = sorted(results.iterdir(), reverse=True) if results.exists() else []
+        if not jobs:
+            print('No saved job results yet.')
+            return
+        latest = jobs[0]
+        print(f'Latest job: {latest}')
+        for name in ('exit-code.txt', 'summary.md'):
+            path = latest / name
+            if path.is_file():
+                print(f'\n{name}:\n{path.read_text()}')
+        print(f'Events and diagnostics: {latest}/events.jsonl, {latest}/stderr.log')
+        return
+    repo, url = initialize()
+    if args.action == 'init':
+        return
+    if not args.branch:
+        parser.error('--branch is required')
+    valid_branch(args.branch)
+    if args.action == 'exec':
+        if args.ticket is None:
+            parser.error('--ticket is required')
+        clean()
+        base = os.environ['SDLC_BASE_BRANCH']
+        valid_branch(base)
+        if args.branch == base:
+            raise ValueError('Use a ticket branch, not the base branch.')
+        run('git', 'fetch', 'origin', base)
+        run('git', 'switch', '-c', args.branch, f'refs/remotes/origin/{base}')
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+        results = Path('/workspace/results') / stamp
+        results.mkdir(parents=True)
+        prompt = ('Implement the supplied ticket in this repository. Read repository instructions. '
+                  'Run relevant checks and create signed commits. Do not push, create a PR, merge, '
+                  'or deploy; the separate publish step handles the draft PR. Do not change '
+                  'Git signing or account settings. Report checks, commits and remaining issues.\n\n'
+                  + args.ticket.read_text())
+        command = ['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox',
+                   '--json', '--output-last-message', str(results / 'summary.md'),
+                   '-C', str(WORKSPACE), '-']
+        print(f'Job results: {results}', file=sys.stderr, flush=True)
+        with (results / 'events.jsonl').open('w') as log, (results / 'stderr.log').open('w') as errors:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, text=True, cwd=WORKSPACE)
+            def diagnostics():
+                for line in process.stderr:
+                    errors.write(line)
+                    errors.flush()
+                    print(line, end='', file=sys.stderr, flush=True)
+            error_reader = threading.Thread(target=diagnostics)
+            error_reader.start()
+            process.stdin.write(prompt)
+            process.stdin.close()
+            for line in process.stdout:
+                log.write(line)
+                log.flush()
+                print(line, end='', flush=True)
+            code = process.wait()
+            error_reader.join()
+        (results / 'exit-code.txt').write_text(f'{code}\n')
+        if code:
+            sys.exit(code)
+        return
+    clean()
+    if args.action == 'publish':
+        if not args.body or not args.title:
+            parser.error('--body and --title are required')
+        login = run('gh', 'api', 'user', '--jq', '.login', capture=True)
+        if login.casefold() != os.environ['SDLC_GITHUB_LOGIN'].casefold():
+            raise ValueError('Token belongs to a different GitHub account.')
+        run('git', 'fetch', 'origin', os.environ['SDLC_BASE_BRANCH'])
+    commits = commits_to_publish(args.branch)
+    print(f'Checked {len(commits)} signed commits for {repo}.')
+    if args.action == 'publish':
+        # No implicit fork, merge, force push, labels, assignees or gh auth switching.
+        run('git', 'push', '--', url, f'HEAD:refs/heads/{args.branch}')
+        run('gh', 'pr', 'create', '--repo', repo, '--base', os.environ['SDLC_BASE_BRANCH'],
+            '--head', args.branch, '--draft', '--title', args.title,
+            '--body-file', str(args.body))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, KeyError, subprocess.CalledProcessError) as exc:
+        print(f'Job failed: {exc}', file=sys.stderr)
+        sys.exit(1)
