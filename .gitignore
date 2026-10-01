@@ -20,3 +20,4 @@ github-token*
 tickets.local/
 results/
 *.log
+docker-*-ticket.md
