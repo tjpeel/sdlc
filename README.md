@@ -10,7 +10,7 @@ This is a public repository. Examples contain placeholders; actual account setti
 
 ## What is included
 
-- A Debian/Node image with Codex CLI **0.159.2** and GitHub CLI **2.81.0**, pinned for repeatable CLI behaviour. Base images and apt packages are not pinned by digest.
+- A Debian/Node image with Codex CLI and GitHub CLI versions pinned in [`runtime/Dockerfile`](runtime/Dockerfile), plus a pinned multi-architecture Node 24/Bookworm base image. Debian apt packages are resolved during the build.
 - Skills and custom agents from [tjpeel/skills](https://github.com/tjpeel/skills) and [tjpeel/agents](https://github.com/tjpeel/agents), pinned to source commits in the image.
 - Model selection for each launch, with an optional profile default.
 - Explicit account/repository profiles. Each pair gets separate workspace, Codex and T3 state volumes.
@@ -59,7 +59,7 @@ python3 scripts/sdlc.py init --profile personal --repo YOUR_PERSONAL_LOGIN/examp
 
 The build runs each catalogue's Codex installer with the `tjpeel` prefix. Skills go in `/home/node/.agents/skills`; custom agents go in `/etc/codex/agents`. Their supporting files remain in `/opt/sdlc/catalogues`. These paths sit outside the mounted Codex state volume, so rebuilding also updates the catalogue for existing workspaces. The paths are supported by the pinned CLI's [skill discovery](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/ext/skills/src/host_roots.rs) and [agent discovery](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/agent-roles/src/loader.rs).
 
-The default source commits are skills [`21801216`](https://github.com/tjpeel/skills/commit/21801216eea73e9b75a2a6ac23e0df62b3cd6b8a) and agents [`1965dbde`](https://github.com/tjpeel/agents/commit/1965dbdea022f2c7bd2a7cec159d982dde59ae3e). To update either catalogue, set `SDLC_SKILLS_REVISION` or `SDLC_AGENTS_REVISION` when running `build`. Each value must be a full, lowercase 40-character commit SHA. Build downloads use the public repositories and need no GitHub credentials.
+The default source commits are recorded in `runtime/Dockerfile`. To override either catalogue for one build, set `SDLC_SKILLS_REVISION` or `SDLC_AGENTS_REVISION` when running the launcher’s `build` command. Each value must be a full, lowercase 40-character commit SHA. The launcher passes overrides as Docker build arguments; Compose uses the Dockerfile defaults. Build downloads use the public repositories and need no GitHub credentials.
 
 Login uses `codex login --device-auth`; your ChatGPT workspace must allow device-code login. After bootstrap, unattended jobs use the stored authentication, subject to token validity and usage limits. API-key authentication is another option, documented in [Codex authentication](https://learn.chatgpt.com/docs/auth). Do not mount your whole host `.codex` directory.
 
@@ -199,3 +199,29 @@ python3 tests/docker_smoke.py
 ```
 
 See [the research and smoke-test checklist](docs/options.md) for what remains to establish before using real work tickets.
+
+## Dependency updates
+
+Once this configuration reaches GitHub's default branch, updates are checked weekly:
+
+| Dependency | Update route |
+| --- | --- |
+| Node 24/Bookworm image digest | Dependabot Docker updates; Node major upgrades remain a deliberate choice |
+| Workflow actions | Dependabot GitHub Actions updates |
+| Codex CLI | The runtime updater reads the latest stable `@openai/codex` npm release |
+| GitHub CLI | The runtime updater reads the latest stable `cli/cli` release |
+| Skills and agents | The runtime updater reads each repository’s `main` commit |
+| Debian tools installed with apt | Resolved during uncached builds; weekly validation builds the image without cache |
+
+[`dependabot.yml`](.github/dependabot.yml) configures the native updates. [`Update runtime pins`](.github/workflows/update-runtime-pins.yml) handles the four Dockerfile arguments that Dependabot cannot parse. It opens one PR after offline tests, an uncached image build, and the Docker/SSH smoke test pass. While a runtime update PR is open, further runtime PRs wait for its review. Updates take effect in local containers after merging and rebuilding; the local image tag is `sdlc-codex-spike:local`.
+
+[`Validate container`](.github/workflows/validate.yml) runs on pushes to `main`, pull requests, manual dispatch, and weekly. The weekly uncached build checks current Debian packages even when none of the tracked pins changes. Python uses only the standard library, so there is no Python dependency manifest to update.
+
+The runtime updater uses GitHub's built-in token. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for it to open PRs. The workflow grants only contents and pull-request write permissions, and does not approve or merge PRs. Dependabot version updates activate when its configuration is on the default branch. See [Dependabot setup](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-version-updates) and [GitHub Actions repository settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository).
+
+PRs created with `GITHUB_TOKEN` can require a user to approve their separate PR workflow runs. The updater therefore validates candidates before opening the PR. See [GitHub token event behavior](https://docs.github.com/en/actions/concepts/security/github_token). Run the updater locally with an authenticated `gh` CLI when needed:
+
+```sh
+python3 scripts/update_runtime_pins.py --check  # Validate local pins without network access.
+python3 scripts/update_runtime_pins.py --write  # Fetch upstream metadata and update the Dockerfile.
+```

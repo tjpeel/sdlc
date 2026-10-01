@@ -2,12 +2,7 @@ services:
   worker:
     build:
       context: .
-      args:
-        CODEX_VERSION: "0.159.2"
-        GH_VERSION: "2.81.0"
-        SKILLS_REVISION: ${SDLC_SKILLS_REVISION:-21801216eea73e9b75a2a6ac23e0df62b3cd6b8a}
-        AGENTS_REVISION: ${SDLC_AGENTS_REVISION:-1965dbdea022f2c7bd2a7cec159d982dde59ae3e}
-    image: sdlc-codex-spike:0.159.2
+    image: sdlc-codex-spike:local
     init: true
     environment:
       SDLC_REPOSITORY: ${SDLC_REPOSITORY:?Select a repository}
