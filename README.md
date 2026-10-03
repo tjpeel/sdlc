@@ -16,10 +16,20 @@ unmanaged executable or a command shadowed earlier on PATH.
 ```sh
 go run ./cmd/sdlc-install --bin-dir /PATH/TO/YOUR_BIN_DIRECTORY
 sdlc --version
+sdlc runtime build --source .
+sdlc runtime status
 ```
 
 The version includes the development version, Git revision and dirty-source
 marker. The installed binary requires no Go runtime.
+
+`runtime build` uses only this clone's `runtime/` context and current dependency
+pins. It builds locally without an account profile or project credentials, probes
+the tools, then selects the shared `sdlc-codex-spike:local` image. Later invocations
+can omit `--source` to use the saved clone. `runtime status` checks that the
+selected engine and image still match the verified record. State lives in the
+OS user configuration directory under `sdlc`, or `SDLC_STATE_DIR` when set.
+Setup/login, catalogue refresh and ticket commands are subsequent increments.
 
 This is a public repository. Examples contain placeholders; actual account settings and credentials belong in ignored local files or an external secret store. Keep real work tickets and job output outside the tracked source tree. The runtime stores authentication and results in Docker volumes.
 

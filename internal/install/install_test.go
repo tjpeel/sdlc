@@ -39,6 +39,11 @@ func writeCommand(t *testing.T, source, value string) {
 
 func TestLocalInstallerReplacesManagedBuildAndPreservesOtherFiles(t *testing.T) {
 	source, bin := fixture(t)
+	later := t.TempDir()
+	if err := os.WriteFile(filepath.Join(later, executableName()), []byte("lower-priority command"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "."+string(os.PathListSeparator)+bin+string(os.PathListSeparator)+later+string(os.PathListSeparator)+os.Getenv("PATH"))
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
