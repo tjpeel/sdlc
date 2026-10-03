@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/Smoke.Api/Smoke.Api.csproj" />
+  <Project Path="tests/Smoke.UnitTests/Smoke.UnitTests.csproj" />
+  <Project Path="tests/Smoke.IntegrationTests/Smoke.IntegrationTests.csproj" />
+</Solution>
