@@ -179,6 +179,8 @@ One current skill requirement needs a decision before tracker-free publication. 
 require a ticket key, whereas the engineering process permits tracker-free work
 references. Report that gap and propose a naming policy before changing the skill;
 never invent an external tracker identity from a ticket's sequence number.
+The [isolated pr-manage proposal](proposals/pr-manage-work-reference.md) accepts
+either supplied key and carries it into every PR; it has not changed the skill.
 Rebase and force-push restacking also need explicit authority. Publication authority
 alone does not authorise rewriting someone else's work.
 
