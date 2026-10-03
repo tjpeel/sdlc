@@ -25,8 +25,8 @@ func InspectWork(ctx context.Context, directory, reference string) (WorkResult, 
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !utf8.ValidString(reference) || !portablePath(reference) || strings.Contains(reference, "/") {
-		return result, errors.New("work reference must be a nonempty portable directory name without traversal or control characters")
+	if !validWorkReference(reference) {
+		return result, errors.New("work reference must be a nonempty directory name without traversal, path separators or control characters")
 	}
 	root, err := git(ctx, directory, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -41,7 +41,28 @@ func InspectWork(ctx context.Context, directory, reference string) (WorkResult, 
 	}
 	result.Reference = reference
 	result.Tickets = []string{}
-	work := filepath.Join(result.Root, ".sdlc", "work", reference)
+	workRoot := filepath.Join(result.Root, ".sdlc", "work")
+	if err := directoryOrMissing(workRoot); err != nil {
+		return result, err
+	}
+	references, err := os.ReadDir(workRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return result, errors.New("selected work reference and its tickets directory must exist")
+	}
+	if err != nil {
+		return result, errors.New("cannot inspect local work directory")
+	}
+	exactReference := false
+	for _, entry := range references {
+		if entry.Name() == reference {
+			exactReference = true
+			break
+		}
+	}
+	if !exactReference {
+		return result, errors.New("selected work reference must match an existing directory name exactly, including case")
+	}
+	work := filepath.Join(workRoot, reference)
 	ticketDirectory := filepath.Join(work, "tickets")
 	for _, path := range []string{work, ticketDirectory} {
 		if err := directoryOrMissing(path); err != nil {

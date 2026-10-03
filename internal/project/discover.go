@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 func discover(root string) ([]string, [][]string, error) {
@@ -79,6 +80,11 @@ func discover(root string) ([]string, [][]string, error) {
 
 var ticketName = regexp.MustCompile(`^[0-9]+-[^/]+\.md$`)
 
+func validWorkReference(reference string) bool {
+	return utf8.ValidString(reference) && reference != "" && reference != "." && reference != ".." &&
+		!strings.ContainsAny(reference, "/\\") && !hasControl(reference)
+}
+
 func tickets(root string) ([]string, error) {
 	result := []string{}
 	work := filepath.Join(root, ".sdlc/work")
@@ -111,8 +117,8 @@ func tickets(root string) ([]string, error) {
 			}
 			if ticketName.MatchString(file.Name()) {
 				relative := filepath.ToSlash(filepath.Join(".sdlc/work", entry.Name(), "tickets", file.Name()))
-				if !portablePath(relative) {
-					return nil, errors.New("ticket paths must be portable relative paths")
+				if !validWorkReference(entry.Name()) || !utf8.ValidString(file.Name()) || !portablePath(file.Name()) {
+					return nil, errors.New("ticket paths require a valid work reference and safe filenames")
 				}
 				result = append(result, relative)
 			}
