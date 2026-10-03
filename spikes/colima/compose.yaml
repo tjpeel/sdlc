@@ -1,0 +1,47 @@
+services:
+  seed:
+    image: busybox:1.37.0
+    network_mode: none
+    command: [sh, -ec, "printf '%s\\n' colima-volume-ok > /data/value.txt"]
+    volumes:
+      - fixture-data:/data
+
+  http:
+    build:
+      context: ./http
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:18085:8080"
+    volumes:
+      - fixture-data:/data:ro
+    healthcheck:
+      test: [CMD, wget, -q, -O-, "http://127.0.0.1:8080/index.html"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  network-probe:
+    image: busybox:1.37.0
+    profiles: [probes]
+    command: [sh, -ec, 'test "$$(wget -q -O- http://http:8080/index.html)" = colima-nested-http-ok']
+
+  writable-probe:
+    image: busybox:1.37.0
+    profiles: [probes]
+    network_mode: none
+    command: [sh, -ec, 'test "$$(cat /data/value.txt)" = colima-volume-ok; printf "%s\n" colima-writable-ok > /data/writable.txt']
+    volumes:
+      - fixture-data:/data
+
+  readonly-probe:
+    image: busybox:1.37.0
+    profiles: [probes]
+    network_mode: none
+    command: [sh, -ec, 'test "$$(cat /data/writable.txt)" = colima-writable-ok; if touch /data/forbidden.txt 2>/dev/null; then exit 1; fi; test ! -e /data/forbidden.txt']
+    volumes:
+      - fixture-data:/data:ro
+
+volumes:
+  fixture-data:

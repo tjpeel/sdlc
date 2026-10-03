@@ -11,9 +11,11 @@ services:
       SDLC_GIT_EMAIL: ${SDLC_GIT_EMAIL:?Set the author email}
       SDLC_BASE_BRANCH: ${SDLC_BASE_BRANCH:-main}
       SDLC_MODEL: ${SDLC_MODEL:-}
+      CLAUDE_CONFIG_DIR: /home/node/.claude
     volumes:
       - workspace:/workspace
       - codex-state:/home/node/.codex
+      - claude-state:/home/node/.claude
       - t3-state:/home/node/.t3
     tmpfs:
       - /run/sdlc:mode=0700
@@ -30,4 +32,5 @@ services:
 volumes:
   workspace:
   codex-state:
+  claude-state:
   t3-state:

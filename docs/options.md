@@ -2,6 +2,12 @@
 
 Research snapshot: **1 October 2026**. The repository starts with a CLI experiment; the desktop routes are proposals to test against the same image.
 
+This is an early options snapshot. The later requirement is that the worker
+creates its own signed commits and pushes them unchanged. Helper-created
+publication below is historical research, and Sandcastle remains inspiration
+with no adoption planned. Use [the protected runner handoff](protected-runner-handoff.md)
+for the current candidate and active plan.
+
 ## Proposed order
 
 | Option | Control and visibility | Credentials | Fit |
@@ -80,9 +86,9 @@ Illustrative host-side provisioning after you configure service-account authenti
 
 ```sh
 op read --out-file .secrets/work/signing-key \
-  'op://Automation/work-signing/private key?ssh-format=openssh'
+  'op://YOUR_AUTOMATION_VAULT/YOUR_SIGNING_ITEM/private key?ssh-format=openssh'
 op read --out-file .secrets/work/github-token \
-  'op://Automation/work-github/token'
+  'op://YOUR_AUTOMATION_VAULT/YOUR_GITHUB_TOKEN_ITEM/token'
 chmod 600 .secrets/work/signing-key .secrets/work/github-token
 ```
 

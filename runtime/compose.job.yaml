@@ -1,0 +1,9 @@
+# A new workspace for every unattended ticket; provider login volumes persist.
+services:
+  worker:
+    environment:
+      SDLC_JOB_ID: ${SDLC_JOB_ID:?Set a unique job ID}
+
+volumes:
+  workspace:
+    name: sdlc-${SDLC_JOB_ID:?Set a unique job ID}-workspace

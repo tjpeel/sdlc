@@ -24,16 +24,31 @@ def codex_defaults(model, filename=Path('/etc/codex/config.toml')):
     filename.chmod(0o644)
 
 
+def claude_catalogues(directory=Path('/home/node/.claude'),
+                      source=Path('/opt/sdlc/claude')):
+    """Keep image catalogues visible through the persistent Claude state mount."""
+    for name in ('skills', 'agents'):
+        destination = directory / name
+        expected = source / name
+        if destination.is_symlink() and destination.readlink() == expected:
+            continue
+        if destination.exists() or destination.is_symlink():
+            raise ValueError('Claude catalogue path conflicts with the image catalogue.')
+        destination.symlink_to(expected, target_is_directory=True)
+
+
 def main():
     context = Path('/run/sdlc')
     context.mkdir(parents=True, exist_ok=True)
     context.chmod(0o700)
     os.chown(context, 1000, 1000)
-    for directory in ('/workspace', '/home/node/.codex', '/home/node/.t3'):
+    for directory in ('/workspace', '/home/node/.codex', '/home/node/.claude', '/home/node/.t3'):
         os.chown(directory, 1000, 1000)
+    claude_catalogues()
 
     env = {
         'HOME': '/home/node', 'CODEX_HOME': '/home/node/.codex',
+        'CLAUDE_CONFIG_DIR': '/home/node/.claude',
         'GH_CONFIG_DIR': '/run/sdlc/gh', 'GIT_CONFIG_GLOBAL': '/run/sdlc/gitconfig',
         'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0',
         'GH_PROMPT_DISABLED': '1',
@@ -42,6 +57,9 @@ def main():
                 'SDLC_GIT_EMAIL', 'SDLC_BASE_BRANCH'):
         env[key] = os.environ[key]
     env['SDLC_MODEL'] = os.environ.get('SDLC_MODEL', '')
+    for key in ('SDLC_JOB_ID', 'DOCKER_HOST', 'DOCKER_CONFIG'):
+        if key in os.environ:
+            env[key] = os.environ[key]
     os.environ.update(env)
     codex_defaults(env['SDLC_MODEL'])
     os.environ.pop('SSH_AUTH_SOCK', None)

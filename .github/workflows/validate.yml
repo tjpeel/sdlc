@@ -23,6 +23,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check public source for sensitive information
+        run: python3 scripts/check_sensitive.py --staged
       - name: Check dependency pins
         run: python3 scripts/update_runtime_pins.py --check
       - name: Run offline tests
@@ -31,3 +33,7 @@ jobs:
         run: docker build --pull --no-cache --tag sdlc-codex-spike:local runtime
       - name: Test container startup and SSH with disposable credentials
         run: python3 tests/docker_smoke.py
+      - name: Test isolated nested Docker and .NET fixtures
+        run: python3 tests/nested_docker_smoke.py --execute
+      - name: Test unattended tickets with disposable provider and GitHub stubs
+        run: python3 tests/container_ticket_smoke.py --execute
