@@ -6,6 +6,8 @@ Start with [container onboarding](docs/container-onboarding.md) to build and aut
 
 **Start with the disposable CLI worker.** It exercises the account, signing and ticket workflow before adding a desktop connection or a ticket queue. [The options note](docs/options.md) compares the alternatives and links the research.
 
+[The CLI workflow design](docs/cli-workflow-design.md) recommends Go for an installed cross-platform command using one shared SDLC image across all repositories. It describes setup, current-repository capture, named-vault secrets, progress and recovery. Its commands are proposed; the current Python runner remains the executable prototype.
+
 This is a public repository. Examples contain placeholders; actual account settings and credentials belong in ignored local files or an external secret store. Keep real work tickets and job output outside the tracked source tree. The runtime stores authentication and results in Docker volumes.
 
 “Full access” means Codex's approval and sandbox settings. It is independent of model choice. Here Codex runs as the `node` user with `--dangerously-bypass-approvals-and-sandbox`; Docker still controls its mounts, capabilities and network. The worker can read every credential supplied to it. This example has normal outbound network access.
