@@ -212,6 +212,15 @@ displayed URL and paste the code into the terminal if the browser cannot reach
 the container callback. These commands use your own account; subscription access
 is not shared or used through a custom API client. See [provider usage](provider-usage.md).
 
+Successful login completes the provider's sign-in flow and confirms that a fresh
+container can load the saved account credentials. Claude may still show its
+native first-launch setup when you first run `sdlc interactive --provider claude`,
+including another sign-in prompt. Complete those prompts using the same account,
+then exit with `/exit`. The terminal setup persists in the same private volume;
+launch again to check that it opens without repeating sign-in. The saved-login
+check does not verify whether terminal setup is complete. See the
+[upstream report](https://github.com/anthropics/claude-code/issues/65725).
+
 Codex is the default provider when `--provider` is omitted. `sdlc auth login`
 logs in to Codex and `sdlc auth status` checks Codex. Select Claude with
 `--provider claude`. Check both providers with `sdlc auth status --all`;
@@ -222,6 +231,18 @@ credential volume. It reports whether the CLI can load stored account credential
 without printing account details or raw provider output. This does not validate a
 token remotely, check model access or make a paid model request. Status exits
 nonzero if any requested provider lacks a usable stored login.
+
+A successful status check reports:
+
+```text
+codex: saved account login found (offline check)
+claude: saved account login found (offline check)
+```
+
+This confirms that the official client can load the saved account credentials. It
+does not repeat browser sign-in or contact the provider to check current access. Completing
+browser login and loading its saved credentials are separate checks; the offline
+status message describes the latter and does not report a login failure.
 
 Each installation has one labelled local Docker volume per provider. Codex retains
 only `auth.json`; its home, settings and logs are disposable. Claude Code manages
