@@ -7,7 +7,7 @@ The CLI supports installation and reinstallation, version reporting, building an
 inspecting the shared runtime, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions, and single-ticket execution through checks, a draft PR, CI and
-independent review. Secret-store integration and stacked-ticket orchestration
+independent review, and a live dashboard of local runs. Secret-store integration and stacked-ticket orchestration
 remain future work.
 
 ## Get started
@@ -98,6 +98,20 @@ The command signs with configured host Git settings and publishes using host
 `gh`; it leaves the PR draft and never merges. Read the [run guide](docs/cli.md#run-one-ticket)
 and [provider rules](docs/provider-usage.md) before a connected run. No live
 provider run has been validated for this implementation.
+
+Watch registered runs across repositories from another terminal:
+
+```sh
+sdlc dashboard
+sdlc dashboard --run RECORDED_RUN_ID --logs
+sdlc dashboard --json
+```
+
+The dashboard shows heartbeat status, current stage and model, questions, check
+results and PR links. It puts attention items first and reads private run state
+without contacting providers. Closing it leaves controllers working. Headless
+controllers remain attached to their original terminal; detached execution is
+future work. See the [dashboard guide](docs/cli.md#watch-local-runs).
 
 ## Security boundary and risks
 

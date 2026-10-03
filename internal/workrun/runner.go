@@ -29,10 +29,11 @@ type Runner struct {
 	PollInterval      time.Duration
 	MissingCheckGrace time.Duration
 	// Reporting hooks run while the exclusive controller lock is held.
-	OnStart  func(Journal) error
-	OnState  func(Journal) error
-	OnOutput func([]byte)
-	OnFinish func() error
+	OnStart        func(Journal) error
+	OnState        func(Journal) error
+	OnOutput       func([]byte)
+	OnNativeOutput func([]byte)
+	OnFinish       func() error
 	// ReviewWorkspace creates a fresh immutable copy of the published revision.
 	ReviewWorkspace func(context.Context, Journal, string) (string, error)
 }
@@ -488,7 +489,8 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		nativeDirectory = filepath.Join(directory, fmt.Sprintf("native-review-%d", journal.Attempt))
 	}
 	prompt := runner.prompt(*journal, role)
-	return runner.Provider.Execute(ctx, Session{model, role, workspace, nativeDirectory, prompt, outcomeSchema, resume, runner.Instructions}, io.MultiWriter(events, runner.Output), diagnostic)
+	nativeOutput := observedOutput{io.MultiWriter(events, runner.Output), runner.OnNativeOutput}
+	return runner.Provider.Execute(ctx, Session{model, role, workspace, nativeDirectory, prompt, outcomeSchema, resume, runner.Instructions}, nativeOutput, diagnostic)
 }
 
 func (runner Runner) prompt(journal Journal, role string) string {

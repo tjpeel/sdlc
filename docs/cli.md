@@ -4,7 +4,7 @@ The Go CLI provides local installation/reinstallation, build identity, shared
 runtime image build/status checks, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions and single-ticket runs through publication, CI and independent
-review. Secret-store access and stacked-ticket orchestration remain future work.
+review, plus a live dashboard of local runs. Secret-store access and stacked-ticket orchestration remain future work.
 
 ## Install or reinstall
 
@@ -370,6 +370,48 @@ Changes to the settings affect the next session or new run. Ticket runs capture
 the shared body once and inject it alongside project instructions on every turn.
 The controller pauses on a structured human question; Markdown instructions alone
 cannot guarantee that a provider stops before returning its handoff.
+
+## Watch local runs
+
+```sh
+sdlc dashboard
+sdlc dashboard --once
+sdlc dashboard --json
+sdlc dashboard --run RECORDED_RUN_ID --logs
+```
+
+The dashboard reads the installation's private run registry across repositories.
+It needs neither Docker nor provider login and never resumes, stops or modifies a
+run. Attention items appear first: human questions, failures, unavailable state,
+stale or interrupted controllers, missing reviewer login and draft PRs ready for
+human review. A fresh heartbeat means the controller is live; elapsed time and
+stage do not estimate percentage completion. Long sessions can be quiet without
+being stale. Missing or corrupt records remain visible as unavailable.
+
+In a terminal, the view refreshes every two seconds. Redirected output defaults to
+one snapshot. Use `--watch` to append snapshots to redirected output, `--once` for
+one terminal snapshot, or `--json` for one structured snapshot. Set `--interval`
+between `250ms` and `1m`. `--run` accepts a full run ID or a unique hexadecimal
+prefix of at least six characters. Details include questions, findings, check
+evidence, PR links and the existing resume command. Optional `--logs` reads a
+bounded tail from that selected run's private output; it requires `--run` and
+cannot combine with JSON. Terminal control characters in displayed content are
+removed. JSON contains status and usage projections, without journal prompts,
+instructions or transcripts.
+
+Native usage is optional. Codex reports aggregate counters; these cannot establish
+current context occupancy. Claude main-message input, cache-read and cache-creation
+counters can describe the latest reported request context. The dashboard shows a
+percentage only when that client actually reports a positive context window for
+the matching model. Missing metrics stay unknown. It ignores subagent messages,
+replaces repeated counters and resets measurements at a new session attempt; it
+never sums aggregate usage across resumes. The pinned clients may omit fields.
+
+Closing the dashboard leaves controllers working. `sdlc run` remains a foreground
+process; its original terminal must stay open. Headless means no provider terminal
+UI, rather than detached execution. Resume older runs to register them; dry runs
+do not register. The registry and logs can contain private repository paths and
+work details, so keep dashboard output private too.
 
 ## Build the shared runtime
 
