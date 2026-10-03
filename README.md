@@ -209,7 +209,7 @@ Run the offline checks without credentials or Docker:
 python3 -m unittest discover -s tests -v
 ```
 
-The original image build and generated-credential Docker/SSH smoke test passed on this Mac. GitHub Actions also passed the updated image build and Docker/SSH checks for bundled catalogues and model defaults on Linux/amd64. [The validation record](docs/validation.md) records the checks and remaining tests. To reproduce the container checks after building:
+Docker images are built and verified locally. CI runs source and offline checks; it does not build, run or publish Docker containers/images. [The validation record](docs/validation.md) records local checks, historical CI results and remaining tests. To reproduce the container checks after a local build:
 
 ```sh
 python3 tests/docker_smoke.py
@@ -244,13 +244,13 @@ Once this configuration reaches GitHub's default branch, updates are checked wee
 | Codex CLI | The runtime updater reads the latest stable `@openai/codex` npm release |
 | GitHub CLI | The runtime updater reads the latest stable `cli/cli` release |
 | Skills and agents | The runtime updater reads each repository’s `main` commit |
-| Debian tools installed with apt | Resolved during uncached builds; weekly validation builds the image without cache |
+| Debian tools installed with apt | Resolved during local builds; use an uncached local build to refresh packages |
 
-[`dependabot.yml`](.github/dependabot.yml) configures the native updates. [`Update runtime pins`](.github/workflows/update-runtime-pins.yml) handles the four Dockerfile arguments that Dependabot cannot parse. After offline tests, an uncached image build, and the Docker/SSH smoke test pass, it opens a PR and squash-merges the tested commit. If that merge is blocked, the PR stays open and further runtime updates wait. Updates take effect in local containers after rebuilding; the local image tag is `sdlc-codex-spike:local`.
+[`dependabot.yml`](.github/dependabot.yml) configures the native updates. [`Update runtime pins`](.github/workflows/update-runtime-pins.yml) handles the four Dockerfile arguments that Dependabot cannot parse. After offline tests and the public-source check pass, it opens a PR and squash-merges the checked commit. If that merge is blocked, the PR stays open and further runtime updates wait. Image builds and Docker smoke checks run locally. Updates take effect after rebuilding the local image; its tag is `sdlc-codex-spike:local`.
 
-[`Validate container`](.github/workflows/validate.yml) runs on pushes to `main`, pull requests, manual dispatch, and weekly. The weekly uncached build checks current Debian packages even when none of the tracked pins changes. Python uses only the standard library, so there is no Python dependency manifest to update.
+[`Validate source`](.github/workflows/validate.yml) runs on pushes to `main`, pull requests, manual dispatch, and weekly. It checks public-source safety, dependency pin syntax and offline tests. Python uses only the standard library, so there is no Python dependency manifest to update.
 
-[`Merge validated dependency PRs`](.github/workflows/merge-dependency-prs.yml) squash-merges Dependabot PRs after `Validate container` succeeds. It also handles an existing runtime PR after validation succeeds. The merge job loads its filters from the trusted default branch and does not execute PR code. It accepts only same-repository bot PRs targeting the default branch, with expected branch names, the validated head commit, and changes confined to the managed dependency files. Runtime PRs may change only the four pinned Dockerfile arguments. Both merge paths refuse to merge if the PR head changed after testing, and respect any repository merge restrictions. Failed validation prevents merging; conflicting PRs stay open.
+[`Merge validated dependency PRs`](.github/workflows/merge-dependency-prs.yml) squash-merges Dependabot PRs after `Validate source` succeeds. It also handles an existing runtime PR after validation succeeds. The merge job loads its filters from the trusted default branch and does not execute PR code. It accepts only same-repository bot PRs targeting the default branch, with expected branch names, the validated head commit, and changes confined to the managed dependency files. Runtime PRs may change only the four pinned Dockerfile arguments. Both merge paths refuse to merge if the PR head changed after testing, and respect any repository merge restrictions. Failed validation prevents merging; conflicting PRs stay open.
 
 The workflows use GitHub's built-in token with contents and pull-request write permissions only for publication and merging. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** for the runtime updater to open PRs. The workflows do not submit approval reviews. Dependabot version updates activate when its configuration is on the default branch. See [Dependabot setup](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-version-updates) and [GitHub Actions repository settings](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository).
 
