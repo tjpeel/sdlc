@@ -22,13 +22,14 @@ import (
 const Image = "sdlc:local"
 
 type State struct {
-	Version  int       `json:"version"`
-	Source   string    `json:"source"`
-	Revision string    `json:"source_revision"`
-	Engine   string    `json:"engine_id"`
-	ImageID  string    `json:"image_id"`
-	BuiltAt  time.Time `json:"built_at"`
-	Tools    string    `json:"tools"`
+	Version   int        `json:"version"`
+	Source    string     `json:"source"`
+	Revision  string     `json:"source_revision"`
+	Engine    string     `json:"engine_id"`
+	ImageID   string     `json:"image_id"`
+	BuiltAt   time.Time  `json:"built_at"`
+	Tools     string     `json:"tools"`
+	Inventory *Inventory `json:"inventory,omitempty"`
 }
 
 type Docker interface {
@@ -135,6 +136,11 @@ func (manager Manager) read() (State, error) {
 	if err := json.Unmarshal(data, &state); err != nil || state.Version != 1 || !imageID.MatchString(state.ImageID) {
 		return State{}, fmt.Errorf("runtime state is invalid; rebuild from the SDLC clone")
 	}
+	if state.Inventory != nil {
+		if err := ValidateInventory(*state.Inventory); err != nil {
+			return State{}, err
+		}
+	}
 	return state, nil
 }
 
@@ -175,7 +181,7 @@ func (manager Manager) Build(ctx context.Context, source string) (State, error) 
 		return State{}, err
 	}
 	contextDirectory := filepath.Join(root, "runtime")
-	for _, name := range []string{"Dockerfile", ".dockerignore", "entrypoint.py", "bin/sdlc-job"} {
+	for _, name := range []string{"Dockerfile", ".dockerignore", "entrypoint.py", "dependencies.py", "bin/sdlc-job"} {
 		info, err := os.Stat(filepath.Join(contextDirectory, name))
 		if err != nil || !info.Mode().IsRegular() {
 			return State{}, fmt.Errorf("source must be the SDLC clone with runtime/%s", name)
@@ -248,7 +254,11 @@ func (manager Manager) Build(ctx context.Context, source string) (State, error) 
 	if len(bytes.TrimSpace(tools)) == 0 {
 		return State{}, fmt.Errorf("built runtime tool probe returned no versions")
 	}
-	state := State{1, root, revision, engine, id, time.Now().UTC(), strings.TrimSpace(string(tools))}
+	inventory, err := manager.saveInventory(ctx, id)
+	if err != nil {
+		return State{}, err
+	}
+	state := State{Version: 1, Source: root, Revision: revision, Engine: engine, ImageID: id, BuiltAt: time.Now().UTC(), Tools: strings.TrimSpace(string(tools)), Inventory: inventory}
 	if err := manager.Docker.Run(ctx, "image", "tag", id, Image); err != nil {
 		return State{}, err
 	}

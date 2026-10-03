@@ -368,7 +368,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cli', required=True, type=Path, help='built SDLC executable')
     args = parser.parse_args()
-    status = command([str(args.cli.resolve()), 'runtime', 'status'])
+    status = command([str(args.cli.resolve()), 'runtime', 'status', '--offline'])
     matched = re.search(r'^Image ID: (sha256:[0-9a-f]{64})$', status, re.MULTILINE)
     if not matched:
         raise RuntimeError('build and record a shared runtime before probing')

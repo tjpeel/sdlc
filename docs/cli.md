@@ -159,7 +159,7 @@ the local image before running the updated CLI:
 
 ```sh
 docker image tag sdlc-codex-spike:local sdlc:local
-sdlc runtime status
+sdlc runtime status --offline
 docker image rm sdlc-codex-spike:local
 ```
 
@@ -173,11 +173,58 @@ and [image removal](https://docs.docker.com/reference/cli/docker/image/rm/) docu
 
 ```sh
 sdlc runtime status
+sdlc runtime status --offline
 ```
 
 Status verifies that the selected Docker engine and shared image match the
-recorded build. It reports the image ID, source revision and tool versions from
-the build checks. It does not check provider authentication or upstream updates.
+recorded build, then checks public upstream metadata for updates. Each image
+build saves an inventory of the versions and catalogue commits actually installed
+in that image. Status compares this inventory, even if the source clone has since
+changed.
+
+The report covers:
+
+- Codex, Claude Code, npm, Yarn if present, and all installed global npm dependencies;
+- GitHub CLI, Docker CLI, Compose and Buildx;
+- the skills and agents catalogue commits against their `main` branches;
+- Node.js within its installed major version, and .NET SDK and runtimes within
+  their installed major/minor release channels;
+- the pinned Node base image digest against its current tag;
+- every installed Debian package against signed Bookworm, Bookworm updates and
+  Bookworm security repository candidates.
+
+Catalogue ancestry distinguishes newer commits from divergent revisions. A changed
+base image digest means its tag changed; it does not establish release ordering.
+Unchanged Debian packages are counted, while available updates and missing
+candidates are listed. These checks cover the shared runtime. They do not check
+host tools, project dependencies or provider authentication.
+
+The online check has a 45-second limit and uses public metadata from npm, GitHub,
+Node.js, .NET, Docker Hub and Debian. The Debian check runs in a disposable
+container without provider storage or project mounts. A failed or unavailable
+check retains the other results, marks the report incomplete and returns a
+nonzero exit code. Updates alone do not cause a nonzero exit code.
+
+Use `--offline` to verify the local runtime and list its inventory without
+contacting upstream services. Login and interactive commands also retain their
+local runtime checks. Status does not install updates, change pins or rebuild
+the image. Review available updates, change the relevant source pins, then run
+`sdlc runtime build`.
+
+Update transitive npm dependencies through their parent package or base image;
+they are not separate Dockerfile pins. The available versions can include major
+releases, so review compatibility when choosing updates.
+
+Images built before dependency inventories were added need one rebuild with the
+updated CLI. Online status reports this as incomplete until that rebuild;
+`--offline` still verifies an older image. Rebuilding preserves provider login
+volumes.
+
+The checks use npm's [package metadata](https://docs.npmjs.com/cli/v11/commands/npm-view/),
+GitHub's [stable releases](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
+and [commit comparison](https://docs.github.com/en/rest/commits/commits#compare-two-commits),
+Docker's [registry metadata](https://distribution.github.io/distribution/spec/api/),
+and Debian's [APT metadata refresh](https://manpages.debian.org/bookworm/apt/apt-get.8.en.html).
 
 State lives under `sdlc` in the OS user configuration directory:
 

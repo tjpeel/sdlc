@@ -2,6 +2,7 @@
 **
 !Dockerfile
 !entrypoint.py
+!dependencies.py
 !sshd_config
 !bin/
 bin/**

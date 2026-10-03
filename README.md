@@ -37,6 +37,13 @@ Repeat the install command to reinstall. After the first build,
 directory. Docker image builds and container checks run locally; CI validates
 source only.
 
+`sdlc runtime status` checks the installed runtime dependencies for updates,
+including the skills and agents catalogues. Use `sdlc runtime status --offline`
+for local validation without network access. Older images need one rebuild with
+the updated CLI to record their dependency inventory. See the
+[runtime status guide](docs/cli.md#inspect-the-runtime) for coverage and failure
+behaviour.
+
 Login opens a browser flow through the terminal. Credentials stay in separate
 local Docker storage and survive CLI reinstallation and image rebuilds. These
 volumes are readable by Docker administrators; see the [authentication guide](docs/cli.md#provider-login).
