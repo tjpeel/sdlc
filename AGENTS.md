@@ -1,3 +1,8 @@
+# Development workflow
+
+Work directly on `main`. Commit and push each completed, validated iteration.
+Use plain commit messages without prefixes.
+
 # Public repository
 
 This repository is public. Keep source, documentation, examples and committed

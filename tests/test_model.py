@@ -24,7 +24,7 @@ def load(name, path):
     return module
 
 
-launcher = load('model_launcher', ROOT / 'scripts/sdlc.py')
+launcher = load('model_launcher', ROOT / 'research/container-spike/sdlc.py')
 job = load('model_job', ROOT / 'runtime/bin/sdlc-job')
 
 

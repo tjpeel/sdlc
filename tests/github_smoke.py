@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connected smoke test for the marker ticket in examples/smoke-ticket.md.
+"""Connected smoke test for the marker ticket in research/container-spike/examples/smoke-ticket.md.
 
 Prints the plan unless --execute is supplied. An optional --ticket runs Codex
 first; otherwise the test uses the completed branch in the existing workspace.
@@ -21,7 +21,7 @@ def commands(args):
               '--repo', args.repo, '--branch', args.branch]
     if args.model is not None:
         common += ['--model', args.model]
-    launcher = [sys.executable, str(ROOT / 'scripts/sdlc.py')]
+    launcher = [sys.executable, str(ROOT / 'research/container-spike/sdlc.py')]
     plan = []
     if args.ticket:
         plan.append(('Implement and check the ticket in Docker',

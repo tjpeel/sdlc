@@ -82,7 +82,7 @@ class DependencyMergePolicy(unittest.TestCase):
                 self.assertFalse(self.files_allowed([
                     {'filename': 'runtime/Dockerfile', 'status': 'modified', 'patch': patch}]))
         self.assertFalse(self.files_allowed([
-            {'filename': 'scripts/sdlc.py', 'status': 'modified', 'patch': '+print(1)'}]))
+            {'filename': 'research/container-spike/sdlc.py', 'status': 'modified', 'patch': '+print(1)'}]))
 
     def test_dependabot_paths_and_statuses_are_restricted(self):
         for filename in ('runtime/Dockerfile', '.github/workflows/validate.yml',
@@ -90,7 +90,7 @@ class DependencyMergePolicy(unittest.TestCase):
             with self.subTest(filename=filename):
                 self.assertTrue(self.files_allowed([
                     {'filename': filename, 'status': 'modified'}], author='dependabot[bot]'))
-        for filename, status in (('scripts/sdlc.py', 'modified'),
+        for filename, status in (('research/container-spike/sdlc.py', 'modified'),
                                  ('.github/workflows/validate.yml', 'removed'),
                                  ('runtime/Dockerfile', 'renamed'),
                                  ('.github/workflows/nested/unsafe.yml', 'modified')):
