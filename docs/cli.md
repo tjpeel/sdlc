@@ -1,8 +1,8 @@
 # CLI installation and commands
 
 The Go CLI provides local installation/reinstallation, build identity, shared
-runtime image build/status checks and Codex/Claude account login. Ticket
-execution and secret-store access remain to be implemented.
+runtime image build/status checks, Codex/Claude account login and shared instruction
+settings. Ticket execution and secret-store access remain to be implemented.
 
 ## Install or reinstall
 
@@ -23,6 +23,48 @@ earlier `sdlc` on PATH. On Windows, close any running `sdlc` before reinstalling
 The installed executable needs no Go runtime. Its version includes `0.1.0-dev`,
 the Git revision, a dirty-source marker when applicable, and the host OS and
 architecture. Release archives and package-manager installation are future work.
+
+## Shared agent instructions
+
+Inspect or change the installation's shared instructions from any directory:
+
+```sh
+sdlc instructions show
+sdlc instructions set --file /PATH/TO/PRIVATE_INSTRUCTIONS.md
+sdlc instructions reset
+```
+
+The default contains only this rule:
+
+> If you have any question for a human, stop implementation immediately and report it.
+> Do not assume an answer or continue implementation until a human has answered.
+
+`set` copies additional Markdown instructions into private installation state.
+They follow the human-answer rule, which remains present. Editing the source file
+afterwards has no effect until you run `set` again. An empty file adds nothing;
+`reset` removes the additions. `show` prints the complete shared body, so keep its
+output private. Custom instructions must be UTF-8 text, at most 16 KiB, without
+terminal control characters.
+
+Settings live in `instructions.md` beside the runtime record. Reinstalling the CLI
+preserves them. Changing them requires no Docker build and affects every project
+using this installation. Personal instructions stay outside the shared image and
+this public source tree.
+
+No shared instruction file is injected by the current login or status commands.
+The image contains catalogue-source `AGENTS.md` files under `/opt/sdlc/catalogues`;
+these are outside the worker's instruction-discovery path. The SDLC repository's
+root `AGENTS.md` is excluded from the Docker build context.
+
+When ticket execution is implemented, each worker must receive a read-only
+snapshot of this shared body at the providers' native global instruction paths:
+`$CODEX_HOME/AGENTS.md` for Codex and `~/.claude/CLAUDE.md` for Claude.
+See [Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+and [Claude memory files](https://code.claude.com/docs/en/memory).
+Project instruction files in the work checkout remain available alongside the
+shared body. Worker injection and an enforced human-input pause are part of the
+remaining ticket-execution work; Markdown instructions alone cannot guarantee a
+process stops.
 
 ## Build the shared runtime
 

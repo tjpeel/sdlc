@@ -13,7 +13,7 @@ before publication. Preserve the repository's signing configuration.
 | Path | Purpose |
 | --- | --- |
 | `cmd/` | Installed Go CLI and local installer |
-| `internal/` | Build identity, installation, locking, shared image and provider authentication |
+| `internal/` | Build identity, installation, locking, shared image, provider authentication and instruction settings |
 | `runtime/` | Shared local image context and supporting runtime components |
 | `docs/` | Current CLI, workflow and development guides |
 | `scripts/` | Public-source safeguards and dependency pin tooling |
@@ -77,3 +77,8 @@ explicitly with `python3 scripts/probe_provider_auth.py --cli /PATH/TO/SDLC_BINA
 it does not run in CI. Real browser login and remote token validity remain manual
 checks. The helper is embedded in the CLI and runs against the existing shared
 image; this iteration requires reinstalling the CLI, without rebuilding the image.
+
+Shared instruction settings were checked with Go tests for snapshots, reset,
+invalid input, file safety and concurrent updates. CLI show/set/reset also passed
+outside the clone with disposable settings on macOS/ARM64. Go vet and all six
+CLI target builds pass. This iteration changes no Docker or provider execution.
