@@ -20,8 +20,34 @@ func bindInstructions(source, destination string) string {
 	return strings.TrimSuffix(output.String(), "\n")
 }
 
-func interactiveArgs(image, name, volume, provider, snapshot, settings string) []string {
+// InteractiveMode validates a native provider mode and supplies its full-access default.
+func InteractiveMode(provider, mode string) (string, error) {
+	if provider == "codex" {
+		if mode == "" {
+			mode = "never"
+		}
+		if mode != "never" && mode != "on-request" {
+			return "", fmt.Errorf("Codex approval must be never or on-request")
+		}
+		return mode, nil
+	}
+	if provider == "claude" {
+		if mode == "" {
+			mode = "bypassPermissions"
+		}
+		switch mode {
+		case "default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions":
+			return mode, nil
+		default:
+			return "", fmt.Errorf("Claude permission mode must be default, manual, acceptEdits, plan, auto, dontAsk or bypassPermissions")
+		}
+	}
+	return "", fmt.Errorf("provider must be codex or claude")
+}
+
+func interactiveArgs(image, name, volume, provider, snapshot, settings, mode string) []string {
 	args := containerArgs(image, name, volume, provider, "interactive")
+	args = append(args, mode)
 	extra := []string{"--init", "--workdir", "/workspace",
 		"--tmpfs", "/workspace:rw,nosuid,nodev,size=1g,mode=0700,uid=1000,gid=1000",
 		"--mount", bindInstructions(snapshot, "/session-instructions.md")}
@@ -52,9 +78,10 @@ func interactiveArgs(image, name, volume, provider, snapshot, settings string) [
 
 // Interactive attaches the user's terminal to the selected official client.
 // It shares only that provider's native login cache and private instructions.
-func (manager Manager) Interactive(ctx context.Context, provider string) (err error) {
-	if !validProvider(provider) {
-		return fmt.Errorf("provider must be codex or claude")
+func (manager Manager) Interactive(ctx context.Context, provider, mode string) (err error) {
+	mode, err = InteractiveMode(provider, mode)
+	if err != nil {
+		return err
 	}
 	if !manager.Terminal() {
 		return fmt.Errorf("interactive sessions need a terminal for stdin, stdout and stderr; do not redirect output")
@@ -112,7 +139,13 @@ func (manager Manager) Interactive(ctx context.Context, provider string) (err er
 	settings := ""
 	if provider == "claude" {
 		settings = filepath.Join(filepath.Dir(absolute), "settings.json")
-		if err := os.WriteFile(settings, []byte("{}\n"), 0444); err != nil {
+		content := "{}\n"
+		if mode == "bypassPermissions" {
+			// The user selected full access through SDLC. Use the documented
+			// setting to avoid repeating acknowledgement in disposable sessions.
+			content = "{\"skipDangerousModePermissionPrompt\":true}\n"
+		}
+		if err := os.WriteFile(settings, []byte(content), 0444); err != nil {
 			return fmt.Errorf("cannot prepare isolated provider settings")
 		}
 		if err := os.Chmod(settings, 0444); err != nil {
@@ -135,7 +168,7 @@ func (manager Manager) Interactive(ctx context.Context, provider string) (err er
 			err = fmt.Errorf("interactive container cleanup failed; inspect Docker before starting another session")
 		}
 	}()
-	if err := manager.Docker.Interactive(ctx, interactiveArgs(state.ImageID, name, volume, provider, absolute, settings)...); err != nil {
+	if err := manager.Docker.Interactive(ctx, interactiveArgs(state.ImageID, name, volume, provider, absolute, settings, mode)...); err != nil {
 		return fmt.Errorf("interactive %s session failed or was cancelled; run sdlc auth status before retrying", provider)
 	}
 	return nil

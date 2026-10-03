@@ -44,6 +44,9 @@ volumes are readable by Docker administrators; see the [authentication guide](do
 Use `sdlc interactive --provider codex` or `--provider claude` to open the native
 provider CLI inside a disposable container. This first command starts in an empty
 workspace; project setup belongs to the remaining ticket-workflow work.
+Both default to full access inside Docker. Use `--approval on-request` for Codex
+or `--permission-mode manual` for Claude to change their native approval modes;
+see the [interactive command guide](docs/cli.md#interactive-provider-sessions).
 
 ## Documentation
 

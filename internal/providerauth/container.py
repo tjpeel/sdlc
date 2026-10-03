@@ -11,6 +11,11 @@ import tempfile
 
 
 FILES = {"codex": "auth.json", "claude": ".credentials.json"}
+INTERACTIVE_MODES = {
+    "codex": ("never", "on-request"),
+    "claude": ("bypassPermissions", "default", "manual", "acceptEdits",
+               "plan", "auto", "dontAsk"),
+}
 LIMIT = 1024 * 1024
 HOME_BASE = "/home/node"
 WORKSPACE = Path("/workspace")
@@ -188,7 +193,7 @@ def finish_codex_interactive(config, directory):
     persist(directory, FILES["codex"], data)
 
 
-def codex_interactive(directory):
+def codex_interactive(directory, mode):
     target = directory / FILES["codex"]
     if credential(target, os.getuid()) is None:
         raise ValueError("missing credential file")
@@ -208,7 +213,7 @@ def codex_interactive(directory):
             raise ValueError("could not prepare image skills")
         command = ["codex", "-c", 'cli_auth_credentials_store="file"',
                    "--no-daemon", "--sandbox", "danger-full-access",
-                   "--ask-for-approval", "on-request"]
+                   "--ask-for-approval", mode]
         try:
             return interactive_process(command, env)
         finally:
@@ -228,7 +233,7 @@ def claude_catalogues(directory):
         path.symlink_to(target, target_is_directory=True)
 
 
-def claude_interactive(directory):
+def claude_interactive(directory, mode):
     path = directory / FILES["claude"]
     if not claude_credential_metadata(path, os.getuid()):
         raise ValueError("missing credential file")
@@ -241,7 +246,7 @@ def claude_interactive(directory):
     if (not stat.S_ISREG(settings_info.st_mode)
             or not os.access(SESSION_SETTINGS, os.R_OK)
             or not (directory / "settings.json").samefile(SESSION_SETTINGS)):
-        raise ValueError("missing empty session settings")
+        raise ValueError("missing isolated session settings")
     claude_catalogues(directory)
     with tempfile.TemporaryDirectory(prefix="sdlc-session-", dir=HOME_BASE) as home:
         env = interactive_environment(home)
@@ -253,7 +258,7 @@ def claude_interactive(directory):
                     "CLAUDE_CODE_DEBUG_LOGS_DIR": str(Path(home) / "debug.log")})
         try:
             return interactive_process(
-                ["claude", "--setting-sources", "user", "--permission-mode", "default",
+                ["claude", "--setting-sources", "user", "--permission-mode", mode,
                  "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'], env)
         finally:
             claude_credential_metadata(path, os.getuid())
@@ -294,7 +299,20 @@ def run_claude(action, directory):
         return 0 if state == "stored" else 1
 
 
-def run(provider, action, directory=Path("/provider-auth")):
+def interactive_mode(provider, mode):
+    allowed = INTERACTIVE_MODES[provider]
+    if mode is None:
+        return allowed[0]
+    if not isinstance(mode, str) or mode not in allowed:
+        raise ValueError("unsupported interactive mode")
+    return mode
+
+
+def run(provider, action, directory=Path("/provider-auth"), mode=None):
+    if action == "interactive":
+        mode = interactive_mode(provider, mode)
+    elif mode is not None:
+        raise ValueError("interactive modes require an interactive session")
     filename = FILES[provider]
     os.umask(0o077)
     if action == "init":
@@ -306,8 +324,8 @@ def run(provider, action, directory=Path("/provider-auth")):
         raise ValueError("unsafe storage directory")
     if action == "interactive":
         if provider == "claude":
-            return claude_interactive(directory)
-        return codex_interactive(directory)
+            return claude_interactive(directory, mode)
+        return codex_interactive(directory, mode)
     if provider == "claude":
         return run_claude(action, directory)
     data = credential(directory / filename, os.getuid(), allow_invalid=action == "login")
@@ -344,11 +362,17 @@ def run(provider, action, directory=Path("/provider-auth")):
 
 
 def main():
-    provider, action = sys.argv[1:]
+    arguments = sys.argv[1:]
+    if len(arguments) not in (2, 3):
+        return 1
+    provider, action = arguments[:2]
+    mode = arguments[2] if len(arguments) == 3 else None
     if provider not in FILES or action not in ("init", "login", "status", "interactive"):
         return 1
+    if action != "interactive" and mode is not None:
+        return 1
     try:
-        return run(provider, action)
+        return run(provider, action, mode=mode)
     except Exception:
         # Exception strings, provider errors and JSON can contain secrets.
         if action == "status":

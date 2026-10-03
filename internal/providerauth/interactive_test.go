@@ -85,8 +85,12 @@ func TestInteractiveUsesOnlySelectedCacheAndPrivateInstructionSnapshot(t *testin
 						t.Fatalf("session has unsafe setting %s", forbidden)
 					}
 				}
-				if args[len(args)-2] != provider || args[len(args)-1] != "interactive" {
+				if args[len(args)-3] != provider || args[len(args)-2] != "interactive" {
 					t.Fatal("wrong provider or helper action")
+				}
+				wantedMode, _ := InteractiveMode(provider, "")
+				if args[len(args)-1] != wantedMode {
+					t.Fatal("session did not receive full-access default")
 				}
 				if strings.Contains(strings.Join(args, "\n"), custom) {
 					t.Fatal("private instructions were placed in Docker arguments")
@@ -105,8 +109,8 @@ func TestInteractiveUsesOnlySelectedCacheAndPrivateInstructionSnapshot(t *testin
 						}
 						if provider == "claude" && (mount["dst"] == "/session-settings.json" || mount["dst"] == "/provider-auth/settings.json") {
 							content, err := os.ReadFile(mount["src"])
-							if err != nil || string(content) != "{}\n" {
-								t.Fatal("Claude session settings are not empty")
+							if err != nil || string(content) != "{\"skipDangerousModePermissionPrompt\":true}\n" {
+								t.Fatal("Claude session settings differ from full-access configuration")
 							}
 							continue
 						}
@@ -160,7 +164,7 @@ func TestInteractiveUsesOnlySelectedCacheAndPrivateInstructionSnapshot(t *testin
 					t.Fatal("active session did not hold the runtime lock")
 				}
 			}}
-			if err := manager.Interactive(context.Background(), provider); err != nil {
+			if err := manager.Interactive(context.Background(), provider, ""); err != nil {
 				t.Fatal(err)
 			}
 			if !attached {
@@ -173,6 +177,61 @@ func TestInteractiveUsesOnlySelectedCacheAndPrivateInstructionSnapshot(t *testin
 				t.Fatal("session created another cache")
 			}
 		})
+	}
+}
+
+func TestNativeModeOverridesReachOnlySelectedProvider(t *testing.T) {
+	for provider, modes := range map[string][]string{
+		"codex":  {"never", "on-request"},
+		"claude": {"default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"},
+	} {
+		for _, mode := range modes {
+			t.Run(provider+"/"+mode, func(t *testing.T) {
+				manager, docker := readyInteractive(t, provider)
+				attached := false
+				manager.Docker = sessionDocker{docker, func(_ context.Context, args []string) {
+					attached = true
+					if args[len(args)-3] != provider || args[len(args)-2] != "interactive" || args[len(args)-1] != mode {
+						t.Fatal("native mode override changed or reached another provider")
+					}
+					if provider == "claude" {
+						wanted := "{}\n"
+						if mode == "bypassPermissions" {
+							wanted = "{\"skipDangerousModePermissionPrompt\":true}\n"
+						}
+						for _, mount := range mounts(t, args) {
+							if mount["dst"] == "/session-settings.json" {
+								content, err := os.ReadFile(mount["src"])
+								if err != nil || string(content) != wanted {
+									t.Fatal("mode received unexpected Claude settings")
+								}
+							}
+						}
+					}
+				}}
+				if err := manager.Interactive(context.Background(), provider, mode); err != nil {
+					t.Fatal(err)
+				}
+				if !attached {
+					t.Fatal("mode override did not launch the selected client")
+				}
+			})
+		}
+	}
+}
+
+func TestInvalidNativeModesStopBeforeDockerAndStateAccess(t *testing.T) {
+	for _, input := range [][2]string{{"codex", "bypassPermissions"}, {"codex", "untrusted"}, {"claude", "never"}, {"claude", "--dangerously-skip-permissions"}} {
+		manager, docker := fixture(t)
+		if err := manager.Interactive(context.Background(), input[0], input[1]); err == nil {
+			t.Fatal("invalid native mode accepted")
+		}
+		if len(docker.calls) != 0 {
+			t.Fatal("invalid native mode reached Docker")
+		}
+		if _, err := os.Stat(filepath.Join(manager.Runtime.Directory, "auth-installation.json")); !os.IsNotExist(err) {
+			t.Fatal("invalid native mode created authentication state")
+		}
 	}
 }
 
@@ -194,7 +253,7 @@ func TestInteractiveRejectsUnavailableLoginWithoutCreatingStorage(t *testing.T) 
 			}
 			volumes := len(docker.volumes)
 			docker.calls = nil
-			if err := manager.Interactive(context.Background(), "codex"); err == nil || !strings.Contains(err.Error(), "auth login --provider codex") {
+			if err := manager.Interactive(context.Background(), "codex", ""); err == nil || !strings.Contains(err.Error(), "auth login --provider codex") {
 				t.Fatal("missing login did not give a useful error")
 			}
 			if len(docker.volumes) != volumes {
@@ -236,11 +295,11 @@ func TestInteractiveRejectsUnsafePreflight(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := manager.Interactive(context.Background(), provider); err == nil {
+			if err := manager.Interactive(context.Background(), provider, ""); err == nil {
 				t.Fatal("unsafe preflight accepted")
 			}
 			for _, args := range docker.calls {
-				if args[0] == "run" && args[len(args)-1] == "interactive" {
+				if args[0] == "run" && args[len(args)-2] == "interactive" {
 					t.Fatal("unsafe preflight started work")
 				}
 			}
@@ -261,7 +320,7 @@ func TestInterruptedInteractiveCleansContainerAndKeepsOnlyCache(t *testing.T) {
 		cancel()
 		docker.cancelled = true
 	}}
-	if err := manager.Interactive(ctx, "codex"); err == nil || strings.Contains(err.Error(), "fake-secret") {
+	if err := manager.Interactive(ctx, "codex", ""); err == nil || strings.Contains(err.Error(), "fake-secret") {
 		t.Fatal("interrupted session leaked or ignored failure")
 	}
 	if docker.leftover || len(docker.volumes) != 1 {
@@ -277,7 +336,7 @@ func TestInteractiveReportsCleanupFailureWithoutDiagnostics(t *testing.T) {
 	manager.Docker = sessionDocker{docker, func(context.Context, []string) {
 		docker.cleanupFailed = true
 	}}
-	if err := manager.Interactive(context.Background(), "claude"); err == nil || !strings.Contains(err.Error(), "cleanup failed") || strings.Contains(err.Error(), "fake-secret") {
+	if err := manager.Interactive(context.Background(), "claude", ""); err == nil || !strings.Contains(err.Error(), "cleanup failed") || strings.Contains(err.Error(), "fake-secret") {
 		t.Fatal("unsafe cleanup diagnostics or missing cleanup failure")
 	}
 }

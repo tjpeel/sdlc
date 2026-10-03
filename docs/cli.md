@@ -221,6 +221,46 @@ sdlc interactive --provider codex
 sdlc interactive --provider claude
 ```
 
+Both providers default to full access inside the container:
+
+| Provider | Default native settings | Command-line control |
+| --- | --- | --- |
+| Codex | `--sandbox danger-full-access --ask-for-approval never` | `--approval never` or `--approval on-request` |
+| Claude | `--permission-mode bypassPermissions` | `--permission-mode default`, `manual`, `acceptEdits`, `plan`, `auto`, `dontAsk` or `bypassPermissions` |
+
+The shared rule to stop implementation until a human answers any question still
+applies in every mode. Full access changes tool approvals, not that rule.
+
+Claude's full-access session settings include the documented
+`skipDangerousModePermissionPrompt: true`, so its responsibility warning does not
+repeat in every disposable container. Other permission modes receive empty
+settings. This setting does not override managed policy. See the
+[native warning behaviour](https://code.claude.com/docs/en/permission-modes#skip-all-checks-with-bypasspermissions-mode).
+
+For example:
+
+```sh
+sdlc interactive --provider codex --approval on-request
+sdlc interactive --provider claude --permission-mode manual
+sdlc interactive --provider claude --permission-mode plan
+```
+
+Options apply to this session. Unsupported values, explicitly empty modes and
+another provider's option are rejected before Docker starts. The native client
+enforces managed policy and mode availability, which can refuse or reduce the
+requested access. The pinned Claude client visibly switches to `auto` when
+managed policy disables bypass permissions. SDLC does not restart or switch
+modes itself. Claude's native `auto` mode can fall back to Manual when unavailable.
+`dontAsk` denies tools that need approval, including
+human-question tools; it is distinct from full access. See the official
+[Codex flags](https://learn.chatgpt.com/docs/developer-commands) and
+[Claude permission modes](https://code.claude.com/docs/en/permission-modes).
+
+Codex always uses Docker as its filesystem and network boundary in this launcher.
+`on-request` enables native approval requests without creating an inner sandbox
+or requiring approval for every shell command. The inner restricted Linux sandbox
+is unavailable under the container's current restrictions.
+
 The command checks the stored login offline, starts the recorded shared image and
 attaches your terminal to the unmodified provider CLI. Enter prompts in its native
 interface and exit through that CLI. A missing login directs you to `sdlc auth
@@ -244,12 +284,13 @@ native configuration. Its transcript history and automatic memory are disabled.
 Sessions run as a non-root user with a read-only root filesystem, no Linux
 capabilities, bounded resources and no host repository or Docker socket. They
 have network access and can access their own provider cache, so use trusted
-prompts. Codex uses Docker as the isolation boundary with
-`--sandbox danger-full-access --ask-for-approval on-request`, following the
+prompts. Full access can read and modify all writable paths in the container,
+including the selected provider's cache. Codex uses Docker as the isolation
+boundary, following the
 [official container guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
-This avoids adding privileges for a second Linux sandbox. Claude starts in its
-normal manual permission mode, uses fresh read-only settings and an empty strict
-MCP configuration, and disables account MCP connectors. Its global instructions,
+This avoids adding privileges for a second Linux sandbox. Claude uses fresh
+read-only settings and an empty strict MCP configuration, and disables account
+MCP connectors. Its global instructions,
 skills and agents remain available; cached rules, commands, styles, workflows and
 plugins are hidden by disposable directories. Documented native work-data
 directories, including plans and file history, are also disposable. Recheck this

@@ -14,7 +14,8 @@ same user's local Codex container. See [Codex authentication](https://learn.chat
 
 Interactive sessions use the ordinary [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
 The client receives prompts directly from the account owner. Docker provides the
-outer isolation boundary with on-request approvals, following the
+outer isolation boundary; native approvals default to `never` and can be set to
+`on-request` for the session, following the
 [container security guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
 No custom API client, credential broker or subscription sharing is involved.
 
@@ -42,8 +43,10 @@ Anthropic's [container guide](https://code.claude.com/docs/en/devcontainer#persi
 documents a named volume for Claude Code's configuration and authentication cache.
 SDLC uses this pattern: the official CLI reads, writes and refreshes its own
 cache. Interactive sessions invoke the ordinary
-[Claude terminal CLI](https://code.claude.com/docs/en/cli-reference) with its
-native permission prompts; SDLC does not submit prompts on the user's behalf.
+[Claude terminal CLI](https://code.claude.com/docs/en/cli-reference) with a selected
+native permission mode, defaulting to `bypassPermissions` inside the isolated
+container. See [Claude permission modes](https://code.claude.com/docs/en/permission-modes).
+SDLC does not submit prompts on the user's behalf or override managed restrictions.
 SDLC does not copy, parse or export Claude tokens. Signing in again for
 every container is unnecessary; re-authenticate when the provider requires it.
 
