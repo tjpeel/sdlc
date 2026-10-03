@@ -233,7 +233,7 @@ func (manager Manager) container(ctx context.Context, image, volume, provider, a
 		output, err = manager.Docker.Output(ctx, args...)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("authentication %s failed or was cancelled; check sdlc auth status before retrying", action)
+		return nil, fmt.Errorf("authentication %s failed or was cancelled; check sdlc auth status --provider %s before retrying", action, provider)
 	}
 	return output, nil
 }

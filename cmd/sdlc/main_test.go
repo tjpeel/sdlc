@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,11 +22,12 @@ func TestUnknownProviderIsRejectedBeforeAccessingDocker(t *testing.T) {
 func TestInvalidInteractiveArgumentsDoNotCreateState(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	t.Setenv("SDLC_STATE_DIR", directory)
-	for _, args := range [][]string{nil, {"--provider", "untrusted"}, {"--provider", "codex", "prompt"}, {"--provider", "claude", "--dangerously-skip-permissions"},
+	for _, args := range [][]string{{"--provider="}, {"--provider", "untrusted"}, {"--provider", "codex", "prompt"}, {"--provider", "claude", "--dangerously-skip-permissions"},
 		{"--provider", "codex", "--approval", "untrusted"}, {"--provider", "codex", "--permission-mode", "plan"},
 		{"--provider", "claude", "--approval", "never"}, {"--provider", "claude", "--permission-mode", "unsupported"},
 		{"--provider", "codex", "--approval="}, {"--provider", "codex", "--permission-mode="},
-		{"--provider", "claude", "--approval="}, {"--provider", "claude", "--permission-mode="}} {
+		{"--provider", "claude", "--approval="}, {"--provider", "claude", "--permission-mode="},
+		{"--permission-mode", "plan"}, {"--permission-mode="}, {"--approval="}, {"--approval", "untrusted"}} {
 		var output bytes.Buffer
 		if err := interactive(context.Background(), args, &output); err == nil {
 			t.Fatalf("invalid arguments were accepted: %v", args)
@@ -36,6 +38,72 @@ func TestInvalidInteractiveArgumentsDoNotCreateState(t *testing.T) {
 	}
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {
 		t.Fatal("invalid interactive command changed installation state")
+	}
+}
+
+func TestInteractiveProviderSelection(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want interactiveOptions
+	}{
+		{name: "default", want: interactiveOptions{provider: "codex", mode: "never"}},
+		{name: "implicit Codex approvals", args: []string{"--approval", "on-request"}, want: interactiveOptions{provider: "codex", mode: "on-request"}},
+		{name: "explicit Codex", args: []string{"--provider", "codex"}, want: interactiveOptions{provider: "codex", mode: "never"}},
+		{name: "explicit Claude", args: []string{"--provider", "claude"}, want: interactiveOptions{provider: "claude", mode: "bypassPermissions"}},
+		{name: "Claude plan", args: []string{"--provider", "claude", "--permission-mode", "plan"}, want: interactiveOptions{provider: "claude", mode: "plan"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseInteractiveOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("selected %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAuthProviderSelection(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		args      []string
+		providers []string
+	}{
+		{name: "default login", args: []string{"login"}, providers: []string{"codex"}},
+		{name: "default status", args: []string{"status"}, providers: []string{"codex"}},
+		{name: "Claude login", args: []string{"login", "--provider", "claude"}, providers: []string{"claude"}},
+		{name: "Claude status", args: []string{"status", "--provider", "claude"}, providers: []string{"claude"}},
+		{name: "Codex status", args: []string{"status", "--provider", "codex"}, providers: []string{"codex"}},
+		{name: "all status", args: []string{"status", "--all"}, providers: []string{"codex", "claude"}},
+		{name: "false all status", args: []string{"status", "--all=false"}, providers: []string{"codex"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseAuthOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.action != test.args[0] || !reflect.DeepEqual(got.providers, test.providers) {
+				t.Fatalf("selected %+v, want action %s and providers %v", got, test.args[0], test.providers)
+			}
+		})
+	}
+}
+
+func TestInvalidAuthArgumentsDoNotCreateState(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "state")
+	t.Setenv("SDLC_STATE_DIR", directory)
+	for _, args := range [][]string{nil, {"unknown"}, {"login", "--all"}, {"login", "--all=false"},
+		{"login", "--provider="}, {"status", "--provider="}, {"status", "--provider=", "--all"},
+		{"status", "--provider", "codex", "--all"}, {"status", "--all", "--provider", "claude"},
+		{"status", "--all=false", "--provider", "codex"}, {"status", "unexpected"}} {
+		if err := auth(context.Background(), args); err == nil {
+			t.Fatalf("invalid arguments were accepted: %v", args)
+		}
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatal("invalid authentication command changed installation state")
 	}
 }
 

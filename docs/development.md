@@ -97,7 +97,13 @@ skip-warning setting avoids repeated acknowledgement in disposable sessions;
 managed policy still disables bypass permissions and the pinned client visibly
 selects its permitted `auto` mode. SDLC does not change modes or retry. These
 checks use fake account data without submitting any model prompts.
-Run the probe locally with:
+
+CLI selection tests cover Codex as the default for interactive sessions, login and
+status, explicit provider overrides and status-only `--all`. Invalid combinations
+are rejected before runtime access. The offline authentication probe also checks
+that a missing Claude login does not prevent the default Codex status check.
+
+Run the interactive probe locally with:
 
 ```sh
 python3 scripts/probe_provider_interactive.py --cli /PATH/TO/BUILT_SDLC

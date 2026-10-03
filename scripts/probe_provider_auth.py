@@ -99,6 +99,7 @@ def main():
             (state / "auth-installation.json").write_text(json.dumps({"id": identity}))
             env = dict(os.environ, SDLC_STATE_DIR=temporary)
             command([cli, "auth", "status"], env=env, expected=1)
+            command([cli, "auth", "status", "--all"], env=env, expected=1)
             for provider, filename in (("codex", "auth.json"), ("claude", ".credentials.json")):
                 name = "sdlc-auth-" + identity + "-" + provider
                 command(["docker", "volume", "create", "--driver", "local", "--label", "io.sdlc.managed=true",
@@ -114,14 +115,15 @@ def main():
                 command(container(image, name) + ["-c", write, filename, json.dumps(fixture(provider))])
                 # Existing UID1000/0700 storage must work with the restricted root initializer.
                 command(initialise)
+                selection = [] if provider == "codex" else ["--provider", provider]
                 for _ in range(2):
-                    result = command([cli, "auth", "status", "--provider", provider], env=env)
+                    result = command([cli, "auth", "status", *selection], env=env)
                     if "stored account login (offline check" not in result or "fake-access" in result:
                         raise RuntimeError("fresh CLI status did not safely load the fixture")
                 if provider == "claude":
                     probe_claude_settings(image, name, cli, env)
                 command(container(image, name) + ["-c", write, filename, "truncated {"])
-                result = command([cli, "auth", "status", "--provider", provider], env=env, expected=1)
+                result = command([cli, "auth", "status", *selection], env=env, expected=1)
                 if "could not be loaded" not in result and "no stored login" not in result:
                     raise RuntimeError("malformed credentials did not produce a safe failure")
                 if provider == "codex":
@@ -130,8 +132,12 @@ def main():
                 else:
                     # Restore only this probe's fake fixture, without SDLC credential handling.
                     command(container(image, name) + ["-c", write, filename, json.dumps(fixture(provider))])
-                command([cli, "auth", "status", "--provider", provider], env=env)
-            command([cli, "auth", "status"], env=env)
+                command([cli, "auth", "status", *selection], env=env)
+                if provider == "codex":
+                    # The default selects only Codex; an absent Claude login
+                    # affects the explicit all-provider check, not the default.
+                    command([cli, "auth", "status", "--all"], env=env, expected=1)
+            command([cli, "auth", "status", "--all"], env=env)
             print("Local authentication probe passed for Codex and Claude using disposable fake credentials.")
     finally:
         for name in volumes:

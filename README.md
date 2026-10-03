@@ -18,11 +18,11 @@ go run ./cmd/sdlc-install --bin-dir /PATH/TO/YOUR_BIN_DIRECTORY
 sdlc --version
 sdlc runtime build --source .
 sdlc runtime status
-sdlc auth login --provider codex
+sdlc auth login
 sdlc auth login --provider claude
-sdlc auth status
+sdlc auth status --all
 sdlc instructions show
-sdlc interactive --provider codex
+sdlc interactive
 ```
 
 `/PATH/TO/YOUR_BIN_DIRECTORY` means a directory your shell searches for commands.
@@ -41,7 +41,10 @@ Login opens a browser flow through the terminal. Credentials stay in separate
 local Docker storage and survive CLI reinstallation and image rebuilds. These
 volumes are readable by Docker administrators; see the [authentication guide](docs/cli.md#provider-login).
 
-Use `sdlc interactive --provider codex` or `--provider claude` to open the native
+Codex is the default provider for login, status and interactive sessions. Use
+`--provider claude` to select Claude, or `sdlc auth status --all` to check both.
+
+Use `sdlc interactive` or `sdlc interactive --provider claude` to open the native
 provider CLI inside a disposable container. This first command starts in an empty
 workspace; project setup belongs to the remaining ticket-workflow work.
 Both default to full access inside Docker. Use `--approval on-request` for Codex

@@ -15,15 +15,19 @@ import (
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
 
+const defaultProvider = "codex"
+
 func main() {
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
 		fmt.Println(buildinfo.String())
 		return
 	}
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
-		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status | auth login --provider codex|claude | auth status [--provider codex|claude]")
+		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status")
+		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
-		fmt.Println("       sdlc interactive --provider codex|claude")
+		fmt.Println("       sdlc interactive [--provider codex|claude]")
+		fmt.Println("         Provider defaults to codex for interactive and auth commands.")
 		fmt.Println("         Codex: [--approval never|on-request] (default: never)")
 		fmt.Println("         Claude: [--permission-mode MODE] (default: bypassPermissions)")
 		return
@@ -91,13 +95,19 @@ func main() {
 	os.Exit(2)
 }
 
-func interactive(ctx context.Context, args []string, output io.Writer) error {
+type interactiveOptions struct {
+	provider string
+	mode     string
+}
+
+func parseInteractiveOptions(args []string) (interactiveOptions, error) {
+	var options interactiveOptions
 	flags := flag.NewFlagSet("interactive", flag.ContinueOnError)
-	provider := flags.String("provider", "", "codex or claude (required)")
+	provider := flags.String("provider", defaultProvider, "codex or claude (default: codex)")
 	approval := flags.String("approval", "", "Codex: never or on-request (default: never)")
 	permissionMode := flags.String("permission-mode", "", "Claude: default, manual, acceptEdits, plan, auto, dontAsk or bypassPermissions (default: bypassPermissions)")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return options, err
 	}
 	var suppliedApproval, suppliedPermissionMode bool
 	flags.Visit(func(option *flag.Flag) {
@@ -109,28 +119,33 @@ func interactive(ctx context.Context, args []string, output io.Writer) error {
 		}
 	})
 	if flags.NArg() != 0 {
-		return fmt.Errorf("interactive accepts --provider and its --approval or --permission-mode option")
-	}
-	if *provider == "" {
-		return fmt.Errorf("interactive requires --provider codex or --provider claude")
+		return options, fmt.Errorf("interactive accepts --provider and its --approval or --permission-mode option")
 	}
 	if *provider != "codex" && *provider != "claude" {
-		return fmt.Errorf("provider must be codex or claude")
+		return options, fmt.Errorf("provider must be codex or claude")
 	}
 	selected := *approval
 	if *provider == "codex" && suppliedPermissionMode {
-		return fmt.Errorf("--permission-mode is only available for Claude; use --approval for Codex")
+		return options, fmt.Errorf("--permission-mode is only available for Claude; use --approval for Codex")
 	}
 	if *provider == "claude" {
 		if suppliedApproval {
-			return fmt.Errorf("--approval is only available for Codex; use --permission-mode for Claude")
+			return options, fmt.Errorf("--approval is only available for Codex; use --permission-mode for Claude")
 		}
 		selected = *permissionMode
 	}
 	if selected == "" && (suppliedApproval || suppliedPermissionMode) {
-		return fmt.Errorf("an explicitly supplied approval or permission mode cannot be empty")
+		return options, fmt.Errorf("an explicitly supplied approval or permission mode cannot be empty")
 	}
 	mode, err := providerauth.InteractiveMode(*provider, selected)
+	if err != nil {
+		return options, err
+	}
+	return interactiveOptions{provider: *provider, mode: mode}, nil
+}
+
+func interactive(ctx context.Context, args []string, output io.Writer) error {
+	options, err := parseInteractiveOptions(args)
 	if err != nil {
 		return err
 	}
@@ -140,12 +155,12 @@ func interactive(ctx context.Context, args []string, output io.Writer) error {
 	}
 	fmt.Fprintln(output, "Opening an empty disposable workspace with your stored provider login and shared instructions.")
 	fmt.Fprintln(output, "Use trusted prompts only. Exit through the provider CLI; workspace files and session history are discarded.")
-	if *provider == "codex" {
-		fmt.Fprintf(output, "Codex access: full inside Docker; approval policy: %s.\n", mode)
+	if options.provider == "codex" {
+		fmt.Fprintf(output, "Codex access: full inside Docker; approval policy: %s.\n", options.mode)
 	} else {
-		fmt.Fprintf(output, "Requested Claude permission mode: %s.\n", mode)
+		fmt.Fprintf(output, "Requested Claude permission mode: %s.\n", options.mode)
 	}
-	return providerauth.New(runtime).Interactive(ctx, *provider, mode)
+	return providerauth.New(runtime).Interactive(ctx, options.provider, options.mode)
 }
 
 func instructionsCommand(args []string, output io.Writer) error {
@@ -198,43 +213,71 @@ func instructionsCommand(args []string, output io.Writer) error {
 	}
 }
 
-func auth(ctx context.Context, args []string) error {
-	if args[0] != "login" && args[0] != "status" {
-		return fmt.Errorf("unknown authentication command; run sdlc --help")
+type authOptions struct {
+	action    string
+	providers []string
+}
+
+func parseAuthOptions(args []string) (authOptions, error) {
+	var options authOptions
+	if len(args) == 0 || (args[0] != "login" && args[0] != "status") {
+		return options, fmt.Errorf("unknown authentication command; run sdlc --help")
 	}
 	flags := flag.NewFlagSet("auth "+args[0], flag.ContinueOnError)
-	provider := flags.String("provider", "", "codex or claude (required for login)")
+	provider := flags.String("provider", defaultProvider, "codex or claude (default: codex)")
+	var all bool
+	if args[0] == "status" {
+		flags.BoolVar(&all, "all", false, "check both providers instead of the default Codex; cannot combine with --provider")
+	}
 	if err := flags.Parse(args[1:]); err != nil {
-		return err
+		return options, err
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("auth accepts only --provider")
+		return options, fmt.Errorf("auth accepts --provider, or --all for status")
 	}
-	if *provider != "" && *provider != "codex" && *provider != "claude" {
-		return fmt.Errorf("provider must be codex or claude")
+	if *provider != "codex" && *provider != "claude" {
+		return options, fmt.Errorf("provider must be codex or claude")
 	}
-	if args[0] == "login" && *provider == "" {
-		return fmt.Errorf("auth login requires --provider codex or --provider claude")
+	var suppliedProvider, suppliedAll bool
+	flags.Visit(func(option *flag.Flag) {
+		switch option.Name {
+		case "provider":
+			suppliedProvider = true
+		case "all":
+			suppliedAll = true
+		}
+	})
+	if suppliedAll && suppliedProvider {
+		return options, fmt.Errorf("cannot combine --all with --provider")
+	}
+	providers := []string{*provider}
+	if all {
+		providers = providerauth.Providers
+	}
+	return authOptions{action: args[0], providers: providers}, nil
+}
+
+func auth(ctx context.Context, args []string) error {
+	options, err := parseAuthOptions(args)
+	if err != nil {
+		return err
 	}
 	runtime, err := runtimeimage.New(os.Stdout, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("cannot locate SDLC installation state")
 	}
 	manager := providerauth.New(runtime)
-	if args[0] == "login" {
-		fmt.Printf("Log in to %s using the browser instructions below. Keep this terminal private.\n", *provider)
-		if err := manager.Login(ctx, *provider); err != nil {
+	if options.action == "login" {
+		provider := options.providers[0]
+		fmt.Printf("Log in to %s using the browser instructions below. Keep this terminal private.\n", provider)
+		if err := manager.Login(ctx, provider); err != nil {
 			return err
 		}
-		fmt.Printf("%s: account credentials saved and loaded by a fresh container; remote validity has not been checked.\n", *provider)
+		fmt.Printf("%s: account credentials saved and loaded by a fresh container; remote validity has not been checked.\n", provider)
 		return nil
 	}
-	providers := providerauth.Providers
-	if *provider != "" {
-		providers = []string{*provider}
-	}
 	ready := true
-	for _, name := range providers {
+	for _, name := range options.providers {
 		state, err := manager.Status(ctx, name)
 		if err != nil {
 			return err

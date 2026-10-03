@@ -130,9 +130,9 @@ Native Linux and Windows CLI execution still needs verification.
 After building the shared image, run these commands from an interactive terminal:
 
 ```sh
-sdlc auth login --provider codex
+sdlc auth login
 sdlc auth login --provider claude
-sdlc auth status
+sdlc auth status --all
 ```
 
 Codex uses its device login flow. Follow the displayed browser instructions;
@@ -143,8 +143,11 @@ displayed URL and paste the code into the terminal if the browser cannot reach
 the container callback. These commands use your own account; subscription access
 is not shared or used through a custom API client. See [provider usage](provider-usage.md).
 
-Check both providers with `sdlc auth status`, or select one with
-`sdlc auth status --provider codex` or `--provider claude`.
+Codex is the default provider when `--provider` is omitted. `sdlc auth login`
+logs in to Codex and `sdlc auth status` checks Codex. Select Claude with
+`--provider claude`. Check both providers with `sdlc auth status --all`;
+`--all` is available only for status and cannot be combined with `--provider`.
+An explicitly empty or unsupported provider is rejected before Docker starts.
 Status starts a fresh container with networking disabled and a read-only
 credential volume. It reports whether the CLI can load stored account credentials,
 without printing account details or raw provider output. This does not validate a
@@ -194,8 +197,9 @@ log files. Claude's own private cache logs may persist. Host proxy environment a
 Docker-config proxy injection are excluded;
 environments that require a proxy need a future explicit configuration option.
 
-If login fails or is interrupted, run `sdlc auth status` and retry the relevant
-login. Codex login can replace malformed contents in a safe credential file.
+If login fails or is interrupted, check the selected provider with `sdlc auth
+status --provider codex` or `--provider claude` and retry the relevant login.
+Codex login can replace malformed contents in a safe credential file.
 Claude Code manages its own recovery and cache writes, including during a failed
 login; SDLC makes no promise that its previous cache is unchanged.
 Unsafe storage permissions or links require inspection before retrying; SDLC does
@@ -217,9 +221,12 @@ See [the workflow](workflow.md) for the next capabilities.
 After building the shared image and logging in to the selected provider:
 
 ```sh
-sdlc interactive --provider codex
+sdlc interactive
 sdlc interactive --provider claude
 ```
+
+Codex is selected when `--provider` is omitted. Explicit selection with
+`--provider codex` is also supported.
 
 Both providers default to full access inside the container:
 
@@ -240,7 +247,7 @@ settings. This setting does not override managed policy. See the
 For example:
 
 ```sh
-sdlc interactive --provider codex --approval on-request
+sdlc interactive --approval on-request
 sdlc interactive --provider claude --permission-mode manual
 sdlc interactive --provider claude --permission-mode plan
 ```
