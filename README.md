@@ -5,8 +5,9 @@ image. The workflow starts from the repository where work is requested.
 
 The CLI supports installation and reinstallation, version reporting, building and
 inspecting the shared runtime, Codex/Claude account login, shared instruction
-settings, local project initialization and interactive provider sessions. Secret
-retrieval, ticket execution, progress logs and recovery are still to be implemented.
+settings, local project initialization, ordered ticket discovery and interactive
+provider sessions. Secret retrieval, ticket execution, progress logs and recovery
+are still to be implemented.
 
 ## Get started
 
@@ -69,6 +70,16 @@ with a local Git exclude rule, and creates `.sdlc/project.json`. Review the
 suggested checks before using them. It works without Docker or provider login;
 ticket execution remains future work. See the
 [project initialization guide](docs/cli.md#initialize-a-project).
+
+List a work folder's tickets in numeric filename order:
+
+```sh
+sdlc work --reference YOUR_WORK_REFERENCE
+```
+
+This inspects `.sdlc/work/YOUR_WORK_REFERENCE/tickets/` without reading ticket
+bodies or starting work. Content and dependency checks belong to execution.
+See the [ticket discovery guide](docs/cli.md#inspect-a-ticket-stream).
 
 ## Security boundary and risks
 

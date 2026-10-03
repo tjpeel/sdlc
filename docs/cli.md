@@ -2,8 +2,9 @@
 
 The Go CLI provides local installation/reinstallation, build identity, shared
 runtime image build/status checks, Codex/Claude account login, shared instruction
-settings, local project initialization and interactive provider sessions. Ticket
-execution and secret-store access remain to be implemented.
+settings, local project initialization, ordered ticket discovery and interactive
+provider sessions. Ticket execution and secret-store access remain to be
+implemented.
 
 ## Install or reinstall
 
@@ -77,6 +78,36 @@ work. `sdlc interactive` still opens an empty workspace after initialization.
 
 If a later setup step fails, earlier completed steps can remain. Fix the reported
 problem and rerun initialization; existing settings and exclude rules are retained.
+
+## Inspect a ticket stream
+
+Run from the project repository or a directory inside it:
+
+```sh
+sdlc work --reference YOUR_WORK_REFERENCE
+```
+
+The command lists numbered Markdown files directly inside
+`.sdlc/work/YOUR_WORK_REFERENCE/tickets/`, ordered by their numeric prefix.
+Use names such as `01-add-api.md` and `02-add-consumer.md`. Padding is recommended;
+the command also accepts unpadded numbers and does not require consecutive numbers.
+Other files, including unnumbered Markdown notes, are ignored.
+
+The reference is the exact work folder name, including its case. Quote it if it
+contains spaces. It must be a single directory name, without path separators or
+control characters. A missing folder, no numbered tickets, malformed numbered
+Markdown filenames or duplicate numeric prefixes cause a nonzero exit. For
+example, `01-add-api.md` and `001-add-consumer.md` have the same prefix value.
+
+Private work must already be ignored and untracked; run `sdlc init` to establish
+the local exclude rule. Unsafe filesystem links, tracked private work and
+selected tickets that Git does not ignore also cause a failure.
+
+Discovery reads filenames and local Git metadata only. It does not read ticket
+bodies, project settings or specifications, check statuses or blockers, or run
+project commands. It writes no state and needs no Docker or provider login.
+The listing describes filename order; it does not approve or launch tickets.
+Ticket content, dependency and execution failures belong to the future launcher.
 
 ## Shared agent instructions
 

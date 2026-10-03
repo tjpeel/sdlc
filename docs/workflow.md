@@ -4,7 +4,8 @@ The confirmed direction is an installed Go CLI coordinating work from a local
 Git repository through one shared SDLC Docker image. macOS and Linux are the
 primary hosts; Windows should remain possible with a Linux-container engine.
 
-The [CLI setup commands, provider login, instruction settings, project initialization and interactive sessions](cli.md)
+The [setup commands, provider login, instruction settings, project initialization,
+ordered ticket discovery and interactive sessions](cli.md)
 are implemented today. Interactive sessions currently use an empty disposable
 workspace. Ticket execution, secret retrieval, update prompts and recovery remain
 to be built.
@@ -43,8 +44,12 @@ work and execution settings before starting.
 `sdlc init` now discovers local Git state, project manifests and ticket paths,
 protects `.sdlc/work/` with Git's local exclude file, and saves portable check and
 input settings in `.sdlc/project.json`. Existing settings are preserved on repeat
-runs. It does not select tickets, capture source or start a worker; those steps
-belong to the future work command.
+runs. `sdlc work --reference REFERENCE` lists that work folder's numbered ticket
+files in numeric order. This is a lightweight discovery step: it does not read
+ticket bodies or check their status, specifications or dependencies. Missing or
+ambiguous ticket paths fail; content and dependency problems must stop the
+future launcher when encountered. Listing does not select tickets for execution.
+Source capture and worker startup remain future work.
 
 The ticket layout comes from the public
 [engineering skills on GitHub](https://github.com/tjpeel/skills/tree/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering),
@@ -62,8 +67,9 @@ reviewed at published commit `56e38979baf389b058ae91c6812abae8d8dbcafa`:
 Treat `<reference>` as an opaque work identifier. Ticket eligibility and order
 follow the engineering process, including `ready-for-agent` and explicit
 lower-numbered dependencies. The GitHub process is the authority; locally
-installed skills do not define the ticket format. Ticket selection and execution
-are still to be implemented.
+installed skills do not define the ticket format. Filename order is available
+through `sdlc work`; eligibility, dependency validation and execution remain to
+be implemented.
 
 At launch, the CLI will obtain the signing key and GitHub token from an authorised
 secret store. The first integration is 1Password scoped to a named vault. Secret
@@ -75,6 +81,28 @@ source state, ticket inputs and required project configuration, including approv
 environment files for integration tests. Keep these inputs out of the image and
 public source. The exact capture and secret-handling rules remain implementation
 work.
+
+### Target project and test environment
+
+The initial target is a .NET 10 repository with an `.slnx` solution containing an
+API or consumer, unit tests and integration tests. Integration tests start the
+application in Docker alongside Mongo or other required container services.
+
+Use the repository's own reviewed test commands and orchestration. Do not infer
+unit/integration separation from project names or impose a test framework.
+Future execution must respect the SDK and test-runner settings in `global.json`;
+.NET 10 supports both VSTest and Microsoft Testing Platform with different
+command options. See Microsoft's [dotnet test guidance](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test).
+Initialization already discovers root `.slnx` files but does not generate .NET
+test commands; configure them in `.sdlc/project.json` for the repository.
+
+The execution environment must provide a job-specific Docker engine for tests,
+without mounting the host Docker socket. The API or consumer and supporting
+services need an isolated job network and disposable storage. Clean up test
+containers and storage after success, failure or cancellation. Dependency
+installation and tests must run without provider caches, signing keys or GitHub
+publishing credentials. These execution controls remain to be implemented;
+ticket discovery does not probe Docker, build the solution or run tests.
 
 ## Implement and review a ticket stream
 
