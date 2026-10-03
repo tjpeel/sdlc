@@ -35,7 +35,7 @@ class InteractiveTests(unittest.TestCase):
         self.instructions = self.root / "instructions.md"
         self.instructions.write_text("Stop implementation for unanswered human questions.\n")
         self.settings = self.root / "session-settings.json"
-        self.settings.write_text("{}\n")
+        self.settings.write_text('{"skipDangerousModePermissionPrompt":true}\n')
         self.catalogues = self.root / "catalogues"
         for name in ("skills", "agents"):
             (self.catalogues / name).mkdir(parents=True, mode=0o700)
@@ -71,14 +71,14 @@ class InteractiveTests(unittest.TestCase):
         Path(command[4]).mkdir(parents=True, mode=0o700)
         return subprocess.CompletedProcess(command, 0)
 
-    def test_codex_uses_native_tui_approvals_shared_body_and_image_catalogue(self):
+    def test_codex_full_access_default_uses_shared_body_and_image_catalogue(self):
         path = self.codex_cache()
         homes = []
 
         def client(command, env):
             self.assertEqual(command, ["codex", "-c", 'cli_auth_credentials_store="file"',
                                        "--no-daemon", "--sandbox", "danger-full-access",
-                                       "--ask-for-approval", "on-request"])
+                                       "--ask-for-approval", "never"])
             home = Path(env["HOME"])
             homes.append(home)
             config = Path(env["CODEX_HOME"])
@@ -208,13 +208,13 @@ class InteractiveTests(unittest.TestCase):
             native.assert_not_called()
         self.assertTrue(path.exists())
 
-    def test_claude_uses_native_cache_approvals_and_same_shared_instructions(self):
+    def test_claude_full_access_default_uses_native_cache_and_shared_instructions(self):
         path = self.claude_cache()
         homes = []
 
         def client(command, env):
             self.assertEqual(command, ["claude", "--setting-sources", "user",
-                                       "--permission-mode", "default",
+                                       "--permission-mode", "bypassPermissions",
                                        "--strict-mcp-config", "--mcp-config",
                                        '{"mcpServers":{}}'])
             homes.append(Path(env["HOME"]))
@@ -298,13 +298,13 @@ class InteractiveTests(unittest.TestCase):
                 auth.run("claude", "interactive", self.cache)
             native.assert_not_called()
 
-    def test_claude_cached_settings_cannot_replace_empty_session_settings(self):
+    def test_claude_cached_settings_cannot_replace_isolated_session_settings(self):
         self.claude_cache()
         path = self.cache / "settings.json"
         path.unlink()
         path.write_text('{"fake":"disposable-untrusted-settings"}')
         with patch.object(auth, "interactive_process") as native:
-            with self.assertRaisesRegex(ValueError, "missing empty session settings"):
+            with self.assertRaisesRegex(ValueError, "missing isolated session settings"):
                 auth.run("claude", "interactive", self.cache)
             native.assert_not_called()
 
@@ -316,6 +316,68 @@ class InteractiveTests(unittest.TestCase):
             self.assertEqual(auth.main(), 1)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(error.getvalue(), "SDLC could not complete the interactive session safely.\n")
+
+    def test_every_supported_provider_mode_reaches_native_client_without_fallback(self):
+        self.codex_cache()
+        self.claude_cache()
+        for provider, flag, modes in (
+                ("codex", "--ask-for-approval", ("never", "on-request")),
+                ("claude", "--permission-mode", ("bypassPermissions", "default", "manual",
+                                                  "acceptEdits", "plan", "auto", "dontAsk"))):
+            for mode in modes:
+                with self.subTest(provider=provider, mode=mode):
+                    if provider == "claude":
+                        self.settings.write_text(
+                            '{"skipDangerousModePermissionPrompt":true}\n'
+                            if mode == "bypassPermissions" else "{}\n")
+                    def client(command, env):
+                        self.assertEqual(command[command.index(flag) + 1], mode)
+                        return 5
+
+                    with patch.object(auth.subprocess, "run", side_effect=self.installer), \
+                            patch.object(auth, "interactive_process", side_effect=client) as native:
+                        self.assertEqual(auth.run(provider, "interactive", self.cache, mode=mode), 5)
+                        native.assert_called_once()
+
+    def test_invalid_modes_are_rejected_before_cache_access_or_native_launch(self):
+        for provider in ("codex", "claude"):
+            for mode in ("", "untrusted-mode", "never" if provider == "claude" else "manual"):
+                with self.subTest(provider=provider, mode=mode), \
+                        patch.object(Path, "lstat", side_effect=AssertionError("cache accessed")), \
+                        patch.object(auth, "interactive_process") as native, \
+                        patch.object(auth.subprocess, "run") as installer:
+                    with self.assertRaisesRegex(ValueError, "unsupported interactive mode"):
+                        auth.run(provider, "interactive", self.cache, mode=mode)
+                    native.assert_not_called()
+                    installer.assert_not_called()
+
+    def test_auth_actions_reject_mode_arguments_before_cache_access(self):
+        for provider in ("codex", "claude"):
+            for action in ("init", "login", "status"):
+                with self.subTest(provider=provider, action=action), \
+                        patch.object(Path, "lstat", side_effect=AssertionError("cache accessed")), \
+                        patch.object(auth.subprocess, "run") as native:
+                    with self.assertRaisesRegex(ValueError, "interactive modes require"):
+                        auth.run(provider, action, self.cache, mode="never")
+                    native.assert_not_called()
+
+    def test_main_accepts_interactive_mode_and_rejects_unexpected_arguments(self):
+        for arguments in (("codex", "interactive"), ("codex", "interactive", "on-request"),
+                          ("claude", "interactive", "manual")):
+            with self.subTest(arguments=arguments), \
+                    patch.object(auth.sys, "argv", ["helper", *arguments]), \
+                    patch.object(auth, "run", return_value=9) as run:
+                self.assertEqual(auth.main(), 9)
+                run.assert_called_once_with(arguments[0], arguments[1],
+                                            mode=arguments[2] if len(arguments) == 3 else None)
+        for arguments in ((), ("codex",), ("codex", "interactive", "never", "extra"),
+                          ("codex", "login", "never"), ("claude", "status", "manual"),
+                          ("claude", "init", "bypassPermissions")):
+            with self.subTest(arguments=arguments), \
+                    patch.object(auth.sys, "argv", ["helper", *arguments]), \
+                    patch.object(auth, "run") as run:
+                self.assertEqual(auth.main(), 1)
+                run.assert_not_called()
 
 
 class InteractiveProcessTests(unittest.TestCase):

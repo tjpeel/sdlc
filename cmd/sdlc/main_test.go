@@ -21,7 +21,11 @@ func TestUnknownProviderIsRejectedBeforeAccessingDocker(t *testing.T) {
 func TestInvalidInteractiveArgumentsDoNotCreateState(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	t.Setenv("SDLC_STATE_DIR", directory)
-	for _, args := range [][]string{nil, {"--provider", "untrusted"}, {"--provider", "codex", "prompt"}, {"--provider", "claude", "--dangerously-skip-permissions"}} {
+	for _, args := range [][]string{nil, {"--provider", "untrusted"}, {"--provider", "codex", "prompt"}, {"--provider", "claude", "--dangerously-skip-permissions"},
+		{"--provider", "codex", "--approval", "untrusted"}, {"--provider", "codex", "--permission-mode", "plan"},
+		{"--provider", "claude", "--approval", "never"}, {"--provider", "claude", "--permission-mode", "unsupported"},
+		{"--provider", "codex", "--approval="}, {"--provider", "codex", "--permission-mode="},
+		{"--provider", "claude", "--approval="}, {"--provider", "claude", "--permission-mode="}} {
 		var output bytes.Buffer
 		if err := interactive(context.Background(), args, &output); err == nil {
 			t.Fatalf("invalid arguments were accepted: %v", args)

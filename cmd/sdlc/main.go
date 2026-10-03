@@ -24,6 +24,8 @@ func main() {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status | auth login --provider codex|claude | auth status [--provider codex|claude]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc interactive --provider codex|claude")
+		fmt.Println("         Codex: [--approval never|on-request] (default: never)")
+		fmt.Println("         Claude: [--permission-mode MODE] (default: bypassPermissions)")
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "interactive" {
@@ -92,17 +94,45 @@ func main() {
 func interactive(ctx context.Context, args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("interactive", flag.ContinueOnError)
 	provider := flags.String("provider", "", "codex or claude (required)")
+	approval := flags.String("approval", "", "Codex: never or on-request (default: never)")
+	permissionMode := flags.String("permission-mode", "", "Claude: default, manual, acceptEdits, plan, auto, dontAsk or bypassPermissions (default: bypassPermissions)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	var suppliedApproval, suppliedPermissionMode bool
+	flags.Visit(func(option *flag.Flag) {
+		switch option.Name {
+		case "approval":
+			suppliedApproval = true
+		case "permission-mode":
+			suppliedPermissionMode = true
+		}
+	})
 	if flags.NArg() != 0 {
-		return fmt.Errorf("interactive accepts only --provider")
+		return fmt.Errorf("interactive accepts --provider and its --approval or --permission-mode option")
 	}
 	if *provider == "" {
 		return fmt.Errorf("interactive requires --provider codex or --provider claude")
 	}
 	if *provider != "codex" && *provider != "claude" {
 		return fmt.Errorf("provider must be codex or claude")
+	}
+	selected := *approval
+	if *provider == "codex" && suppliedPermissionMode {
+		return fmt.Errorf("--permission-mode is only available for Claude; use --approval for Codex")
+	}
+	if *provider == "claude" {
+		if suppliedApproval {
+			return fmt.Errorf("--approval is only available for Codex; use --permission-mode for Claude")
+		}
+		selected = *permissionMode
+	}
+	if selected == "" && (suppliedApproval || suppliedPermissionMode) {
+		return fmt.Errorf("an explicitly supplied approval or permission mode cannot be empty")
+	}
+	mode, err := providerauth.InteractiveMode(*provider, selected)
+	if err != nil {
+		return err
 	}
 	runtime, err := runtimeimage.New(os.Stdout, os.Stderr)
 	if err != nil {
@@ -111,9 +141,11 @@ func interactive(ctx context.Context, args []string, output io.Writer) error {
 	fmt.Fprintln(output, "Opening an empty disposable workspace with your stored provider login and shared instructions.")
 	fmt.Fprintln(output, "Use trusted prompts only. Exit through the provider CLI; workspace files and session history are discarded.")
 	if *provider == "codex" {
-		fmt.Fprintln(output, "Codex uses Docker for isolation; on-request approval prompts remain enabled.")
+		fmt.Fprintf(output, "Codex access: full inside Docker; approval policy: %s.\n", mode)
+	} else {
+		fmt.Fprintf(output, "Requested Claude permission mode: %s.\n", mode)
 	}
-	return providerauth.New(runtime).Interactive(ctx, *provider)
+	return providerauth.New(runtime).Interactive(ctx, *provider, mode)
 }
 
 func instructionsCommand(args []string, output io.Writer) error {

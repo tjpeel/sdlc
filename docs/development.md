@@ -85,12 +85,18 @@ CLI target builds pass. This iteration changes no Docker or provider execution.
 
 Interactive sessions are checked with offline tests for selected-cache mounts,
 instruction snapshots, startup failures, cancellation, native cache updates and
-logout. All 175 Python tests, Go tests, vet and six target builds pass. The local
-native-client probe uses disposable fake credentials and disables networking on
-every test container; it verifies Claude's shared instructions and image skills,
+logout. All 179 Python tests, Go tests, vet and six CLI and installer target builds
+pass. The local native-client probe uses disposable fake credentials and disables
+networking on every test container; it verifies Claude's shared instructions and image skills,
 cached customization isolation and Codex's native file-cache behavior. Attached
 CLI cancellation also restores the terminal and removes containers and snapshots,
 including under umask `077` with a state path containing spaces and a comma.
+Native permission probes cover Codex's `never` and `on-request` approvals and
+Claude's full-access default, manual and plan modes. Claude's documented
+skip-warning setting avoids repeated acknowledgement in disposable sessions;
+managed policy still disables bypass permissions and the pinned client visibly
+selects its permitted `auto` mode. SDLC does not change modes or retry. These
+checks use fake account data without submitting any model prompts.
 Run the probe locally with:
 
 ```sh
