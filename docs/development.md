@@ -3,6 +3,11 @@
 Work directly on `main`. Complete a bounded iteration, run its checks, commit and
 push before starting the next iteration. Use plain commit messages.
 
+If remote access is unavailable, keep validated iterations as local commits and
+push when access returns. If the account owner explicitly authorises unsigned
+commits while signing is unavailable, record those commit IDs for re-signing
+before publication. Preserve the repository's signing configuration.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -60,10 +65,14 @@ Native Linux/Windows CLI execution and connected provider/ticket jobs remain to
 be verified. Earlier container and experiment results are preserved in the
 [historical validation note](../research/notes/historical-runtime-validation.md).
 
-Codex authentication was checked with offline boundary tests and local
+Provider authentication was checked with offline boundary tests and local
 containers using disposable fake OAuth data. These cover fresh-container reads,
 repeat volume initialization, fixed status output, credential-file permissions,
-failed-login preservation and malformed-file recovery. The local probe runs
+Codex failed-login preservation and malformed-file recovery, and Claude's native
+cache handling. The Claude probe also checks that cached settings cannot change
+the authentication route or run a credential helper or hook. All 159 Python tests,
+Go tests and vet, and six CLI target builds pass for the provider-login iteration.
+The local probe runs
 explicitly with `python3 scripts/probe_provider_auth.py --cli /PATH/TO/SDLC_BINARY`;
 it does not run in CI. Real browser login and remote token validity remain manual
 checks. The helper is embedded in the CLI and runs against the existing shared

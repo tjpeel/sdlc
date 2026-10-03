@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 
-FILES = {"codex": "auth.json"}
+FILES = {"codex": "auth.json", "claude": ".credentials.json"}
 LIMIT = 1024 * 1024
 HOME_BASE = "/home/node"
 
@@ -80,6 +80,74 @@ def classify(result):
     return "invalid"
 
 
+def claude_credential_metadata(path, owner):
+    """Validate file metadata without opening Claude's native credential cache."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or info.st_uid != owner or stat.S_IMODE(info.st_mode) != 0o600):
+        raise ValueError("unsafe credential file")
+    return True
+
+
+def classify_claude(result):
+    # The official status command owns credential loading. Drop account details,
+    # configuration paths and stderr rather than passing them back to the host.
+    try:
+        if len(result.stdout) > LIMIT:
+            return "invalid"
+        record = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return "invalid"
+    if not isinstance(record, dict):
+        return "invalid"
+    if (result.returncode == 0 and record.get("loggedIn") is True
+            and record.get("authMethod") == "claude.ai"
+            and record.get("apiProvider") == "firstParty"):
+        return "stored"
+    if (result.returncode == 1 and record.get("loggedIn") is False
+            and record.get("authMethod") == "none"):
+        return "missing"
+    return "invalid"
+
+
+def run_claude(action, directory):
+    path = directory / FILES["claude"]
+    present = claude_credential_metadata(path, os.getuid())
+    if action == "status" and not present:
+        print(json.dumps({"state": "missing"}))
+        return 0
+    with tempfile.TemporaryDirectory(prefix="sdlc-auth-", dir=HOME_BASE) as home:
+        # Restricted mode excludes cached user/project settings, including env
+        # routing and apiKeyHelper; safe mode excludes user extensions and hooks.
+        # Managed policy still applies. The CLI retains its native OAuth cache.
+        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home,
+               "LANG": "C.UTF-8", "TERM": "xterm-256color",
+               "CLAUDE_CONFIG_DIR": str(directory), "CLAUDE_CODE_SAFE_MODE": "1",
+               "CLAUDE_CODE_RESTRICTED": "1",
+               "DISABLE_AUTOUPDATER": "1",
+               "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+        if action == "login":
+            result = subprocess.run(["claude", "auth", "login"], env=env, cwd=home)
+            if result.returncode:
+                # Claude owns any cache changes, including a failed login.
+                return 1
+            if not claude_credential_metadata(path, os.getuid()):
+                return 1
+        result = subprocess.run(["claude", "auth", "status", "--json"],
+                                env=env, cwd=home, capture_output=True,
+                                text=True, timeout=30)
+        state = classify_claude(result)
+        if not claude_credential_metadata(path, os.getuid()) and state == "stored":
+            state = "invalid"
+        if action == "status":
+            print(json.dumps({"state": state}))
+            return 0
+        return 0 if state == "stored" else 1
+
+
 def run(provider, action, directory=Path("/provider-auth")):
     filename = FILES[provider]
     os.umask(0o077)
@@ -90,6 +158,8 @@ def run(provider, action, directory=Path("/provider-auth")):
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) != 0o700):
         raise ValueError("unsafe storage directory")
+    if provider == "claude":
+        return run_claude(action, directory)
     data = credential(directory / filename, os.getuid(), allow_invalid=action == "login")
     if action == "status" and data is None:
         print(json.dumps({"state": "missing"}))

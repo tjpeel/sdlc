@@ -4,7 +4,7 @@ A Go CLI for a ticket-based engineering workflow using one shared local Docker
 image. The workflow starts from the repository where work is requested.
 
 The CLI supports installation and reinstallation, version reporting, building and
-inspecting the shared runtime, and Codex account login. Secret retrieval,
+inspecting the shared runtime, and Codex/Claude account login. Secret retrieval,
 ticket execution, progress logs and recovery are still to be implemented.
 
 ## Get started
@@ -18,6 +18,7 @@ sdlc --version
 sdlc runtime build --source .
 sdlc runtime status
 sdlc auth login --provider codex
+sdlc auth login --provider claude
 sdlc auth status
 ```
 

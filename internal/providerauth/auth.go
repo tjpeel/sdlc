@@ -23,7 +23,7 @@ import (
 //go:embed container.py
 var helper string
 
-var Providers = []string{"codex"}
+var Providers = []string{"codex", "claude"}
 
 type Docker interface {
 	Output(context.Context, ...string) ([]byte, error)
@@ -65,7 +65,7 @@ func terminal() bool {
 	return true
 }
 
-func validProvider(provider string) bool { return provider == "codex" }
+func validProvider(provider string) bool { return provider == "codex" || provider == "claude" }
 
 func randomID() (string, error) {
 	var token [16]byte
@@ -238,7 +238,7 @@ func (manager Manager) begin(ctx context.Context) (runtimeimage.State, *os.File,
 
 func (manager Manager) Login(ctx context.Context, provider string) error {
 	if !validProvider(provider) {
-		return fmt.Errorf("supported provider is codex")
+		return fmt.Errorf("provider must be codex or claude")
 	}
 	if !manager.Terminal() {
 		return fmt.Errorf("login needs an interactive terminal for stdin, stdout and stderr; do not redirect login output")
@@ -291,7 +291,7 @@ func (manager Manager) status(ctx context.Context, image, volume, provider strin
 
 func (manager Manager) Status(ctx context.Context, provider string) (string, error) {
 	if !validProvider(provider) {
-		return "", fmt.Errorf("supported provider is codex")
+		return "", fmt.Errorf("provider must be codex or claude")
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()

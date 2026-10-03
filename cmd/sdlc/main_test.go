@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestUnimplementedProviderIsRejectedBeforeAccessingDocker(t *testing.T) {
+func TestUnknownProviderIsRejectedBeforeAccessingDocker(t *testing.T) {
 	for _, command := range []string{"login", "status"} {
-		err := auth(context.Background(), []string{command, "--provider", "claude"})
-		if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
-			t.Fatal("unimplemented provider was enabled")
+		err := auth(context.Background(), []string{command, "--provider", "untrusted"})
+		if err == nil || !strings.Contains(err.Error(), "provider must be") {
+			t.Fatal("unknown provider was enabled")
 		}
 	}
 }
