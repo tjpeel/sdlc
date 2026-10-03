@@ -103,6 +103,8 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, options.timeout)
+	defer cancel()
 	current, err := os.Getwd()
 	if err != nil {
 		return err
@@ -168,19 +170,6 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if inCI() {
 			return fmt.Errorf("account-authenticated ticket runs are supported here only as local single-user CLI jobs; CI requires a separately supported authentication route")
 		}
-		provider := providerauth.New(runtime)
-		for index, role := range []workrun.Model{roles.Implementation, roles.Review} {
-			status, err := provider.Status(ctx, role.Provider)
-			if err != nil {
-				return err
-			}
-			if index == 0 && status != "stored" {
-				return fmt.Errorf("selected implementer needs login: sdlc auth login --provider %s", role.Provider)
-			}
-			if index == 1 && status != "stored" {
-				fmt.Fprintf(output, "Independent review will wait for %s authentication after delivery.\n", role.Provider)
-			}
-		}
 		id, err := workrun.NewID()
 		if err != nil {
 			return err
@@ -232,15 +221,25 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		}
 		answer = string(data)
 	}
-	ctx, cancel := context.WithTimeout(ctx, options.timeout)
-	defer cancel()
 	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests}
 	if len(journal.Plan.CheckInputs) > 0 {
 		checker.InputDirectory = filepath.Join(directory, "check-inputs")
 	}
-	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: providerauth.New(runtime), ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.GitHubPublisher{}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	registry := runstatus.New(runtime.Directory)
 	var tracker *runstatus.Tracker
+	manager := providerauth.New(runtime)
+	manager.OnWait = func(provider, reason string) {
+		if tracker != nil {
+			_ = tracker.Wait(provider, reason)
+		}
+		queueMessage(output, provider, reason)
+	}
+	manager.OnAcquired = func(provider string) {
+		if tracker != nil {
+			_ = tracker.ClearWait(provider)
+		}
+	}
+	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.GitHubPublisher{}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)

@@ -1,6 +1,7 @@
 package filelock
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -22,4 +23,20 @@ func Acquire(path string) (*os.File, error) {
 		return nil, fmt.Errorf("another SDLC operation holds the lock: %w", callErr)
 	}
 	return file, nil
+}
+
+func tryLock(file *os.File, mode Mode) (bool, error) {
+	flags := uintptr(1) // LOCKFILE_FAIL_IMMEDIATELY
+	if mode == Exclusive {
+		flags |= 2
+	}
+	var overlapped syscall.Overlapped
+	result, _, err := lockFileEx.Call(file.Fd(), flags, 0, 1, 0, uintptr(unsafe.Pointer(&overlapped)))
+	if result != 0 {
+		return false, nil
+	}
+	if errors.Is(err, syscall.Errno(33)) {
+		return true, nil
+	} // ERROR_LOCK_VIOLATION
+	return false, err
 }

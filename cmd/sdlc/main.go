@@ -235,7 +235,9 @@ func interactive(ctx context.Context, args []string, output io.Writer) error {
 	} else {
 		fmt.Fprintf(output, "Requested Claude permission mode: %s.\n", options.mode)
 	}
-	return providerauth.New(runtime).Interactive(ctx, options.provider, options.mode)
+	manager := providerauth.New(runtime)
+	manager.OnWait = func(provider, reason string) { queueMessage(output, provider, reason) }
+	return manager.Interactive(ctx, options.provider, options.mode)
 }
 
 func instructionsCommand(args []string, output io.Writer) error {
@@ -343,6 +345,7 @@ func auth(ctx context.Context, args []string) error {
 	}
 	manager := providerauth.New(runtime)
 	if options.action == "login" {
+		manager.OnWait = func(provider, reason string) { queueMessage(os.Stdout, provider, reason) }
 		provider := options.providers[0]
 		fmt.Printf("Log in to %s using the browser instructions below. Keep this terminal private.\n", provider)
 		if err := manager.Login(ctx, provider); err != nil {
@@ -355,6 +358,7 @@ func auth(ctx context.Context, args []string) error {
 		return nil
 	}
 	ready := true
+	manager.OnWait = func(provider, reason string) { queueMessage(os.Stdout, provider, reason) }
 	for _, name := range options.providers {
 		state, err := manager.Status(ctx, name)
 		if err != nil {
@@ -375,4 +379,12 @@ func auth(ctx context.Context, args []string) error {
 		return fmt.Errorf("one or more providers need an account login")
 	}
 	return nil
+}
+
+func queueMessage(output io.Writer, provider, reason string) {
+	if reason == "runtime_busy" {
+		fmt.Fprintln(output, "Waiting for the runtime build to finish.")
+		return
+	}
+	fmt.Fprintf(output, "Waiting for another %s operation to release its account cache.\n", provider)
 }

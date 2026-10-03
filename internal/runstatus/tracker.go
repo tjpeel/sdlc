@@ -11,20 +11,23 @@ import (
 )
 
 type Snapshot struct {
-	Version        int       `json:"version"`
-	ID             string    `json:"id"`
-	ControllerID   string    `json:"controller_id"`
-	Role           string    `json:"role"`
-	Provider       string    `json:"provider"`
-	Model          string    `json:"model"`
-	Effort         string    `json:"effort"`
-	StartedAt      time.Time `json:"started_at"`
-	HeartbeatAt    time.Time `json:"heartbeat_at"`
-	LastActivityAt time.Time `json:"last_activity_at"`
-	OutputBytes    uint64    `json:"output_bytes"`
-	Stopped        bool      `json:"stopped"`
-	StoppedAt      time.Time `json:"stopped_at,omitempty"`
-	Usage          Usage     `json:"usage"`
+	Version         int       `json:"version"`
+	ID              string    `json:"id"`
+	ControllerID    string    `json:"controller_id"`
+	Role            string    `json:"role"`
+	Provider        string    `json:"provider"`
+	Model           string    `json:"model"`
+	Effort          string    `json:"effort"`
+	StartedAt       time.Time `json:"started_at"`
+	HeartbeatAt     time.Time `json:"heartbeat_at"`
+	LastActivityAt  time.Time `json:"last_activity_at"`
+	OutputBytes     uint64    `json:"output_bytes"`
+	Stopped         bool      `json:"stopped"`
+	StoppedAt       time.Time `json:"stopped_at,omitempty"`
+	Usage           Usage     `json:"usage"`
+	WaitingProvider string    `json:"waiting_provider,omitempty"`
+	WaitReason      string    `json:"wait_reason,omitempty"`
+	WaitingSince    time.Time `json:"waiting_since,omitempty"`
 }
 
 type Tracker struct {
@@ -160,6 +163,53 @@ func (t *Tracker) NativeEvent(data []byte) {
 	}
 	t.observer.feed(data, t.snapshot.Provider, t.snapshot.Model, &t.snapshot.Usage)
 }
+
+// Wait records why the controller is waiting for a local execution slot. A
+// repeated notification for the same wait retains its original start time.
+func (t *Tracker) Wait(provider, reason string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return fmt.Errorf("activity tracker is closed")
+	}
+	if !waitProvider(provider) || (reason != "provider_busy" && reason != "runtime_busy") {
+		return fmt.Errorf("invalid provider wait")
+	}
+	if t.snapshot.WaitingProvider != provider || t.snapshot.WaitReason != reason {
+		t.snapshot.WaitingSince = time.Now().UTC()
+	}
+	t.snapshot.WaitingProvider, t.snapshot.WaitReason = provider, reason
+	t.snapshot.HeartbeatAt = time.Now().UTC()
+	if err := t.persist(); err != nil {
+		t.err = err
+	}
+	return t.err
+}
+
+// ClearWait is called when that provider acquires its execution slot. It cannot
+// clear a different provider's pending wait and is safe to repeat after clearing.
+func (t *Tracker) ClearWait(provider string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return fmt.Errorf("activity tracker is closed")
+	}
+	if !waitProvider(provider) {
+		return fmt.Errorf("invalid wait provider")
+	}
+	if t.snapshot.WaitingProvider != "" && t.snapshot.WaitingProvider != provider {
+		return fmt.Errorf("pending wait belongs to another provider")
+	}
+	t.snapshot.WaitingProvider, t.snapshot.WaitReason = "", ""
+	t.snapshot.WaitingSince = time.Time{}
+	t.snapshot.HeartbeatAt = time.Now().UTC()
+	if err := t.persist(); err != nil {
+		t.err = err
+	}
+	return t.err
+}
+
+func waitProvider(provider string) bool { return provider == "codex" || provider == "claude" }
 
 type activityWriter struct {
 	tracker *Tracker

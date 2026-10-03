@@ -142,7 +142,11 @@ func List(output io.Writer, views []runstatus.View, now time.Time) error {
 		if len(id) > 12 {
 			id = id[:12]
 		}
-		if _, err := fmt.Fprintf(output, "%-4s %-12s %-17s %-21s %-19s %-8s %-7s %-7s\n", mark, id, clip(filepath.Base(v.Root), 17), clip(filepath.Base(v.Ticket), 21), clip(v.State, 19), controller(v), clip(v.Provider, 7), age(now, v.LastActivityAt)); err != nil {
+		stage := v.State
+		if v.Live && v.Activity.WaitReason != "" {
+			stage = "queued: " + stage
+		}
+		if _, err := fmt.Fprintf(output, "%-4s %-12s %-17s %-21s %-19s %-8s %-7s %-7s\n", mark, id, clip(filepath.Base(v.Root), 17), clip(filepath.Base(v.Ticket), 21), clip(stage, 19), controller(v), clip(v.Provider, 7), age(now, v.LastActivityAt)); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(output, "     %s | %s / %s | elapsed %s\n", clip(v.Reference, 40), clip(v.Model, 40), clip(v.Effort, 12), elapsed(v, now)); err != nil {
@@ -182,6 +186,12 @@ func Reason(v runstatus.View) string {
 	}
 	if v.Stale {
 		return "Controller heartbeat is stale; inspect the original process before resuming."
+	}
+	if v.Live && v.Activity.WaitReason != "" {
+		if v.Activity.WaitReason == "runtime_busy" {
+			return "Waiting for the runtime build to release its lease."
+		}
+		return "Waiting for another " + v.Activity.WaitingProvider + " operation to release its account cache."
 	}
 	if v.Stopped && v.NeedsAttention && v.State != "ready" {
 		return "Controller stopped; checkpoint retained."

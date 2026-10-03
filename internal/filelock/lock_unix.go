@@ -3,6 +3,7 @@
 package filelock
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -20,4 +21,16 @@ func Acquire(path string) (*os.File, error) {
 		return nil, fmt.Errorf("another SDLC operation holds the lock: %w", err)
 	}
 	return file, nil
+}
+
+func tryLock(file *os.File, mode Mode) (bool, error) {
+	flags := syscall.LOCK_SH | syscall.LOCK_NB
+	if mode == Exclusive {
+		flags = syscall.LOCK_EX | syscall.LOCK_NB
+	}
+	err := syscall.Flock(int(file.Fd()), flags)
+	if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		return true, nil
+	}
+	return false, err
 }

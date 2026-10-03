@@ -413,6 +413,34 @@ UI, rather than detached execution. Resume older runs to register them; dry runs
 do not register. The registry and logs can contain private repository paths and
 work details, so keep dashboard output private too.
 
+## Concurrent runs and account caches
+
+Multiple controllers can operate in the same repository using separate captured
+workspaces and branches. Codex and Claude operations can overlap. Operations
+using the same provider's account cache wait for one another, including login and
+offline status checks; native refresh and cleanup finish before the next user of
+that cache starts. This permits at most one native operation per provider per
+installation. Waiting is cancellable and makes no FIFO or fairness guarantee.
+`sdlc run --timeout` includes setup and queued waits. Authentication is checked
+inside the registered controller before implementation, so queued runs remain
+visible in the dashboard. Reviewer authentication is checked at the review stage.
+
+Provider operations hold a shared runtime lease. Runtime builds need exclusive
+ownership and retain their existing immediate failure when the runtime is in use.
+A provider waiting behind a build checks runtime identity after acquiring its
+lease; an existing run still rejects an image that differs from its recorded image.
+Installation identity creation has a separate short lock. If Docker reports any
+surviving container using the selected provider volume, SDLC blocks reuse. Inspect
+and stop/remove that container deliberately before retrying; lock files alone
+cannot establish whether a Docker container survived a controller interruption.
+External Docker operations remain outside SDLC's coordination.
+
+Each `--docker-tests` check invocation receives a distinct daemon and network
+namespace without publishing ports on the host. Separate invocations can use the
+same API or database ports inside their own daemons. Commands within one invocation
+share its daemon and can still collide. Shared external services, host resources,
+provider usage limits and Git merge conflicts remain shared concerns.
+
 ## Build the shared runtime
 
 The host needs the Docker CLI and a local Docker engine running Linux containers.
@@ -604,7 +632,8 @@ home, a read-only root filesystem and no Linux capabilities. They receive no
 project checkout, host credentials, signing key, GitHub token or Docker socket.
 Only login has network access. A separate offline initializer sets volume
 ownership with limited privileges and never reads credential contents. The
-runtime lock prevents image replacement during authentication.
+runtime lease prevents image replacement during authentication; the selected
+provider's cache lock serializes its readers and writers.
 
 Claude authentication commands use documented [safe and restricted modes](https://code.claude.com/docs/en/cli-reference).
 They retain native authentication, disable user customizations such as hooks and
@@ -734,7 +763,9 @@ directories, including plans and file history, are also disposable. Recheck this
 layout when upgrading the pinned client. Native settings changes cannot persist
 through the read-only settings file. Managed provider policy still applies.
 
-The runtime lock prevents login operations or image replacement during a session.
+The selected provider's cache lock prevents overlapping login or session operations
+on that cache. A shared runtime lease prevents image replacement during a session;
+the other provider can run concurrently.
 Normal exit and cancellation remove the container and instruction snapshot while
 keeping the provider cache. If cleanup fails or the host crashes, inspect leftover
 `sdlc-interactive-*` containers before trying again. Reinstall the CLI after this

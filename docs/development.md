@@ -176,3 +176,9 @@ sanitized terminal output, bounded log tails, readonly snapshots and cancellatio
 Usage fixtures cover chunked native events, optional counters, repeated events,
 subagent exclusion, model matching and oversized/malformed input. These remain
 offline; no reported metric establishes real model access or connected-run success.
+
+Scoped-concurrency tests cover different-provider overlap, same-cache waits through
+cleanup, cancellation, exclusive-build/shared-session exclusion, simultaneous
+installation identity creation, runtime changes while queued, process-crash lock
+release and surviving Docker cache users. They use fake Docker clients and no
+provider account calls. Queue reporting retains heartbeat and optional usage data.

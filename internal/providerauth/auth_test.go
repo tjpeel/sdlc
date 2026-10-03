@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -18,6 +20,7 @@ const testID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 var testImage = "sha256:" + strings.Repeat("b", 64)
 
 type fakeDocker struct {
+	mu                                              sync.Mutex
 	calls                                           [][]string
 	volumes                                         map[string]map[string]any
 	result                                          string
@@ -28,6 +31,8 @@ type fakeDocker struct {
 }
 
 func (docker *fakeDocker) Output(ctx context.Context, args ...string) ([]byte, error) {
+	docker.mu.Lock()
+	defer docker.mu.Unlock()
 	docker.calls = append(docker.calls, append([]string(nil), args...))
 	switch args[0] {
 	case "context":
@@ -94,6 +99,8 @@ func (docker *fakeDocker) Run(context.Context, ...string) error {
 	return errors.New("unexpected runtime mutation")
 }
 func (docker *fakeDocker) Interactive(_ context.Context, args ...string) error {
+	docker.mu.Lock()
+	defer docker.mu.Unlock()
 	docker.calls = append(docker.calls, append([]string(nil), args...))
 	if docker.cancelled {
 		docker.leftover = true
@@ -225,7 +232,9 @@ func TestRejectedPreflightDoesNotStartContainer(t *testing.T) {
 				}
 				defer lock.Close()
 			}
-			if err := manager.Login(context.Background(), provider); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			if err := manager.Login(ctx, provider); err == nil {
 				t.Fatal("failed preflight accepted")
 			}
 			for _, args := range docker.calls {

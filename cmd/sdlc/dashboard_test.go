@@ -195,6 +195,43 @@ func TestDashboardJSONIncludesAllRepositoriesWithoutPrivateJournal(t *testing.T)
 	assertDashboardReadOnly(t, root, marker, before)
 }
 
+func TestDashboardJSONExposesQueueReason(t *testing.T) {
+	_, _, journals := dashboardFixture(t)
+	j := journals[0]
+	path := filepath.Join(filepath.Dir(j.Workspace), "activity.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activity runstatus.Snapshot
+	if err := json.Unmarshal(data, &activity); err != nil {
+		t.Fatal(err)
+	}
+	activity.WaitingProvider, activity.WaitReason, activity.WaitingSince = "codex", "provider_busy", time.Now().UTC()
+	data, _ = json.Marshal(activity)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := dashboardCommand(context.Background(), []string{"--json", "--run", j.ID}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Runs []struct {
+			Live            bool      `json:"live"`
+			WaitReason      string    `json:"wait_reason"`
+			WaitingProvider string    `json:"waiting_provider"`
+			WaitingSince    time.Time `json:"waiting_since"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Runs) != 1 || !result.Runs[0].Live || result.Runs[0].WaitReason != "provider_busy" || result.Runs[0].WaitingProvider != "codex" || result.Runs[0].WaitingSince.IsZero() {
+		t.Fatal(output.String())
+	}
+}
+
 func TestDashboardSelectedRunShowsQuestionsPRChecksAndBoundedLogs(t *testing.T) {
 	root, marker, journals := dashboardFixture(t)
 	before := dashboardTree(t, root)

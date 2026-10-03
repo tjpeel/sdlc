@@ -60,9 +60,11 @@ func (LocalDocker) Interactive(ctx context.Context, args ...string) error {
 }
 
 type Manager struct {
-	Runtime  runtimeimage.Manager
-	Docker   Docker
-	Terminal func() bool
+	Runtime    runtimeimage.Manager
+	Docker     Docker
+	Terminal   func() bool
+	OnWait     func(provider, reason string)
+	OnAcquired func(provider string)
 }
 
 func New(runtime runtimeimage.Manager) Manager {
@@ -90,6 +92,15 @@ func randomID() (string, error) {
 var installationID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func (manager Manager) identity(create bool) (string, error) {
+	return manager.identityContext(context.Background(), create)
+}
+
+func (manager Manager) identityContext(ctx context.Context, create bool) (string, error) {
+	lock, err := filelock.AcquireContext(ctx, filepath.Join(manager.Runtime.Directory, "auth-installation.lock"), filelock.Exclusive, nil)
+	if err != nil {
+		return "", fmt.Errorf("cannot lock authentication installation state: %w", err)
+	}
+	defer lock.Close()
 	path := filepath.Join(manager.Runtime.Directory, "auth-installation.json")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) && !create {
@@ -174,7 +185,50 @@ func (manager Manager) volume(ctx context.Context, id, provider string, create b
 			return "", fmt.Errorf("authentication storage ownership labels do not match this installation")
 		}
 	}
+	if err := manager.guardVolume(ctx, name, id, provider); err != nil {
+		return "", err
+	}
 	return name, nil
+}
+
+// guardVolume refuses to reuse a cache while any surviving container holds it.
+// Even a stopped container can be restarted outside this process's lease.
+func (manager Manager) guardVolume(ctx context.Context, volume, id, provider string) error {
+	output, err := manager.Docker.Output(ctx, "ps", "--all", "--filter", "volume="+volume, "--format", "{{.ID}}")
+	if err != nil {
+		return fmt.Errorf("cannot check authentication storage container ownership")
+	}
+	for _, container := range strings.Fields(string(output)) {
+		data, err := manager.Docker.Output(ctx, "container", "inspect", container)
+		if err != nil {
+			return fmt.Errorf("cannot inspect authentication storage container ownership")
+		}
+		var records []struct {
+			Config struct{ Labels map[string]string }
+			State  struct {
+				Status                      string
+				Running, Paused, Restarting bool
+			}
+			Mounts []struct{ Type, Name string }
+		}
+		if json.Unmarshal(data, &records) != nil || len(records) != 1 || records[0].State.Status == "" {
+			return fmt.Errorf("cannot verify authentication storage container ownership")
+		}
+		for _, mount := range records[0].Mounts {
+			if mount.Type != "volume" || mount.Name != volume {
+				continue
+			}
+			expected := labels(id, provider)
+			for _, key := range []string{"io.sdlc.managed", "io.sdlc.kind", "io.sdlc.installation", "io.sdlc.provider"} {
+				if records[0].Config.Labels[key] != expected[key] {
+					return fmt.Errorf("authentication storage is held by an unmanaged container; inspect Docker before retrying")
+				}
+			}
+			return fmt.Errorf("authentication storage is held by a surviving provider container; inspect Docker before retrying")
+		}
+		return fmt.Errorf("cannot verify authentication storage container mounts")
+	}
+	return nil
 }
 
 func containerArgs(image, name, volume, provider, action string) []string {
@@ -187,6 +241,10 @@ func containerArgs(image, name, volume, provider, action string) []string {
 		"--pids-limit", pids, "--memory", memory, "--cpus", cpus,
 		"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777",
 		"--tmpfs", "/home/node/:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=1000,gid=1000"}
+	installation := strings.TrimSuffix(strings.TrimPrefix(volume, "sdlc-auth-"), "-"+provider)
+	for _, key := range []string{"io.sdlc.managed", "io.sdlc.kind", "io.sdlc.installation", "io.sdlc.provider"} {
+		args = append(args, "--label", key+"="+labels(installation, provider)[key])
+	}
 	// Docker's client can inject proxies from its host config. Empty overrides prevent that.
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "ALL_PROXY",
 		"http_proxy", "https_proxy", "ftp_proxy", "no_proxy", "all_proxy"} {
@@ -238,20 +296,42 @@ func (manager Manager) container(ctx context.Context, image, volume, provider, a
 	return output, nil
 }
 
-func (manager Manager) begin(ctx context.Context) (runtimeimage.State, *os.File, error) {
+type operationLease struct{ provider, runtime *os.File }
+
+func (lease *operationLease) Close() error {
+	return errors.Join(lease.runtime.Close(), lease.provider.Close())
+}
+
+func (manager Manager) begin(ctx context.Context, provider string) (runtimeimage.State, *operationLease, error) {
 	if err := os.MkdirAll(manager.Runtime.Directory, 0700); err != nil {
 		return runtimeimage.State{}, nil, fmt.Errorf("cannot open SDLC state directory")
 	}
-	lock, err := filelock.Acquire(filepath.Join(manager.Runtime.Directory, "runtime-build.lock"))
-	if err != nil {
-		return runtimeimage.State{}, nil, fmt.Errorf("another SDLC operation is running, or its lock is unavailable")
+	wait := func(reason string) func() {
+		return func() {
+			if manager.OnWait != nil {
+				manager.OnWait(provider, reason)
+			}
+		}
 	}
+	providerLock, err := filelock.AcquireContext(ctx, filepath.Join(manager.Runtime.Directory, "provider-"+provider+".lock"), filelock.Exclusive, wait("provider_busy"))
+	if err != nil {
+		return runtimeimage.State{}, nil, fmt.Errorf("provider lease unavailable: %w", err)
+	}
+	runtimeLock, err := filelock.AcquireContext(ctx, filepath.Join(manager.Runtime.Directory, "runtime-build.lock"), filelock.Shared, wait("runtime_busy"))
+	if err != nil {
+		providerLock.Close()
+		return runtimeimage.State{}, nil, fmt.Errorf("runtime lease unavailable: %w", err)
+	}
+	lease := &operationLease{providerLock, runtimeLock}
 	state, err := manager.Runtime.Status(ctx)
 	if err != nil {
-		lock.Close()
+		lease.Close()
 		return runtimeimage.State{}, nil, fmt.Errorf("shared local runtime is unavailable or changed; run sdlc runtime status and rebuild if needed")
 	}
-	return state, lock, nil
+	if manager.OnAcquired != nil {
+		manager.OnAcquired(provider)
+	}
+	return state, lease, nil
 }
 
 func (manager Manager) Login(ctx context.Context, provider string) error {
@@ -261,14 +341,14 @@ func (manager Manager) Login(ctx context.Context, provider string) error {
 	if !manager.Terminal() {
 		return fmt.Errorf("login needs an interactive terminal for stdin, stdout and stderr; do not redirect login output")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-	defer cancel()
-	state, lock, err := manager.begin(ctx)
+	state, lock, err := manager.begin(ctx, provider)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	id, err := manager.identity(true)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	id, err := manager.identityContext(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -311,14 +391,14 @@ func (manager Manager) Status(ctx context.Context, provider string) (string, err
 	if !validProvider(provider) {
 		return "", fmt.Errorf("provider must be codex or claude")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	state, lock, err := manager.begin(ctx)
+	state, lock, err := manager.begin(ctx, provider)
 	if err != nil {
 		return "", err
 	}
 	defer lock.Close()
-	id, err := manager.identity(false)
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	id, err := manager.identityContext(ctx, false)
 	if err != nil || id == "" {
 		return "missing", err
 	}

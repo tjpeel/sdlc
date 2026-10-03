@@ -118,6 +118,14 @@ not implemented. See the [security risks](../README.md#security-boundary-and-ris
 
 ## Progress and resume
 
+Controllers can overlap in one repository using separate captured workspaces and
+branches. Codex and Claude use separate cache leases; the same provider's native
+operations queue through cleanup. Queue waiting is cancellable and appears in
+the dashboard. Runtime builds require exclusive ownership of the shared runtime.
+Each integration check invocation uses its own Docker daemon and namespace,
+allowing the same internal service ports across invocations. Host capacity,
+external services, account limits and merge conflicts still need coordination.
+
 `sdlc dashboard` watches registered local runs across repositories without
 contacting providers or controlling execution. It separates controller heartbeat
 from output activity, displays attention reasons and retains unavailable records.
