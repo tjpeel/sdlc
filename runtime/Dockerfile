@@ -50,8 +50,8 @@ RUN set -eu; \
     tar -xzf /tmp/dotnet-sdk.tar.gz -C /opt/dotnet; \
     rm /tmp/dotnet-releases.json /tmp/dotnet-archive.txt /tmp/dotnet-sdk.tar.gz
 
-# Keep catalogue sources and generated packages outside the Codex state volume.
-# The upstream installers retain symlinks to supporting files in these sources.
+# Keep pinned catalogue sources for provenance and generated packages outside
+# provider authentication storage.
 RUN set -eu; \
     fetch_catalogue() { \
         catalogue="$1"; revision="$2"; \
@@ -66,12 +66,12 @@ RUN set -eu; \
     }; \
     fetch_catalogue skills "$SKILLS_REVISION"; \
     fetch_catalogue agents "$AGENTS_REVISION"; \
-    bash /opt/sdlc/catalogues/skills/scripts/install-codex-skills \
-        --prefix tjpeel /home/node/.agents/skills; \
+    bash /opt/sdlc/catalogues/skills/scripts/install-skills \
+        --provider codex --prefix tjpeel -- /home/node/.agents/skills; \
     bash /opt/sdlc/catalogues/agents/scripts/install-agents \
         --runtime codex --prefix tjpeel /etc/codex/agents; \
-    bash /opt/sdlc/catalogues/skills/scripts/install-claude-skills \
-        /opt/sdlc/claude/skills; \
+    bash /opt/sdlc/catalogues/skills/scripts/install-skills \
+        --provider claude --prefix tjpeel -- /opt/sdlc/claude/skills; \
     bash /opt/sdlc/catalogues/agents/scripts/install-agents \
         --runtime claude --prefix tjpeel /opt/sdlc/claude/agents
 
