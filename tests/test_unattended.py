@@ -32,7 +32,7 @@ def load(name, path):
     return module
 
 
-launcher = load('unattended_launcher', ROOT / 'scripts/sdlc.py')
+launcher = load('unattended_launcher', ROOT / 'research/container-spike/sdlc.py')
 job = load('unattended_job', ROOT / 'runtime/bin/sdlc-job')
 collector = load('unattended_collector', ROOT / 'runtime/bin/ticket_input.py')
 

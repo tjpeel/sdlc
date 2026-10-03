@@ -30,7 +30,7 @@ def load(name, path):
 
 
 job = load('publication_job', ROOT / 'runtime/bin/sdlc-job')
-launcher = load('publication_launcher', ROOT / 'scripts/sdlc.py')
+launcher = load('publication_launcher', ROOT / 'research/container-spike/sdlc.py')
 
 
 def draft_pr():

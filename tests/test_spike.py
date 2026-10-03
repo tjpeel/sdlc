@@ -22,7 +22,7 @@ def load(name, path):
 
 
 job = load('sdlc_job', ROOT / 'runtime/bin/sdlc-job')
-launcher = load('sdlc_launcher', ROOT / 'scripts/sdlc.py')
+launcher = load('sdlc_launcher', ROOT / 'research/container-spike/sdlc.py')
 
 
 class SigningChecks(unittest.TestCase):
@@ -128,7 +128,7 @@ class LauncherChecks(unittest.TestCase):
         self.body.write_text('Reviewable changes and checks.')
 
     def call(self, *args):
-        return subprocess.run([sys.executable, str(ROOT / 'scripts/sdlc.py'), *args,
+        return subprocess.run([sys.executable, str(ROOT / 'research/container-spike/sdlc.py'), *args,
                                '--profiles', str(self.profiles), '--profile', 'work',
                                '--repo', 'work-org/test-repo'], text=True, capture_output=True)
 
