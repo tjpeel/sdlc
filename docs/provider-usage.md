@@ -8,8 +8,9 @@ can guarantee that a provider will never restrict an account.
 ## Codex
 
 SDLC invokes the unmodified Codex CLI for device login, offline login status and
-an interactive terminal session. The authentication guide documents file-backed login caching and moving
-that cache into Docker. SDLC stores the cache privately and gives it only to the
+interactive terminal sessions and non-interactive ticket sessions through
+`codex exec`. The authentication guide documents file-backed login caching and
+moving that cache into Docker. SDLC stores the cache privately and gives it only to the
 same user's local Codex container. See [Codex authentication](https://learn.chatgpt.com/docs/auth).
 
 Interactive sessions use the ordinary [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
@@ -19,8 +20,9 @@ outer isolation boundary; native approvals default to `never` and can be set to
 [container security guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
 No custom API client, credential broker or subscription sharing is involved.
 
-Login does not authorise every later use of the account. For ticket automation,
-review the chosen account, repository trust and execution mode against
+Login does not authorise every later use of the account. Ticket runs are limited
+to the account owner's local single-user native CLI job, using trusted inputs.
+Review the chosen account, repository trust and execution mode against
 [non-interactive Codex guidance](https://learn.chatgpt.com/docs/non-interactive-mode).
 API keys are the documented default for automation. Any account-based exception
 must fit the documented conditions; its credentials must stay out of public or
@@ -46,12 +48,13 @@ cache. Interactive sessions invoke the ordinary
 [Claude terminal CLI](https://code.claude.com/docs/en/cli-reference) with a selected
 native permission mode, defaulting to `bypassPermissions` inside the isolated
 container. See [Claude permission modes](https://code.claude.com/docs/en/permission-modes).
-SDLC does not submit prompts on the user's behalf or override managed restrictions.
+Ticket runs submit the account owner's selected work through native `claude -p`;
+SDLC does not override managed restrictions.
 SDLC does not copy, parse or export Claude tokens. Signing in again for
 every container is unnecessary; re-authenticate when the provider requires it.
 
 Account login and cache persistence do not approve every unattended use. Before
-implementing ticket execution, review the account type and execution mode against
+running a ticket, review the account type and execution mode against
 the [Consumer Terms](https://www.anthropic.com/legal/consumer-terms),
 [Commercial Terms](https://www.anthropic.com/legal/commercial-terms) and
 [`claude -p` guidance](https://code.claude.com/docs/en/headless). API or supported
@@ -68,8 +71,35 @@ leave network-disabled test containers. Real login requires the account owner's
 action through the official provider flow; SDLC does not automate browser sign-in
 or implement token refresh itself.
 
-Future workers must stop on exhausted usage, unsupported credentials, access
+Ticket workers must stop on exhausted usage, unsupported credentials, access
 denials, account holds and policy refusals. Any retry of a transient failure must
 remain within the provider's documented limits. Credentials belong to one
 authorised user; SDLC must not pool subscriptions or make their usage available
 to other users.
+
+## Local ticket execution
+
+`sdlc run` invokes the unmodified official clients in their documented headless
+modes: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
+and [Claude print mode](https://code.claude.com/docs/en/headless). It uses stored
+native account login for the same user's local job. SDLC rejects CI execution;
+this account route is not a service for other users, shared subscription broker
+or general unattended deployment route. Use API or supported cloud authentication
+for integrations outside the documented native-client account conditions.
+No connected provider test has been authorised or run for this implementation.
+
+The selected implementer must have login. Missing opposite-reviewer login allows
+draft PR publication and CI before pausing at `awaiting_reviewer`. Review never
+uses the implementation account as a substitute. Repairs resume the original
+native implementation session; each independent review starts fresh. A reported
+model mismatch stops execution; a missing model report cannot establish the
+requested identity. Effort is a request that providers may cap.
+
+Native provider caches remain accessible inside authenticated workers. Separate
+check workers have no provider caches or host publication credentials, but a
+prompt cannot prevent the provider's shell from running repository code or
+reading its own cache. Use trusted repositories and selected inputs; network
+destinations are not restricted. Private JSONL, diagnostics and native session
+storage may retain sensitive material. Stop on policy refusals, access denials,
+usage exhaustion and unsupported account routes; resume only after resolving the
+cause without identity switching or limit evasion.

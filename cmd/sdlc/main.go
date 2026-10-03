@@ -30,6 +30,7 @@ func main() {
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc init (from a project repository)")
 		fmt.Println("       sdlc work --reference REFERENCE (list local tickets in numeric order)")
+		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc interactive [--provider codex|claude]")
 		fmt.Println("         Provider defaults to codex for interactive and auth commands.")
 		fmt.Println("         Codex: [--approval never|on-request] (default: never)")
@@ -49,6 +50,15 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := workCommand(ctx, os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "run" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := runCommand(ctx, os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "sdlc:", err)
 			os.Exit(1)
 		}

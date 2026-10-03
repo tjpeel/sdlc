@@ -3,8 +3,8 @@
 The Go CLI provides local installation/reinstallation, build identity, shared
 runtime image build/status checks, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
-provider sessions. Ticket execution and secret-store access remain to be
-implemented.
+provider sessions and single-ticket runs through publication, CI and independent
+review. Secret-store access and stacked-ticket orchestration remain future work.
 
 ## Install or reinstall
 
@@ -63,8 +63,11 @@ Portable settings live in `.sdlc/project.json`:
 
 Each check is an argument array. The initial checks are suggestions based on
 detected project files; review and edit them for the project's requirements.
-`input_files` starts empty. It is reserved for relative input paths and does not
-approve or transfer files. Keep credentials, account details, vault references
+`input_files` starts empty. During a run, these exact relative files are copied
+only into the separate credential-free check worker. Use this for reviewed test
+configuration; it does not supply requirements to the provider. Files named
+explicitly by `--input` are provider-visible, even if also in `input_files`.
+Files already tracked in source remain visible as normal source. Keep credentials, account details, vault references
 and host paths out of these settings. This file can be committed if its contents
 are suitable for the project repository.
 
@@ -73,8 +76,8 @@ custom checks, rather than replacing them with newly detected defaults. It
 rejects unsupported settings versions, invalid paths and unsafe filesystem links.
 No project checks run during initialization. It needs only local Git access;
 it does not fetch source, contact providers, bind an account profile or require
-Docker. Project capture, secret retrieval and ticket execution remain future
-work. `sdlc interactive` still opens an empty workspace after initialization.
+Docker. `sdlc run` captures source and starts ticket execution; secret-store
+integration remains future work. `sdlc interactive` still opens an empty workspace after initialization.
 
 If a later setup step fails, earlier completed steps can remain. Fix the reported
 problem and rerun initialization; existing settings and exclude rules are retained.
@@ -109,7 +112,211 @@ Discovery reads filenames and local Git metadata only. It does not read ticket
 bodies, project settings or specifications, check statuses or blockers, or run
 project commands. It writes no state and needs no Docker or provider login.
 The listing describes filename order; it does not approve or launch tickets.
-Ticket content, dependency and execution failures belong to the future launcher.
+Use `sdlc run` to select a ticket; its implementation skill checks ticket
+eligibility, dependencies and missing requirements when encountered.
+
+## Run one ticket
+
+Run from an initialized project with an existing HEAD commit and a local base
+branch. Review `.sdlc/project.json` checks first. The command captures current
+source, including local changes, in private run storage without changing the
+initiating checkout. Capture currently requires a real `.git` directory and
+rejects symlinks, submodules and unsafe Git metadata.
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --dry-run
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
+  --input .sdlc/work/YOUR_WORK_REFERENCE/specification.md \
+  --input .sdlc/work/YOUR_WORK_REFERENCE/decisions.md
+```
+
+The ticket is an exact numbered filename from `sdlc work`. Only that ticket and
+repeatable `--input` requirements are selected; SDLC does not discover a
+specification automatically or launch the next ticket. `--dry-run` prints the
+plan without Docker, authentication checks or execution. It cannot prove account
+or model access.
+
+| Flag | Default and purpose |
+| --- | --- |
+| `--reference`, `--ticket` | Required exact work folder and numbered ticket. |
+| `--provider` | `codex`; use `claude` to reverse the implementation/review roles. |
+| `--input` | Repeatable exact path relative to the project; visible to both providers. |
+| `--base` | `main`; must exist locally, be included in source HEAD, and match the GitHub base at publication. |
+| `--branch` | Unique `work/<reference>/<ticket-stem>-<run-prefix>` branch. |
+| `--repo` | GitHub `OWNER/REPO`, inferred from a single credential-free GitHub origin URL. |
+| `--model`, `--effort` | Override the implementation lead's model and effort. |
+| `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
+| `--docker-tests` | Enable the separate privileged integration-test daemon. |
+| `--timeout` | `2h` per controller invocation; accepts `1m` through `24h`. |
+| `--resume` | Continue a recorded run ID with its original settings. |
+| `--answer-file` | Bounded nonempty UTF-8 human answer, only with `--resume`. |
+| `--dry-run` | Print an offline plan. |
+
+The implementation login is required before launch. A missing opposite-provider
+login allows implementation, local checks, draft PR publication and CI to finish,
+then retains `awaiting_reviewer`. Login and resume to complete independent review.
+Account-authenticated runs support the account owner's local single-user job;
+CI execution is rejected. Review the [provider rules](provider-usage.md) first.
+
+### Models and pinned agents
+
+These are requested lead settings, not a guarantee of account entitlement:
+
+| Selected implementer | Implementation | Independent review |
+| --- | --- | --- |
+| Codex (default) | `gpt-6.1-sol`, `medium` | Claude `claude-opus-5-5`, `high` |
+| Claude | `claude-sonnet-5-5`, `medium` | Codex `gpt-6.1-sol`, `high` |
+
+For example:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
+  --provider codex --model gpt-6.1-sol --effort medium \
+  --review-model claude-opus-5-5 --review-effort high
+```
+
+An optional private `models.json` beside the installation's runtime record can
+replace defaults. The state directory is `SDLC_STATE_DIR` when set, otherwise
+the OS user configuration directory followed by `sdlc` (on macOS,
+`~/Library/Application Support/sdlc`). Use full model identifiers, with selected implementer and
+opposite reviewer providers:
+
+```json
+{
+  "version": 1,
+  "codex": {
+    "implementation": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "medium"},
+    "review": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
+  },
+  "claude": {
+    "implementation": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "medium"},
+    "review": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"}
+  }
+}
+```
+
+Flags override that file for new runs. Resume preserves the recorded models,
+effort, runtime image, inputs, checks and shared instructions. Accepted Codex
+efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`;
+Claude accepts `low`, `medium`, `high`, `xhigh`, `max`. Acceptance by SDLC does not
+establish support by a model or account. A reported model mismatch or change
+stops the run; if the client reports no model, SDLC cannot verify it. Providers
+may cap or interpret effort differently.
+
+The lead follows the pinned engineering and PR skills. The native clients load
+the image's pinned agent definitions and model/effort policies for
+`read_low`, `read_medium`, `read_high` and `write_medium`; lead flags do not
+replace those agent policies. See [Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents),
+[Claude subagents](https://code.claude.com/docs/en/sub-agents) and
+[Claude model configuration](https://code.claude.com/docs/en/model-config).
+
+### Context use
+
+Each run covers one ticket. Fresh sessions receive the launch brief; implementation
+repairs receive only the ticket identity, current feedback and execution gates.
+Shared instructions are supplied through native instruction files without
+duplicating their body in prompts. Leads are told to delegate narrow investigations,
+request concise evidence and leave large logs and inventories on disk. Reviewers
+start fresh each round. Native compaction retains the implementation session.
+
+Native usage events are retained in private `events-*.jsonl` files and streamed
+to the host. They are not a normalized context gauge. The pinned
+[Codex JSON event processor](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/exec/src/event_processor_with_jsonl_output.rs)
+reports aggregate usage without current context occupancy or its window size;
+do not sum those counters across resumes or turn them into a context percentage.
+Claude may report per-request assistant usage: its latest main-session input
+size includes input, cache-read and cache-creation tokens, following the
+[documented context calculation](https://code.claude.com/docs/en/statusline).
+Aggregate result usage and subagent usage are separate. Missing metadata is
+unknown. A context percentage requires an actual matching model window size;
+SDLC does not currently display such a gauge or trigger compaction thresholds.
+
+### Checks, publication and review
+
+The implementation requests checks on a clean committed candidate. SDLC executes
+`.sdlc/project.json` argument arrays in order in a separate disposable worker,
+without a host shell. Configure dependency installation as a check if required.
+No commands are guessed at run time. For .NET 10 `.slnx` repositories, choose
+commands that match the repository's `global.json`, SDK and VSTest or Microsoft
+Testing Platform configuration. Initialization does not generate .NET checks.
+
+Configured `input_files` receive a separate copy in the check workspace. Their
+untracked files stay out of the provider workspace unless selected with
+`--input`; files already tracked in source remain visible as normal source. Keep credentials
+out of these files; SDLC's path checks do not identify every secret in file
+contents. Check workers receive no provider cache, signing keys, GitHub token,
+SSH agent or host Docker socket. They have network access for dependencies.
+`--docker-tests` explicitly starts a separate privileged Docker-in-Docker daemon,
+job network and disposable volumes. This mode is for trusted integration checks;
+privileged containers do not isolate hostile code from the engine host. Cleanup
+errors stop delivery.
+
+The provider has shell access to its authenticated workspace. Its instructions
+prohibit dependency installation, scripts and tests there, but that is not an
+enforced execution boundary: repository code can still read its provider cache
+or send accessible data over the network. Review the [remaining risks](../README.md#security-boundary-and-risks).
+
+After passing checks and the implementation's whole-ticket local review, the
+host controller imports the candidate bundle into separate Git metadata. It
+recreates commits using configured host identity and signing settings, verifies
+signatures when signing is enabled, and checks that the final tree matches the
+verified tree. Host `git` and authenticated `gh` publish the branch and create or
+update a draft PR. Configure host Git identity/signing and `gh auth login` first;
+secret-store retrieval is not implemented. Workers receive no publication access.
+
+Every reported PR check must pass on the recorded current base/head. Pending
+checks are polled; failures, cancellation and skipping require repair. When no
+checks are reported, SDLC waits for up to two minutes for CI to start, then blocks
+the run with its checkpoint retained. Configure CI and resume the run. SDLC
+rechecks the PR boundary around CI inspection and independent review. External base/head changes stop for reconciliation.
+
+A fresh opposite-provider session reviews the exact published revision and
+selected requirements, without the implementation transcript. Actionable findings
+return to the original implementation session for bounded repairs, checks,
+publication, CI and another fresh review. The normal repair bound is three rounds.
+A complete review with no findings reaches `ready` and prints the PR URL. The PR
+remains draft; SDLC never approves, marks it ready or merges automatically.
+
+### Logs, questions and resume
+
+Native structured JSONL streams to the terminal and is retained privately under:
+
+```text
+.sdlc/work/<reference>/runs/<ticket-stem>/<run-id>/
+  journal.json
+  events-<attempt>.jsonl
+  diagnostics-<attempt>.log
+  checks-<attempt>.log
+  native-implementation/
+  native-review-<attempt>/
+  workspace/
+```
+
+Logs, snapshots and native sessions may contain private source, prompts and
+account data. Keep the whole work directory ignored and untracked; do not publish
+terminal recordings. No live provider run has yet validated this execution path.
+
+A structured human question pauses at `waiting_for_human`. Supply an answer:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
+  --resume RECORDED_RUN_ID --answer-file /PATH/TO/PRIVATE_ANSWER.txt
+```
+
+For reviewer login or an operational stop, resume without an answer file:
+
+```sh
+sdlc auth login --provider claude
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --resume RECORDED_RUN_ID
+```
+
+Resume accepts only `--reference`, `--ticket`, `--resume`, `--answer-file`,
+`--timeout` and `--dry-run`. Implementation turns and repairs resume the exact
+recorded native session, never the latest unrelated session. Each independent
+review starts fresh. Cancellation, timeout, invalid handoffs, missing inputs,
+usage/access limits and policy refusals retain a stopped checkpoint. Fix the
+reported cause before resuming; never restart or change identities to evade
+provider restrictions. Journals and native storage must remain intact for resume.
 
 ## Shared agent instructions
 
@@ -148,10 +355,10 @@ providers' native global instruction paths: `$CODEX_HOME/AGENTS.md` for Codex an
 `$CLAUDE_CONFIG_DIR/CLAUDE.md` for Claude (normally `~/.claude/CLAUDE.md`).
 See [Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 and [Claude memory files](https://code.claude.com/docs/en/memory).
-Changes to the settings affect the next session. Ticket workers will need the
-same injection alongside project instruction files. An enforced human-input pause
-remains part of ticket-execution work; Markdown instructions alone cannot
-guarantee a process stops.
+Changes to the settings affect the next session or new run. Ticket runs capture
+the shared body once and inject it alongside project instructions on every turn.
+The controller pauses on a structured human question; Markdown instructions alone
+cannot guarantee that a provider stops before returning its handoff.
 
 ## Build the shared runtime
 
