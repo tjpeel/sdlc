@@ -1,0 +1,6 @@
+# Optional ignored, private test environment. No contents enter the image or argv.
+services:
+  worker:
+    env_file:
+      - path: ${SDLC_TEST_ENV_FILE:?Select a private test environment file}
+        format: raw

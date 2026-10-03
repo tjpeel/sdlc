@@ -1,4 +1,4 @@
-"""Offline checks for model selection, environment isolation and Codex arguments."""
+"""Offline checks for provider selection, model isolation and launcher arguments."""
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -55,10 +55,16 @@ class LauncherModelChecks(unittest.TestCase):
               mock.patch.object(launcher.subprocess, 'run',
                                 return_value=subprocess.CompletedProcess([], 0, stdout='')) as run,
               mock.patch.dict(os.environ, {'SDLC_MODEL': 'inherited-model',
-                                           'GH_TOKEN': 'fake-inherited-token'}),
+                                           'GH_TOKEN': 'fake-inherited-token',
+                                           'GITHUB_TOKEN': 'fake-inherited-token',
+                                           'SDLC_SIGNING_KEY': 'fake-inherited-key',
+                                           'SDLC_GITHUB_TOKEN': 'fake-inherited-token',
+                                           'OPENAI_API_KEY': 'fake-inherited-api-key',
+                                           'ANTHROPIC_API_KEY': 'fake-inherited-api-key',
+                                           'CLAUDE_CODE_OAUTH_TOKEN': 'fake-inherited-oauth-token'}),
               contextlib.redirect_stdout(output)):
             launcher.main()
-            if '--dry-run' in extra:
+            if '--dry-run' in extra or action in ('login', 'auth-status'):
                 secret.assert_not_called()
         compose = [call for call in run.call_args_list if call.args[0][:2] == ['docker', 'compose']]
         return compose[0] if compose else None, output.getvalue(), run
@@ -100,10 +106,114 @@ class LauncherModelChecks(unittest.TestCase):
         self.assertEqual(argv.count('--model'), 1)
         self.assertEqual(argv[0], 'codex')
 
+    def test_codex_is_default_and_explicit_interactive_provider(self):
+        self.profile['model'] = 'profile-model'
+        for extra in ((), ('--provider', 'codex')):
+            with self.subTest(extra=extra):
+                command, _, _ = self.call('cli', *extra)
+                argv = shlex.split(command.args[0][-1].removeprefix('sdlc-job init && exec '))
+                self.assertEqual(argv, ['codex', '--dangerously-bypass-approvals-and-sandbox',
+                                        '-C', '/workspace/repo', '--model', 'profile-model'])
+                self.assertNotIn('-T', command.args[0])
+
+    def test_claude_starts_fresh_in_repository_without_profile_codex_model(self):
+        self.profile['model'] = 'profile-codex-model'
+        command, output, _ = self.call('cli', '--provider', 'claude')
+        shell = command.args[0][-1]
+        prefix = 'sdlc-job init && cd /workspace/repo && exec '
+        self.assertTrue(shell.startswith(prefix))
+        self.assertEqual(shlex.split(shell.removeprefix(prefix)),
+                         ['claude', '--dangerously-skip-permissions'])
+        self.assertEqual(command.kwargs['env']['SDLC_MODEL'], '')
+        self.assertNotIn('-T', command.args[0])
+        self.assertIn('model: Claude default', output)
+        self.assertNotIn('profile-codex-model', output)
+
+    def test_claude_explicit_model_is_quoted_without_configuring_codex(self):
+        self.profile['model'] = 'profile-codex-model'
+        model = "claude-test;$(touch${IFS}/tmp/unused-test-model)'name"
+        command, output, _ = self.call('cli', '--provider', 'claude', '--model', model)
+        argv = shlex.split(command.args[0][-1].removeprefix(
+            'sdlc-job init && cd /workspace/repo && exec '))
+        self.assertEqual(argv, ['claude', '--dangerously-skip-permissions', '--model', model])
+        self.assertEqual(command.kwargs['env']['SDLC_MODEL'], '')
+        self.assertIn('model: ' + model, output)
+
+    def test_login_keeps_provider_authentication_commands(self):
+        for extra, expected in (
+                ((), ['codex', 'login', '--device-auth']),
+                (('--provider', 'codex'), ['codex', 'login', '--device-auth']),
+                (('--provider', 'claude'), ['claude', 'auth', 'login'])):
+            with self.subTest(extra=extra):
+                command, _, _ = self.call('login', *extra)
+                self.assertEqual(command.args[0][-len(expected):], expected)
+                self.assertNotIn('-T', command.args[0])
+                self.assertNotIn(str(self.folder / 'runtime/compose.credentials.yaml'), command.args[0])
+
+    def test_auth_status_uses_selected_provider_without_credentials_or_tty(self):
+        self.profile.pop('signing_key_file')
+        self.profile.pop('github_token_file')
+        for extra, expected in (
+                ((), ['codex', 'login', 'status']),
+                (('--provider', 'codex'), ['codex', 'login', 'status']),
+                (('--provider', 'claude'), ['claude', 'auth', 'status', '--text'])):
+            with self.subTest(extra=extra):
+                command, output, _ = self.call('auth-status', *extra)
+                self.assertEqual(command.args[0][-len(expected):], expected)
+                self.assertIn('-T', command.args[0])
+                self.assertNotIn(str(self.folder / 'runtime/compose.credentials.yaml'), command.args[0])
+                for name in ('GH_TOKEN', 'GITHUB_TOKEN', 'SDLC_SIGNING_KEY', 'SDLC_GITHUB_TOKEN',
+                             'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'):
+                    self.assertNotIn(name, command.kwargs['env'])
+                self.assertNotIn('fake-inherited', output)
+
+    def test_explicit_provider_fails_for_unsupported_actions_before_profile_access(self):
+        for action in ('build', 'init', 'exec', 'results', 'verify', 'publish',
+                       'ssh-up', 'ssh-down', 'run'):
+            for provider in ('codex', 'claude'):
+                argv = ['sdlc.py', action, '--profile', 'example',
+                        '--repo', 'example-org/test-repo', '--provider', provider]
+                with (self.subTest(action=action, provider=provider),
+                      mock.patch.object(sys, 'argv', argv),
+                      mock.patch.object(launcher, 'selected_profile') as selected,
+                      mock.patch.object(launcher.subprocess, 'run') as run,
+                      mock.patch.object(launcher, 'secret') as secret,
+                      contextlib.redirect_stderr(io.StringIO())):
+                    with self.assertRaises(SystemExit) as raised:
+                        launcher.main()
+                    self.assertEqual(raised.exception.code, 2)
+                    selected.assert_not_called()
+                    run.assert_not_called()
+                    secret.assert_not_called()
+
+    def test_auth_status_respects_project_lock_before_docker_or_secret_access(self):
+        self.profiles.write_text(json.dumps({'example': self.profile}))
+        for provider in ('codex', 'claude'):
+            argv = ['sdlc.py', 'auth-status', '--profiles', str(self.profiles),
+                    '--profile', 'example', '--repo', 'example-org/test-repo',
+                    '--provider', provider]
+            with (self.subTest(provider=provider),
+                  mock.patch.object(sys, 'argv', argv),
+                  mock.patch.object(launcher.fcntl, 'flock', side_effect=BlockingIOError),
+                  mock.patch.object(launcher.subprocess, 'run') as run,
+                  mock.patch.object(launcher, 'secret') as secret,
+                  contextlib.redirect_stdout(io.StringIO())):
+                with self.assertRaisesRegex(ValueError, 'owns this Docker project'):
+                    launcher.main()
+                secret.assert_not_called()
+                self.assertFalse(any(call.args[0][0] == 'docker' for call in run.call_args_list))
+
     def test_model_changes_do_not_change_workspace_volume_identity(self):
         first, _, _ = self.call('cli', '--model', 'first-model')
         second, _, _ = self.call('cli', '--model', 'second-model')
         self.assertEqual(first.args[0][3], second.args[0][3])
+
+    def test_provider_changes_do_not_change_workspace_volume_identity(self):
+        codex, _, _ = self.call('cli')
+        claude, _, _ = self.call('cli', '--provider', 'claude')
+        status, _, _ = self.call('auth-status', '--provider', 'claude')
+        self.assertEqual(codex.args[0][3], claude.args[0][3])
+        self.assertEqual(claude.args[0][3], status.args[0][3])
 
     def test_preview_reports_model_without_running_docker_or_reading_secrets(self):
         command, output, run = self.call('cli', '--model', 'chosen-model', '--dry-run')

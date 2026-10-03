@@ -9,6 +9,8 @@ work/
 .state/
 .codex/
 .t3/
+.claude/
+.sdlc/work/
 .ssh/
 profiles.*.local.json
 *.pem

@@ -1,6 +1,8 @@
 # SDLC container spike
 
-Run Codex inside a container with an explicit GitHub account, SSH commit signing, and a separate command to publish a draft PR. This is an initial runtime experiment for an unattended development workflow, researched on 1 October 2026.
+Run Codex and Claude Code inside a container with an explicit GitHub account and SSH commit signing. The unattended ticket runner uses separate implementation and review sessions, runs configured checks, and finishes with a signed push and draft PR. The original separate execution and publication commands remain available.
+
+Start with [container onboarding](docs/container-onboarding.md) to build and authenticate either provider. Use [unattended Docker ticket jobs](docs/docker-ticket-jobs.md) for repository-root tickets, Docker-backed integration tests and choosing a different provider for review.
 
 **Start with the disposable CLI worker.** It exercises the account, signing and ticket workflow before adding a desktop connection or a ticket queue. [The options note](docs/options.md) compares the alternatives and links the research.
 
@@ -8,18 +10,31 @@ This is a public repository. Examples contain placeholders; actual account setti
 
 “Full access” means Codex's approval and sandbox settings. It is independent of model choice. Here Codex runs as the `node` user with `--dangerously-bypass-approvals-and-sandbox`; Docker still controls its mounts, capabilities and network. The worker can read every credential supplied to it. This example has normal outbound network access.
 
+[The security spikes](spikes/security/README.md) examine host identity and application checks, and test worker-created signed commits with repository-scoped pushes. The current runtime does not protect credentials from another unrestricted process using their host owner’s identity. Use disposable credentials for its experiments; the protected unattended installation remains to be proved.
+
+For a new conversation, start with [the worker execution handoff](docs/worker-execution-handoff.md). It records the latest no-host-mount/Docker-in-Docker proposal, credential findings, Docker Sandboxes assessment and T3 remote options. The [protected runner handoff](docs/protected-runner-handoff.md) preserves the earlier service-boundary investigation.
+
+The [Colima trial](docs/colima-trial.md) passed the full worker lifecycle in a disposable Linux VM without Mac filesystem sharing or forwarded SSH credentials. It used generated credentials, real signed commits/local Git pushes, nested Docker and simulated provider/PR responses. The report includes repeat steps and Windows alternatives.
+
+The [host control handoff](docs/host-control-handoff.md) records why that trial retained host management access. The [guided access test](docs/host-control-test.md) provides the prepared scripts and steps for one fixed job owned by a separate OS account, with probes from an unprivileged initiating account.
+
+The [execution options and decision-loop guide](docs/runner-options-and-feedback.md) compares local VMs, remote Linux machines and T3, and proposes CLI-based onboarding and human decisions for paused jobs. Its [offline CLI spike](spikes/decision-loop/README.md) can be installed into a new private prefix and exercises registration, ticket capture and a bound answer/continuation cycle without credentials or model calls.
+
+The [Herdr remote assessment](docs/herdr-remote-assessment.md) examines a terminal-based alternative over SSH/Tailscale, with persistent Codex/Claude panes, worker-local Docker and human feedback. It includes a proposed trial; no Herdr connection has been tested.
+
 ## What is included
 
-- A Debian/Node image with Codex CLI and GitHub CLI versions pinned in [`runtime/Dockerfile`](runtime/Dockerfile), plus a pinned multi-architecture Node 24/Bookworm base image. Debian apt packages are resolved during the build.
+- A Debian/Node image with Codex, Claude Code, GitHub CLI, .NET 10 and Docker/Compose tools in [`runtime/Dockerfile`](runtime/Dockerfile), plus a pinned multi-architecture Node 24/Bookworm base image. Debian apt packages are resolved during the build.
 - Skills and custom agents from [tjpeel/skills](https://github.com/tjpeel/skills) and [tjpeel/agents](https://github.com/tjpeel/agents), pinned to source commits in the image.
 - Model selection for each launch, with an optional profile default.
-- Explicit account/repository profiles. Each pair gets separate workspace, Codex and T3 state volumes.
+- Explicit account/repository profiles. Each pair gets separate Codex, Claude and T3 state volumes; unattended jobs get a fresh workspace.
 - Dedicated SSH commit signing, separate from HTTPS Git and GitHub API authentication.
-- One ticket file per run; streamed JSON events and a saved final response.
+- One ticket file per run; unattended jobs capture linked local work Markdown and retain private diagnostics.
+- An optional per-job Docker daemon for integration tests using worker-local ports and relative bind mounts.
 - Signature and account checks before an explicit draft-PR command.
 - An optional SSH service for Codex desktop or T3 Code.
 
-The scripts have no scheduler, Jira integration, automatic merge, application deployment or retry policy. Repository language tools must be added to the image as needed.
+The scripts have no scheduler, Jira integration, automatic merge or application deployment. The unattended runner has bounded review/fix rounds; publication retries remain manual.
 
 ## 1. Configure one account and test repository
 
@@ -57,7 +72,7 @@ python3 scripts/sdlc.py login --profile personal --repo YOUR_PERSONAL_LOGIN/exam
 python3 scripts/sdlc.py init --profile personal --repo YOUR_PERSONAL_LOGIN/example-repo
 ```
 
-The build runs each catalogue's Codex installer with the `tjpeel` prefix. Skills go in `/home/node/.agents/skills`; custom agents go in `/etc/codex/agents`. Their supporting files remain in `/opt/sdlc/catalogues`. These paths sit outside the mounted Codex state volume, so rebuilding also updates the catalogue for existing workspaces. The paths are supported by the pinned CLI's [skill discovery](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/ext/skills/src/host_roots.rs) and [agent discovery](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/agent-roles/src/loader.rs).
+The build runs each catalogue's Codex installer with the `tjpeel` prefix. Skills go in `/home/node/.agents/skills`; custom agents go in `/etc/codex/agents`. Their supporting files remain in `/opt/sdlc/catalogues`. These paths sit outside the mounted Codex state volume, so rebuilding also updates the catalogue for existing workspaces. The paths are supported by the pinned CLI's [skill discovery](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/ext/skills/src/host_roots.rs) and [agent discovery](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/agent-roles/src/loader.rs).
 
 The default source commits are recorded in `runtime/Dockerfile`. To override either catalogue for one build, set `SDLC_SKILLS_REVISION` or `SDLC_AGENTS_REVISION` when running the launcher’s `build` command. Each value must be a full, lowercase 40-character commit SHA. The launcher passes overrides as Docker build arguments; Compose uses the Dockerfile defaults. Build downloads use the public repositories and need no GitHub credentials.
 
@@ -199,6 +214,22 @@ python3 tests/docker_smoke.py
 ```
 
 See [the research and smoke-test checklist](docs/options.md) for what remains to establish before using real work tickets.
+
+## Protect public commits
+
+Install the staged-content check in each clone:
+
+```sh
+git config --local core.hooksPath .githooks
+python3 scripts/check_sensitive.py --worktree
+```
+
+Preserve existing hooks if you already use a different hooks directory. The check
+blocks private paths, credentials and local artifacts in staged files, including
+force-added files. Review private work details manually before publishing, and
+check unpublished history with `python3 scripts/check_sensitive.py --history`.
+See [publication safety](docs/publication-safety.md) for the policy, detection
+limits and review steps. GitHub validation runs the same staged-content check.
 
 ## Dependency updates
 

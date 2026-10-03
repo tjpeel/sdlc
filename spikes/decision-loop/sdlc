@@ -1,0 +1,4 @@
+#!/bin/sh
+# Offline simulation entry point; no privilege change or ambient credentials.
+set -eu
+exec python3 -B "$(dirname "$0")/sdlc.py" "$@" </dev/null

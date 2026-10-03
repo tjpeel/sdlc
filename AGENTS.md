@@ -13,3 +13,11 @@ test data free of credentials and private work material.
   or secret-store exports into source, Docker build contexts or test fixtures.
 - Before publishing, inspect the actual staged files for sensitive content.
   Ignore rules do not protect files that are already tracked or force-added.
+- Install the repository pre-commit hook with
+  `git config --local core.hooksPath .githooks`; preserve any existing hooks.
+  See `docs/publication-safety.md` for installation and review guidance.
+- Run `python3 scripts/check_sensitive.py --worktree` before staging and
+  `python3 scripts/check_sensitive.py --staged` before committing. Before pushing,
+  also run `python3 scripts/check_sensitive.py --history` and inspect unpublished
+  ancestors; deleting private content in a later commit does not remove it.
+- Run `python3 -m unittest discover -s tests -v` for changes to the safeguards.

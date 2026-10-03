@@ -1,0 +1,34 @@
+# Explicit compatibility spike. Only this per-job daemon is privileged.
+# No host Docker socket, home directory, or credential volume is mounted here.
+services:
+  worker:
+    network_mode: service:docker-engine
+    environment:
+      DOCKER_HOST: unix:///run/job-docker/docker.sock
+      DOCKER_CONFIG: /run/sdlc/docker
+    volumes:
+      - docker-socket:/run/job-docker
+
+  docker-engine:
+    image: docker:29.8.2-dind
+    privileged: true
+    # Bypass the image wrapper, which would also expose a TCP API.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - "addgroup -g 1000 job-docker; exec dockerd --host=unix:///run/job-docker/docker.sock --group=job-docker"
+    volumes:
+      - workspace:/workspace
+      - docker-socket:/run/job-docker
+      - docker-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "--host=unix:///run/job-docker/docker.sock", "info"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    stop_grace_period: 30s
+
+volumes:
+  docker-socket:
+    name: sdlc-${SDLC_JOB_ID:?Set a unique job ID}-docker-socket
+  docker-data:
+    name: sdlc-${SDLC_JOB_ID:?Set a unique job ID}-docker-data

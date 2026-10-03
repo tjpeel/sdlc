@@ -50,6 +50,9 @@ jobs:
       - name: Run offline tests on the candidate pins
         if: steps.pins.outputs.changed == 'true'
         run: python3 -m unittest discover -s tests -v
+      - name: Check public source before publication
+        if: steps.pins.outputs.changed == 'true'
+        run: python3 scripts/check_sensitive.py --worktree
       - name: Build the candidate image
         if: steps.pins.outputs.changed == 'true'
         run: docker build --pull --no-cache --tag sdlc-codex-spike:local runtime

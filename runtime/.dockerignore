@@ -7,3 +7,5 @@
 bin/**
 !bin/sdlc-job
 !bin/ssh-sign-file
+!bin/sdlc_agents.py
+!bin/ticket_input.py

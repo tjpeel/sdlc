@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Small, explicit job lifecycle. No scheduler and no arbitrary credential broker."""
 import argparse
+import contextlib
+import functools
+import hashlib
+import signal
 import json
 from datetime import datetime, timezone
 import os
@@ -12,12 +16,36 @@ import threading
 import unicodedata
 from urllib.parse import quote
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 WORKSPACE = Path('/workspace/repo')
 SIGN_PROGRAM = '/usr/local/bin/ssh-sign-file'
 ALLOWED_SIGNERS = '/run/sdlc/allowed-signers'
 SMOKE_FILE = 'docs/codex-docker-smoke.md'
 SMOKE_CONTENT = 'Codex completed this task inside Docker.\n'
 
+
+
+@contextlib.contextmanager
+def interruption_guard(cleanup=False):
+    def interrupted(signum, frame):
+        raise InterruptedError('Job interrupted; cleanup will run.')
+    previous = {}
+    for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        previous[signum] = signal.signal(signum, signal.SIG_IGN if cleanup else interrupted)
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def guarded_job(function):
+    @functools.wraps(function)
+    def guarded(*arguments, **keywords):
+        with interruption_guard():
+            return function(*arguments, **keywords)
+    return guarded
 
 def selected_model():
     model = os.environ.get('SDLC_MODEL', '')
@@ -93,9 +121,10 @@ def commits_to_publish(branch):
     return commits
 
 
-def verify_publication(repo, branch):
-    head = run('git', 'rev-parse', 'HEAD', capture=True)
-    remote_head = run('gh', 'api', f'repos/{repo}/git/ref/heads/{quote(branch, safe="/")}',
+def verify_publication(repo, branch, runner=None):
+    runner = runner or run
+    head = runner('git', 'rev-parse', 'HEAD', capture=True)
+    remote_head = runner('gh', 'api', f'repos/{repo}/git/ref/heads/{quote(branch, safe="/")}',
                       '--jq', '.object.sha', capture=True)
     if remote_head != head:
         raise ValueError('Published branch SHA does not match the local HEAD.')
@@ -139,9 +168,369 @@ def check_smoke_acceptance(commits):
     print(f'Smoke acceptance passed for commit {commits[0]}.')
 
 
+def load_job(path):
+    """Validate the descriptor and every snapshotted byte before repository access."""
+    from ticket_input import MAX_FILES, MAX_TOTAL_BYTES, read_markdown, ticket_path
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+        raise ValueError('Invalid job descriptor.')
+    descriptor = json.loads(path.read_text())
+    expected = {'version', 'id', 'repository', 'branch', 'base_branch', 'ticket', 'manifest',
+                'implementation', 'review', 'checks', 'cleanup', 'max_review_rounds', 'agent_timeout_seconds'}
+    if not isinstance(descriptor, dict) or set(descriptor) != expected or type(descriptor['version']) is not int or descriptor['version'] != 1:
+        raise ValueError('Invalid job descriptor schema.')
+    if not isinstance(descriptor['id'], str) or not re.fullmatch(r'[0-9a-f]{32}', descriptor['id']):
+        raise ValueError('Invalid job identity.')
+    if os.environ.get('SDLC_JOB_ID') != descriptor['id']:
+        raise ValueError('Job identity does not match the selected volume.')
+    for field, environment in (('repository', 'SDLC_REPOSITORY'), ('base_branch', 'SDLC_BASE_BRANCH')):
+        if descriptor[field] != os.environ[environment]:
+            raise ValueError('Job descriptor does not match selected repository settings.')
+    if not isinstance(descriptor['branch'], str) or not descriptor['branch']:
+        raise ValueError('Invalid job branch.')
+    ticket_path(descriptor['ticket'])
+    for field in ('implementation', 'review'):
+        role = descriptor[field]
+        if not isinstance(role, dict) or set(role) != {'provider', 'model'} or role['provider'] not in ('codex', 'claude'):
+            raise ValueError('Invalid provider settings.')
+        model = role['model']
+        if model is not None and (not isinstance(model, str) or not model or model.startswith('-')
+                                  or any(c.isspace() or unicodedata.category(c).startswith('C') for c in model)):
+            raise ValueError('Invalid provider model.')
+    for field in ('checks', 'cleanup'):
+        commands = descriptor[field]
+        if (not isinstance(commands, list) or (field == 'checks' and not commands)
+                or any(not isinstance(c, str) or not c.strip() or '\0' in c or '\r' in c for c in commands)):
+            raise ValueError('Invalid configured commands.')
+    for field, low, high in (('max_review_rounds', 1, 3), ('agent_timeout_seconds', 60, 14400)):
+        if type(descriptor[field]) is not int or not low <= descriptor[field] <= high:
+            raise ValueError('Invalid job execution limit.')
+    manifest = descriptor['manifest']
+    if (not isinstance(manifest, dict) or set(manifest) != {'version', 'ticket', 'files'}
+            or type(manifest['version']) is not int or manifest['version'] != 1 or manifest['ticket'] != descriptor['ticket']
+            or not isinstance(manifest['files'], list) or not 1 <= len(manifest['files']) <= MAX_FILES):
+        raise ValueError('Invalid ticket input manifest.')
+    stored_manifest = path.parent / 'manifest.json'
+    if stored_manifest.is_symlink() or stored_manifest.stat().st_size > 65536:
+        raise ValueError('Invalid stored ticket manifest.')
+    if json.loads(stored_manifest.read_text()) != manifest:
+        raise ValueError('Ticket manifest does not match the descriptor.')
+    seen = set()
+    total = 0
+    for entry in manifest['files']:
+        if (not isinstance(entry, dict) or set(entry) != {'path', 'size', 'sha256'}
+                or not isinstance(entry['path'], str) or entry['path'] in seen
+                or type(entry['size']) is not int or entry['size'] < 0
+                or not isinstance(entry['sha256'], str) or not re.fullmatch(r'[0-9a-f]{64}', entry['sha256'])):
+            raise ValueError('Invalid ticket file record.')
+        content = read_markdown(path.parent, entry['path'])
+        if len(content) != entry['size'] or hashlib.sha256(content).hexdigest() != entry['sha256']:
+            raise ValueError('Ticket input hash mismatch.')
+        seen.add(entry['path'])
+        total += len(content)
+    if descriptor['ticket'] not in seen or total > MAX_TOTAL_BYTES:
+        raise ValueError('Ticket input manifest is incomplete or exceeds limits.')
+    return descriptor
+
+
+
+def persist_inputs(descriptor, source, results):
+    """Retain only validated job inputs in the private result volume."""
+    from ticket_input import read_markdown
+    destination = results / 'input'
+    destination.mkdir(mode=0o700)
+    for entry in descriptor['manifest']['files']:
+        content = read_markdown(source, entry['path'])
+        if len(content) != entry['size'] or hashlib.sha256(content).hexdigest() != entry['sha256']:
+            raise ValueError('Ticket input changed while being saved.')
+        target = destination / entry['path']
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target.write_bytes(content)
+        target.chmod(0o600)
+    for filename, value in (('job.json', descriptor), ('manifest.json', descriptor['manifest'])):
+        target = destination / filename
+        target.write_text(json.dumps(value, indent=2) + '\n')
+        target.chmod(0o600)
+    return destination
+
+
+def pipeline_command(arguments, results, label, *, cwd=None, timeout=3600, capture=True):
+    """Keep command output private and terminate the process tree on timeout."""
+    with (results / f'{label}.log').open('a') as output:
+        process = subprocess.Popen(arguments, cwd=WORKSPACE if cwd is None else cwd,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE if capture else output,
+                                   stderr=output, text=True, start_new_session=True)
+        try:
+            stdout, _ = process.communicate(timeout=timeout)
+        except BaseException:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise
+        if stdout:
+            output.write(stdout)
+    if process.returncode:
+        raise ValueError(f'Job command failed during {label}; inspect private results.')
+    return stdout.strip() if stdout else ''
+
+
+def git_settings():
+    return (
+        ('user.name', os.environ['SDLC_GIT_NAME']), ('user.email', os.environ['SDLC_GIT_EMAIL']),
+        ('user.signingKey', '/run/secrets/signing-key'), ('gpg.format', 'ssh'),
+        ('gpg.ssh.program', SIGN_PROGRAM), ('gpg.ssh.allowedSignersFile', ALLOWED_SIGNERS),
+        ('commit.gpgsign', 'true'), ('core.hooksPath', '/dev/null'),
+    )
+
+
+def fresh_checkout(descriptor, results):
+    repo, url = repository()
+    if WORKSPACE.exists() or WORKSPACE.is_symlink():
+        raise ValueError('Fresh job refuses an existing checkout; start a new job ID.')
+    command = lambda *args: pipeline_command(args, results, 'preflight')
+    for branch in (descriptor['branch'], descriptor['base_branch']):
+        if not branch or branch.startswith(('-', 'codex/')):
+            raise ValueError('Use an explicit valid branch without a codex/ prefix.')
+        pipeline_command(['git', 'check-ref-format', '--branch', branch], results, 'preflight', cwd='/workspace')
+    if descriptor['branch'] == descriptor['base_branch']:
+        raise ValueError('Use a ticket branch, not the base branch.')
+    login = pipeline_command(['gh', 'api', 'user', '--jq', '.login'], results, 'preflight', cwd='/workspace')
+    if login.casefold() != os.environ['SDLC_GITHUB_LOGIN'].casefold():
+        raise ValueError('Token belongs to a different GitHub account.')
+    pipeline_command(['git', 'clone', '--', url, str(WORKSPACE)], results, 'preflight', cwd='/workspace')
+    if command('git', 'remote', 'get-url', 'origin') != url:
+        raise ValueError('Fresh checkout origin does not match selected repository.')
+    for key, value in git_settings():
+        command('git', 'config', '--local', key, value)
+    if command('git', 'ls-remote', '--heads', 'origin', f'refs/heads/{descriptor["branch"]}'):
+        raise ValueError('Requested ticket branch already exists on the remote.')
+    command('git', 'fetch', 'origin', descriptor['base_branch'])
+    base = command('git', 'rev-parse', f'refs/remotes/origin/{descriptor["base_branch"]}')
+    command('git', 'switch', '-c', descriptor['branch'], f'refs/remotes/origin/{descriptor["base_branch"]}')
+    return repo, url, base
+
+
+def checked_head(descriptor, results):
+    command = lambda *args: pipeline_command(args, results, 'verification')
+    if command('git', 'status', '--porcelain', '--untracked-files=all'):
+        raise ValueError('Job left uncommitted changes.')
+    if command('git', 'branch', '--show-current') != descriptor['branch']:
+        raise ValueError('Current branch does not match the requested branch.')
+    for key, value in git_settings():
+        if command('git', 'config', '--local', '--get', key) != value:
+            raise ValueError('Job changed the configured Git signing or identity settings.')
+    base = descriptor.get('_base_commit', f'refs/remotes/origin/{descriptor["base_branch"]}')
+    command('git', 'merge-base', '--is-ancestor', base, 'HEAD')
+    commits = command('git', 'rev-list', f'{base}..HEAD').splitlines()
+    if not commits:
+        raise ValueError('No proposed commits to publish.')
+    for commit in commits:
+        identity = command('git', 'show', '-s', '--format=%an%n%ae%n%cn%n%ce', commit).splitlines()
+        if identity != [os.environ['SDLC_GIT_NAME'], os.environ['SDLC_GIT_EMAIL']] * 2:
+            raise ValueError('Commit author or committer does not match the selected identity.')
+        command('git', '-c', 'gpg.format=ssh', '-c', f'gpg.ssh.program={SIGN_PROGRAM}',
+                '-c', f'gpg.ssh.allowedSignersFile={ALLOWED_SIGNERS}', 'verify-commit', commit)
+    return command('git', 'rev-parse', 'HEAD'), commits
+
+
+def workspace_fingerprint(results):
+    """Hash tracked and ignored working files as well as local Git configuration."""
+    digest = hashlib.sha256()
+    for base, directories, files in os.walk(WORKSPACE, followlinks=False):
+        digest.update(str(Path(base).relative_to(WORKSPACE)).encode() + b'\0')
+        digest.update(str(Path(base).stat().st_mode).encode() + b'\0')
+        directories.sort()
+        files.sort()
+        if Path(base) == WORKSPACE:
+            directories[:] = [name for name in directories if name != '.git']
+        for name in list(directories):
+            path = Path(base) / name
+            if path.is_symlink():
+                files.append(name)
+                directories.remove(name)
+        for name in sorted(files):
+            path = Path(base) / name
+            digest.update(str(path.relative_to(WORKSPACE)).encode() + b'\0')
+            digest.update(str(path.lstat().st_mode).encode() + b'\0')
+            if path.is_symlink():
+                digest.update(b'link\0' + os.readlink(path).encode())
+            elif path.is_file():
+                with path.open('rb') as source:
+                    for block in iter(lambda: source.read(65536), b''):
+                        digest.update(block)
+            else:
+                raise ValueError('Workspace contains a nonregular file during review.')
+            digest.update(b'\0')
+    digest.update((WORKSPACE / '.git/config').read_bytes())
+    head = pipeline_command(['git', 'rev-parse', 'HEAD'], results, 'review-state')
+    status = pipeline_command(['git', 'status', '--porcelain', '--untracked-files=all'], results, 'review-state')
+    return head, status, digest.hexdigest()
+
+
+def configured_commands(descriptor, results, key, round_number):
+    statuses = []
+    errors = []
+    for index, command in enumerate(descriptor[key]):
+        label = f'{key}-{round_number}-{index + 1}'
+        try:
+            pipeline_command(['bash', '-lc', command], results, label,
+                             timeout=min(descriptor['agent_timeout_seconds'], 180) if key == 'cleanup'
+                             else descriptor['agent_timeout_seconds'], capture=False)
+            statuses.append({'command': command, 'status': 'passed', 'log': f'{label}.log'})
+        except Exception as exc:
+            statuses.append({'command': command, 'status': 'failed', 'log': f'{label}.log'})
+            errors.append(exc)
+            if key != 'cleanup':
+                break
+    (results / f'{key}-{round_number}.json').write_text(json.dumps(statuses, indent=2) + '\n')
+    if errors:
+        raise ValueError(f'Configured {key} failed; inspect private results.') from errors[0]
+    return statuses
+
+
+def invoke_agent(settings, prompt, results, role, timeout):
+    from sdlc_agents import run_agent
+    response = run_agent(settings['provider'], settings['model'], prompt, results, role,
+                         timeout_seconds=timeout)
+    common = {'provider': settings['provider'], 'model': settings['model'], 'role': role}
+    if not isinstance(response, dict) or any(response.get(k) != v for k, v in common.items()):
+        raise ValueError('Agent returned mismatched execution metadata.')
+    if role == 'implementation':
+        if (response.get('status') != 'complete' or set(response) != set(common) | {'status', 'title', 'body'}
+                or any(not isinstance(response.get(k), str) or not response[k].strip() for k in ('title', 'body'))):
+            raise ValueError('Implementation did not return a complete publication proposal.')
+    elif (set(response) != set(common) | {'verdict', 'findings'}
+          or response.get('verdict') not in ('pass', 'changes_requested')
+          or not isinstance(response.get('findings'), list)
+          or any(not isinstance(f, str) or not f.strip() for f in response['findings'])
+          or ((response['verdict'] == 'pass') != (not response['findings']))):
+        raise ValueError('Review did not return a valid verdict.')
+    return response
+
+
+def push_new_branch(url, branch, head, results):
+    # An empty expected value is an atomic absent-ref condition. This cannot
+    # update an existing branch, even if it appeared after the clone preflight.
+    pipeline_command(['git', 'push', f'--force-with-lease=refs/heads/{branch}:', '--',
+                      url, f'{head}:refs/heads/{branch}'], results, 'publication')
+
+
+@guarded_job
+def unattended_job(path):
+    descriptor = load_job(path)
+    results = Path('/workspace/results') / descriptor['id']
+    results.mkdir(mode=0o700, parents=True, exist_ok=False)
+    metadata = {'version': 1, 'job_id': descriptor['id'], 'repository': descriptor['repository'],
+                'branch': descriptor['branch'], 'status': 'failed', 'stage': 'preflight'}
+    review_head = None
+    proposal = None
+    failure = None
+    try:
+        saved_input = persist_inputs(descriptor, path.parent, results)
+        metadata['input_directory'] = str(saved_input)
+        repo, url, base = fresh_checkout(descriptor, results)
+        metadata['base_commit'] = base
+        descriptor['_base_commit'] = base
+        ticket = path.parent / descriptor['ticket']
+        implementation_prompt = (
+            f'Implement the ticket at {ticket}. Linked work Markdown is under {path.parent}, '
+            'with repository-relative paths preserved. Read code and repository documentation from '
+            f'the fresh clone at {WORKSPACE}. Read repository instructions and available skills/agents. '
+            'Run relevant checks and create signed commits using the configured identity. '
+            'Do not push, create or edit a PR, merge, deploy, or change authentication, signing or Git settings. '
+            'Keep the supplied ticket, job inputs, credentials and raw logs out of commits. '
+            'The job runner validates, reviews and publishes after this session. Return a complete '
+            'status and a concise draft PR title/body stating the problem, change and checks. '
+            'If you cannot complete the ticket, return blocked.\n'
+        )
+        for number in range(1, descriptor['max_review_rounds'] + 1):
+            metadata['stage'] = f'implementation-{number}'
+            if number > 1:
+                implementation_prompt += '\nAddress these independent review findings, then create signed commits:\n' + '\n'.join(review['findings'])
+            proposal = invoke_agent(descriptor['implementation'], implementation_prompt,
+                                    results / f'implementation-{number}', 'implementation', descriptor['agent_timeout_seconds'])
+            checked_head(descriptor, results)
+            metadata['stage'] = f'checks-{number}'
+            configured_commands(descriptor, results, 'checks', number)
+            head, commits = checked_head(descriptor, results)
+            diff = pipeline_command(['git', 'diff', '--binary', f'{base}...{head}'], results, f'review-diff-{number}')
+            diff_path = results / f'review-diff-{number}.patch'
+            diff_path.write_text(diff + '\n')
+            before = workspace_fingerprint(results)
+            metadata['stage'] = f'review-{number}'
+            review_prompt = (
+                f'Review the implementation independently against {ticket}. Read repository instructions '
+                f'from {WORKSPACE}; the original ticket/context snapshot is under {path.parent}. '
+                f'The complete diff is at {diff_path}, against base {base}, reviewed HEAD {head}. '
+                f'Configured check results are in {results / ("checks-" + str(number) + ".json")}. '
+                'Read relevant source and instructions. Report only actionable correctness, regression, '
+                'security, acceptance-criteria or test findings. Do not edit files, commits or Git settings; '
+                'do not push or interact with PRs. Return pass with no findings, or changes_requested '
+                'with concrete findings. This is a fresh review session, independent of implementation.\n'
+            )
+            review = invoke_agent(descriptor['review'], review_prompt, results / f'review-{number}',
+                                  'review', descriptor['agent_timeout_seconds'])
+            if workspace_fingerprint(results) != before:
+                raise ValueError('Reviewer changed the workspace or reviewed commit.')
+            if review['verdict'] == 'pass':
+                review_head = head
+                metadata['review_rounds'] = number
+                metadata['commits'] = commits
+                break
+        if review_head is None:
+            raise ValueError('Independent review still has findings after the configured rounds.')
+    except BaseException as exc:
+        failure = exc
+    finally:
+        # Integration resources must stop even when implementation, checks or review fail.
+        # No publication is allowed until cleanup succeeds and the reviewed HEAD is rechecked.
+        metadata['last_stage'] = metadata['stage']
+        metadata['stage'] = 'cleanup'
+        with interruption_guard(cleanup=True):
+            if WORKSPACE.is_dir():
+                try:
+                    configured_commands(descriptor, results, 'cleanup', 0)
+                except BaseException as exc:
+                    failure = failure or exc
+            if failure is not None:
+                metadata['error_type'] = type(failure).__name__
+                metadata['error'] = str(failure)
+                (results / 'result.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    if failure is not None:
+        raise ValueError(f'Unattended job failed during {metadata["last_stage"]}; inspect private result volume.') from failure
+    try:
+        metadata['stage'] = 'publication'
+        head, commits = checked_head(descriptor, results)
+        if head != review_head:
+            raise ValueError('Reviewed HEAD changed before publication.')
+        if pipeline_command(['git', 'remote', 'get-url', 'origin'], results, 'publication') != url:
+            raise ValueError('Origin changed before publication.')
+        login = pipeline_command(['gh', 'api', 'user', '--jq', '.login'], results, 'publication')
+        if login.casefold() != os.environ['SDLC_GITHUB_LOGIN'].casefold():
+            raise ValueError('Token belongs to a different GitHub account.')
+        body = results / 'pr-body.md'
+        body.write_text(proposal['body'] + '\n')
+        push_new_branch(url, descriptor['branch'], head, results)
+        pipeline_command(['gh', 'pr', 'create', '--repo', repo, '--base', descriptor['base_branch'],
+                          '--head', descriptor['branch'], '--draft', '--title', proposal['title'],
+                          '--body-file', str(body)], results, 'publication')
+        # Reuse the verified branch/account/PR contract while keeping raw CLI output private.
+        private_run = lambda *args, **kwargs: pipeline_command(args, results, 'publication', cwd=kwargs.get('cwd'))
+        pr_url, published_head = verify_publication(repo, descriptor['branch'], runner=private_run)
+        metadata.update(status='published', stage='complete', commit=published_head, pr_url=pr_url)
+    except BaseException as exc:
+        metadata['error_type'] = type(exc).__name__
+        metadata['error'] = str(exc)
+        raise ValueError('Publication did not complete verification; inspect private results before retrying.') from exc
+    finally:
+        (results / 'result.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    print(f'Job {descriptor["id"]}: draft PR published and verified.')
+
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('init', 'exec', 'verify', 'publish', 'results'))
+    parser.add_argument('action', choices=('init', 'exec', 'verify', 'publish', 'results', 'run'))
+    parser.add_argument('--job', type=Path)
+    parser.add_argument('--job-id')
     parser.add_argument('--branch')
     parser.add_argument('--ticket', type=Path)
     parser.add_argument('--body', type=Path)
@@ -149,6 +538,8 @@ def main():
     parser.add_argument('--verify-published', action='store_true')
     parser.add_argument('--smoke-checks', action='store_true')
     args = parser.parse_args()
+    if args.job_id and (args.action != 'results' or not re.fullmatch(r'[0-9a-f]{32}', args.job_id)):
+        parser.error('--job-id requires results and a 32-character lowercase hex job ID')
     if args.verify_published and args.action != 'publish':
         parser.error('--verify-published is only valid for publish')
     if args.smoke_checks and args.action != 'publish':
@@ -158,6 +549,26 @@ def main():
         os.environ.update(json.loads(runtime_env.read_text()))
         os.environ.pop('SSH_AUTH_SOCK', None)
     model = selected_model()
+    if args.action == 'run':
+        if args.job is None:
+            parser.error('--job is required for run')
+        unattended_job(args.job)
+        return
+    if args.action == 'results' and args.job_id:
+        if os.environ.get('SDLC_JOB_ID') != args.job_id:
+            raise ValueError('Result identity does not match the selected volume.')
+        result = Path('/workspace/results') / args.job_id / 'result.json'
+        if not result.is_file():
+            print(f'Job {args.job_id}: no saved result metadata yet.')
+            return
+        metadata = json.loads(result.read_text())
+        print(f'Job {args.job_id}: {metadata.get("status", "unknown")} (stage {metadata.get("stage", "unknown")}).')
+        if metadata.get('commit'):
+            print(f'Commit: {metadata["commit"]}')
+        if metadata.get('pr_url'):
+            print(f'Draft PR: {metadata["pr_url"]}')
+        print(f'Private metadata and stage logs: {result.parent}')
+        return
     if args.action == 'results':
         results = Path('/workspace/results')
         jobs = sorted(results.iterdir(), reverse=True) if results.exists() else []
@@ -248,8 +659,12 @@ def main():
 
 
 if __name__ == '__main__':
+    def interrupted(signum, frame):
+        raise InterruptedError('Job interrupted; cleanup will run.')
+    for interrupt_signal in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(interrupt_signal, interrupted)
     try:
         main()
-    except (ValueError, KeyError, subprocess.CalledProcessError) as exc:
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as exc:
         print(f'Job failed: {exc}', file=sys.stderr)
         sys.exit(1)

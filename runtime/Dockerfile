@@ -1,12 +1,17 @@
+FROM docker:29.8.2-cli AS docker-tools
+
 FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
 
 ARG CODEX_VERSION=0.159.3
 ARG GH_VERSION=2.102.0
+ARG CLAUDE_VERSION=2.1.287
+ARG DOTNET_VERSION=10.0.401
 ARG SKILLS_REVISION=21801216eea73e9b75a2a6ac23e0df62b3cd6b8a
 ARG AGENTS_REVISION=1965dbdea022f2c7bd2a7cec159d982dde59ae3e
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git gosu jq openssh-client openssh-server python3 ripgrep \
+    ca-certificates curl git gosu jq libicu72 libssl3 libunwind8 \
+    openssh-client openssh-server python3 ripgrep zlib1g \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in amd64) arch=amd64 ;; arm64) arch=arm64 ;; *) exit 1 ;; esac; \
@@ -21,8 +26,29 @@ RUN set -eu; \
     tar -xzf "$archive"; \
     install -m 0755 "gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
     rm -rf /tmp/gh_*
-RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
-    && codex --version && gh --version
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+    && codex --version && claude --version && gh --version
+
+COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-tools /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+# Microsoft publishes SHA-512 hashes for every SDK archive. Select an exact
+# version and architecture and verify before extraction; do not execute an installer.
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; *) exit 1 ;; esac; \
+    curl -fsSL https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json \
+        -o /tmp/dotnet-releases.json; \
+    jq -r --arg version "$DOTNET_VERSION" --arg rid "$rid" \
+        '[.releases[].sdks[] | select(.version == $version) | .files[] | select(.rid == $rid)][0] | .url, .hash' \
+        /tmp/dotnet-releases.json > /tmp/dotnet-archive.txt; \
+    url="$(sed -n '1p' /tmp/dotnet-archive.txt)"; \
+    hash="$(sed -n '2p' /tmp/dotnet-archive.txt)"; \
+    test "$url" != null && test "${#hash}" -eq 128; \
+    case "$url" in https://builds.dotnet.microsoft.com/dotnet/Sdk/*) ;; *) exit 1 ;; esac; \
+    curl -fsSL "$url" -o /tmp/dotnet-sdk.tar.gz; \
+    printf '%s  /tmp/dotnet-sdk.tar.gz\n' "$hash" | sha512sum -c -; \
+    mkdir -p /opt/dotnet; \
+    tar -xzf /tmp/dotnet-sdk.tar.gz -C /opt/dotnet; \
+    rm /tmp/dotnet-releases.json /tmp/dotnet-archive.txt /tmp/dotnet-sdk.tar.gz
 
 # Keep catalogue sources and generated packages outside the Codex state volume.
 # The upstream installers retain symlinks to supporting files in these sources.
@@ -43,12 +69,16 @@ RUN set -eu; \
     bash /opt/sdlc/catalogues/skills/scripts/install-codex-skills \
         --prefix tjpeel /home/node/.agents/skills; \
     bash /opt/sdlc/catalogues/agents/scripts/install-agents \
-        --runtime codex --prefix tjpeel /etc/codex/agents
+        --runtime codex --prefix tjpeel /etc/codex/agents; \
+    bash /opt/sdlc/catalogues/skills/scripts/install-claude-skills \
+        /opt/sdlc/claude/skills; \
+    bash /opt/sdlc/catalogues/agents/scripts/install-agents \
+        --runtime claude --prefix tjpeel /opt/sdlc/claude/agents
 
 # The bootstrap runs as root to initialise private tmpfs and named volumes.
 # Codex and the project tools run as the existing non-root node user.
-RUN mkdir -p /workspace /home/node/.codex /home/node/.t3 /run/sdlc /run/sshd \
-    && chown node:node /workspace /home/node/.codex /home/node/.t3 \
+RUN mkdir -p /workspace /home/node/.codex /home/node/.claude /home/node/.t3 /run/sdlc /run/sshd \
+    && chown node:node /workspace /home/node/.codex /home/node/.claude /home/node/.t3 \
     && passwd -d node
 COPY entrypoint.py /usr/local/bin/sdlc-entrypoint
 COPY bin/ /usr/local/bin/
@@ -57,7 +87,10 @@ RUN chmod 0755 /usr/local/bin/sdlc-* /usr/local/bin/ssh-sign-file \
     && printf '%s\n' 'if [ -r /run/sdlc/environment ]; then . /run/sdlc/environment; fi' \
        > /etc/profile.d/sdlc.sh
 
-ENV HOME=/home/node CODEX_HOME=/home/node/.codex
+ENV HOME=/home/node CODEX_HOME=/home/node/.codex CLAUDE_CONFIG_DIR=/home/node/.claude \
+    DOTNET_ROOT=/opt/dotnet PATH=/opt/dotnet:$PATH \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1
+RUN dotnet --version && docker --version && docker compose version
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/sdlc-entrypoint"]
 CMD ["bash", "-l"]
