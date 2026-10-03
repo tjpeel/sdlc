@@ -4,11 +4,75 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestInitRejectsArgumentsBeforeWritingProjectSettings(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	for _, args := range [][]string{{"extra"}, {"--source", directory}, {"--provider", "codex"}} {
+		var output bytes.Buffer
+		if err := initCommand(context.Background(), args, &output); err == nil {
+			t.Fatalf("invalid arguments accepted: %v", args)
+		}
+		if output.Len() != 0 {
+			t.Fatal("invalid arguments printed a setup summary")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(directory, ".sdlc")); !os.IsNotExist(err) {
+		t.Fatal("invalid arguments changed the project")
+	}
+	if err := initCommand(context.Background(), []string{"--help"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInitFromNestedDirectoryReportsProjectAndPreservesSettings(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	command := exec.Command("git", "init", "--initial-branch=main", directory)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create test repository: %v: %s", err, output)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module example.invalid/project\n\ngo 1.24.0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(directory, "source", "nested")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+	var output bytes.Buffer
+	if err := initCommand(context.Background(), nil, &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"HEAD: no commits yet", "Project file: \"go.mod\"", "Tickets found: 0", "Project settings created: .sdlc/project.json", "Local project setup complete"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %q in summary: %s", want, output.String())
+		}
+	}
+	settings := filepath.Join(directory, ".sdlc", "project.json")
+	before, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := initCommand(context.Background(), nil, &output); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(settings)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("repeat initialization replaced project settings", err)
+	}
+	if !strings.Contains(output.String(), "Project settings preserved") {
+		t.Fatal("repeat initialization did not report existing settings")
+	}
+}
 
 func TestUnknownProviderIsRejectedBeforeAccessingDocker(t *testing.T) {
 	for _, command := range []string{"login", "status"} {

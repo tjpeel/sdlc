@@ -2,8 +2,8 @@
 
 The Go CLI provides local installation/reinstallation, build identity, shared
 runtime image build/status checks, Codex/Claude account login, shared instruction
-settings and interactive provider sessions. Ticket execution and secret-store
-access remain to be implemented.
+settings, local project initialization and interactive provider sessions. Ticket
+execution and secret-store access remain to be implemented.
 
 ## Install or reinstall
 
@@ -24,6 +24,59 @@ earlier `sdlc` on PATH. On Windows, close any running `sdlc` before reinstalling
 The installed executable needs no Go runtime. Its version includes `0.1.0-dev`,
 the Git revision, a dirty-source marker when applicable, and the host OS and
 architecture. Release archives and package-manager installation are future work.
+
+## Initialize a project
+
+Run from a project repository or any directory inside it:
+
+```sh
+cd /PATH/TO/YOUR_PROJECT
+sdlc init
+```
+
+Initialization discovers the Git root, current branch and HEAD, local changes,
+sanitized remote identities, project manifests and ticket paths under
+`.sdlc/work/<reference>/tickets/`. It supports new repositories without commits
+and detached HEAD. It reports missing inputs without reading ticket bodies or
+deciding ticket readiness and blockers.
+Source-state inspection avoids Git content filters. It reports possible changes
+when file metadata differs or cannot be compared, even if contents are unchanged.
+
+The command creates `.sdlc/work/` and, when needed, adds `/.sdlc/work/` to Git's
+local `info/exclude` file. It resolves that file through Git, including in linked
+worktrees, and preserves existing exclude rules. Private process inputs and run
+output under this directory must be ignored and untracked. Initialization fails
+if they or case variants of their paths are tracked or staged, or if repository
+ignore rules prevent this protection. Remove private files from tracking deliberately before retrying;
+initialization does not change the index or erase Git history.
+
+Portable settings live in `.sdlc/project.json`:
+
+```json
+{
+  "version": 1,
+  "checks": [["go", "test", "./..."], ["go", "vet", "./..."]],
+  "input_files": []
+}
+```
+
+Each check is an argument array. The initial checks are suggestions based on
+detected project files; review and edit them for the project's requirements.
+`input_files` starts empty. It is reserved for relative input paths and does not
+approve or transfer files. Keep credentials, account details, vault references
+and host paths out of these settings. This file can be committed if its contents
+are suitable for the project repository.
+
+Repeated initialization validates and preserves existing settings, including
+custom checks, rather than replacing them with newly detected defaults. It
+rejects unsupported settings versions, invalid paths and unsafe filesystem links.
+No project checks run during initialization. It needs only local Git access;
+it does not fetch source, contact providers, bind an account profile or require
+Docker. Project capture, secret retrieval and ticket execution remain future
+work. `sdlc interactive` still opens an empty workspace after initialization.
+
+If a later setup step fails, earlier completed steps can remain. Fix the reported
+problem and rerun initialization; existing settings and exclude rules are retained.
 
 ## Shared agent instructions
 
