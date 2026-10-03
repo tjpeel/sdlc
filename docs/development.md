@@ -13,7 +13,7 @@ before publication. Preserve the repository's signing configuration.
 | Path | Purpose |
 | --- | --- |
 | `cmd/` | Installed Go CLI and local installer |
-| `internal/` | Build identity, installation, locking, shared image, provider authentication, instruction settings, project initialization, ticket discovery and interactive sessions |
+| `internal/` | Build identity, installation, locking, shared image, provider authentication, instructions, project setup, ticket discovery, interactive sessions and single-ticket execution |
 | `runtime/` | Shared local image context and supporting runtime components |
 | `docs/` | Current CLI, workflow and development guides |
 | `scripts/` | Public-source safeguards and dependency pin tooling |
@@ -21,8 +21,9 @@ before publication. Preserve the repository's signing configuration.
 | `research/` | Earlier notes, examples, Python runner and experiments |
 
 The runtime still contains components exercised by the Python prototype. Their
-presence does not make ticket execution or recovery available through the Go
-CLI. Prototype usage is documented only in the research archive.
+presence does not define the Go CLI workflow. The current `sdlc run` implementation
+has its own Go controller and native client adapter. Prototype usage is documented
+only in the research archive.
 
 ## Validate an iteration
 
@@ -144,3 +145,22 @@ not parsed. Go tests, vet, CLI/installer builds and all 186 offline Python tests
 pass. A built macOS/ARM64 CLI also passed discovery from a nested directory in a
 disposable `.slnx` repository, duplicate failure and help dispatch. No Docker or
 provider session is launched by this command.
+
+Single-ticket execution is checked with offline fake-provider tests for streaming,
+schema handoffs, opposite-provider selection, human questions, exact session
+resume, bounded repairs, publication reconciliation, signing and current CI gates.
+Tests cover isolated source capture, check input separation and checkpoint recovery.
+Go tests and vet, plus all 193 Python tests, pass. A local macOS/ARM64 Docker probe
+verified installed native CLI flags with networking disabled, source inspection
+and bundle export, credential-free unit checks, and a nested service with a source
+bind through the separate integration daemon. No provider account, model request
+or GitHub write ran in these probes. Run the Docker probe explicitly with:
+
+```sh
+SDLC_OFFLINE_DOCKER_TESTS=1 go test -count=1 -v ./internal/workrun \
+  -run TestOfflineDockerExecutionBoundaries
+```
+
+The probe uses the recorded local runtime and a disposable privileged Docker
+daemon; it does not run in CI. Real .NET repository tests, connected implementation,
+PR publication and cross-provider review remain to be validated together.

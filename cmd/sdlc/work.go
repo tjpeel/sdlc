@@ -43,7 +43,7 @@ func workCommand(ctx context.Context, args []string, output io.Writer) error {
 		fmt.Fprintf(&summary, "  %d. %q\n", index+1, ticket)
 	}
 	fmt.Fprintln(&summary, "Ticket discovery complete. Ticket content and dependencies have not been checked.")
-	fmt.Fprintln(&summary, "Ticket execution remains future work.")
+	fmt.Fprintln(&summary, "Select one ticket with sdlc run --reference REFERENCE --ticket NUMBERED_FILE.")
 	_, err = output.Write(summary.Bytes())
 	return err
 }

@@ -1,59 +1,19 @@
 # Ticket workflow
 
-The confirmed direction is an installed Go CLI coordinating work from a local
-Git repository through one shared SDLC Docker image. macOS and Linux are the
-primary hosts; Windows should remain possible with a Linux-container engine.
+The installed Go CLI coordinates work from a local Git repository through one
+shared SDLC Docker image. macOS and Linux are the primary hosts; Windows needs a
+Linux-container engine. [The CLI guide](cli.md) covers setup and exact commands.
 
-The [setup commands, provider login, instruction settings, project initialization,
-ordered ticket discovery and interactive sessions](cli.md)
-are implemented today. Interactive sessions currently use an empty disposable
-workspace. Ticket execution, secret retrieval, update prompts and recovery remain
-to be built.
+## Implemented: one selected ticket
 
-## Set up the installation
+Install the CLI, build the shared runtime, authenticate the selected provider,
+then run `sdlc init` in the project. Review the checks in `.sdlc/project.json`.
+Shared instructions are private installation settings; each run captures their
+current body. The image contains pinned public skills and agent definitions.
+Runtime status reports available updates; automatic update prompts remain future
+work.
 
-Clone the SDLC repository, install the CLI on PATH and build the shared image
-locally. Every project uses that image. Project names, source, tickets and
-credentials do not become image build inputs.
-
-Authenticate Codex and Claude with `sdlc auth login` and
-`sdlc auth login --provider claude`. Their login state lives in installation-wide
-storage, separate from disposable work containers. Claude manages its own native
-cache, following the [provider usage rules](provider-usage.md). The image contains pinned
-skills and agents from the public GitHub catalogues. Startup should report
-available updates to both provider CLIs and the skills/agents, and prompt before
-updating the shared runtime.
-
-Codex is the default provider when none is specified. Use `--provider claude` to
-select Claude. `sdlc auth status` checks Codex; `sdlc auth status --all` checks both
-providers.
-
-Configure common agent instructions with `sdlc instructions set --file FILE`,
-inspect them with `sdlc instructions show`, or remove custom additions with
-`sdlc instructions reset`. The default shared body contains only the rule that
-implementation stops whenever an agent has a question for a human, until a human
-answers. Additional instructions retain that rule. These settings are private
-installation state and do not require an image rebuild.
-
-## Start work from a project
-
-Run the CLI in the repository containing the work. It should infer the Git root,
-remote, current source state and local engineering inputs, then show the selected
-work and execution settings before starting.
-
-`sdlc init` now discovers local Git state, project manifests and ticket paths,
-protects `.sdlc/work/` with Git's local exclude file, and saves portable check and
-input settings in `.sdlc/project.json`. Existing settings are preserved on repeat
-runs. `sdlc work --reference REFERENCE` lists that work folder's numbered ticket
-files in numeric order. This is a lightweight discovery step: it does not read
-ticket bodies or check their status, specifications or dependencies. Missing or
-ambiguous ticket paths fail; content and dependency problems must stop the
-future launcher when encountered. Listing does not select tickets for execution.
-Source capture and worker startup remain future work.
-
-The ticket layout comes from the public
-[engineering skills on GitHub](https://github.com/tjpeel/skills/tree/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering),
-reviewed at published commit `56e38979baf389b058ae91c6812abae8d8dbcafa`:
+The work layout is:
 
 ```text
 .sdlc/work/<reference>/
@@ -64,59 +24,128 @@ reviewed at published commit `56e38979baf389b058ae91c6812abae8d8dbcafa`:
     02-ticket-title.md
 ```
 
-Treat `<reference>` as an opaque work identifier. Ticket eligibility and order
-follow the engineering process, including `ready-for-agent` and explicit
-lower-numbered dependencies. The GitHub process is the authority; locally
-installed skills do not define the ticket format. Filename order is available
-through `sdlc work`; eligibility, dependency validation and execution remain to
-be implemented.
+`sdlc work --reference REFERENCE` discovers numbered filenames in numeric order.
+`sdlc run --reference REFERENCE --ticket NUMBERED_FILE` selects exactly one ticket.
+Add exact specification or decision paths with repeatable `--input`; SDLC does
+not automatically supply them or execute the remaining tickets. The pinned
+implementation skill retains its eligibility, dependency, missing-input and
+human-decision gates. A run consumes prepared requirements rather than creating
+decisions, specifications or tickets.
 
-At launch, the CLI will obtain the signing key and GitHub token from an authorised
-secret store. The first integration is 1Password scoped to a named vault. Secret
-references belong in private configuration. Open-source alternatives remain part
-of the [detailed design research](../research/notes/cli-workflow-design.md).
+The controller captures current source and selected requirements into private
+storage, records source/base revisions and creates a unique destination branch.
+Local source changes are preserved in a separate baseline commit. It leaves the
+initiating checkout intact. The selected local base must match GitHub at
+publication, and the checkout must include that selected base revision. Capture
+currently rejects linked worktrees, source symlinks,
+submodules and unsafe Git metadata.
 
-Create a fresh checkout in disposable job storage. Carry over the selected local
-source state, ticket inputs and required project configuration, including approved
-environment files for integration tests. Keep these inputs out of the image and
-public source. The exact capture and secret-handling rules remain implementation
-work.
+Codex is the default implementer (`gpt-6.1-sol`, medium effort), with Claude
+(`claude-opus-5-5`, high effort) as independent reviewer. Selecting Claude uses
+`claude-sonnet-5-5` at medium effort and Codex `gpt-6.1-sol` at high effort for
+review. Lead flags and optional private `models.json` settings select full model
+identifiers. Native clients load the pinned subagent model/effort policy. Model
+identity is checked when the client reports it; no report leaves it unverified,
+and providers may cap effort. See [model settings](cli.md#models-and-pinned-agents).
 
-### Target project and test environment
+The implementation account must have stored login. Missing reviewer login does
+not block draft PR delivery and CI: the run then pauses at `awaiting_reviewer`
+until that opposite provider is authenticated. It never falls back to the
+implementer for independent review. These account-authenticated runs support the
+owner's local single-user CLI job and reject CI execution; see the
+[provider rules](provider-usage.md). No live provider run has yet validated the
+new execution path.
 
-The initial target is a .NET 10 repository with an `.slnx` solution containing an
-API or consumer, unit tests and integration tests. Integration tests start the
-application in Docker alongside Mongo or other required container services.
+The delivery sequence is:
 
-Use the repository's own reviewed test commands and orchestration. Do not infer
-unit/integration separation from project names or impose a test framework.
-Future execution must respect the SDK and test-runner settings in `global.json`;
-.NET 10 supports both VSTest and Microsoft Testing Platform with different
-command options. See Microsoft's [dotnet test guidance](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test).
-Initialization already discovers root `.slnx` files but does not generate .NET
-test commands; configure them in `.sdlc/project.json` for the repository.
+1. The implementation follows `tjpeel-engineering-implement` and its testing,
+   verification and whole-ticket local review gates. It makes unsigned candidate
+   commits and requests controller checks through a structured handoff.
+2. The controller runs configured check argument arrays against a disposable copy
+   of the committed tree. Passing evidence resumes the exact original native
+   implementation session. Changed trees need fresh checks.
+3. After local review and `tjpeel-pr-draft` metadata, the host controller recreates
+   candidate commits using host Git identity/signing settings, verifies enabled
+   signatures and confirms the published tree matches the checked tree. Host Git
+   and `gh` push the branch and create or update its draft PR. No secret-store
+   retrieval is implemented; configure host signing and GitHub authentication.
+4. Every reported CI check must pass for the recorded current PR base/head.
+   Missing checks wait for up to two minutes for CI to start, then block with a
+   retained checkpoint; configure CI and resume. Pending checks wait; failed, cancelled or skipped
+   checks return a bounded repair. External PR changes stop for reconciliation.
+5. A fresh opposite-provider session uses `tjpeel-pr-review` on the exact published
+   snapshot and selected requirements, without the implementation transcript or
+   publication credentials. Actionable findings return to the original
+   implementation session. Repairs repeat checks, publication, CI and a fresh
+   independent review.
+6. Passing current CI and a complete review without findings produce `ready` for
+   human review. The PR stays draft. SDLC never merges or approves automatically.
 
-The execution environment must provide a job-specific Docker engine for tests,
-without mounting the host Docker socket. The API or consumer and supporting
-services need an isolated job network and disposable storage. Clean up test
-containers and storage after success, failure or cancellation. Dependency
-installation and tests must run without provider caches, signing keys or GitHub
-publishing credentials. These execution controls remain to be implemented;
-ticket discovery does not probe Docker, build the solution or run tests.
+The normal repair bound is three rounds. Both leads use the pinned
+`read_low`, `read_medium` and `read_high` roles where their skills direct;
+implementation also uses `write_medium`. The controller's authority to publish
+one ticket does not authorise rewriting unrelated work.
 
-## Implement and review a ticket stream
+## Repository checks and Docker integration tests
 
-A selected stream uses two provider roles: an implementer and an independent
-reviewer. Codex is the initial implementer default; Claude is the initial reviewer
-default. Either role can select another supported provider, but the two providers
-must differ. Keep the original implementer responsible for the stream and its
-repairs. If the selected reviewer is unavailable, stop rather than falling back
-to the implementation provider. These roles and stream execution remain to be
-implemented; current interactive sessions do not coordinate tickets or PRs.
+The initial target includes .NET 10 `.slnx` solutions with API or consumer code,
+unit tests and integration tests. Use the repository's reviewed check commands
+and orchestration. Initialization discovers `.slnx` files but does not generate
+.NET checks. Configure exact argument arrays in `.sdlc/project.json` that fit
+`global.json`, the SDK and the selected VSTest or Microsoft Testing Platform
+runner. Do not infer test separation from project names. See Microsoft's
+[dotnet test guidance](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test).
 
-For the requested linear stream, create the first ticket branch from the agreed
-`main` revision. Create each subsequent ticket branch from its predecessor's
-verified delivered revision, with one branch and draft PR per ticket:
+Checks and dependency installation run in separate disposable workers without
+provider caches, host signing keys, SSH agents or GitHub publishing credentials.
+Configured `input_files` supply exact test configuration to those workers;
+untracked files stay out of the provider workspace unless explicitly selected.
+Tracked files remain visible as normal source. Explicit `--input` requirements
+are visible to both providers. Keep credentials
+out of both; path checks cannot detect every secret in file contents.
+
+`--docker-tests` explicitly enables a separate privileged Docker-in-Docker daemon
+with a job network and disposable workspace, socket and daemon-data volumes.
+The host Docker socket is never mounted. This mode requires trusted integration
+tests; a privileged daemon is not containment for hostile code. Cleanup runs on
+success, failure and cancellation; cleanup errors stop delivery.
+
+The authenticated provider still has shell access. Instructions prohibit running
+repository scripts, tests and dependency installation there, but cannot enforce
+that separation. Repository code could read the provider cache or disclose other
+accessible data. Network destination restrictions and credential encryption are
+not implemented. See the [security risks](../README.md#security-boundary-and-risks).
+
+## Progress and resume
+
+Private state is stored under:
+
+```text
+.sdlc/work/<reference>/runs/<ticket-stem>/<run-id>/
+```
+
+The journal records stages, input hashes, source/check evidence, publication
+revisions and the original implementation session ID. Native structured JSONL
+streams to the terminal and private event files; diagnostics and check logs stay
+with the run. Source snapshots and native session storage survive container
+removal. Keep this ignored directory and terminal output private.
+
+A structured human question stops at `waiting_for_human`. Resume the recorded run
+with `--answer-file` only after answering its questions. Operational failures,
+cancellation, timeout, missing inputs, incomplete handoffs, access/usage limits
+and policy refusals also retain a stopped checkpoint. Repair the cause before
+resume; never switch identities or repeatedly restart to evade provider limits.
+
+Resume preserves the original provider/model settings, checks, inputs, runtime
+image and shared instructions. Implementation repairs resume the exact recorded
+native session; independent review always starts fresh. Retain the journal and
+native session files. See [resume commands](cli.md#logs-questions-and-resume).
+
+## Future: stacked-ticket streams
+
+The supported command runs one ticket. The agreed stream design remains future
+work: one branch and draft PR per ticket, with each ticket starting from its
+verified predecessor and using that predecessor branch as PR base:
 
 ```text
 main
@@ -125,142 +154,20 @@ main
       ticket-three  PR base: ticket-two
 ```
 
-The SDLC repository itself continues to be developed on `main`. These ticket
-branches belong to the repository in which work is requested. A stream's delivery
-order does not rewrite ticket blockers or treat an unresolved dependency as
-complete. Each launch names one ticket, its exact selected inputs, starting SHA,
-destination branch, review boundary and PR base. Keep branch state in the launch
-context, not in maintained ticket or specification files. The published
-[implementation contract](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/implement/SKILL.md)
-already defines prepared launches, predecessor revisions and stale descendants.
+A future controller must retain the original implementation owner, verify explicit
+dependencies, wait for every current PR's CI, and review both each incremental
+slice and the complete stack against its original `main` revision. An earlier
+repair invalidates affected descendants' CI and review evidence; restacking must
+preserve ticket boundaries and reconcile changed remote state. Rebase and
+force-push need explicit authority. A finding requiring a product decision stops
+for a human answer. No automatic merge is planned.
 
-The skill roles are:
+The [ticket-stream prompt](prompts/implement-ticket-stream.md) is a design template
+for a harness with prepared repositories and inputs, not the prompt submitted by
+`sdlc run`. Secret-store integration, stream orchestration, broader recovery and
+cleanup management, and an outer-harness `sdlc` skill remain deferred. The SDLC
+repository itself continues development on `main`; ticket branches belong to the
+project requesting work.
 
-| Published skill | Responsibility |
-| --- | --- |
-| [`engineering-implement`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/implement/SKILL.md) | Implement one selected ticket in verified, committed increments. |
-| [`engineering-testing`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/testing/SKILL.md) | Choose checks for required behaviour and credible coverage gaps. |
-| [`engineering-verification`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/verification/SKILL.md) | Bind completion evidence to the actual checked revision and outcomes. |
-| [`engineering-code-review`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/code-review/SKILL.md) | Review the complete local ticket change against technical behaviour and selected requirements. |
-| [`pr-draft`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/draft/SKILL.md) | Draft each PR's description, distinguishing its slice from inherited work. |
-| [`pr-manage`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/manage/SKILL.md) | Publish authorised branches and draft PRs with the recorded predecessor bases. |
-| [`pr-monitor`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/monitor/SKILL.md) | Wait for the required checks on current published revisions and return supported CI repairs to the implementation owner. |
-| [`pr-review`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/review/SKILL.md) | Review published PRs against fixed base and head revisions. |
-
-These are source skill names; use their installed names from the image's
-catalogue. The image pins published skills commit
-`56e38979baf389b058ae91c6812abae8d8dbcafa` and agents commit
-`347f58e598515c51c42fab4a7f699380db725fd3`. A local rebuild installs them.
-The earlier decision, specification and ticket-creation skills supply approved
-inputs; a work run consumes those inputs rather than regenerating them.
-
-The immediate step is a [ticket-stream prompt](prompts/implement-ticket-stream.md)
-that coordinates the existing skills, with one implementation invocation per
-ticket. It does not require a new skill or changes to the skills repository.
-Propose any incompatible skill requirement before deciding whether to change
-or defer it. The current CLI does not yet prepare a project checkout or submit
-this prompt; it is a template for a harness with the selected repository and
-inputs available.
-
-All process inputs and private run outputs use the initiating repository's
-`.sdlc/` root. The skills catalogue keeps its existing structure. A future single
-`sdlc` skill would let an outer AI harness use the CLI; the CLI itself will not
-invoke that skill. Its design is deferred.
-
-Implementation already applies testing and verification guidance and invokes a
-local code review at the end of each ticket. Preserve that per-ticket check.
-The different-provider review requested here is an additional whole-stream gate
-after publication and CI, coordinated by SDLC:
-
-1. Implement and verify each selected ticket on its own branch. Publish its draft
-   PR, then launch the next ticket from the verified predecessor.
-2. Wait until every stream PR is published and its configured required CI checks
-   have passed for the recorded current revisions. Missing, pending, failed,
-   cancelled or unexpectedly skipped checks do not satisfy the gate.
-3. Start a fresh session with the selected review provider. Supply approved
-   tickets and specifications, immutable source and diffs, PR base/head SHAs and
-   check evidence. Review each incremental PR and the complete stack against the
-   stream's recorded `main` starting point, including interactions across tickets.
-4. Record actionable findings against the reviewed revisions and return them to
-   the original implementer. An incomplete or interrupted review is not approval.
-   A finding that needs a new product decision stops for a human answer.
-5. Apply repairs within the affected tickets. Carry an earlier ticket's repair
-   through all affected descendants, publish the updated branches and invalidate
-   their old CI and review evidence. Preserve original ticket boundaries and
-   record their mapping to the updated bases.
-6. Repeat the CI gate and fresh independent review for the updated stack. Finish
-   as ready for human review and merge only when required checks pass and the
-   independent review completes without actionable findings.
-
-CI evidence and reviews belong to exact content, not just PR numbers. A changed
-head, base or relevant input invalidates affected evidence. Reconcile remote
-state before resume and before declaring the stack ready. Questions, unexpected
-external changes, policy refusals and exhausted usage stop the whole stream.
-Do not automatically merge PRs.
-
-Keep publication credentials and signing with the controller where possible.
-The reviewer receives only its own provider login and selected review inputs,
-with no implementer transcript, publication credentials or implementation secrets.
-It cannot publish or change the implementation branches; any verification scratch
-changes are disposable and must not be mistaken for the reviewed revision.
-Store the stream journal, findings and source checkpoints outside disposable
-container storage, alongside the private run outputs. Verify the supported
-unattended account route under the [provider rules](provider-usage.md) before
-connecting either role; current interactive login does not establish that route.
-
-The published [pr-manage reference rules](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/manage/SKILL.md#L61-L121)
-now accept a confirmed ticket key or the exact selected work reference. Every
-PR carries that identifier in its title and body; branch names can use a
-separate Git-safe rendering. Preserve both identifiers in the body when a ticket
-key and associated work reference are supplied. The [isolated proposal](proposals/pr-manage-work-reference.md)
-records the change that was adopted upstream. SDLC uses the published skill.
-Rebase and force-push restacking also need explicit authority. Publication authority
-alone does not authorise rewriting someone else's work.
-
-## Execute and report progress
-
-Each job gets a disposable worker and its own Docker test daemon. Nested test
-containers, daemon data and job storage should be ephemeral. The worker implements
-tickets, runs the repository's checks and uses the engineering review process.
-
-The initiating repository retains progress and diagnostic logs at a path tied to
-the requested ticket:
-
-```text
-.sdlc/work/<reference>/runs/<ticket-stem>/<job-id>/attempts/<attempt-id>/
-```
-
-This run-log layout is the proposed SDLC convention; it is not defined by the
-upstream engineering skills. Bind the selected run directory into the worker so
-the CLI can tail files on the host. Logs then survive container removal and a
-disconnected terminal. Keep them private and ignored.
-
-At job launch, capture the shared instructions in a read-only per-run snapshot and
-make the same body available to Codex and Claude through their native global
-instruction files. Preserve the checkout's own instruction files. The SDLC
-repository's development instructions are not a worker default. Interactive
-sessions already receive this snapshot; ticket-worker injection remains to be
-implemented with the work launcher.
-
-## Stop and continue
-
-Unattended work should either complete with recorded checks and results or stop
-with an explicit problem and the information needed to intervene. The CLI should
-show the failure, accept the required decision and continue the same logical job.
-
-Any agent question for a human must stop implementation and put the job into a
-waiting-for-human state with the question recorded in its progress log. Do not
-guess an answer, continue to another ticket or restart automatically. Resume only
-after a human has answered the pending question. Enforce this in the runner's
-status handling as well as the shared instructions; a Markdown rule alone is not
-a process control. Question capture and answer handling remain implementation
-work.
-
-Logs alone cannot restore uncommitted work or a provider session. A recovery
-checkpoint must preserve the relevant source changes, input identity and session
-state outside ephemeral storage. Recovery and cleanup rules are still to be
-implemented.
-
-The [research archive](../research/README.md) preserves the investigations and
-prototypes behind this direction. Their commands and experiments are separate
-from the current Go CLI.
+The [research archive](../research/README.md) preserves earlier investigations
+and prototypes. Their commands do not define current CLI behaviour.

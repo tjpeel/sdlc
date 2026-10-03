@@ -70,7 +70,7 @@ func TestWorkListsTicketsWithoutReadingBodiesOrRunningChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := output.String()
-	for _, want := range []string{"Work reference: \"Example stream\"", "Ticket order (3):", "1. \".sdlc/work/Example stream/tickets/02-api.md\"", "2. \".sdlc/work/Example stream/tickets/10-consumer.md\"", "3. \".sdlc/work/Example stream/tickets/100-integration.md\"", "content and dependencies have not been checked", "execution remains future work"} {
+	for _, want := range []string{"Work reference: \"Example stream\"", "Ticket order (3):", "1. \".sdlc/work/Example stream/tickets/02-api.md\"", "2. \".sdlc/work/Example stream/tickets/10-consumer.md\"", "3. \".sdlc/work/Example stream/tickets/100-integration.md\"", "content and dependencies have not been checked", "Select one ticket with sdlc run"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %s", want, got)
 		}
