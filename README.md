@@ -6,7 +6,20 @@ Start with [container onboarding](docs/container-onboarding.md) to build and aut
 
 **Start with the disposable CLI worker.** It exercises the account, signing and ticket workflow before adding a desktop connection or a ticket queue. [The options note](docs/options.md) compares the alternatives and links the research.
 
-[The CLI workflow design](docs/cli-workflow-design.md) recommends Go for an installed cross-platform command using one shared SDLC image across all repositories. It describes setup, current-repository capture, named-vault secrets, progress and recovery. Its commands are proposed; the current Python runner remains the executable prototype.
+[The CLI workflow design](docs/cli-workflow-design.md) describes the Go host command and one shared SDLC image across all repositories. The first local installation increment is available below; setup, ticket execution, secrets and recovery are proposed. The current Python runner remains the ticket-execution prototype.
+
+To build and install the Go command from this clone, select an existing directory
+on your PATH. Go 1.24 or later is required for local builds. Repeat the same
+command to reinstall; it preserves runtime state and refuses to overwrite an
+unmanaged executable or a command shadowed earlier on PATH.
+
+```sh
+go run ./cmd/sdlc-install --bin-dir /PATH/TO/YOUR_BIN_DIRECTORY
+sdlc --version
+```
+
+The version includes the development version, Git revision and dirty-source
+marker. The installed binary requires no Go runtime.
 
 This is a public repository. Examples contain placeholders; actual account settings and credentials belong in ignored local files or an external secret store. Keep real work tickets and job output outside the tracked source tree. The runtime stores authentication and results in Docker volumes.
 
