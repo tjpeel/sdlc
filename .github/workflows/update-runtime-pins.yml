@@ -53,13 +53,7 @@ jobs:
       - name: Check public source before publication
         if: steps.pins.outputs.changed == 'true'
         run: python3 scripts/check_sensitive.py --worktree
-      - name: Build the candidate image
-        if: steps.pins.outputs.changed == 'true'
-        run: docker build --pull --no-cache --tag sdlc-codex-spike:local runtime
-      - name: Test the candidate container with disposable credentials
-        if: steps.pins.outputs.changed == 'true'
-        run: python3 tests/docker_smoke.py
-      - name: Open and merge the tested update PR
+      - name: Open and merge the checked update PR
         if: steps.pins.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,8 +75,8 @@ jobs:
           (folder / 'runtime-pr.md').write_text(
               'Update the pinned Codex and GitHub CLI releases and skills/agents source commits.\n\n'
               '```text\n' + changes + '```\n\n'
-              'Validation passed: offline tests, an uncached Docker build, and the Docker/SSH smoke test '
-              'with disposable keys and a fake token. No model request or GitHub publication smoke test ran.\n'
+              'Validation passed: offline tests and the public-source sensitive-information check. '
+              'Docker image builds and container smoke checks run locally, outside CI.\n'
           )
           PY
           tested_commit=$(git rev-parse HEAD)

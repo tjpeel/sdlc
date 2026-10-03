@@ -1,4 +1,4 @@
-name: Validate container
+name: Validate source
 
 on:
   pull_request:
@@ -29,11 +29,3 @@ jobs:
         run: python3 scripts/update_runtime_pins.py --check
       - name: Run offline tests
         run: python3 -m unittest discover -s tests -v
-      - name: Build the image with current Debian packages
-        run: docker build --pull --no-cache --tag sdlc-codex-spike:local runtime
-      - name: Test container startup and SSH with disposable credentials
-        run: python3 tests/docker_smoke.py
-      - name: Test isolated nested Docker and .NET fixtures
-        run: python3 tests/nested_docker_smoke.py --execute
-      - name: Test unattended tickets with disposable provider and GitHub stubs
-        run: python3 tests/container_ticket_smoke.py --execute

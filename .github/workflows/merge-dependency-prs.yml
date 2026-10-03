@@ -2,7 +2,7 @@ name: Merge validated dependency PRs
 
 on:
   workflow_run:
-    workflows: [Validate container]
+    workflows: [Validate source]
     types: [completed]
 
 permissions:
