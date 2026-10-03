@@ -118,6 +118,13 @@ not implemented. See the [security risks](../README.md#security-boundary-and-ris
 
 ## Progress and resume
 
+`sdlc dashboard` watches registered local runs across repositories without
+contacting providers or controlling execution. It separates controller heartbeat
+from output activity, displays attention reasons and retains unavailable records.
+Select details with `--run RUN_ID`, optionally adding `--logs` for a bounded private
+tail. Usage fields are optional native measurements; aggregate counters never
+stand in for current context occupancy. See the [dashboard guide](cli.md#watch-local-runs).
+
 Private state is stored under:
 
 ```text

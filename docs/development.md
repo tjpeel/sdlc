@@ -170,3 +170,9 @@ controller ownership, independent heartbeats, stopped and stale sessions, corrup
 or missing run state, and retained stop/CI evidence. Reporting starts and finishes
 inside the selected run's exclusive controller lock. No provider calls are needed
 for reporting tests.
+
+Dashboard tests cover attention ordering, selection, questions and evidence,
+sanitized terminal output, bounded log tails, readonly snapshots and cancellation.
+Usage fixtures cover chunked native events, optional counters, repeated events,
+subagent exclusion, model matching and oversized/malformed input. These remain
+offline; no reported metric establishes real model access or connected-run success.

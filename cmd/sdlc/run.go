@@ -248,6 +248,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	runner.OnState = func(snapshot workrun.Journal) error { return tracker.Update(snapshot) }
 	runner.OnOutput = func(data []byte) { tracker.Activity(data) }
+	runner.OnNativeOutput = func(data []byte) { tracker.NativeEvent(data) }
 	runner.OnFinish = func() error { return tracker.Close() }
 	err = runner.Run(ctx, directory, &journal, answer)
 	fmt.Fprintf(output, "Private run state: %q\nResume: sdlc run --reference %q --ticket %q --resume %s\n", directory, options.reference, ticket, journal.ID)

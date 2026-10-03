@@ -93,6 +93,29 @@ func TestStaleLoadedCheckpointCannotRestartCompletedWork(t *testing.T) {
 	}
 }
 
+type providerShapedCheck struct{}
+
+func (providerShapedCheck) Check(_ context.Context, _ string, _ [][]string, output io.Writer) error {
+	_, err := io.WriteString(output, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":999}}\n")
+	return err
+}
+
+func TestCheckLogsCannotEnterNativeEventObserver(t *testing.T) {
+	dir, j := testRun(t)
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("reviewed")}}
+	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
+	r.Checker = providerShapedCheck{}
+	var native, all strings.Builder
+	r.OnOutput = func(data []byte) { all.Write(data) }
+	r.OnNativeOutput = func(data []byte) { native.Write(data) }
+	if err := r.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(all.String(), "999") || strings.Contains(native.String(), "999") || !strings.Contains(native.String(), "fake streamed event") {
+		t.Fatal("native events mixed with repository logs")
+	}
+}
+
 func TestFreshReviewerReceivesRecordedHumanQuestions(t *testing.T) {
 	dir, j := testRun(t)
 	j.State, j.PendingRole = "waiting_for_human", "review"

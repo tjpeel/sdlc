@@ -24,6 +24,7 @@ type Snapshot struct {
 	OutputBytes    uint64    `json:"output_bytes"`
 	Stopped        bool      `json:"stopped"`
 	StoppedAt      time.Time `json:"stopped_at,omitempty"`
+	Usage          Usage     `json:"usage"`
 }
 
 type Tracker struct {
@@ -34,6 +35,9 @@ type Tracker struct {
 	closed    bool
 	stop      chan struct{}
 	done      chan struct{}
+	observer  usageObserver
+	attempt   int
+	sessionID string
 }
 
 // Begin must be called while holding the selected run's controller lock. Only
@@ -56,7 +60,7 @@ func Begin(directory string, journal workrun.Journal) (*Tracker, error) {
 	}
 	role, model := currentModel(journal)
 	now := time.Now().UTC()
-	t := &Tracker{directory: directory, stop: make(chan struct{}), done: make(chan struct{}), snapshot: Snapshot{
+	t := &Tracker{directory: directory, attempt: journal.Attempt, sessionID: journal.SessionID, stop: make(chan struct{}), done: make(chan struct{}), snapshot: Snapshot{
 		Version: 1, ID: journal.ID, ControllerID: controller, Role: role, Provider: model.Provider, Model: model.Name, Effort: model.Effort,
 		StartedAt: now, HeartbeatAt: now, LastActivityAt: now,
 	}}
@@ -113,6 +117,11 @@ func (t *Tracker) Update(journal workrun.Journal) error {
 		return fmt.Errorf("activity identity does not match journal")
 	}
 	role, model := currentModel(journal)
+	if role != t.snapshot.Role || model.Provider != t.snapshot.Provider || model.Name != t.snapshot.Model || journal.Attempt != t.attempt || (t.sessionID != "" && journal.SessionID != "" && journal.SessionID != t.sessionID) {
+		t.observer.reset()
+		t.snapshot.Usage = Usage{}
+	}
+	t.attempt, t.sessionID = journal.Attempt, journal.SessionID
 	t.snapshot.Role, t.snapshot.Provider, t.snapshot.Model, t.snapshot.Effort = role, model.Provider, model.Name, model.Effort
 	t.snapshot.HeartbeatAt = time.Now().UTC()
 	if err := t.persist(); err != nil {
@@ -122,7 +131,8 @@ func (t *Tracker) Update(journal workrun.Journal) error {
 	return nil
 }
 
-// Activity records output without retaining its content or performing file I/O.
+// Activity records generic output without parsing its content or performing
+// file I/O. Check and diagnostic output can never update native usage telemetry.
 func (t *Tracker) Activity(data []byte) {
 	if len(data) == 0 {
 		return
@@ -134,6 +144,21 @@ func (t *Tracker) Activity(data []byte) {
 	}
 	t.snapshot.LastActivityAt = time.Now().UTC()
 	t.snapshot.OutputBytes += uint64(len(data))
+}
+
+// NativeEvent observes only the provider's native stdout transport. It does not
+// count output bytes or activity twice when the same output reaches Activity.
+// Bounded malformed telemetry is ignored and never causes a run to fail.
+func (t *Tracker) NativeEvent(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return
+	}
+	t.observer.feed(data, t.snapshot.Provider, t.snapshot.Model, &t.snapshot.Usage)
 }
 
 type activityWriter struct {
@@ -161,6 +186,11 @@ func (t *Tracker) Writer(output io.Writer) io.Writer {
 func (t *Tracker) Close() error {
 	t.mu.Lock()
 	if !t.closed {
+		// A final native JSON object can arrive without a trailing newline.
+		if !t.observer.dropping {
+			t.observer.consume(t.observer.line, t.snapshot.Provider, t.snapshot.Model, &t.snapshot.Usage)
+		}
+		t.observer.reset()
 		t.closed = true
 		close(t.stop)
 		now := time.Now().UTC()
