@@ -1,8 +1,9 @@
 # CLI installation and commands
 
 The Go CLI provides local installation/reinstallation, build identity, shared
-runtime image build/status checks, Codex/Claude account login and shared instruction
-settings. Ticket execution and secret-store access remain to be implemented.
+runtime image build/status checks, Codex/Claude account login, shared instruction
+settings and interactive provider sessions. Ticket execution and secret-store
+access remain to be implemented.
 
 ## Install or reinstall
 
@@ -56,15 +57,15 @@ The image contains catalogue-source `AGENTS.md` files under `/opt/sdlc/catalogue
 these are outside the worker's instruction-discovery path. The SDLC repository's
 root `AGENTS.md` is excluded from the Docker build context.
 
-When ticket execution is implemented, each worker must receive a read-only
-snapshot of this shared body at the providers' native global instruction paths:
-`$CODEX_HOME/AGENTS.md` for Codex and `~/.claude/CLAUDE.md` for Claude.
+Interactive sessions receive a read-only snapshot of this shared body at the
+providers' native global instruction paths: `$CODEX_HOME/AGENTS.md` for Codex and
+`$CLAUDE_CONFIG_DIR/CLAUDE.md` for Claude (normally `~/.claude/CLAUDE.md`).
 See [Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 and [Claude memory files](https://code.claude.com/docs/en/memory).
-Project instruction files in the work checkout remain available alongside the
-shared body. Worker injection and an enforced human-input pause are part of the
-remaining ticket-execution work; Markdown instructions alone cannot guarantee a
-process stops.
+Changes to the settings affect the next session. Ticket workers will need the
+same injection alongside project instruction files. An enforced human-input pause
+remains part of ticket-execution work; Markdown instructions alone cannot
+guarantee a process stops.
 
 ## Build the shared runtime
 
@@ -210,3 +211,53 @@ An incompatible provider upgrade fails the status check rather than displaying
 unrecognised provider output.
 
 See [the workflow](workflow.md) for the next capabilities.
+
+## Interactive provider sessions
+
+After building the shared image and logging in to the selected provider:
+
+```sh
+sdlc interactive --provider codex
+sdlc interactive --provider claude
+```
+
+The command checks the stored login offline, starts the recorded shared image and
+attaches your terminal to the unmodified provider CLI. Enter prompts in its native
+interface and exit through that CLI. A missing login directs you to `sdlc auth
+login --provider ...`. Provider errors and questions appear directly in the
+terminal. SDLC does not submit a prompt, restart a failed session or bypass usage
+limits.
+
+This first slice opens an empty `/workspace`. It receives the shared instruction
+snapshot and the skills and agents already built into the image. It does not
+capture the current repository or load work secrets. Workspace files, temporary
+homes and session history are discarded on exit. There is no saved progress log,
+checkpoint or resumable session yet; do not use it for work you need to keep.
+
+Only the selected provider's private native cache persists. The official client
+handles refresh. Codex's scratch `auth.json` points to its persistent cache so
+native refresh writes survive interruption; native logout is propagated on exit.
+This follows the pinned client's [file-cache implementation](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/login/src/auth/storage.rs)
+and must be rechecked on upgrade. Claude manages its cache directly; it may retain account metadata and
+native configuration. Its transcript history and automatic memory are disabled.
+
+Sessions run as a non-root user with a read-only root filesystem, no Linux
+capabilities, bounded resources and no host repository or Docker socket. They
+have network access and can access their own provider cache, so use trusted
+prompts. Codex uses Docker as the isolation boundary with
+`--sandbox danger-full-access --ask-for-approval on-request`, following the
+[official container guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
+This avoids adding privileges for a second Linux sandbox. Claude starts in its
+normal manual permission mode, uses fresh read-only settings and an empty strict
+MCP configuration, and disables account MCP connectors. Its global instructions,
+skills and agents remain available; cached rules, commands, styles, workflows and
+plugins are hidden by disposable directories. Documented native work-data
+directories, including plans and file history, are also disposable. Recheck this
+layout when upgrading the pinned client. Native settings changes cannot persist
+through the read-only settings file. Managed provider policy still applies.
+
+The runtime lock prevents login operations or image replacement during a session.
+Normal exit and cancellation remove the container and instruction snapshot while
+keeping the provider cache. If cleanup fails or the host crashes, inspect leftover
+`sdlc-interactive-*` containers before trying again. Reinstall the CLI after this
+change; the existing image can be reused.

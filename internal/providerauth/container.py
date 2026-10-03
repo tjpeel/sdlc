@@ -1,8 +1,9 @@
-"""Runs in the shared image with an empty home; never returns account details."""
+"""Run native provider authentication and TUIs with isolated command homes."""
 
 import json
 import os
 from pathlib import Path
+import signal
 import stat
 import subprocess
 import sys
@@ -12,6 +13,11 @@ import tempfile
 FILES = {"codex": "auth.json", "claude": ".credentials.json"}
 LIMIT = 1024 * 1024
 HOME_BASE = "/home/node"
+WORKSPACE = Path("/workspace")
+SESSION_INSTRUCTIONS = Path("/session-instructions.md")
+SESSION_SETTINGS = Path("/session-settings.json")
+CODEX_SKILL_INSTALLER = "/opt/sdlc/catalogues/skills/scripts/install-codex-skills"
+CLAUDE_CATALOGUES = Path("/opt/sdlc/claude")
 
 
 def credential(path, owner, allow_invalid=False):
@@ -113,6 +119,146 @@ def classify_claude(result):
     return "invalid"
 
 
+def interactive_environment(home):
+    # Pass no host credentials, proxy configuration or provider overrides. The
+    # image's tools and the selected native account cache are the only inputs.
+    return {"PATH": "/opt/dotnet:/usr/local/bin:/usr/bin:/bin", "HOME": home,
+            "LANG": "C.UTF-8", "TERM": "xterm-256color",
+            "DOTNET_ROOT": "/opt/dotnet", "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+            "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1"}
+
+
+def interactive_process(command, env):
+    """Keep the native TUI attached while allowing orderly container shutdown."""
+    child = None
+    terminating = False
+
+    def terminate(signum, frame):
+        nonlocal terminating
+        terminating = True
+        if child is not None:
+            try:
+                child.send_signal(signum)
+            except ProcessLookupError:
+                pass
+
+    # A Python handler resets to the default when the child execs. Ctrl-C thus
+    # reaches the native TUI without interrupting our wait or cache bookkeeping.
+    handlers = {number: signal.getsignal(number)
+                for number in (signal.SIGTERM, signal.SIGINT)}
+    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGINT, lambda signum, frame: None)
+    try:
+        child = subprocess.Popen(command, env=env, cwd=WORKSPACE)
+        if terminating:
+            child.send_signal(signal.SIGTERM)
+        code = child.wait()
+        return code if code >= 0 else 128 - code
+    finally:
+        for number, handler in handlers.items():
+            signal.signal(number, handler)
+
+
+def require_session_instructions():
+    info = SESSION_INSTRUCTIONS.lstat()
+    if not stat.S_ISREG(info.st_mode) or not os.access(SESSION_INSTRUCTIONS, os.R_OK):
+        raise ValueError("missing session instructions")
+
+
+def finish_codex_interactive(config, directory):
+    """Retain only the native account cache, including native logout changes."""
+    path = config / FILES["codex"]
+    target = directory / FILES["codex"]
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        # Native logout deletes the scratch auth path. Validate the persistent
+        # target again before propagating that deletion.
+        if credential(target, os.getuid()) is not None:
+            target.unlink()
+        return
+    if stat.S_ISLNK(info.st_mode):
+        if path.readlink() != target:
+            raise ValueError("unexpected native cache link")
+        credential(target, os.getuid())
+        return
+    data = credential(path, os.getuid())
+    if data is None:
+        raise ValueError("missing native credential file")
+    persist(directory, FILES["codex"], data)
+
+
+def codex_interactive(directory):
+    target = directory / FILES["codex"]
+    if credential(target, os.getuid()) is None:
+        raise ValueError("missing credential file")
+    require_session_instructions()
+    with tempfile.TemporaryDirectory(prefix="sdlc-session-", dir=HOME_BASE) as home:
+        config = Path(home) / ".codex"
+        config.mkdir(mode=0o700)
+        (config / "AGENTS.md").symlink_to(SESSION_INSTRUCTIONS)
+        (config / FILES["codex"]).symlink_to(target)
+        skills = Path(home) / ".agents" / "skills"
+        env = interactive_environment(home)
+        env["CODEX_HOME"] = str(config)
+        result = subprocess.run(
+            ["bash", CODEX_SKILL_INSTALLER, "--prefix", "tjpeel", str(skills)],
+            env=env, cwd=home, capture_output=True)
+        if result.returncode:
+            raise ValueError("could not prepare image skills")
+        command = ["codex", "-c", 'cli_auth_credentials_store="file"',
+                   "--no-daemon", "--sandbox", "danger-full-access",
+                   "--ask-for-approval", "on-request"]
+        try:
+            return interactive_process(command, env)
+        finally:
+            finish_codex_interactive(config, directory)
+
+
+def claude_catalogues(directory):
+    for name in ("skills", "agents"):
+        target = CLAUDE_CATALOGUES / name
+        path = directory / name
+        if not target.is_dir():
+            raise ValueError("missing image catalogue")
+        if path.is_symlink() and path.readlink() == target:
+            continue
+        if path.exists() or path.is_symlink():
+            raise ValueError("conflicting catalogue path")
+        path.symlink_to(target, target_is_directory=True)
+
+
+def claude_interactive(directory):
+    path = directory / FILES["claude"]
+    if not claude_credential_metadata(path, os.getuid()):
+        raise ValueError("missing credential file")
+    require_session_instructions()
+    # Both paths are readonly mounts of the same file. Cached instructions must
+    # never replace the body selected through the SDLC CLI.
+    if not (directory / "CLAUDE.md").samefile(SESSION_INSTRUCTIONS):
+        raise ValueError("missing shared Claude instructions")
+    settings_info = SESSION_SETTINGS.lstat()
+    if (not stat.S_ISREG(settings_info.st_mode)
+            or not os.access(SESSION_SETTINGS, os.R_OK)
+            or not (directory / "settings.json").samefile(SESSION_SETTINGS)):
+        raise ValueError("missing empty session settings")
+    claude_catalogues(directory)
+    with tempfile.TemporaryDirectory(prefix="sdlc-session-", dir=HOME_BASE) as home:
+        env = interactive_environment(home)
+        env.update({"CLAUDE_CONFIG_DIR": str(directory), "DISABLE_AUTOUPDATER": "1",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "1",
+                    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+                    "CLAUDE_CODE_DEBUG_LOGS_DIR": str(Path(home) / "debug.log")})
+        try:
+            return interactive_process(
+                ["claude", "--setting-sources", "user", "--permission-mode", "default",
+                 "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'], env)
+        finally:
+            claude_credential_metadata(path, os.getuid())
+
+
 def run_claude(action, directory):
     path = directory / FILES["claude"]
     present = claude_credential_metadata(path, os.getuid())
@@ -158,6 +304,10 @@ def run(provider, action, directory=Path("/provider-auth")):
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) != 0o700):
         raise ValueError("unsafe storage directory")
+    if action == "interactive":
+        if provider == "claude":
+            return claude_interactive(directory)
+        return codex_interactive(directory)
     if provider == "claude":
         return run_claude(action, directory)
     data = credential(directory / filename, os.getuid(), allow_invalid=action == "login")
@@ -195,7 +345,7 @@ def run(provider, action, directory=Path("/provider-auth")):
 
 def main():
     provider, action = sys.argv[1:]
-    if provider not in FILES or action not in ("init", "login", "status"):
+    if provider not in FILES or action not in ("init", "login", "status", "interactive"):
         return 1
     try:
         return run(provider, action)
@@ -204,7 +354,10 @@ def main():
         if action == "status":
             print(json.dumps({"state": "invalid"}))
             return 0
-        print("SDLC could not complete authentication safely.", file=sys.stderr)
+        message = ("SDLC could not complete the interactive session safely."
+                   if action == "interactive"
+                   else "SDLC could not complete authentication safely.")
+        print(message, file=sys.stderr)
         return 1
 
 
