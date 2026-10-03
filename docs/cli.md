@@ -133,8 +133,10 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
 The ticket is an exact numbered filename from `sdlc work`. Only that ticket and
 repeatable `--input` requirements are selected; SDLC does not discover a
 specification automatically or launch the next ticket. `--dry-run` prints the
-plan without Docker, authentication checks or execution. It cannot prove account
-or model access.
+plan without Docker, authentication checks or execution. The plan lists selected
+provider inputs and configured check inputs without reading their bodies; their
+content hashes remain empty until source capture. A resumed run's plan shows its
+recorded paths and hashes. The offline plan cannot prove account or model access.
 
 | Flag | Default and purpose |
 | --- | --- |

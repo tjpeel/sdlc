@@ -117,7 +117,7 @@ func TestRunDryRunIsOfflineAndPreservesProviderRoles(t *testing.T) {
 			marker := forbidConnectedRunCommands(t, root)
 			t.Setenv("CI", "true")
 			var output bytes.Buffer
-			if err := runCommand(context.Background(), runArgs("--provider", provider, "--repo", "example/project", "--input", "spec.md", "--dry-run"), &output); err != nil {
+			if err := runCommand(context.Background(), runArgs("--provider", provider, "--repo", "example/project", "--branch", "work/TASK-1", "--input", "spec.md", "--input", "spec.md", "--input", "README.md", "--dry-run"), &output); err != nil {
 				t.Fatal(err)
 			}
 			parts := strings.SplitN(output.String(), "\n", 2)
@@ -135,8 +135,18 @@ func TestRunDryRunIsOfflineAndPreservesProviderRoles(t *testing.T) {
 			if provider == "claude" {
 				want = workrun.DefaultModels().Claude
 			}
-			if result.State != "prepared" || result.Plan.Roles != want || result.Plan.Ticket != ".sdlc/work/TASK-1/tickets/01-selected.md" || result.Plan.DockerTests {
+			if result.State != "prepared" || result.Plan.Roles != want || result.Plan.Ticket != ".sdlc/work/TASK-1/tickets/01-selected.md" || result.Plan.Branch != "work/TASK-1" || result.Plan.DockerTests {
 				t.Fatalf("selection=%+v", result)
+			}
+			wantInputs := []workrun.Input{{Path: result.Plan.Ticket}, {Path: "spec.md"}, {Path: "README.md"}}
+			wantChecks := []workrun.Input{{Path: "README.md"}}
+			if !reflect.DeepEqual(result.Plan.Inputs, wantInputs) || !reflect.DeepEqual(result.Plan.CheckInputs, wantChecks) {
+				t.Fatalf("selected provider/check inputs omitted or misclassified: %+v", result.Plan)
+			}
+			for _, body := range []string{"Selected requirement", "Example repository", "Selected ticket", "Other ticket"} {
+				if strings.Contains(output.String(), body) {
+					t.Fatalf("offline plan disclosed input body %q", body)
+				}
 			}
 			for _, path := range []string{marker, filepath.Join(root, "private-state")} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
