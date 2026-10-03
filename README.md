@@ -72,6 +72,11 @@ suggested checks before using them. It works without Docker or provider login;
 execution starts with `sdlc run`. See the
 [project initialization guide](docs/cli.md#initialize-a-project).
 
+For a disposable .NET 10 `.slnx` project with an API, unit tests and Docker/Mongo
+integration tests, use the [smoke-test example](examples/dotnet-smoke/README.md).
+Its public ticket template adds a count endpoint. The build and tests have passed
+in credential-free SDLC workers; connected provider execution remains to be tested.
+
 List a work folder's tickets in numeric filename order:
 
 ```sh

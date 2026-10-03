@@ -187,3 +187,24 @@ cleanup, cancellation, exclusive-build/shared-session exclusion, simultaneous
 installation identity creation, runtime changes while queued, process-crash lock
 release and surviving Docker cache users. They use fake Docker clients and no
 provider account calls. Queue reporting retains heartbeat and optional usage data.
+
+The [disposable .NET example](../examples/dotnet-smoke/README.md) matches the target
+repository shape: a .NET 10 `.slnx`, an API, unit tests and Docker integration
+tests with Mongo. On 4 October 2026 its credential-free check worker passed the
+solution build with zero warnings or errors, four unit tests and one API/Mongo
+integration test. The dedicated daemon used `overlay2`; all check containers,
+networks and volumes were removed afterwards. No provider account or GitHub write
+was used. Run the opt-in probe from the SDLC checkout:
+
+```sh
+SDLC_OFFLINE_DOTNET_TESTS=1 go test -timeout 25m -count=1 -v ./internal/workrun \
+  -run '^TestOfflineDotnetSmokeExample$'
+```
+
+The probe restores public NuGet packages and pulls public container images. Its
+explicit public file list excludes local ignored credentials and work material.
+Nine offline Python tests cover the sample runner's failure, cancellation,
+cleanup, resource naming and fixed Docker endpoint, including a conflicting
+`DOCKER_CONTEXT`. The complete offline suite now has 202 Python tests. Connected
+implementation, signed publication, CI and opposite-provider review still need a
+test with the account owner.
