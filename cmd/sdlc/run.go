@@ -19,6 +19,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
+	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
@@ -238,6 +239,16 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		checker.InputDirectory = filepath.Join(directory, "check-inputs")
 	}
 	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: providerauth.New(runtime), ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.GitHubPublisher{}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	registry := runstatus.New(runtime.Directory)
+	var tracker *runstatus.Tracker
+	runner.OnStart = func(snapshot workrun.Journal) error {
+		var err error
+		tracker, err = registry.Begin(directory, snapshot)
+		return err
+	}
+	runner.OnState = func(snapshot workrun.Journal) error { return tracker.Update(snapshot) }
+	runner.OnOutput = func(data []byte) { tracker.Activity(data) }
+	runner.OnFinish = func() error { return tracker.Close() }
 	err = runner.Run(ctx, directory, &journal, answer)
 	fmt.Fprintf(output, "Private run state: %q\nResume: sdlc run --reference %q --ticket %q --resume %s\n", directory, options.reference, ticket, journal.ID)
 	return err

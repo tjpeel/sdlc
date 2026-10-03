@@ -54,6 +54,12 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if journal.StartedAt.IsZero() {
+		journal.StartedAt = journal.UpdatedAt
+		if journal.StartedAt.IsZero() {
+			journal.StartedAt = time.Now().UTC()
+		}
+	}
 	journal.UpdatedAt = time.Now().UTC()
 	return saveJSON(filepath.Join(directory, "journal.json"), journal)
 }

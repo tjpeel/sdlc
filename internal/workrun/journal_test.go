@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
 )
@@ -21,6 +22,8 @@ func TestJournalRoundTripRetainsRecoveryEvidence(t *testing.T) {
 	j.Publication = Publication{URL: "https://github.com/example/project/pull/1", Number: 1, HeadSHA: testHead, BaseSHA: testBase}
 	j.Rounds = 2
 	j.Attempt = 4
+	j.StopReason = "Signing agent unavailable"
+	j.CI = CIResult{Status: "pending", Details: "unit checks"}
 	if err := Save(dir, j); err != nil {
 		t.Fatal(err)
 	}
@@ -31,9 +34,25 @@ func TestJournalRoundTripRetainsRecoveryEvidence(t *testing.T) {
 	if got.ResumeState != j.ResumeState || got.SessionID != j.SessionID || got.Evidence.Tree != testTree || got.Publication != j.Publication || got.Rounds != 2 || got.Attempt != 4 || got.UpdatedAt.IsZero() {
 		t.Fatalf("lost recovery state: %+v", got)
 	}
+	if got.StopReason != j.StopReason || got.CI != j.CI || got.StartedAt.IsZero() {
+		t.Fatal("reporting fields were not retained")
+	}
+	started := got.StartedAt
+	if err := Save(dir, &got); err != nil || got.StartedAt != started {
+		t.Fatal("saving a checkpoint changed its start time")
+	}
 	info, err := os.Stat(filepath.Join(dir, "journal.json"))
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("unsafe journal permissions: %v %v", info, err)
+	}
+}
+
+func TestOldJournalRetainsRecordedAgeWhenResumed(t *testing.T) {
+	dir, j := testRun(t)
+	j.UpdatedAt = time.Now().Add(-time.Hour).UTC()
+	previous := j.UpdatedAt
+	if err := Save(dir, j); err != nil || j.StartedAt != previous || !j.UpdatedAt.After(previous) {
+		t.Fatal("old checkpoint age lost during resume")
 	}
 }
 func TestJournalRejectsOutsideWorkspaceAndUnknownFields(t *testing.T) {

@@ -28,14 +28,22 @@ type Runner struct {
 	MaxRounds         int
 	PollInterval      time.Duration
 	MissingCheckGrace time.Duration
+	// Reporting hooks run while the exclusive controller lock is held.
+	OnStart  func(Journal) error
+	OnState  func(Journal) error
+	OnOutput func([]byte)
+	OnFinish func() error
 	// ReviewWorkspace creates a fresh immutable copy of the published revision.
 	ReviewWorkspace func(context.Context, Journal, string) (string, error)
 }
 
 func (runner Runner) stop(directory string, journal *Journal, state, message string) error {
-	journal.ResumeState = journal.State
+	if journal.State != "blocked" && journal.State != "failed" && journal.State != "waiting_for_human" {
+		journal.ResumeState = journal.State
+	}
 	journal.State = state
-	if err := Save(directory, journal); err != nil {
+	journal.StopReason = message
+	if err := runner.save(directory, journal); err != nil {
 		return err
 	}
 	if runner.Output != nil {
@@ -47,13 +55,37 @@ func (runner Runner) stop(directory string, journal *Journal, state, message str
 func (runner Runner) transition(directory string, journal *Journal, state string) error {
 	journal.State = state
 	journal.ResumeState = ""
+	journal.StopReason = ""
 	if runner.Output != nil {
 		fmt.Fprintf(runner.Output, "Run %s: %s\n", journal.ID, state)
 	}
-	return Save(directory, journal)
+	return runner.save(directory, journal)
 }
 
-func (runner Runner) Run(ctx context.Context, directory string, journal *Journal, answer string) error {
+func (runner Runner) save(directory string, journal *Journal) error {
+	if err := Save(directory, journal); err != nil {
+		return err
+	}
+	if runner.OnState != nil {
+		return runner.OnState(*journal)
+	}
+	return nil
+}
+
+type observedOutput struct {
+	writer  io.Writer
+	observe func([]byte)
+}
+
+func (output observedOutput) Write(data []byte) (int, error) {
+	n, err := output.writer.Write(data)
+	if n > 0 && output.observe != nil {
+		output.observe(data[:n])
+	}
+	return n, err
+}
+
+func (runner Runner) Run(ctx context.Context, directory string, journal *Journal, answer string) (runErr error) {
 	if runner.Provider == nil || runner.Checker == nil || runner.Publisher == nil || runner.Repository == nil {
 		return fmt.Errorf("run controller is missing an execution boundary")
 	}
@@ -69,14 +101,36 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		return fmt.Errorf("another controller owns this run")
 	}
 	defer lock.Close()
+	if !journal.UpdatedAt.IsZero() {
+		current, err := Load(directory)
+		if err != nil {
+			return err
+		}
+		if current.UpdatedAt != journal.UpdatedAt {
+			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
+		}
+	}
+	if runner.OnStart != nil {
+		if err := runner.OnStart(*journal); err != nil {
+			return err
+		}
+	}
+	if runner.OnFinish != nil {
+		defer func() {
+			if err := runner.OnFinish(); err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("cannot finish run reporting: %w", err))
+			}
+		}()
+	}
 	if runner.Output == nil {
 		runner.Output = io.Discard
 	}
+	runner.Output = observedOutput{runner.Output, runner.OnOutput}
 	if journal.State == "waiting_for_human" {
 		if answer == "" {
 			return runner.stop(directory, journal, "waiting_for_human", "answer the recorded questions with --answer-file before resuming")
 		}
-		journal.Feedback = "Human answer to the recorded questions:\n" + answer
+		journal.Feedback = "Recorded human questions:\n" + strings.Join(journal.Outcome.Questions, "\n") + "\nHuman answer:\n" + answer
 		journal.State = journal.PendingRole
 		if journal.State == "review" {
 			journal.State = "reviewing"
@@ -91,6 +145,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return fmt.Errorf("stopped run has no resumable stage")
 		}
 		journal.State = journal.ResumeState
+	}
+	journal.StopReason = ""
+	if err := runner.save(directory, journal); err != nil {
+		return err
 	}
 	if runner.Output == nil {
 		runner.Output = io.Discard
@@ -114,6 +172,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		switch journal.State {
 		case "ready":
 			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
+			journal.CI = checks
 			if err != nil || checks.Status != "passed" {
 				return runner.stop(directory, journal, "blocked", "PR or CI changed after independent review")
 			}
@@ -181,7 +240,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					return runner.stop(directory, journal, "blocked", err.Error())
 				}
 				journal.CheckAttempt++
-				if err := Save(directory, journal); err != nil {
+				if err := runner.save(directory, journal); err != nil {
 					return err
 				}
 				path := filepath.Join(directory, fmt.Sprintf("checks-%d.log", journal.CheckAttempt))
@@ -254,20 +313,24 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 		case "ci":
 			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
+			journal.CI = checks
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			if checks.Status != "missing" && !journal.MissingChecksSince.IsZero() {
 				journal.MissingChecksSince = time.Time{}
-				if err := Save(directory, journal); err != nil {
+				if err := runner.save(directory, journal); err != nil {
 					return err
 				}
+			}
+			if err := runner.save(directory, journal); err != nil {
+				return err
 			}
 			wait := runner.PollInterval
 			if checks.Status == "missing" {
 				if journal.MissingChecksSince.IsZero() {
 					journal.MissingChecksSince = time.Now().UTC()
-					if err := Save(directory, journal); err != nil {
+					if err := runner.save(directory, journal); err != nil {
 						return err
 					}
 					fmt.Fprintln(runner.Output, "Waiting for CI checks to appear on the published PR.")
@@ -313,13 +376,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			if status != "stored" {
-				journal.State = "awaiting_reviewer"
-				if err := Save(directory, journal); err != nil {
-					return err
-				}
-				return fmt.Errorf("%w: authenticate %s, then resume this run for independent review", ErrStopped, journal.Plan.Roles.Review.Provider)
+				return runner.stop(directory, journal, "awaiting_reviewer", fmt.Sprintf("authenticate %s, then resume this run for independent review", journal.Plan.Roles.Review.Provider))
 			}
 			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
+			journal.CI = checks
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
@@ -365,6 +425,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			// A review is evidence for this exact PR boundary only.
 			checks, err = runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
+			journal.CI = checks
 			if err != nil || checks.Status != "passed" {
 				return runner.stop(directory, journal, "blocked", "PR or CI changed during independent review")
 			}
@@ -406,7 +467,7 @@ func verifyInputs(root string, inputs []Input) error {
 
 func (runner Runner) session(ctx context.Context, directory string, journal *Journal, role, workspace, resume string) (SessionResult, error) {
 	journal.Attempt++
-	if err := Save(directory, journal); err != nil {
+	if err := runner.save(directory, journal); err != nil {
 		return SessionResult{}, err
 	}
 	eventPath := filepath.Join(directory, fmt.Sprintf("events-%d.jsonl", journal.Attempt))
