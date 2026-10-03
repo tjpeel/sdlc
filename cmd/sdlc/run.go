@@ -163,8 +163,16 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`).MatchString(repository) {
 			return fmt.Errorf("--repo must name a GitHub OWNER/REPO")
 		}
-		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
 		if options.dryRun {
+			// Selection is known before capture; content hashes are not. Keep
+			// the offline plan useful without reading requirement bodies.
+			for _, path := range launch.Inputs {
+				journal.Plan.Inputs = append(journal.Plan.Inputs, workrun.Input{Path: path})
+			}
+			for _, path := range launch.Config.InputFiles {
+				journal.Plan.CheckInputs = append(journal.Plan.CheckInputs, workrun.Input{Path: path})
+			}
 			return printRunPlan(output, journal, true)
 		}
 		if inCI() {

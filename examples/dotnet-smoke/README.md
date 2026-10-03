@@ -70,6 +70,29 @@ Keep the copied requirements ignored and untracked. The template's source link
 remains valid after copying. The count endpoint is deliberately absent from the
 baseline so that the ticket produces an observable API change.
 
+Inspect the selected inputs, checks and provider roles before a connected trial.
+Replace `OWNER/REPO` with the intended test repository:
+
+```sh
+sdlc run --reference dotnet-smoke --ticket 01-count-items.md \
+  --input .sdlc/work/dotnet-smoke/specification.md --repo OWNER/REPO \
+  --docker-tests --dry-run
+```
+
+For the connected trial, first configure the test repository's GitHub remote,
+host Git author/signing, host `gh` login and a CI workflow that reports PR checks.
+This fixture includes no CI workflow. SDLC pauses if the PR has no reported
+checks after its CI startup wait. The account-based SDLC controller runs locally;
+CI runs the repository's checks separately. In the original SDLC checkout,
+follow the provider-login section of `docs/cli.md` and the account usage rules
+in `docs/provider-usage.md` for your account.
+
+When ready, use the same run command without `--dry-run`. Codex implements by
+default; Claude reviews when authenticated. Missing Claude login pauses delivery
+at `awaiting_reviewer` after draft publication and CI. Watch from another terminal
+with `sdlc dashboard`. The run remains attached to its terminal; detached
+execution is not implemented.
+
 The sample uses Microsoft's documented [VSTest/xUnit workflow](https://learn.microsoft.com/en-us/dotnet/core/testing/unit-testing-csharp-with-xunit)
 and [.slnx solution support](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-sln),
 the official [MongoDB C# driver](https://www.mongodb.com/docs/drivers/csharp/current/get-started/),
