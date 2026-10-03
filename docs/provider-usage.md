@@ -26,7 +26,7 @@ change identities or restart work to bypass a denial or usage cap. See
 
 ## Claude
 
-Claude login is the next implementation slice. Anthropic explicitly permits an
+Claude login invokes the unmodified official client. Anthropic explicitly permits an
 end user to sign into the unmodified Claude Code binary with their own subscription,
 including in a hosted container. It restricts third-party credential collection
 and using subscription credentials to intermediate service access for other users.
@@ -34,8 +34,8 @@ See [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and
 
 Anthropic's [container guide](https://code.claude.com/docs/en/devcontainer#persist-authentication-and-settings-across-rebuilds)
 documents a named volume for Claude Code's configuration and authentication cache.
-SDLC will use this pattern: the official CLI reads, writes and refreshes its own
-cache. SDLC will not copy, parse or export Claude tokens. Signing in again for
+SDLC uses this pattern: the official CLI reads, writes and refreshes its own
+cache. SDLC does not copy, parse or export Claude tokens. Signing in again for
 every container is unnecessary; re-authenticate when the provider requires it.
 
 Account login and cache persistence do not approve every unattended use. Before

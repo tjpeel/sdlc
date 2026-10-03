@@ -135,7 +135,7 @@ func TestLoginUsesIsolatedImmutableContainersAndReusesVolume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(docker.volumes) != 1 {
+	if len(docker.volumes) != 2 {
 		t.Fatal("repeated login created new authentication volumes")
 	}
 	for _, args := range docker.calls {

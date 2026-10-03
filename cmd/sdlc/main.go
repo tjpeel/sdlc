@@ -19,7 +19,7 @@ func main() {
 		return
 	}
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
-		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status | auth login --provider codex | auth status [--provider codex]")
+		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status | auth login --provider codex|claude | auth status [--provider codex|claude]")
 		return
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "auth" {
@@ -74,21 +74,18 @@ func auth(ctx context.Context, args []string) error {
 		return fmt.Errorf("unknown authentication command; run sdlc --help")
 	}
 	flags := flag.NewFlagSet("auth "+args[0], flag.ContinueOnError)
-	provider := flags.String("provider", "", "codex (required for login)")
+	provider := flags.String("provider", "", "codex or claude (required for login)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("auth accepts only --provider")
 	}
-	if *provider == "claude" {
-		return fmt.Errorf("Claude login is not implemented yet; its planned flow uses the official CLI's own cache")
-	}
-	if *provider != "" && *provider != "codex" {
-		return fmt.Errorf("supported provider is codex")
+	if *provider != "" && *provider != "codex" && *provider != "claude" {
+		return fmt.Errorf("provider must be codex or claude")
 	}
 	if args[0] == "login" && *provider == "" {
-		return fmt.Errorf("auth login requires --provider codex")
+		return fmt.Errorf("auth login requires --provider codex or --provider claude")
 	}
 	runtime, err := runtimeimage.New(os.Stdout, os.Stderr)
 	if err != nil {
