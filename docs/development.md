@@ -162,8 +162,13 @@ SDLC_OFFLINE_DOCKER_TESTS=1 go test -count=1 -v ./internal/workrun \
 ```
 
 The probe uses the recorded local runtime and a disposable privileged Docker
-daemon; it does not run in CI. Real .NET repository tests, connected implementation,
-PR publication and cross-provider review remain to be validated together.
+daemon; it does not run in CI. It also builds successive image layers after
+creating a Unix socket, verifies the `overlay2` driver and runs the built image.
+VFS fails this class of build; see [BuildKit issue 3965](https://github.com/moby/buildkit/issues/3965).
+Docker 29's containerd image store is explicitly disabled for this classic
+storage driver; see [Docker daemon feature flags](https://docs.docker.com/reference/cli/dockerd/#enable-feature-in-the-daemon---feature).
+Connected implementation, PR publication and cross-provider review remain to be
+validated together.
 
 Run reporting is checked with offline fixtures for private atomic registry writes,
 controller ownership, independent heartbeats, stopped and stale sessions, corrupt

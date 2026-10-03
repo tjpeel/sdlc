@@ -81,18 +81,28 @@ print('Credential-free unit worker passed')`
 	if err := checker.Check(ctx, workspace, [][]string{{"python3", "-c", check}}, &output); err != nil {
 		t.Fatalf("unit worker: %v\n%s", err, &output)
 	}
-	// Build a tiny shell image from the check worker's existing files. No image
+	// Build a shell/Python image from the check worker's existing files. No image
 	// pull or package restore is needed inside the disposable integration daemon.
-	integration := `import io,os,pathlib,re,subprocess,tarfile
+	integration := `import _socket,io,os,pathlib,re,subprocess,sys,sysconfig,tarfile
 assert os.environ['DOCKER_HOST']=='unix:///run/sdlc/docker.sock'
 assert os.environ['TESTCONTAINERS_HOST_OVERRIDE']=='localhost'
 assert not pathlib.Path('/provider-auth').exists()
-files={'/bin/sh'}
-files.update(re.findall(r'/[^\s()]+',subprocess.check_output(['ldd','/bin/sh'],text=True)))
+assert subprocess.check_output(['docker','info','--format','{{.Driver}}'],text=True).strip()=='overlay2'
+files={'/bin/sh',sys.executable}
+if getattr(_socket,'__file__',None): files.add(_socket.__file__)
+for executable in list(files):
+ files.update(re.findall(r'/[^\s()]+',subprocess.check_output(['ldd',executable],text=True)))
 archive=io.BytesIO()
 with tarfile.open(fileobj=archive,mode='w',dereference=True) as tar:
  for path in sorted(files): tar.add(path,arcname=path.lstrip('/'),recursive=False)
+ encodings=pathlib.Path(sysconfig.get_path('stdlib'))/'encodings'
+ tar.add(encodings,arcname=str(encodings).lstrip('/'))
 subprocess.run(['docker','import','-','sdlc-offline-smoke:local'],input=archive.getvalue(),check=True)
+build=pathlib.Path('/workspace/offline-build')
+build.mkdir()
+(build/'Dockerfile').write_text('FROM sdlc-offline-smoke:local\nRUN '+sys.executable+' -S -c "import _socket; s=_socket.socket(_socket.AF_UNIX); s.bind(\'/build-service.sock\')"\nRUN test -S /build-service.sock && echo second > /second\n')
+subprocess.run(['docker','build','--network','none','--tag','sdlc-offline-built:local',str(build)],check=True)
+subprocess.run(['docker','run','--rm','--pull','never','--network','none','--entrypoint','/bin/sh','sdlc-offline-built:local','-c','test -S /build-service.sock && test -f /second && echo Nested socket-layer image build passed'],check=True)
 subprocess.run(['docker','run','--rm','--pull','never','--network','none','--mount','type=bind,src=/workspace,dst=/data,readonly','--entrypoint','/bin/sh','sdlc-offline-smoke:local','-c','test -r /data/README.md && echo Nested Docker service and workspace bind passed'],check=True)
 print('Disposable Docker integration worker passed')`
 	checker.DockerTests = true

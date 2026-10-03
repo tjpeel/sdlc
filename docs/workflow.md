@@ -109,6 +109,9 @@ with a job network and disposable workspace, socket and daemon-data volumes.
 The host Docker socket is never mounted. This mode requires trusted integration
 tests; a privileged daemon is not containment for hostile code. Cleanup runs on
 success, failure and cancellation; cleanup errors stop delivery.
+The disposable daemon uses the classic `overlay2` image store. Its backing
+filesystem must support OverlayFS; startup fails rather than falling back to VFS,
+which cannot build layers containing Unix sockets left by some build tools.
 
 The authenticated provider still has shell access. Instructions prohibit running
 repository scripts, tests and dependency installation there, but cannot enforce
