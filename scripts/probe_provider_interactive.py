@@ -63,6 +63,8 @@ def native(command, env):
     assert (config / 'auth.json').readlink() == target
     assert (config / 'AGENTS.md').samefile(SESSION_INSTRUCTIONS)
     assert list((Path(env['HOME']) / '.agents/skills').glob('*/SKILL.md'))
+    definitions = list(Path('/etc/codex/agents').glob('*.toml'))
+    assert definitions and all(definition.read_text() for definition in definitions)
     assert command[command.index('--ask-for-approval') + 1] == approval
     assert command[command.index('--sandbox') + 1] == 'danger-full-access'
     help_result = subprocess.run(command + ['--help'], capture_output=True,
@@ -349,6 +351,19 @@ def probe_cli_cancellation(cli, image, state, volume, recorded_names, mode):
         os.close(slave)
 
 
+def instruction_snapshot(directory, *, bypass=False):
+    # Match production: each session receives immutable files at fresh paths.
+    directory.mkdir(mode=0o700)
+    instructions = directory / 'instructions.md'
+    instructions.write_text('Stop implementation until a human answers any question.\n')
+    instructions.chmod(0o444)
+    settings = directory / 'settings.json'
+    settings.write_text(json.dumps({'skipDangerousModePermissionPrompt': True}
+                                   if bypass else {}) + '\n')
+    settings.chmod(0o444)
+    return instructions
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cli', required=True, type=Path, help='built SDLC executable')
@@ -363,12 +378,7 @@ def main():
     recorded_names = None
     try:
         with tempfile.TemporaryDirectory(prefix='sdlc-interactive-probe-') as temporary:
-            instructions = Path(temporary) / 'instructions.md'
-            instructions.write_text('Stop implementation until a human answers any question.\n')
-            instructions.chmod(0o444)
-            settings = instructions.parent / 'settings.json'
-            settings.write_text('{}\n')
-            settings.chmod(0o444)
+            instructions = instruction_snapshot(Path(temporary) / 'codex')
             for provider in ('codex', 'claude'):
                 name = 'sdlc-interactive-probe-' + identity + '-' + provider
                 command(['docker', 'volume', 'create', '--driver', 'local', name])
@@ -391,10 +401,9 @@ def main():
                 else:
                     command(container(image, name) + ['-c', HELPER + CLAUDE_SETUP])
                     for mode in ('default', 'manual', 'plan'):
-                        settings.chmod(0o600)
-                        settings.write_text(json.dumps({'skipDangerousModePermissionPrompt': True}
-                                                       if mode == 'default' else {}) + '\n')
-                        settings.chmod(0o444)
+                        instructions = instruction_snapshot(
+                            Path(temporary) / ('claude-' + mode), bypass=mode == 'default')
+                        setup = container(image, name, instructions)
                         result = json.loads(command(setup + ['-c', HELPER + CLAUDE, mode, 'startup']))
                         assert result['native_status'] and not result['customization_executed']
                         if mode == 'manual':
@@ -404,12 +413,11 @@ def main():
                             assert '[User] /provider-auth/CLAUDE.md' in result['debug']
                             assert '@read_medium' in result['ui']
                             print('Claude loaded ' + skills.group(1) + ' image skills with shared instructions.')
+                    instructions = instruction_snapshot(
+                        Path(temporary) / 'claude-managed-policy', bypass=True)
                     managed = instructions.parent / 'managed-settings.json'
                     managed.write_text(json.dumps({'permissions': {'disableBypassPermissionsMode': 'disable'}}))
                     managed.chmod(0o444)
-                    settings.chmod(0o600)
-                    settings.write_text(json.dumps({'skipDangerousModePermissionPrompt': True}) + '\n')
-                    settings.chmod(0o444)
                     denied = json.loads(command(container(image, name, instructions, managed=managed)
                         + ['-c', HELPER + CLAUDE, 'default', 'managed-policy']))
                     assert denied['managed_denied']
