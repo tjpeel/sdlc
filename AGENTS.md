@@ -3,6 +3,23 @@
 Work directly on `main`. Commit and push each completed, validated iteration.
 Use plain commit messages without prefixes.
 
+# Provider service rules
+
+Account safety and compliance with provider terms are requirements throughout
+development. Read `docs/provider-usage.md` before changing authentication or
+executing connected provider work, and verify current official documentation for
+the proposed account type and execution mode.
+
+- Use unmodified official clients and their documented authentication flows.
+- Do not extract or replay subscription OAuth tokens through custom API clients,
+  SDKs or proxies, share account credentials, or bypass provider restrictions.
+- Do not rotate accounts, change identities or repeatedly restart jobs to evade
+  rate limits, usage limits, access denials or account suspensions.
+- Stop and report an unclear or unsupported authentication/execution route before
+  connecting an account. Historical prototypes do not establish permission.
+- Keep provider tests offline with disposable fake data unless a connected test
+  is explicitly authorised. Never transmit fake credentials to provider services.
+
 # Public repository
 
 This repository is public. Keep source, documentation, examples and committed
