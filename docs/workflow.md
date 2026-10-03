@@ -41,7 +41,8 @@ remote, current source state and local engineering inputs, then show the selecte
 work and execution settings before starting.
 
 The ticket layout comes from the public
-[engineering skills on GitHub](https://github.com/tjpeel/skills/tree/e5071a81c703f36014ea60446204b2434d6b1579/engineering):
+[engineering skills on GitHub](https://github.com/tjpeel/skills/tree/00a2426379eba03364736cf80fbe880de1b69df5/engineering),
+reviewed at published commit `00a2426379eba03364736cf80fbe880de1b69df5`:
 
 ```text
 .sdlc/work/<reference>/
@@ -68,6 +69,118 @@ source state, ticket inputs and required project configuration, including approv
 environment files for integration tests. Keep these inputs out of the image and
 public source. The exact capture and secret-handling rules remain implementation
 work.
+
+## Implement and review a ticket stream
+
+A selected stream uses two provider roles: an implementer and an independent
+reviewer. Codex is the initial implementer default; Claude is the initial reviewer
+default. Either role can select another supported provider, but the two providers
+must differ. Keep the original implementer responsible for the stream and its
+repairs. If the selected reviewer is unavailable, stop rather than falling back
+to the implementation provider. These roles and stream execution remain to be
+implemented; current interactive sessions do not coordinate tickets or PRs.
+
+For the requested linear stream, create the first ticket branch from the agreed
+`main` revision. Create each subsequent ticket branch from its predecessor's
+verified delivered revision, with one branch and draft PR per ticket:
+
+```text
+main
+  ticket-one    PR base: main
+    ticket-two  PR base: ticket-one
+      ticket-three  PR base: ticket-two
+```
+
+The SDLC repository itself continues to be developed on `main`. These ticket
+branches belong to the repository in which work is requested. A stream's delivery
+order does not rewrite ticket blockers or treat an unresolved dependency as
+complete. Each launch names one ticket, its exact selected inputs, starting SHA,
+destination branch, review boundary and PR base. Keep branch state in the launch
+context, not in maintained ticket or specification files. The published
+[implementation contract](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/implement/SKILL.md)
+already defines prepared launches, predecessor revisions and stale descendants.
+
+The skill roles are:
+
+| Published skill | Responsibility |
+| --- | --- |
+| [`engineering-implement`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/implement/SKILL.md) | Implement one selected ticket in verified, committed increments. |
+| [`engineering-testing`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/testing/SKILL.md) | Choose checks for required behaviour and credible coverage gaps. |
+| [`engineering-verification`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/verification/SKILL.md) | Bind completion evidence to the actual checked revision and outcomes. |
+| [`engineering-code-review`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/code-review/SKILL.md) | Review the complete local ticket change against technical behaviour and selected requirements. |
+| [`pr-draft`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/draft/SKILL.md) | Draft each PR's description, distinguishing its slice from inherited work. |
+| [`pr-manage`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/manage/SKILL.md) | Publish authorised branches and draft PRs with the recorded predecessor bases. |
+| [`pr-monitor`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/monitor/SKILL.md) | Wait for the required checks on current published revisions and return supported CI repairs to the implementation owner. |
+| [`pr-review`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/review/SKILL.md) | Review published PRs against fixed base and head revisions. |
+
+These are source skill names; use their installed names from the image's
+catalogue. The image pins published skills commit
+`00a2426379eba03364736cf80fbe880de1b69df5` and agents commit
+`347f58e598515c51c42fab4a7f699380db725fd3`. A local rebuild installs them.
+The earlier decision, specification and ticket-creation skills supply approved
+inputs; a work run consumes those inputs rather than regenerating them.
+
+The immediate step is a [ticket-stream prompt](prompts/implement-ticket-stream.md)
+that coordinates the existing skills, with one implementation invocation per
+ticket. It does not require a new skill or changes to the skills repository.
+Propose any incompatible skill requirement before deciding whether to change
+or defer it. The current CLI does not yet prepare a project checkout or submit
+this prompt; it is a template for a harness with the selected repository and
+inputs available.
+
+All process inputs and private run outputs use the initiating repository's
+`.sdlc/` root. The skills catalogue keeps its existing structure. A future single
+`sdlc` skill would let an outer AI harness use the CLI; the CLI itself will not
+invoke that skill. Its design is deferred.
+
+Implementation already applies testing and verification guidance and invokes a
+local code review at the end of each ticket. Preserve that per-ticket check.
+The different-provider review requested here is an additional whole-stream gate
+after publication and CI, coordinated by SDLC:
+
+1. Implement and verify each selected ticket on its own branch. Publish its draft
+   PR, then launch the next ticket from the verified predecessor.
+2. Wait until every stream PR is published and its configured required CI checks
+   have passed for the recorded current revisions. Missing, pending, failed,
+   cancelled or unexpectedly skipped checks do not satisfy the gate.
+3. Start a fresh session with the selected review provider. Supply approved
+   tickets and specifications, immutable source and diffs, PR base/head SHAs and
+   check evidence. Review each incremental PR and the complete stack against the
+   stream's recorded `main` starting point, including interactions across tickets.
+4. Record actionable findings against the reviewed revisions and return them to
+   the original implementer. An incomplete or interrupted review is not approval.
+   A finding that needs a new product decision stops for a human answer.
+5. Apply repairs within the affected tickets. Carry an earlier ticket's repair
+   through all affected descendants, publish the updated branches and invalidate
+   their old CI and review evidence. Preserve original ticket boundaries and
+   record their mapping to the updated bases.
+6. Repeat the CI gate and fresh independent review for the updated stack. Finish
+   as ready for human review and merge only when required checks pass and the
+   independent review completes without actionable findings.
+
+CI evidence and reviews belong to exact content, not just PR numbers. A changed
+head, base or relevant input invalidates affected evidence. Reconcile remote
+state before resume and before declaring the stack ready. Questions, unexpected
+external changes, policy refusals and exhausted usage stop the whole stream.
+Do not automatically merge PRs.
+
+Keep publication credentials and signing with the controller where possible.
+The reviewer receives only its own provider login and selected review inputs,
+with no implementer transcript, publication credentials or implementation secrets.
+It cannot publish or change the implementation branches; any verification scratch
+changes are disposable and must not be mistaken for the reviewed revision.
+Store the stream journal, findings and source checkpoints outside disposable
+container storage, alongside the private run outputs. Verify the supported
+unattended account route under the [provider rules](provider-usage.md) before
+connecting either role; current interactive login does not establish that route.
+
+One current skill requirement needs a decision before tracker-free publication. The
+[`pr-manage` naming rules](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/manage/SKILL.md#L61-L73)
+require a ticket key, whereas the engineering process permits tracker-free work
+references. Report that gap and propose a naming policy before changing the skill;
+never invent an external tracker identity from a ticket's sequence number.
+Rebase and force-push restacking also need explicit authority. Publication authority
+alone does not authorise rewriting someone else's work.
 
 ## Execute and report progress
 
