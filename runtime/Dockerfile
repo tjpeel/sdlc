@@ -84,6 +84,8 @@ RUN chown -R node:node /etc/codex/agents /opt/sdlc/claude/agents
 RUN mkdir -p /workspace /home/node/.codex /home/node/.claude /home/node/.t3 /run/sdlc /run/sshd \
     && chown node:node /workspace /home/node/.codex /home/node/.claude /home/node/.t3 \
     && passwd -d node
+COPY Dockerfile /opt/sdlc/runtime.Dockerfile
+COPY dependencies.py /usr/local/lib/sdlc-dependencies.py
 COPY entrypoint.py /usr/local/bin/sdlc-entrypoint
 COPY bin/ /usr/local/bin/
 COPY sshd_config /etc/ssh/sshd_config.sdlc
@@ -94,7 +96,9 @@ RUN chmod 0755 /usr/local/bin/sdlc-* /usr/local/bin/ssh-sign-file \
 ENV HOME=/home/node CODEX_HOME=/home/node/.codex CLAUDE_CONFIG_DIR=/home/node/.claude \
     DOTNET_ROOT=/opt/dotnet PATH=/opt/dotnet:$PATH \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1
-RUN dotnet --version && docker --version && docker compose version
+RUN dotnet --version && docker --version && docker compose version \
+    && python3 /usr/local/lib/sdlc-dependencies.py capture \
+       --skills-revision "$SKILLS_REVISION" --agents-revision "$AGENTS_REVISION"
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/sdlc-entrypoint"]
 CMD ["bash", "-l"]

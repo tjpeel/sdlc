@@ -123,3 +123,15 @@ vet, all 179 offline Python tests, sensitive-content checks and CLI/installer
 builds for all six targets pass. A temporary macOS/ARM64 installation also passed
 initialization and repeat initialization from a nested project directory with
 spaces in its path. Native Linux and Windows execution remains unverified.
+
+Runtime dependency status has offline tests for immutable inventories, native
+tool versions, npm optional packages and aliases, catalogue ancestry, release
+channels, paginated Docker tags, registry digests and Debian version ordering.
+They also cover upstream timeouts, partial failures, older images and `--offline`
+without network requests. Go tests, race checks for the changed packages, vet,
+CLI and installer builds for all six targets, and all 186 Python tests pass.
+These tests use disposable fake metadata and no provider accounts. A local
+macOS/ARM64 rebuild captured 160 component entries and 423 Debian packages.
+Both offline status and a complete online metadata check passed; the online
+check found available updates without installing them or accessing provider
+storage.
