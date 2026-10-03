@@ -4,8 +4,9 @@ The confirmed direction is an installed Go CLI coordinating work from a local
 Git repository through one shared SDLC Docker image. macOS and Linux are the
 primary hosts; Windows should remain possible with a Linux-container engine.
 
-The [CLI setup commands and provider login](cli.md) are implemented today. Ticket
-execution, secret retrieval, update prompts and recovery remain to be built.
+The [CLI setup commands, provider login and instruction settings](cli.md) are
+implemented today. Ticket execution, secret retrieval, update prompts and recovery
+remain to be built.
 
 ## Set up the installation
 
@@ -20,6 +21,13 @@ cache, following the [provider usage rules](provider-usage.md). The image contai
 skills and agents from the public GitHub catalogues. Startup should report
 available updates to both provider CLIs and the skills/agents, and prompt before
 updating the shared runtime.
+
+Configure common agent instructions with `sdlc instructions set --file FILE`,
+inspect them with `sdlc instructions show`, or remove custom additions with
+`sdlc instructions reset`. The default shared body contains only the rule that
+implementation stops whenever an agent has a question for a human, until a human
+answers. Additional instructions retain that rule. These settings are private
+installation state and do not require an image rebuild.
 
 ## Start work from a project
 
@@ -74,11 +82,25 @@ upstream engineering skills. Bind the selected run directory into the worker so
 the CLI can tail files on the host. Logs then survive container removal and a
 disconnected terminal. Keep them private and ignored.
 
+At job launch, capture the shared instructions in a read-only per-run snapshot and
+make the same body available to Codex and Claude through their native global
+instruction files. Preserve the checkout's own instruction files. The SDLC
+repository's development instructions are not a worker default. This injection
+is still to be implemented with the worker launcher.
+
 ## Stop and continue
 
 Unattended work should either complete with recorded checks and results or stop
 with an explicit problem and the information needed to intervene. The CLI should
 show the failure, accept the required decision and continue the same logical job.
+
+Any agent question for a human must stop implementation and put the job into a
+waiting-for-human state with the question recorded in its progress log. Do not
+guess an answer, continue to another ticket or restart automatically. Resume only
+after a human has answered the pending question. Enforce this in the runner's
+status handling as well as the shared instructions; a Markdown rule alone is not
+a process control. Question capture and answer handling remain implementation
+work.
 
 Logs alone cannot restore uncommitted work or a provider session. A recovery
 checkpoint must preserve the relevant source changes, input identity and session

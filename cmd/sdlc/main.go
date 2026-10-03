@@ -4,11 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/tjpeel/sdlc/internal/buildinfo"
+	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
@@ -20,6 +22,14 @@ func main() {
 	}
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status | auth login --provider codex|claude | auth status [--provider codex|claude]")
+		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "instructions" {
+		if err := instructionsCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "auth" {
@@ -67,6 +77,56 @@ func main() {
 	}
 	fmt.Fprintln(os.Stderr, "sdlc: unknown command; run sdlc --help")
 	os.Exit(2)
+}
+
+func instructionsCommand(args []string, output io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("instructions requires show, set --file FILE, or reset")
+	}
+	var source string
+	switch args[0] {
+	case "show", "reset":
+		if len(args) != 1 {
+			return fmt.Errorf("instructions %s accepts no arguments", args[0])
+		}
+	case "set":
+		flags := flag.NewFlagSet("instructions set", flag.ContinueOnError)
+		file := flags.String("file", "", "Markdown file containing additional shared instructions")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *file == "" || flags.NArg() != 0 {
+			return fmt.Errorf("instructions set requires --file FILE")
+		}
+		source = *file
+	default:
+		return fmt.Errorf("unknown instructions command; run sdlc --help")
+	}
+	manager, err := instructions.New()
+	if err != nil {
+		return fmt.Errorf("cannot locate SDLC installation state")
+	}
+	switch args[0] {
+	case "show":
+		content, err := manager.Show()
+		if err != nil {
+			return err
+		}
+		_, err = output.Write(content)
+		return err
+	case "set":
+		if err := manager.Set(source); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(output, "Shared instructions updated.")
+		return err
+	default:
+		if err := manager.Reset(); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(output, "Shared instructions reset to the default human-answer rule.")
+		return err
+	}
 }
 
 func auth(ctx context.Context, args []string) error {
