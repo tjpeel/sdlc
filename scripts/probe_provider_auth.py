@@ -62,7 +62,7 @@ def probe_claude_settings(image, volume, cli, env):
     command(container(image, volume) + ["-c", write, json.dumps(settings)])
     try:
         result = command([cli, "auth", "status", "--provider", "claude"], env=env)
-        if "stored account login (offline check" not in result or "fake-settings" in result:
+        if "saved account login found (offline check)" not in result or "fake-settings" in result:
             raise RuntimeError("cached settings affected native account status")
         # Inspect the marker before the disposable tmpfs disappears. This uses
         # the production helper and the same read-only cache as CLI status.
@@ -118,7 +118,7 @@ def main():
                 selection = [] if provider == "codex" else ["--provider", provider]
                 for _ in range(2):
                     result = command([cli, "auth", "status", *selection], env=env)
-                    if "stored account login (offline check" not in result or "fake-access" in result:
+                    if "saved account login found (offline check)" not in result or "fake-access" in result:
                         raise RuntimeError("fresh CLI status did not safely load the fixture")
                 if provider == "claude":
                     probe_claude_settings(image, name, cli, env)

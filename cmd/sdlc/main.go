@@ -343,7 +343,10 @@ func auth(ctx context.Context, args []string) error {
 		if err := manager.Login(ctx, provider); err != nil {
 			return err
 		}
-		fmt.Printf("%s: account credentials saved and loaded by a fresh container; remote validity has not been checked.\n", provider)
+		fmt.Printf("%s: login completed; saved account credentials loaded successfully by a fresh container.\n", provider)
+		if provider == "claude" {
+			fmt.Println("On the first Claude interactive launch, complete its terminal setup; it may ask you to sign in again.")
+		}
 		return nil
 	}
 	ready := true
@@ -354,7 +357,7 @@ func auth(ctx context.Context, args []string) error {
 		}
 		switch state {
 		case "stored":
-			fmt.Printf("%s: stored account login (offline check; remote validity and model access are unverified)\n", name)
+			fmt.Printf("%s: saved account login found (offline check)\n", name)
 		case "missing":
 			fmt.Printf("%s: no stored login; run sdlc auth login --provider %s\n", name, name)
 			ready = false
