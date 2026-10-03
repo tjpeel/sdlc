@@ -18,6 +18,23 @@ func TestUnknownProviderIsRejectedBeforeAccessingDocker(t *testing.T) {
 	}
 }
 
+func TestInvalidInteractiveArgumentsDoNotCreateState(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "state")
+	t.Setenv("SDLC_STATE_DIR", directory)
+	for _, args := range [][]string{nil, {"--provider", "untrusted"}, {"--provider", "codex", "prompt"}, {"--provider", "claude", "--dangerously-skip-permissions"}} {
+		var output bytes.Buffer
+		if err := interactive(context.Background(), args, &output); err == nil {
+			t.Fatalf("invalid arguments were accepted: %v", args)
+		}
+		if output.Len() != 0 {
+			t.Fatal("invalid arguments reached session startup")
+		}
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatal("invalid interactive command changed installation state")
+	}
+}
+
 func TestInstructionsCanBeConfiguredWithoutDockerOrRuntime(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("SDLC_STATE_DIR", filepath.Join(directory, "state"))

@@ -13,7 +13,7 @@ before publication. Preserve the repository's signing configuration.
 | Path | Purpose |
 | --- | --- |
 | `cmd/` | Installed Go CLI and local installer |
-| `internal/` | Build identity, installation, locking, shared image, provider authentication and instruction settings |
+| `internal/` | Build identity, installation, locking, shared image, provider authentication, instruction settings and interactive sessions |
 | `runtime/` | Shared local image context and supporting runtime components |
 | `docs/` | Current CLI, workflow and development guides |
 | `scripts/` | Public-source safeguards and dependency pin tooling |
@@ -82,3 +82,20 @@ Shared instruction settings were checked with Go tests for snapshots, reset,
 invalid input, file safety and concurrent updates. CLI show/set/reset also passed
 outside the clone with disposable settings on macOS/ARM64. Go vet and all six
 CLI target builds pass. This iteration changes no Docker or provider execution.
+
+Interactive sessions are checked with offline tests for selected-cache mounts,
+instruction snapshots, startup failures, cancellation, native cache updates and
+logout. All 175 Python tests, Go tests, vet and six target builds pass. The local
+native-client probe uses disposable fake credentials and disables networking on
+every test container; it verifies Claude's shared instructions and image skills,
+cached customization isolation and Codex's native file-cache behavior. Attached
+CLI cancellation also restores the terminal and removes containers and snapshots,
+including under umask `077` with a state path containing spaces and a comma.
+Run the probe locally with:
+
+```sh
+python3 scripts/probe_provider_interactive.py --cli /PATH/TO/BUILT_SDLC
+```
+
+It is separate from CI. Connected model requests and real interactive account
+sessions remain manual checks.

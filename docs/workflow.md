@@ -4,9 +4,10 @@ The confirmed direction is an installed Go CLI coordinating work from a local
 Git repository through one shared SDLC Docker image. macOS and Linux are the
 primary hosts; Windows should remain possible with a Linux-container engine.
 
-The [CLI setup commands, provider login and instruction settings](cli.md) are
-implemented today. Ticket execution, secret retrieval, update prompts and recovery
-remain to be built.
+The [CLI setup commands, provider login, instruction settings and interactive sessions](cli.md)
+are implemented today. Interactive sessions currently use an empty disposable
+workspace. Ticket execution, secret retrieval, update prompts and recovery remain
+to be built.
 
 ## Set up the installation
 
@@ -85,8 +86,9 @@ disconnected terminal. Keep them private and ignored.
 At job launch, capture the shared instructions in a read-only per-run snapshot and
 make the same body available to Codex and Claude through their native global
 instruction files. Preserve the checkout's own instruction files. The SDLC
-repository's development instructions are not a worker default. This injection
-is still to be implemented with the worker launcher.
+repository's development instructions are not a worker default. Interactive
+sessions already receive this snapshot; ticket-worker injection remains to be
+implemented with the work launcher.
 
 ## Stop and continue
 

@@ -42,6 +42,20 @@ func (LocalDocker) Interactive(ctx context.Context, args ...string) error {
 	// The container PTY merges provider stderr into stdout. Docker-client stderr
 	// is separate and can contain host configuration; only show our fixed errors.
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, io.Discard
+	// Let Docker restore the host terminal before its attached client exits.
+	// Killing the client directly can leave that terminal in raw mode.
+	for i, arg := range args {
+		if arg == "--name" && i+1 < len(args) {
+			name := args[i+1]
+			command.Cancel = func() error {
+				stop, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+				defer cancel()
+				return exec.CommandContext(stop, "docker", "stop", "--time", "8", name).Run()
+			}
+			command.WaitDelay = 15 * time.Second
+			break
+		}
+	}
 	return command.Run()
 }
 
@@ -164,9 +178,13 @@ func (manager Manager) volume(ctx context.Context, id, provider string, create b
 }
 
 func containerArgs(image, name, volume, provider, action string) []string {
+	memory, cpus, pids := "1g", "2", "128"
+	if action == "interactive" {
+		memory, cpus, pids = "4g", "4", "512"
+	}
 	args := []string{"run", "--rm", "--name", name, "--pull", "never", "--log-driver", "none",
 		"--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-		"--pids-limit", "128", "--memory", "1g", "--cpus", "2",
+		"--pids-limit", pids, "--memory", memory, "--cpus", cpus,
 		"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777",
 		"--tmpfs", "/home/node/:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=1000,gid=1000"}
 	// Docker's client can inject proxies from its host config. Empty overrides prevent that.
@@ -183,7 +201,7 @@ func containerArgs(image, name, volume, provider, action string) []string {
 			args = append(args, "--network", "none")
 			mount += ",readonly"
 		}
-		if action == "login" {
+		if action == "login" || action == "interactive" {
 			args = append(args, "--interactive", "--tty", "--network", "bridge")
 		}
 	}

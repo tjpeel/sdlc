@@ -23,6 +23,16 @@ func main() {
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status | auth login --provider codex|claude | auth status [--provider codex|claude]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
+		fmt.Println("       sdlc interactive --provider codex|claude")
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "interactive" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := interactive(ctx, os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "instructions" {
@@ -77,6 +87,33 @@ func main() {
 	}
 	fmt.Fprintln(os.Stderr, "sdlc: unknown command; run sdlc --help")
 	os.Exit(2)
+}
+
+func interactive(ctx context.Context, args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("interactive", flag.ContinueOnError)
+	provider := flags.String("provider", "", "codex or claude (required)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("interactive accepts only --provider")
+	}
+	if *provider == "" {
+		return fmt.Errorf("interactive requires --provider codex or --provider claude")
+	}
+	if *provider != "codex" && *provider != "claude" {
+		return fmt.Errorf("provider must be codex or claude")
+	}
+	runtime, err := runtimeimage.New(os.Stdout, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("cannot locate SDLC installation state")
+	}
+	fmt.Fprintln(output, "Opening an empty disposable workspace with your stored provider login and shared instructions.")
+	fmt.Fprintln(output, "Use trusted prompts only. Exit through the provider CLI; workspace files and session history are discarded.")
+	if *provider == "codex" {
+		fmt.Fprintln(output, "Codex uses Docker for isolation; on-request approval prompts remain enabled.")
+	}
+	return providerauth.New(runtime).Interactive(ctx, *provider)
 }
 
 func instructionsCommand(args []string, output io.Writer) error {

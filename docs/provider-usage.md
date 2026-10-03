@@ -7,10 +7,16 @@ can guarantee that a provider will never restrict an account.
 
 ## Codex
 
-This iteration invokes the unmodified Codex CLI for device login and offline login
-status. The authentication guide documents file-backed login caching and moving
+SDLC invokes the unmodified Codex CLI for device login, offline login status and
+an interactive terminal session. The authentication guide documents file-backed login caching and moving
 that cache into Docker. SDLC stores the cache privately and gives it only to the
 same user's local Codex container. See [Codex authentication](https://learn.chatgpt.com/docs/auth).
+
+Interactive sessions use the ordinary [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
+The client receives prompts directly from the account owner. Docker provides the
+outer isolation boundary with on-request approvals, following the
+[container security guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
+No custom API client, credential broker or subscription sharing is involved.
 
 Login does not authorise every later use of the account. For ticket automation,
 review the chosen account, repository trust and execution mode against
@@ -35,7 +41,10 @@ See [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and
 Anthropic's [container guide](https://code.claude.com/docs/en/devcontainer#persist-authentication-and-settings-across-rebuilds)
 documents a named volume for Claude Code's configuration and authentication cache.
 SDLC uses this pattern: the official CLI reads, writes and refreshes its own
-cache. SDLC does not copy, parse or export Claude tokens. Signing in again for
+cache. Interactive sessions invoke the ordinary
+[Claude terminal CLI](https://code.claude.com/docs/en/cli-reference) with its
+native permission prompts; SDLC does not submit prompts on the user's behalf.
+SDLC does not copy, parse or export Claude tokens. Signing in again for
 every container is unnecessary; re-authenticate when the provider requires it.
 
 Account login and cache persistence do not approve every unattended use. Before
