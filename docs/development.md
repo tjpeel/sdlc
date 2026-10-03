@@ -13,7 +13,7 @@ before publication. Preserve the repository's signing configuration.
 | Path | Purpose |
 | --- | --- |
 | `cmd/` | Installed Go CLI and local installer |
-| `internal/` | Build identity, installation, locking, shared image, provider authentication, instruction settings and interactive sessions |
+| `internal/` | Build identity, installation, locking, shared image, provider authentication, instruction settings, project initialization and interactive sessions |
 | `runtime/` | Shared local image context and supporting runtime components |
 | `docs/` | Current CLI, workflow and development guides |
 | `scripts/` | Public-source safeguards and dependency pin tooling |
@@ -111,3 +111,15 @@ python3 scripts/probe_provider_interactive.py --cli /PATH/TO/BUILT_SDLC
 
 It is separate from CI. Connected model requests and real interactive account
 sessions remain manual checks.
+
+Project initialization is checked with disposable Git repositories for nested
+invocation, new and detached checkouts, linked-worktree exclude resolution,
+dirty source, sanitized remotes, custom settings preservation and invalid input.
+Tests reject tracked private work, symlinked state, input paths and tickets,
+conflicting ignore rules, case variants of tracked private paths, and Git
+filesystem-monitor and content-filter execution. A concurrent exclude edit is
+preserved rather than overwritten. Go tests,
+vet, all 179 offline Python tests, sensitive-content checks and CLI/installer
+builds for all six targets pass. A temporary macOS/ARM64 installation also passed
+initialization and repeat initialization from a nested project directory with
+spaces in its path. Native Linux and Windows execution remains unverified.

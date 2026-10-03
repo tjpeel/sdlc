@@ -4,7 +4,7 @@ The confirmed direction is an installed Go CLI coordinating work from a local
 Git repository through one shared SDLC Docker image. macOS and Linux are the
 primary hosts; Windows should remain possible with a Linux-container engine.
 
-The [CLI setup commands, provider login, instruction settings and interactive sessions](cli.md)
+The [CLI setup commands, provider login, instruction settings, project initialization and interactive sessions](cli.md)
 are implemented today. Interactive sessions currently use an empty disposable
 workspace. Ticket execution, secret retrieval, update prompts and recovery remain
 to be built.
@@ -39,6 +39,12 @@ installation state and do not require an image rebuild.
 Run the CLI in the repository containing the work. It should infer the Git root,
 remote, current source state and local engineering inputs, then show the selected
 work and execution settings before starting.
+
+`sdlc init` now discovers local Git state, project manifests and ticket paths,
+protects `.sdlc/work/` with Git's local exclude file, and saves portable check and
+input settings in `.sdlc/project.json`. Existing settings are preserved on repeat
+runs. It does not select tickets, capture source or start a worker; those steps
+belong to the future work command.
 
 The ticket layout comes from the public
 [engineering skills on GitHub](https://github.com/tjpeel/skills/tree/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering),

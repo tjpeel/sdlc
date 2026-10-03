@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/instructions"
+	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
@@ -26,10 +28,20 @@ func main() {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status")
 		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
+		fmt.Println("       sdlc init (from a project repository)")
 		fmt.Println("       sdlc interactive [--provider codex|claude]")
 		fmt.Println("         Provider defaults to codex for interactive and auth commands.")
 		fmt.Println("         Codex: [--approval never|on-request] (default: never)")
 		fmt.Println("         Claude: [--permission-mode MODE] (default: bypassPermissions)")
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "init" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := initCommand(ctx, os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "interactive" {
@@ -93,6 +105,64 @@ func main() {
 	}
 	fmt.Fprintln(os.Stderr, "sdlc: unknown command; run sdlc --help")
 	os.Exit(2)
+}
+
+func initCommand(ctx context.Context, args []string, output io.Writer) error {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		_, err := fmt.Fprintln(output, "Usage: sdlc init\nRun from a project repository to discover local inputs and save project settings.")
+		return err
+	}
+	if len(args) != 0 {
+		return fmt.Errorf("init accepts no arguments; run it from the project repository")
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot locate the current directory")
+	}
+	result, err := project.Initialize(ctx, directory)
+	if err != nil {
+		return err
+	}
+	var summary bytes.Buffer
+	fmt.Fprintf(&summary, "Project: %q\n", result.Root)
+	if result.Detached {
+		fmt.Fprintln(&summary, "Branch: detached HEAD")
+	} else {
+		fmt.Fprintf(&summary, "Branch: %q\n", result.Branch)
+	}
+	if result.Head == "" {
+		fmt.Fprintln(&summary, "HEAD: no commits yet")
+	} else {
+		fmt.Fprintf(&summary, "HEAD: %s\n", result.Head)
+	}
+	if result.Dirty {
+		fmt.Fprintln(&summary, "Source state: changes may be present before initialization.")
+	} else {
+		fmt.Fprintln(&summary, "Source state: no changes detected before initialization.")
+	}
+	for _, remote := range result.Remotes {
+		fmt.Fprintf(&summary, "Remote %q: %q\n", remote.Name, remote.Identity)
+	}
+	for _, tool := range result.Tools {
+		fmt.Fprintf(&summary, "Project file: %q\n", tool)
+	}
+	fmt.Fprintf(&summary, "Tickets found: %d\n", len(result.Tickets))
+	for _, ticket := range result.Tickets {
+		fmt.Fprintf(&summary, "  %q\n", ticket)
+	}
+	if result.ConfigCreated {
+		fmt.Fprintf(&summary, "Project settings created: %s\n", project.ConfigPath)
+	} else {
+		fmt.Fprintf(&summary, "Project settings preserved: %s\n", project.ConfigPath)
+	}
+	fmt.Fprintf(&summary, "Checks configured: %d; review project settings before execution.\n", len(result.Config.Checks))
+	fmt.Fprintln(&summary, "Private work inputs and run output are ignored and untracked.")
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(&summary, "Warning: %s\n", warning)
+	}
+	fmt.Fprintln(&summary, "Local project setup complete. Ticket readiness and execution remain future work.")
+	_, err = output.Write(summary.Bytes())
+	return err
 }
 
 type interactiveOptions struct {

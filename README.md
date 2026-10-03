@@ -5,8 +5,8 @@ image. The workflow starts from the repository where work is requested.
 
 The CLI supports installation and reinstallation, version reporting, building and
 inspecting the shared runtime, Codex/Claude account login, shared instruction
-settings and interactive provider sessions. Secret retrieval, ticket execution,
-progress logs and recovery are still to be implemented.
+settings, local project initialization and interactive provider sessions. Secret
+retrieval, ticket execution, progress logs and recovery are still to be implemented.
 
 ## Get started
 
@@ -50,6 +50,18 @@ workspace; project setup belongs to the remaining ticket-workflow work.
 Both default to full access inside Docker. Use `--approval on-request` for Codex
 or `--permission-mode manual` for Claude to change their native approval modes;
 see the [interactive command guide](docs/cli.md#interactive-provider-sessions).
+
+From the project repository, prepare local settings with:
+
+```sh
+sdlc init
+```
+
+This discovers Git state, project files and ticket paths, protects private work
+with a local Git exclude rule, and creates `.sdlc/project.json`. Review the
+suggested checks before using them. It works without Docker or provider login;
+ticket execution remains future work. See the
+[project initialization guide](docs/cli.md#initialize-a-project).
 
 ## Documentation
 
