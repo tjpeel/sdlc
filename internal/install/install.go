@@ -61,22 +61,25 @@ func Build(ctx context.Context, source, binDir string, stdout, stderr io.Writer)
 	}
 	onPath := false
 	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+		if entry == "" && runtime.GOOS == "windows" {
+			continue
+		}
 		if candidate, err := directory(entry); err == nil && samePath(candidate, bin) {
 			onPath = true
 			break
+		}
+		candidate, err := filepath.Abs(filepath.Join(entry, executableName()))
+		if err != nil {
+			return "", err
+		}
+		if _, err := exec.LookPath(candidate); err == nil {
+			return "", fmt.Errorf("another sdlc resolves first on PATH; select that directory or adjust PATH")
 		}
 	}
 	if !onPath {
 		return "", fmt.Errorf("bin directory must already be on PATH")
 	}
 	destination := filepath.Join(bin, executableName())
-	if found, err := exec.LookPath(executableName()); err == nil {
-		absolute, resolveErr := filepath.Abs(found)
-		resolved, linkErr := filepath.EvalSymlinks(absolute)
-		if resolveErr != nil || linkErr != nil || !samePath(resolved, destination) {
-			return "", fmt.Errorf("another sdlc resolves first on PATH; select that directory or adjust PATH")
-		}
-	}
 	lockPath := filepath.Join(bin, ".sdlc-install.lock")
 	lock, err := filelock.Acquire(lockPath)
 	if err != nil {
