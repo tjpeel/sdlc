@@ -13,7 +13,7 @@ before publication. Preserve the repository's signing configuration.
 | Path | Purpose |
 | --- | --- |
 | `cmd/` | Installed Go CLI and local installer |
-| `internal/` | Build identity, installation, locking, shared image, provider authentication, instruction settings, project initialization and interactive sessions |
+| `internal/` | Build identity, installation, locking, shared image, provider authentication, instruction settings, project initialization, ticket discovery and interactive sessions |
 | `runtime/` | Shared local image context and supporting runtime components |
 | `docs/` | Current CLI, workflow and development guides |
 | `scripts/` | Public-source safeguards and dependency pin tooling |
@@ -135,3 +135,12 @@ macOS/ARM64 rebuild captured 160 component entries and 423 Debian packages.
 Both offline status and a complete online metadata check passed; the online
 check found available updates without installing them or accessing provider
 storage.
+
+Ticket discovery is checked with disposable Git repositories for numeric order,
+opaque references, missing folders, malformed and duplicate numbers, unsafe
+links, ignored/untracked private inputs and unchanged checkout metadata. Ticket
+bodies are deliberately incomplete or invalid in fixtures to verify they are
+not parsed. Go tests, vet, CLI/installer builds and all 186 offline Python tests
+pass. A built macOS/ARM64 CLI also passed discovery from a nested directory in a
+disposable `.slnx` repository, duplicate failure and help dispatch. No Docker or
+provider session is launched by this command.
