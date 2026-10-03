@@ -345,7 +345,7 @@ def host_runs(image):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute', action='store_true', help='Run the disposable Docker acceptance checks')
-    parser.add_argument('--image', default='sdlc-codex-spike:local', help='Use an already built worker image')
+    parser.add_argument('--image', default='sdlc:local', help='Use an already built worker image')
     parser.add_argument('--inside', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.inside:

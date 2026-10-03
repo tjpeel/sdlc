@@ -2,7 +2,7 @@ services:
   worker:
     build:
       context: .
-    image: sdlc-codex-spike:local
+    image: sdlc:local
     init: true
     environment:
       SDLC_REPOSITORY: ${SDLC_REPOSITORY:?Select a repository}

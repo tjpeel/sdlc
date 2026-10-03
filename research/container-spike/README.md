@@ -226,7 +226,7 @@ Once this configuration reaches GitHub's default branch, updates are checked wee
 | Skills and agents | The runtime updater reads each repository’s `main` commit |
 | Debian tools installed with apt | Resolved during local builds; use an uncached local build to refresh packages |
 
-[`dependabot.yml`](../../.github/dependabot.yml) configures the native updates. [`Update runtime pins`](../../.github/workflows/update-runtime-pins.yml) handles the four Dockerfile arguments that Dependabot cannot parse. After offline tests and the public-source check pass, it opens a PR and squash-merges the checked commit. If that merge is blocked, the PR stays open and further runtime updates wait. Image builds and Docker smoke checks run locally. Updates take effect after rebuilding the local image; its tag is `sdlc-codex-spike:local`.
+[`dependabot.yml`](../../.github/dependabot.yml) configures the native updates. [`Update runtime pins`](../../.github/workflows/update-runtime-pins.yml) handles the four Dockerfile arguments that Dependabot cannot parse. After offline tests and the public-source check pass, it opens a PR and squash-merges the checked commit. If that merge is blocked, the PR stays open and further runtime updates wait. Image builds and Docker smoke checks run locally. Updates take effect after rebuilding the local image; its tag is `sdlc:local`.
 
 [`Validate source`](../../.github/workflows/validate.yml) runs on pushes to `main`, pull requests, manual dispatch, and weekly. It checks public-source safety, dependency pin syntax and offline tests. Python uses only the standard library, so there is no Python dependency manifest to update.
 
