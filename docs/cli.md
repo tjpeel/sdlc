@@ -279,6 +279,17 @@ remains draft; SDLC never approves, marks it ready or merges automatically.
 
 ### Logs, questions and resume
 
+Every executing controller registers its private run directory in the installation's
+`runs/` registry. The registry contains paths and run identities, without ticket
+bodies or transcripts. Each run retains `activity.json` alongside its journal:
+a controller heartbeat every five seconds, last streamed activity, current role
+and requested model, and a stopped marker. Heartbeats are separate from journal
+updates; a quiet provider session can still be alive. Activity older than twenty
+seconds without a stopped marker is stale, rather than proof of a failed ticket.
+Stop reasons and the latest CI result are saved in the journal for later inspection.
+Resuming an older run registers it when the controller starts. Dry runs create
+neither registry entries nor heartbeats. These records are private local state.
+
 Native structured JSONL streams to the terminal and is retained privately under:
 
 ```text

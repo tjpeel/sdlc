@@ -132,6 +132,9 @@ type Journal struct {
 	PendingRole        string        `json:"pending_role,omitempty"`
 	Feedback           string        `json:"feedback,omitempty"`
 	MissingChecksSince time.Time     `json:"missing_checks_since,omitempty"`
+	StopReason         string        `json:"stop_reason,omitempty"`
+	CI                 CIResult      `json:"ci"`
+	StartedAt          time.Time     `json:"started_at"`
 	UpdatedAt          time.Time     `json:"updated_at"`
 }
 

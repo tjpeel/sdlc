@@ -164,3 +164,9 @@ SDLC_OFFLINE_DOCKER_TESTS=1 go test -count=1 -v ./internal/workrun \
 The probe uses the recorded local runtime and a disposable privileged Docker
 daemon; it does not run in CI. Real .NET repository tests, connected implementation,
 PR publication and cross-provider review remain to be validated together.
+
+Run reporting is checked with offline fixtures for private atomic registry writes,
+controller ownership, independent heartbeats, stopped and stale sessions, corrupt
+or missing run state, and retained stop/CI evidence. Reporting starts and finishes
+inside the selected run's exclusive controller lock. No provider calls are needed
+for reporting tests.
