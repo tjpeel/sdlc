@@ -19,7 +19,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/filelock"
 )
 
-const Image = "sdlc-codex-spike:local"
+const Image = "sdlc:local"
 
 type State struct {
 	Version  int       `json:"version"`
@@ -224,7 +224,7 @@ func (manager Manager) Build(ctx context.Context, source string) (State, error) 
 	if _, err := rand.Read(token[:]); err != nil {
 		return State{}, err
 	}
-	candidate := "sdlc-codex-spike:build-" + hex.EncodeToString(token[:])
+	candidate := "sdlc:build-" + hex.EncodeToString(token[:])
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()

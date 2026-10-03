@@ -138,7 +138,7 @@ GitHub token or provider login. Skills and agents come from the pinned public
 GitHub repositories during the image build.
 
 The command checks Codex, Claude Code, GitHub CLI, .NET and Docker/Compose before
-selecting the shared `sdlc-codex-spike:local` image. Failed builds or tool checks
+selecting the shared `sdlc:local` image. Failed builds or tool checks
 leave the previous shared image and recorded state intact. A build lock prevents
 overlapping replacements, and existing containers using the image block a
 rebuild. After replacement, the command removes the superseded image.
@@ -152,6 +152,22 @@ sdlc runtime build
 Use `--source /PATH/TO/SDLC_CLONE` if the clone moves. Builds are local; CI neither
 builds nor publishes the Docker image. Updating the CLI executable and rebuilding
 the image are separate operations.
+
+If an existing installation uses `sdlc-codex-spike:local`, check that
+`sdlc runtime status` succeeds with the old CLI, then reinstall the CLI and rename
+the local image before running the updated CLI:
+
+```sh
+docker image tag sdlc-codex-spike:local sdlc:local
+sdlc runtime status
+docker image rm sdlc-codex-spike:local
+```
+
+The new tag points to the same image ID, so the runtime record and provider login
+volumes remain valid. Remove the old tag only after status succeeds; this keeps
+superseded-image cleanup working on the next build. No image rebuild or provider
+login is needed for this rename. See Docker's [image tagging](https://docs.docker.com/reference/cli/docker/image/tag/)
+and [image removal](https://docs.docker.com/reference/cli/docker/image/rm/) documentation.
 
 ## Inspect the runtime
 

@@ -45,7 +45,7 @@ func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, err
 			return nil, nil
 		}
 		name := args[len(args)-1]
-		if strings.HasPrefix(name, "sdlc-codex-spike:build-") {
+		if strings.HasPrefix(name, "sdlc:build-") {
 			return []byte(newImage), nil
 		}
 		if docker.current == "" {
