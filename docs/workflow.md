@@ -4,8 +4,8 @@ The confirmed direction is an installed Go CLI coordinating work from a local
 Git repository through one shared SDLC Docker image. macOS and Linux are the
 primary hosts; Windows should remain possible with a Linux-container engine.
 
-Only the [CLI bootstrap commands](cli.md) are implemented today. The steps below
-describe the process being built; they are not available CLI commands.
+The [CLI setup commands and Codex login](cli.md) are implemented today. Ticket
+execution, secret retrieval, update prompts and recovery remain to be built.
 
 ## Set up the installation
 
@@ -13,9 +13,11 @@ Clone the SDLC repository, install the CLI on PATH and build the shared image
 locally. Every project uses that image. Project names, source, tickets and
 credentials do not become image build inputs.
 
-The next setup steps will authenticate Codex and then Claude, retaining their
-login state separately from disposable work containers. The image will contain
-skills and agents from the configured GitHub repositories. Startup should report
+Authenticate Codex with `sdlc auth login --provider codex`. Its login state lives in
+installation-wide storage, separate from disposable work containers. Claude
+login will use the official CLI's own persistent cache in the next slice, following
+the [provider usage rules](provider-usage.md). The image contains pinned
+skills and agents from the public GitHub catalogues. Startup should report
 available updates to both provider CLIs and the skills/agents, and prompt before
 updating the shared runtime.
 

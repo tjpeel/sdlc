@@ -6,6 +6,11 @@ and shared local runtime. Start with the [current CLI](../docs/cli.md) and
 Archive material may describe earlier layouts, alternatives or unimplemented
 proposals.
 
+These experiments do not establish permission to automate a provider account.
+Apply the current [provider usage rules](../docs/provider-usage.md) before running
+any connected experiment. Subscription authentication in an archived prototype
+is not an approved route for the installed CLI.
+
 ## Design and evidence
 
 - [CLI language and container workflow](notes/cli-workflow-design.md)
