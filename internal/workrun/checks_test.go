@@ -136,6 +136,9 @@ func TestDockerChecksUseDedicatedDaemonAndUnchangedArgv(t *testing.T) {
 	if !strings.Contains(joined, checkDaemonImage) || !strings.Contains(joined, "--host=unix://"+checkSocket) {
 		t.Fatal("daemon version/socket not fixed")
 	}
+	if !strings.Contains(joined, "--storage-driver=overlay2") || !strings.Contains(joined, "--feature=containerd-snapshotter=false") || strings.Contains(joined, "--storage-driver=vfs") {
+		t.Fatal("integration image builds require the explicit classic OverlayFS backend")
+	}
 	for _, arg := range daemon {
 		if arg == "--publish" || arg == "-p" || strings.Contains(arg, "tcp://") || strings.Contains(arg, "type=bind") {
 			t.Fatal("daemon exposes host resources")

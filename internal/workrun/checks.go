@@ -210,7 +210,10 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 		daemonArgs := checkContainerEnvironment([]string{"run", "--detach", "--name", name + "-daemon", "--pull", "missing", "--privileged", "--network", name,
 			"--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace", "--mount", "type=volume,src=" + volumes[1] + ",dst=/run/sdlc", "--mount", "type=volume,src=" + volumes[2] + ",dst=/var/lib/docker",
 			"--env", "DOCKER_TLS_CERTDIR="})
-		daemonArgs = append(daemonArgs, "--entrypoint", "dockerd-entrypoint.sh", checkDaemonImage, "dockerd", "--host=unix://"+checkSocket, "--tls=false", "--group=root", "--storage-driver=vfs")
+		// VFS cannot snapshot build layers containing Unix sockets, including
+		// sockets left by .NET build services. Pin the classic OverlayFS backend
+		// explicitly: Docker 29 otherwise enables the containerd image store.
+		daemonArgs = append(daemonArgs, "--entrypoint", "dockerd-entrypoint.sh", checkDaemonImage, "dockerd", "--host=unix://"+checkSocket, "--tls=false", "--group=root", "--feature=containerd-snapshotter=false", "--storage-driver=overlay2")
 		if err = call(daemonArgs...); err != nil {
 			return fmt.Errorf("start repository check daemon: %w", err)
 		}
