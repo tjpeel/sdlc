@@ -113,6 +113,11 @@ without contacting providers. Closing it leaves controllers working. Headless
 controllers remain attached to their original terminal; detached execution is
 future work. See the [dashboard guide](docs/cli.md#watch-local-runs).
 
+Concurrent controllers use separate workspaces. Codex and Claude can overlap;
+operations using the same provider cache wait until its prior operation and cleanup
+finish. Waiting runs remain visible in the dashboard. See the
+[concurrency guide](docs/cli.md#concurrent-runs-and-account-caches).
+
 ## Security boundary and risks
 
 SDLC uses Docker to limit what provider commands can reach. Interactive sessions

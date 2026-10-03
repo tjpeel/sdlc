@@ -86,12 +86,12 @@ func (manager Manager) Interactive(ctx context.Context, provider, mode string) (
 	if !manager.Terminal() {
 		return fmt.Errorf("interactive sessions need a terminal for stdin, stdout and stderr; do not redirect output")
 	}
-	state, lock, err := manager.begin(ctx)
+	state, lock, err := manager.begin(ctx, provider)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	id, err := manager.identity(false)
+	id, err := manager.identityContext(ctx, false)
 	if err != nil {
 		return err
 	}

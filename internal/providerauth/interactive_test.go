@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/instructions"
@@ -295,7 +296,9 @@ func TestInteractiveRejectsUnsafePreflight(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := manager.Interactive(context.Background(), provider, ""); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			if err := manager.Interactive(ctx, provider, ""); err == nil {
 				t.Fatal("unsafe preflight accepted")
 			}
 			for _, args := range docker.calls {

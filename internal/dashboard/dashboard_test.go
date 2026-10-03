@@ -63,6 +63,21 @@ func TestListDistinguishesQuietLiveControllerFromStaleHeartbeat(t *testing.T) {
 	}
 }
 
+func TestQueuedLiveRunShowsItsWaitWithoutClaimingFailure(t *testing.T) {
+	v := runstatus.View{ID: "0123456789abcdef01234567", Available: true, Live: true, State: "implementing", Activity: runstatus.Snapshot{WaitingProvider: "codex", WaitReason: "provider_busy"}}
+	var output bytes.Buffer
+	if err := List(&output, []runstatus.View{v}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "queued: implement") || !strings.Contains(output.String(), "Waiting for another codex operation") || !strings.Contains(output.String(), "1 live  0 need attention") {
+		t.Fatal(output.String())
+	}
+	v.Activity.WaitReason = "runtime_busy"
+	if !strings.Contains(Reason(v), "runtime build") {
+		t.Fatal("runtime wait mislabeled")
+	}
+}
+
 func TestSelectRequiresUnambiguousPrefixOrExactID(t *testing.T) {
 	views := []runstatus.View{{ID: "abcdef000000000000000001"}, {ID: "abcdef111111111111111111"}, {ID: "123456000000000000000002"}}
 	for _, id := range []string{"abcdef0", views[0].ID, "123456"} {

@@ -157,7 +157,7 @@ func (manager Manager) Headless(ctx context.Context, request HeadlessRequest, st
 	if !ok {
 		return fmt.Errorf("Docker adapter does not support native headless sessions")
 	}
-	state, lock, err := manager.begin(ctx)
+	state, lock, err := manager.begin(ctx, request.Provider)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (manager Manager) Headless(ctx context.Context, request HeadlessRequest, st
 	if request.ImageID != "" && state.ImageID != request.ImageID {
 		return fmt.Errorf("runtime changed since launch; restore the recorded image before resuming")
 	}
-	id, err := manager.identity(false)
+	id, err := manager.identityContext(ctx, false)
 	if err != nil {
 		return err
 	}
