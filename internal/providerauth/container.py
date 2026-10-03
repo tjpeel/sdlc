@@ -21,7 +21,7 @@ HOME_BASE = "/home/node"
 WORKSPACE = Path("/workspace")
 SESSION_INSTRUCTIONS = Path("/session-instructions.md")
 SESSION_SETTINGS = Path("/session-settings.json")
-CODEX_SKILL_INSTALLER = "/opt/sdlc/catalogues/skills/scripts/install-codex-skills"
+CODEX_SKILL_INSTALLER = "/opt/sdlc/catalogues/skills/scripts/install-skills"
 CLAUDE_CATALOGUES = Path("/opt/sdlc/claude")
 
 
@@ -207,7 +207,8 @@ def codex_interactive(directory, mode):
         env = interactive_environment(home)
         env["CODEX_HOME"] = str(config)
         result = subprocess.run(
-            ["bash", CODEX_SKILL_INSTALLER, "--prefix", "tjpeel", str(skills)],
+            ["bash", CODEX_SKILL_INSTALLER, "--provider", "codex",
+             "--prefix", "tjpeel", "--", str(skills)],
             env=env, cwd=home, capture_output=True)
         if result.returncode:
             raise ValueError("could not prepare image skills")

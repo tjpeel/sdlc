@@ -63,12 +63,12 @@ class InteractiveTests(unittest.TestCase):
         return path
 
     def installer(self, command, **kwargs):
-        self.assertEqual(command[:4], ["bash", auth.CODEX_SKILL_INSTALLER,
-                                      "--prefix", "tjpeel"])
-        self.assertEqual(Path(command[4]), Path(kwargs["env"]["HOME"]) / ".agents/skills")
+        self.assertEqual(command[:7], ["bash", auth.CODEX_SKILL_INSTALLER,
+                                      "--provider", "codex", "--prefix", "tjpeel", "--"])
+        self.assertEqual(Path(command[7]), Path(kwargs["env"]["HOME"]) / ".agents/skills")
         self.assertEqual(kwargs["cwd"], kwargs["env"]["HOME"])
         self.assertTrue(kwargs["capture_output"])
-        Path(command[4]).mkdir(parents=True, mode=0o700)
+        Path(command[7]).mkdir(parents=True, mode=0o700)
         return subprocess.CompletedProcess(command, 0)
 
     def test_codex_full_access_default_uses_shared_body_and_image_catalogue(self):
