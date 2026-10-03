@@ -95,9 +95,11 @@ Other files, including unnumbered Markdown notes, are ignored.
 
 The reference is the exact work folder name, including its case. Quote it if it
 contains spaces. It must be a single directory name, without path separators or
-control characters. A missing folder, no numbered tickets, malformed numbered
-Markdown filenames or duplicate numeric prefixes cause a nonzero exit. For
-example, `01-add-api.md` and `001-add-consumer.md` have the same prefix value.
+control characters. Other characters, including a colon where the host filesystem
+permits it, are treated literally. A missing folder, no numbered tickets,
+malformed numbered Markdown filenames or duplicate numeric prefixes cause a
+nonzero exit. For example, `01-add-api.md` and `001-add-consumer.md` have the same
+prefix value.
 
 Private work must already be ignored and untracked; run `sdlc init` to establish
 the local exclude rule. Unsafe filesystem links, tracked private work and

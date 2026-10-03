@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -186,6 +187,7 @@ func TestConfigValidation(t *testing.T) {
 		`{"version":1,"checks":[[]],"input_files":[]}`,
 		`{"version":1,"checks":[[""]],"input_files":[]}`,
 		`{"version":1,"checks":[],"input_files":["/example/input"]}`,
+		`{"version":1,"checks":[],"input_files":["example:input"]}`,
 		`{"version":1,"checks":[],"input_files":[]} {}`,
 		`{"version":1,"checks":[],"input_files":[],"unknown":true}`,
 	} {
@@ -197,6 +199,18 @@ func TestConfigValidation(t *testing.T) {
 	var c Config
 	if err := decodeConfig([]byte(`{"version":1,"checks":[],"input_files":[]}`), &c); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitializeColonWorkReference(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows directory names cannot contain a colon")
+	}
+	root := repo(t)
+	write(t, root, ".sdlc/work/Example: work/tickets/01-example.md", "disposable ticket contents\n")
+	result := initAt(t, root)
+	if !reflect.DeepEqual(result.Tickets, []string{".sdlc/work/Example: work/tickets/01-example.md"}) {
+		t.Fatalf("initialization changed the literal work reference: %+v", result.Tickets)
 	}
 }
 

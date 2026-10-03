@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,36 @@ func TestInspectWorkInvalidReferenceBeforeInspection(t *testing.T) {
 	entries, err := os.ReadDir(root)
 	if err != nil || len(entries) != 0 {
 		t.Fatal("invalid work inspection created state")
+	}
+}
+
+func TestInspectWorkRequiresExactReferenceSpelling(t *testing.T) {
+	root := workRepo(t)
+	workTicket(t, root, "Example", "01-example.md")
+	result, err := InspectWork(context.Background(), root, "Example")
+	if err != nil || result.Reference != "Example" || !reflect.DeepEqual(result.Tickets, []string{".sdlc/work/Example/tickets/01-example.md"}) {
+		t.Fatalf("exact reference spelling failed: %+v: %v", result, err)
+	}
+	for _, reference := range []string{"example", "EXAMPLE"} {
+		if _, err := InspectWork(context.Background(), root, reference); err == nil || !strings.Contains(err.Error(), "exactly") {
+			t.Fatalf("wrong-case reference accepted: %q: %v", reference, err)
+		}
+	}
+}
+
+func TestInspectWorkColonReference(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows directory names cannot contain a colon")
+	}
+	root := workRepo(t)
+	reference := "Example: work"
+	workTicket(t, root, reference, "01-example.md")
+	result, err := InspectWork(context.Background(), root, reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reference != reference || !reflect.DeepEqual(result.Tickets, []string{".sdlc/work/Example: work/tickets/01-example.md"}) {
+		t.Fatalf("literal colon reference was changed: %+v", result)
 	}
 }
 
