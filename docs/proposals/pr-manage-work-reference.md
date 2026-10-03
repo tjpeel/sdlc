@@ -1,9 +1,10 @@
 # Let pr-manage carry a ticket key or work reference
 
-Proposal only. The skills repository is unchanged.
+Adopted upstream in published [skills commit 56e3897](https://github.com/tjpeel/skills/commit/56e38979baf389b058ae91c6812abae8d8dbcafa).
+SDLC uses that revision. No local edits to the skills repository were made here.
 
-The published [pr-manage skill](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/manage/SKILL.md)
-requires a tracker ticket key for branches and PR titles. The engineering skills
+The previously pinned [pr-manage skill](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/manage/SKILL.md)
+required a tracker ticket key for branches and PR titles. The engineering skills
 also support work selected by an opaque work reference. Accept either supplied
 identifier, and carry it into every PR produced for that work.
 
@@ -46,4 +47,5 @@ mode or change the catalogue structure.
 Before adopting the change, check tracker-backed work still follows its existing
 naming, tracker-free work preserves its exact reference, conflicting or missing
 references stop before a write, and every stacked PR retains the identifier and
-intended base. Approval and implementation in the skills repository are deferred.
+intended base. The published update covers these rules and also preserves the
+existing scope of authority when editing PR fields.

@@ -41,8 +41,8 @@ remote, current source state and local engineering inputs, then show the selecte
 work and execution settings before starting.
 
 The ticket layout comes from the public
-[engineering skills on GitHub](https://github.com/tjpeel/skills/tree/00a2426379eba03364736cf80fbe880de1b69df5/engineering),
-reviewed at published commit `00a2426379eba03364736cf80fbe880de1b69df5`:
+[engineering skills on GitHub](https://github.com/tjpeel/skills/tree/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering),
+reviewed at published commit `56e38979baf389b058ae91c6812abae8d8dbcafa`:
 
 ```text
 .sdlc/work/<reference>/
@@ -97,25 +97,25 @@ order does not rewrite ticket blockers or treat an unresolved dependency as
 complete. Each launch names one ticket, its exact selected inputs, starting SHA,
 destination branch, review boundary and PR base. Keep branch state in the launch
 context, not in maintained ticket or specification files. The published
-[implementation contract](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/implement/SKILL.md)
+[implementation contract](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/implement/SKILL.md)
 already defines prepared launches, predecessor revisions and stale descendants.
 
 The skill roles are:
 
 | Published skill | Responsibility |
 | --- | --- |
-| [`engineering-implement`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/implement/SKILL.md) | Implement one selected ticket in verified, committed increments. |
-| [`engineering-testing`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/testing/SKILL.md) | Choose checks for required behaviour and credible coverage gaps. |
-| [`engineering-verification`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/verification/SKILL.md) | Bind completion evidence to the actual checked revision and outcomes. |
-| [`engineering-code-review`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/engineering/code-review/SKILL.md) | Review the complete local ticket change against technical behaviour and selected requirements. |
-| [`pr-draft`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/draft/SKILL.md) | Draft each PR's description, distinguishing its slice from inherited work. |
-| [`pr-manage`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/manage/SKILL.md) | Publish authorised branches and draft PRs with the recorded predecessor bases. |
-| [`pr-monitor`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/monitor/SKILL.md) | Wait for the required checks on current published revisions and return supported CI repairs to the implementation owner. |
-| [`pr-review`](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/review/SKILL.md) | Review published PRs against fixed base and head revisions. |
+| [`engineering-implement`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/implement/SKILL.md) | Implement one selected ticket in verified, committed increments. |
+| [`engineering-testing`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/testing/SKILL.md) | Choose checks for required behaviour and credible coverage gaps. |
+| [`engineering-verification`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/verification/SKILL.md) | Bind completion evidence to the actual checked revision and outcomes. |
+| [`engineering-code-review`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/engineering/code-review/SKILL.md) | Review the complete local ticket change against technical behaviour and selected requirements. |
+| [`pr-draft`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/draft/SKILL.md) | Draft each PR's description, distinguishing its slice from inherited work. |
+| [`pr-manage`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/manage/SKILL.md) | Publish authorised branches and draft PRs with the recorded predecessor bases. |
+| [`pr-monitor`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/monitor/SKILL.md) | Wait for the required checks on current published revisions and return supported CI repairs to the implementation owner. |
+| [`pr-review`](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/review/SKILL.md) | Review published PRs against fixed base and head revisions. |
 
 These are source skill names; use their installed names from the image's
 catalogue. The image pins published skills commit
-`00a2426379eba03364736cf80fbe880de1b69df5` and agents commit
+`56e38979baf389b058ae91c6812abae8d8dbcafa` and agents commit
 `347f58e598515c51c42fab4a7f699380db725fd3`. A local rebuild installs them.
 The earlier decision, specification and ticket-creation skills supply approved
 inputs; a work run consumes those inputs rather than regenerating them.
@@ -174,13 +174,12 @@ container storage, alongside the private run outputs. Verify the supported
 unattended account route under the [provider rules](provider-usage.md) before
 connecting either role; current interactive login does not establish that route.
 
-One current skill requirement needs a decision before tracker-free publication. The
-[`pr-manage` naming rules](https://github.com/tjpeel/skills/blob/00a2426379eba03364736cf80fbe880de1b69df5/pr/manage/SKILL.md#L61-L73)
-require a ticket key, whereas the engineering process permits tracker-free work
-references. Report that gap and propose a naming policy before changing the skill;
-never invent an external tracker identity from a ticket's sequence number.
-The [isolated pr-manage proposal](proposals/pr-manage-work-reference.md) accepts
-either supplied key and carries it into every PR; it has not changed the skill.
+The published [pr-manage reference rules](https://github.com/tjpeel/skills/blob/56e38979baf389b058ae91c6812abae8d8dbcafa/pr/manage/SKILL.md#L61-L121)
+now accept a confirmed ticket key or the exact selected work reference. Every
+PR carries that identifier in its title and body; branch names can use a
+separate Git-safe rendering. Preserve both identifiers in the body when a ticket
+key and associated work reference are supplied. The [isolated proposal](proposals/pr-manage-work-reference.md)
+records the change that was adopted upstream. SDLC uses the published skill.
 Rebase and force-push restacking also need explicit authority. Publication authority
 alone does not authorise rewriting someone else's work.
 

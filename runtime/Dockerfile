@@ -6,7 +6,7 @@ ARG CODEX_VERSION=0.159.3
 ARG GH_VERSION=2.102.0
 ARG CLAUDE_VERSION=2.1.287
 ARG DOTNET_VERSION=10.0.401
-ARG SKILLS_REVISION=00a2426379eba03364736cf80fbe880de1b69df5
+ARG SKILLS_REVISION=56e38979baf389b058ae91c6812abae8d8dbcafa
 ARG AGENTS_REVISION=347f58e598515c51c42fab4a7f699380db725fd3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -74,6 +74,10 @@ RUN set -eu; \
         --provider claude --prefix tjpeel -- /opt/sdlc/claude/skills; \
     bash /opt/sdlc/catalogues/agents/scripts/install-agents \
         --runtime claude --prefix tjpeel /opt/sdlc/claude/agents
+
+# The agent installer creates owner-only definitions. They contain public
+# catalogue instructions and must be owned by the non-root client user.
+RUN chown -R node:node /etc/codex/agents /opt/sdlc/claude/agents
 
 # The bootstrap runs as root to initialise private tmpfs and named volumes.
 # Codex and the project tools run as the existing non-root node user.
