@@ -15,13 +15,17 @@ Clone the SDLC repository, install the CLI on PATH and build the shared image
 locally. Every project uses that image. Project names, source, tickets and
 credentials do not become image build inputs.
 
-Authenticate Codex and Claude with `sdlc auth login --provider codex` and
+Authenticate Codex and Claude with `sdlc auth login` and
 `sdlc auth login --provider claude`. Their login state lives in installation-wide
 storage, separate from disposable work containers. Claude manages its own native
 cache, following the [provider usage rules](provider-usage.md). The image contains pinned
 skills and agents from the public GitHub catalogues. Startup should report
 available updates to both provider CLIs and the skills/agents, and prompt before
 updating the shared runtime.
+
+Codex is the default provider when none is specified. Use `--provider claude` to
+select Claude. `sdlc auth status` checks Codex; `sdlc auth status --all` checks both
+providers.
 
 Configure common agent instructions with `sdlc instructions set --file FILE`,
 inspect them with `sdlc instructions show`, or remove custom additions with

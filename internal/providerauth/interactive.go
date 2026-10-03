@@ -169,7 +169,7 @@ func (manager Manager) Interactive(ctx context.Context, provider, mode string) (
 		}
 	}()
 	if err := manager.Docker.Interactive(ctx, interactiveArgs(state.ImageID, name, volume, provider, absolute, settings, mode)...); err != nil {
-		return fmt.Errorf("interactive %s session failed or was cancelled; run sdlc auth status before retrying", provider)
+		return fmt.Errorf("interactive %s session failed or was cancelled; run sdlc auth status --provider %s before retrying", provider, provider)
 	}
 	return nil
 }
