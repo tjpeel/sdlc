@@ -70,6 +70,74 @@ suggested checks before using them. It works without Docker or provider login;
 ticket execution remains future work. See the
 [project initialization guide](docs/cli.md#initialize-a-project).
 
+## Security boundary and risks
+
+SDLC uses Docker to limit what provider commands can reach. Interactive sessions
+run as a non-root user with a read-only root filesystem, dropped Linux
+capabilities, Docker's `no-new-privileges` restriction, and CPU, memory and
+process limits.
+They receive the selected provider's private cache and shared instructions.
+The current session starts in an empty disposable workspace, with no host
+repository, host home, SSH agent, work secrets or Docker socket mounted. Project
+execution and exporting changes are still future work.
+
+This boundary is useful for trusted repositories too: their dependencies,
+installation scripts, build tools and tests can be compromised. Keeping that
+code away from unrelated host files reduces the damage it can cause. The host,
+Docker engine and runtime image remain trusted parts of the system; an attacker
+controlling them can inspect or alter sessions and credential storage. See
+[Docker's security model](https://docs.docker.com/engine/security/).
+
+The remaining risks are:
+
+- **Credentials inside the session are exposed to its code.** Login and
+  interactive sessions can read and update the selected provider's cache.
+  Default full access removes native permission prompts, and network access
+  currently has no destination allowlist. Malicious instructions or executable
+  dependencies could steal credentials or transmit other accessible data.
+  Manual approval is additional supervision; approving an installation command
+  does not constrain its package scripts. Anthropic documents the same
+  [credential exposure in dev containers](https://code.claude.com/docs/en/devcontainer).
+- **Persistent storage remains sensitive.** SDLC supplies no credential
+  encryption. Docker administrators and an attacker with sufficient host access
+  can read provider volumes. Claude's native cache may also retain account
+  metadata and logs. Reinstalling or rebuilding preserves these volumes;
+  deleting local storage does not establish provider-side revocation. Follow
+  the [login storage guidance](docs/cli.md#provider-login).
+- **Container isolation can fail.** Runtime or kernel vulnerabilities and unsafe
+  host configuration can weaken the boundary. Docker bridge networking can
+  reach services allowed by the host network; filesystem isolation does not
+  isolate those services. Keep the host and container engine maintained.
+- **Pins and update checks do not establish safety.** A pinned release or skill
+  can contain malicious code. `sdlc runtime status` reports version availability,
+  not a vulnerability scan, malware check or endorsement of an update.
+- **Disposable state has operational costs.** Current workspace changes are
+  discarded on exit. Provider volumes have no storage quota, so session code
+  can exhaust Docker's disk space. Deleting these volumes loses saved login
+  state; losing installation metadata or switching engines can leave old
+  sensitive volumes behind. Offline auth status cannot prove current account
+  or model access.
+
+The next hardening priorities, not yet implemented, are to run dependency
+installation and tests in separate workers without provider caches or publishing
+credentials, enforce network restrictions outside those workers, and give future
+ticket jobs disposable source copies. Signing and publishing should remain
+outside workers and operate only on an approved revision and destination.
+Separating workers must be enforced by the execution design; a prompt asking the
+agent to use a safer container is insufficient. Allowed network destinations
+can still carry data, so network restrictions reduce rather than eliminate
+disclosure risk. A dedicated execution VM or separate machine can add another
+boundary, while its administrator remains trusted.
+
+A carefully configured Claude dev container can provide comparable containment
+and can already offer tighter network controls. SDLC uses the same underlying
+container boundary. Its current value is a shared recorded runtime, consistent
+Codex/Claude launch settings, provider cache separation, shared instructions and
+dependency visibility. Disposable ticket work, independent validation and
+controlled publication are planned workflow benefits. Full access directly on
+the host exposes the files and services available to that host user; running
+inside SDLC narrows that exposure, while retaining the risks listed above.
+
 ## Documentation
 
 - [CLI installation and commands](docs/cli.md)
