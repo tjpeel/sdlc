@@ -19,9 +19,17 @@ sdlc runtime build --source .
 sdlc runtime status
 ```
 
-Repeat the install command to reinstall. After the first build, `sdlc runtime
-build` uses the saved clone location and can run from another directory. Docker
-image builds and container checks run locally; CI validates source only.
+`/PATH/TO/YOUR_BIN_DIRECTORY` means a directory your shell searches for commands.
+For a Mac where Homebrew's `/opt/homebrew/bin` is on PATH, install with:
+
+```sh
+go run ./cmd/sdlc-install --bin-dir /opt/homebrew/bin
+```
+
+Repeat the install command to reinstall. After the first build,
+`sdlc runtime build` uses the saved clone location and can run from another
+directory. Docker image builds and container checks run locally; CI validates
+source only.
 
 ## Documentation
 
