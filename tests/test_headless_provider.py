@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -71,7 +72,8 @@ class HeadlessTests(unittest.TestCase):
             path.write_bytes(contents)
             path.chmod(0o600)
 
-    def run_client(self, provider, resume="", readonly=False, effect=None):
+    def run_client(self, provider, resume="", readonly=False, effect=None,
+                   before_transcript=None):
         invocations = []
 
         def launch(command, env, cwd, stdin):
@@ -86,7 +88,10 @@ class HeadlessTests(unittest.TestCase):
             path = config / native.FILES[provider]
             self.assertTrue(path.is_symlink())
             self.assertEqual(path.readlink(), self.cache / native.FILES[provider])
-            (config / "native-transcript.jsonl").write_text('{"session_id":"' + ID + '"}\n')
+            if before_transcript:
+                before_transcript(config)
+            else:
+                (config / "native-transcript.jsonl").write_text('{"session_id":"' + ID + '"}\n')
             invocations.append((command, env, config))
             if effect:
                 effect(path)
@@ -221,6 +226,24 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual((config / "skills").readlink(), self.catalogues / "skills")
         self.assertEqual((config / "agents").readlink(), self.catalogues / "agents")
         self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(), b"fake-native-cache")
+
+    def test_claude_headless_retains_native_history_for_specific_resume(self):
+        with patch.dict(os.environ, {"CLAUDE_CODE_SKIP_PROMPT_HISTORY": "1"}):
+            _, env, config = self.run_client("claude")
+        self.assertNotIn("CLAUDE_CODE_SKIP_PROMPT_HISTORY", env)
+        transcript = config / "native-transcript.jsonl"
+        before = transcript.read_bytes()
+        def verify_existing_transcript(current):
+            self.assertEqual(current, config)
+            self.assertEqual((current / transcript.name).read_bytes(), before)
+
+        command, next_env, next_config = self.run_client(
+            "claude", ID, before_transcript=verify_existing_transcript)
+        self.assertEqual(next_config, config)
+        self.assertEqual(command[-2:], ["--resume", ID])
+        self.assertNotIn("CLAUDE_CODE_SKIP_PROMPT_HISTORY", next_env)
+        self.assertEqual(transcript.read_bytes(), before)
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o700)
 
     def test_native_atomic_auth_refresh_does_not_leave_credentials_in_session(self):
         for provider in native.FILES:

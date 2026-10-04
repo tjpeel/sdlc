@@ -221,7 +221,6 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
             native.claude_catalogues(config)
             env.update({"CLAUDE_CONFIG_DIR": str(config), "DISABLE_AUTOUPDATER": "1",
                         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                        "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "1",
                         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
                         # Foreground delegates complete before native structured
                         # output can end the parent turn with work still pending.
