@@ -26,7 +26,7 @@ Have these available for the session:
 
 - A running local Docker engine using Linux containers, with enough disk and
   memory for the SDLC runtime, .NET SDK builds, Mongo and two test daemons.
-- Host Git, GitHub CLI (`gh`), Python 3 and Go 1.24 or later for installation.
+- Host Git, GitHub CLI (`gh`), Python 3 and Go 1.25 or later for installation.
   Go and host Codex/Claude binaries are not required after SDLC is installed;
   the provider clients and .NET SDK run in the shared image.
 - Your authorised Codex and Claude accounts, with access to the chosen models.

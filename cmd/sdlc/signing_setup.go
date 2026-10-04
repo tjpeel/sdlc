@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -54,11 +56,21 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
-		return fmt.Errorf("signing profile already exists or cannot be inspected; use signing status, or configure to replace it deliberately")
+	var previous signing.Profile
+	if options.replace {
+		previous, err = signing.Load(path)
+		if err != nil {
+			return fmt.Errorf("--replace requires an existing safe, valid signing profile; inspect signing status first")
+		}
+	} else if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return fmt.Errorf("signing profile already exists or cannot be inspected; use signing status, or signing setup --replace to revise it through the wizard")
 	}
 	bootstrap := options.bootstrap
-	if bootstrap == "" {
+	reuseBootstrap := bootstrap != ""
+	if bootstrap == "" && options.replace {
+		bootstrap = previous.BootstrapFile
+		reuseBootstrap = true
+	} else if bootstrap == "" {
 		bootstrap, err = signing.BootstrapPath(directory, options.name)
 		if err != nil {
 			return err
@@ -84,15 +96,31 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 		defer clear(data)
 		return strings.TrimSpace(string(data)), err
 	}
-	vault, err := read("Dedicated vault name or ID: ")
+	readIdentity := func(label, current string) (string, error) {
+		if !options.replace {
+			return read(label + ": ")
+		}
+		answer, err := read(label + " [" + current + "; Enter to keep]: ")
+		if answer == "" {
+			answer = current
+		}
+		return answer, err
+	}
+	var vaultCurrent, itemCurrent string
+	if options.replace {
+		segments := strings.Split(strings.TrimSuffix(strings.TrimPrefix(previous.Reference, "op://"), "/private key?ssh-format=openssh"), "/")
+		vaultCurrent, itemCurrent = segments[0], segments[1]
+		fmt.Fprintln(output, "Replacing the existing signing profile. Enter keeps each current vault, item and public-key value shown below.")
+	}
+	vault, err := readIdentity("Dedicated vault name or ID", vaultCurrent)
 	if err != nil {
 		return err
 	}
-	item, err := read("SSH Key item name or ID within that vault: ")
+	item, err := readIdentity("SSH Key item name or ID within that vault", itemCurrent)
 	if err != nil {
 		return err
 	}
-	public, err := read("Public Ed25519 key (ssh-ed25519 ...; never the private key): ")
+	public, err := readIdentity("Public Ed25519 key (ssh-ed25519 ...; never the private key)", previous.PublicKey)
 	if err != nil {
 		return err
 	}
@@ -107,14 +135,40 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 	if options.provider != "" {
 		profile.Provider = options.provider
 	}
-	if options.bootstrap != "" {
+	if options.replace {
+		profile.ID = previous.ID
+	}
+	if options.replace && options.bootstrap == "" {
+		choice, err := read("Service Account token: keep the existing token file or enter a new token? [keep/new; Enter to keep]: ")
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(choice) {
+		case "", "keep":
+		case "new":
+			bootstrap, err = replacementSigningBootstrapPath(directory, options.name)
+			if err != nil {
+				return err
+			}
+			profile.BootstrapFile = bootstrap
+			reuseBootstrap = false
+		default:
+			return fmt.Errorf("select keep or new for the Service Account token; no signing files were changed")
+		}
+	}
+	if reuseBootstrap {
 		if err := signing.CheckBootstrap(profile); err != nil {
 			return err
 		}
 	}
 	fmt.Fprintf(output, "\nGitHub/signing profile: %s\nSigning secret provider: %s\nPublic signing fingerprint: %s\nPrivate profile: %q\nPlaintext Service Account token file: %q\n", options.name, profile.EffectiveProvider(), profile.Fingerprint, path, bootstrap)
 	fmt.Fprintln(output, "The private profile contains an op:// vault/item locator and this token file path; it contains no token or private key.")
-	answer, err := read("Save this identity with the described private host storage? [y/N]: ")
+	confirmation := "Save this identity with the described private host storage? [y/N]: "
+	if options.replace {
+		confirmation = "Replace the existing signing profile with these settings? [y/N]: "
+		fmt.Fprintln(output, "Existing token files will be retained; other profiles may use them.")
+	}
+	answer, err := read(confirmation)
 	if err != nil {
 		return err
 	}
@@ -130,10 +184,15 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 	}
 	defer lock.Close()
 	// Preflight is repeated under the per-profile lock before reading a token.
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+	if options.replace {
+		current, err := signing.Load(path)
+		if err != nil || current != previous {
+			return fmt.Errorf("signing profile changed during setup; rerun the wizard to review the current settings")
+		}
+	} else if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		return fmt.Errorf("signing profile appeared during setup; inspect it with signing status before retrying")
 	}
-	if options.bootstrap == "" {
+	if !reuseBootstrap {
 		if _, err := os.Lstat(bootstrap); !os.IsNotExist(err) {
 			return fmt.Errorf("bootstrap appeared during setup; inspect private storage before retrying")
 		}
@@ -141,7 +200,7 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 		return err
 	}
 	createdBootstrap := false
-	if options.bootstrap == "" {
+	if !reuseBootstrap {
 		token, err := prompt.Read("1Password Service Account token (hidden; never paste into chat): ", true)
 		defer clear(token)
 		if err != nil {
@@ -157,7 +216,11 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 	}
 	err = ctx.Err()
 	if err == nil {
-		err = signing.StoreNew(directory, profile, options.name)
+		if options.replace {
+			err = signing.StoreReplacement(directory, profile, previous, options.name)
+		} else {
+			err = signing.StoreNew(directory, profile, options.name)
+		}
 	}
 	if err != nil {
 		if createdBootstrap {
@@ -172,4 +235,17 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 	fmt.Fprintf(output, "Next: sdlc signing status --profile %s\nThen: sdlc signing verify --profile %s (contacts 1Password; needs the runtime and pinned op image).\n", options.name, options.name)
 	fmt.Fprintf(output, "Use the same account selection with sdlc auth login --service github --profile %s and sdlc run --github-profile %s.\n", options.name, options.name)
 	return nil
+}
+
+// A new token never overwrites an existing bootstrap, which may be shared.
+func replacementSigningBootstrapPath(directory, name string) (string, error) {
+	base, err := signing.BootstrapPath(directory, name)
+	if err != nil {
+		return "", err
+	}
+	var identifier [12]byte
+	if _, err := rand.Read(identifier[:]); err != nil {
+		return "", fmt.Errorf("cannot identify a new private bootstrap file")
+	}
+	return base + "-" + hex.EncodeToString(identifier[:]), nil
 }

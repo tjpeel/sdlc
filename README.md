@@ -19,7 +19,7 @@ Start with the [GitHub profile and signing test guide](docs/github-docker-test.m
 to provision separate accounts. Use the [1Password signing setup guide](docs/1password-signing-setup.md)
 to create the dedicated vault/account/key and run `sdlc signing setup --profile personal`.
 
-From this clone, with Go 1.24 or later and a local Docker engine running Linux
+From this clone, with Go 1.25 or later and a local Docker engine running Linux
 containers, select an existing directory on your PATH:
 
 ```sh

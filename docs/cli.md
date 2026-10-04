@@ -10,7 +10,7 @@ use separate Docker containers; stacked-ticket orchestration remains future work
 ## Install or reinstall
 
 Clone this repository and run the installer from its root. Local builds require
-Go 1.24 or later. Choose an existing directory on your PATH:
+Go 1.25 or later. Choose an existing directory on your PATH:
 
 ```sh
 go run ./cmd/sdlc-install --bin-dir /PATH/TO/YOUR_BIN_DIRECTORY
@@ -754,13 +754,33 @@ No alternative backend or general plugin interface is implemented.
 expected SHA256 fingerprint. A blank fingerprint is calculated from the public
 key. It reads the Service Account token through a hidden prompt, or uses an
 existing private file selected by `--bootstrap-file /PATH/TO/YOUR_PRIVATE_BOOTSTRAP`.
-The wizard saves private local configuration and prints its exact storage paths.
-It refuses to overwrite an existing profile or bootstrap. It creates no vault,
-account or SSH key, makes no network request and cannot certify account grants.
+The wizard requires confirmation before saving private local configuration and
+prints its exact storage paths. Without `--replace`, it refuses to overwrite an
+existing profile. It creates no vault, account or SSH key, makes no network
+request and cannot certify account grants.
+
+Use the wizard to change an existing profile:
+
+```sh
+sdlc signing setup --profile personal --provider 1password --replace
+```
+
+`--replace` requires a valid private saved profile. Any token file selected for
+reuse must pass the safety checks; a new token can replace a missing or unsafe
+bootstrap.
+Press Enter at the vault, item and public-key prompts to keep their current
+values. A blank fingerprint is recalculated from the accepted public key. The
+token choice defaults to keeping the current Service Account token; choose a
+new token to enter it at a hidden prompt, or select a safe existing token file
+with `--bootstrap-file`. A new token is saved in a unique private file. Setup
+never overwrites or deletes an existing bootstrap, which may be shared by other
+profiles. After confirmation, it replaces the profile atomically. Cancellation
+or a save failure preserves the existing profile. Connected verification remains
+a separate `signing status --verify` command.
 
 Default installation state is `~/Library/Application Support/sdlc` on macOS and
 `~/.config/sdlc` on Linux (respecting XDG configuration). A named profile uses
-`profiles.personal.local.json`; the hidden prompt creates
+`profiles.personal.local.json`; first setup through the hidden prompt creates
 `signing-personal-bootstrap` there. Keep state outside repositories. The bearer
 token remains plaintext in a private owned mode-`0600` file.
 
@@ -780,9 +800,13 @@ sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_P
 `--show-config` is explicit private inspection: it displays the reference,
 bootstrap path and saved configuration location, never the token or private key.
 Keep that output private. `signing verify` remains an alias for `status --verify`.
-`configure` imports an existing external private JSON profile for deliberate
-configuration changes; `--file` belongs to `configure`. These commands default
-to the `default` profile when `--profile` is omitted.
+`configure --file` is an advanced import of an external JSON profile owned by
+your user with mode `0600`. The JSON contains `provider`, `version`, `id`,
+`reference`, `public_key`, `fingerprint` and `bootstrap_file` metadata, with no
+Service Account token or private key. The wizard creates this file; routine
+changes through `setup --replace` do not require a hand-written JSON file.
+`--file` belongs to `configure`. These commands default to the `default` profile
+when `--profile` is omitted.
 
 The signing configuration name must match the selected GitHub profile. Provision
 the public key as a GitHub signing key for the intended account and Git email.

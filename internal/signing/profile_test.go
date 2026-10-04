@@ -111,7 +111,7 @@ func TestResolverKeepsBearerSecretOffArgumentsAndConfigEnvironment(t *testing.T)
 		if strings.Contains(joined, "fake-service-account-input") || strings.Contains(joined, profile.Reference) || strings.Contains(joined, "--mount") || strings.Contains(joined, "--env OP_SERVICE_ACCOUNT_TOKEN") {
 			t.Fatal("credential channel leaked or mounted host files")
 		}
-		for _, required := range []string{"--read-only", "--user 1000:1000", "--cap-drop ALL", "--log-driver none", "--pull never", "--rm", "--entrypoint /usr/bin/timeout", "--kill-after=5s 35s", "io.sdlc.kind=signing", Image} {
+		for _, required := range []string{"--read-only", "--user opuser", "--cap-drop ALL", "--log-driver none", "--pull never", "--rm", "--entrypoint /usr/bin/timeout", "--kill-after=5s 35s", "io.sdlc.kind=signing", Image} {
 			if !strings.Contains(joined, required) {
 				t.Fatalf("missing %s", required)
 			}

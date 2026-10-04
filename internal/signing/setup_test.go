@@ -311,6 +311,417 @@ func TestStoreNewRejectsProfileStorageLinksAndRepositoryPaths(t *testing.T) {
 	}
 }
 
+func TestStoreReplacementChangesOnlyProfileUnderSetupLease(t *testing.T) {
+	profile, path := replacementFixture(t)
+	directory := filepath.Dir(path)
+	lease, err := AcquireSetup(directory, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	bootstrap, err := os.ReadFile(profile.BootstrapFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := profile
+	replacement.Provider = DefaultProvider
+	replacement.ID = "replacement-signing"
+	replacement.Reference = "op://YOUR_VAULT/YOUR_REPLACEMENT_KEY/private key?ssh-format=openssh"
+	if err := StoreReplacement(directory, replacement, profile, ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || loaded != replacement {
+		t.Fatal("replacement profile not loadable", err)
+	}
+	after, err := os.Lstat(path)
+	if err != nil || after.Mode().Perm() != 0600 || privateOwner(after) != nil || os.SameFile(before, after) {
+		t.Fatal("replacement was not published as a new private file", err)
+	}
+	unchanged, err := os.ReadFile(profile.BootstrapFile)
+	if err != nil || !bytes.Equal(bootstrap, unchanged) {
+		t.Fatal("replacement changed bootstrap contents", err)
+	}
+	assertNoReplacementTemporary(t, directory)
+}
+
+func TestStoreReplacementRejectsStaleExpectedMetadataWithoutWriting(t *testing.T) {
+	profile, path := replacementFixture(t)
+	directory := filepath.Dir(path)
+	edited := profile
+	edited.ID = "edited-signing"
+	data, err := json.Marshal(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := profile
+	replacement.ID = "replacement-signing"
+	if err := StoreReplacement(directory, replacement, profile, ""); err == nil {
+		t.Fatal("stale wizard metadata replaced an edited profile")
+	}
+	retained, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, retained) {
+		t.Fatal("refused replacement changed edited profile", err)
+	}
+	assertNoReplacementTemporary(t, directory)
+}
+
+func TestStoreReplacementRejectsUnsafeOrMissingTarget(t *testing.T) {
+	for _, cause := range []string{"absent", "public", "symlink", "hardlink", "directory", "invalid", "oversized", "unknown field"} {
+		t.Run(cause, func(t *testing.T) {
+			profile, path := replacementFixture(t)
+			directory := filepath.Dir(path)
+			bootstrap, err := os.ReadFile(profile.BootstrapFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch cause {
+			case "absent", "symlink", "hardlink", "directory":
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch cause {
+			case "public":
+				err = os.Chmod(path, 0644)
+			case "symlink":
+				err = os.Symlink(profile.BootstrapFile, path)
+			case "hardlink":
+				err = os.Link(profile.BootstrapFile, path)
+			case "directory":
+				err = os.Mkdir(path, 0700)
+			case "invalid":
+				err = os.WriteFile(path, []byte("invalid offline profile"), 0600)
+			case "oversized":
+				err = os.WriteFile(path, bytes.Repeat([]byte(" "), 8193), 0600)
+			case "unknown field":
+				data, marshalErr := json.Marshal(profile)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				data = append(data[:len(data)-1], []byte(",\"extra\":true}")...)
+				err = os.WriteFile(path, data, 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, beforeErr := os.Lstat(path)
+			var contents []byte
+			if beforeErr == nil && before.Mode().IsRegular() {
+				contents, err = os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			replacement := profile
+			replacement.ID = "replacement-signing"
+			if err := StoreReplacement(directory, replacement, profile, ""); err == nil {
+				t.Fatal("unsafe replacement target accepted")
+			}
+			after, afterErr := os.Lstat(path)
+			if os.IsNotExist(beforeErr) {
+				if !os.IsNotExist(afterErr) {
+					t.Fatal("replacement created an absent profile")
+				}
+			} else if afterErr != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
+				t.Fatal("refused replacement changed target identity or mode", afterErr)
+			}
+			if contents != nil {
+				retained, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(contents, retained) {
+					t.Fatal("refused replacement changed target contents", err)
+				}
+			}
+			unchanged, err := os.ReadFile(profile.BootstrapFile)
+			if err != nil || !bytes.Equal(bootstrap, unchanged) {
+				t.Fatal("refused replacement changed bootstrap target", err)
+			}
+			assertNoReplacementTemporary(t, directory)
+		})
+	}
+}
+
+func TestStoreReplacementRejectsInvalidMetadataBeforeWriting(t *testing.T) {
+	for _, cause := range []string{"new profile", "expected profile", "profile name"} {
+		t.Run(cause, func(t *testing.T) {
+			profile, path := replacementFixture(t)
+			initial, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacement, expected := profile, profile
+			name := ""
+			switch cause {
+			case "new profile":
+				replacement.Reference = "invalid-locator-with-private-marker"
+			case "expected profile":
+				expected.Reference = "invalid-locator-with-private-marker"
+			case "profile name":
+				name = "../private-marker"
+			}
+			err = StoreReplacement(filepath.Dir(path), replacement, expected, name)
+			if err == nil {
+				t.Fatal("invalid replacement metadata accepted")
+			}
+			if strings.Contains(err.Error(), "private-marker") || strings.Contains(err.Error(), profile.BootstrapFile) || strings.Contains(err.Error(), profile.Reference) {
+				t.Fatal("replacement error exposed locator contents")
+			}
+			retained, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(initial, retained) {
+				t.Fatal("invalid metadata changed existing profile", err)
+			}
+			assertNoReplacementTemporary(t, filepath.Dir(path))
+		})
+	}
+}
+
+func TestStoreReplacementRejectsUnsafeStorageWithoutWriting(t *testing.T) {
+	for _, cause := range []string{"relative", "noncanonical", "public", "parent symlink", "repository", "missing"} {
+		t.Run(cause, func(t *testing.T) {
+			profile, fixturePath := replacementFixture(t)
+			base := filepath.Dir(fixturePath)
+			directory := filepath.Join(base, "replacement-state")
+			if err := StoreNew(directory, profile, "work"); err != nil {
+				t.Fatal(err)
+			}
+			path, err := ProfilePath(directory, "work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := directory
+			switch cause {
+			case "relative":
+				selected = "relative-replacement-state"
+			case "noncanonical":
+				selected = directory + "/../replacement-state"
+			case "public":
+				err = os.Chmod(directory, 0755)
+			case "parent symlink":
+				selected = filepath.Join(base, "linked-state")
+				err = os.Symlink(directory, selected)
+			case "repository":
+				err = os.Mkdir(filepath.Join(directory, ".git"), 0700)
+			case "missing":
+				selected = filepath.Join(base, "missing-state")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacement := profile
+			replacement.ID = "replacement-signing"
+			if err := StoreReplacement(selected, replacement, profile, "work"); err == nil {
+				t.Fatal("unsafe profile storage accepted")
+			}
+			retained, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(initial, retained) {
+				t.Fatal("unsafe storage changed profile contents", err)
+			}
+			if cause == "missing" {
+				if _, err := os.Lstat(selected); !os.IsNotExist(err) {
+					t.Fatal("replacement created missing storage", err)
+				}
+			}
+			assertNoReplacementTemporary(t, directory)
+		})
+	}
+}
+
+func TestStoreReplacementRefusesProfileAndBootstrapPathCollision(t *testing.T) {
+	for _, cause := range []string{"new bootstrap", "expected bootstrap"} {
+		t.Run(cause, func(t *testing.T) {
+			profile, path := replacementFixture(t)
+			replacement, expected := profile, profile
+			if cause == "new bootstrap" {
+				replacement.BootstrapFile = path
+			} else {
+				expected.BootstrapFile = filepath.Dir(path) + "/child/../" + filepath.Base(path)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := StoreReplacement(filepath.Dir(path), replacement, expected, ""); err == nil {
+				t.Fatal("profile destination accepted as bootstrap locator")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("bootstrap path collision changed profile", err)
+			}
+			assertNoReplacementTemporary(t, filepath.Dir(path))
+		})
+	}
+}
+
+func TestStoreReplacementDoesNotRequireOrCreateBootstrapFiles(t *testing.T) {
+	profile, path := replacementFixture(t)
+	directory := filepath.Dir(path)
+	profile.BootstrapFile = filepath.Join(directory, "absent-old-bootstrap")
+	data, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := profile
+	replacement.ID = "replacement-signing"
+	replacement.BootstrapFile = filepath.Join(directory, "absent-new-bootstrap")
+	if err := StoreReplacement(directory, replacement, profile, ""); err != nil {
+		t.Fatal("profile replacement tried to use bootstrap contents", err)
+	}
+	for _, bootstrap := range []string{profile.BootstrapFile, replacement.BootstrapFile} {
+		if _, err := os.Lstat(bootstrap); !os.IsNotExist(err) {
+			t.Fatal("replacement created a bootstrap file", err)
+		}
+	}
+	assertNoReplacementTemporary(t, directory)
+}
+
+func TestReplacementPublicationRechecksProfileAndTemporaryIdentity(t *testing.T) {
+	for _, cause := range []string{"edited metadata", "new target inode", "new temporary inode", "edited temporary metadata"} {
+		t.Run(cause, func(t *testing.T) {
+			profile, path := replacementFixture(t)
+			directory := filepath.Dir(path)
+			root, err := os.OpenRoot(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			directoryInfo, err := os.Lstat(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targetInfo, err := matchingReplacementProfile(root, filepath.Base(path), profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const temporary = ".signing-profile-test-pending"
+			file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, err := file.Stat()
+			if err != nil {
+				file.Close()
+				t.Fatal(err)
+			}
+			replacement := profile
+			replacement.ID = "replacement-signing"
+			data, err := json.Marshal(replacement)
+			if err != nil {
+				file.Close()
+				t.Fatal(err)
+			}
+			if _, err := file.Write(data); err != nil {
+				file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Sync(); err != nil {
+				file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			switch cause {
+			case "edited metadata":
+				edited := profile
+				edited.ID = "edited-signing"
+				data, err := json.Marshal(edited)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "new target inode":
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				other := filepath.Join(directory, "edited-profile")
+				if err := os.WriteFile(other, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := root.Rename("edited-profile", filepath.Base(path)); err != nil {
+					t.Fatal(err)
+				}
+			case "new temporary inode":
+				other := filepath.Join(directory, "foreign-temporary")
+				if err := os.WriteFile(other, []byte("offline foreign file"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := root.Rename("foreign-temporary", temporary); err != nil {
+					t.Fatal(err)
+				}
+			case "edited temporary metadata":
+				edited := replacement
+				edited.ID = "edited-signing"
+				data, err := json.Marshal(edited)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(directory, temporary), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := publishReplacement(root, directory, path, directoryInfo, targetInfo, temporary, created, profile, replacement); err == nil {
+				t.Fatal("changed target or temporary published")
+			}
+			retained, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, retained) {
+				t.Fatal("failed publication changed existing profile", err)
+			}
+			removeCreatedFile(root, temporary, created)
+			pending, err := os.ReadFile(filepath.Join(directory, temporary))
+			if cause == "new temporary inode" {
+				if err != nil || string(pending) != "offline foreign file" {
+					t.Fatal("cleanup removed a different temporary inode", err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatal("cleanup retained its own temporary", err)
+			}
+		})
+	}
+}
+
+func assertNoReplacementTemporary(t *testing.T, directory string) {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".signing-profile-") {
+			t.Fatal("replacement left a temporary profile")
+		}
+	}
+}
+
+func replacementFixture(t *testing.T) (Profile, string) {
+	t.Helper()
+	profile, path := fixture(t)
+	if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return profile, path
+}
+
 func TestAcquireSetupSerializesEntireProfileTransaction(t *testing.T) {
 	profile, _ := fixture(t)
 	directory := filepath.Join(filepath.Dir(profile.BootstrapFile), "leased-state")

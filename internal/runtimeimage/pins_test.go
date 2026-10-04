@@ -58,6 +58,7 @@ func pinsFixture(t *testing.T) (Manager, *fakeDocker, string, runtimepins.Pins, 
 	inventory.Dependencies = append(inventory.Dependencies, Dependency{Name: "yarn", Kind: "npm", Source: "yarn", Version: "1.22.22"})
 	docker.inventoryOverride = &inventory
 	docker.opVersion = "2.39.0"
+	docker.opInitializationOutput = []byte("[]\n")
 	docker.daemonVersion = "29.0.0"
 	return manager, docker, root, pins, original
 }
@@ -176,7 +177,7 @@ func TestUpdatePlanIdentityIsCheckedBeforePullOrBuild(t *testing.T) {
 }
 
 func TestInvalidAuxiliaryAndInventoryCandidatesPreservePrevious(t *testing.T) {
-	for _, cause := range []string{"invalid signing ref", "invalid daemon ref", "signing pull", "daemon pull", "signing probe", "daemon probe", "signing version", "daemon version", "codex inventory", "node inventory", "docker inventory", "missing yarn", "callback"} {
+	for _, cause := range []string{"invalid signing ref", "invalid daemon ref", "signing pull", "daemon pull", "signing probe", "daemon probe", "signing version", "daemon version", "signing initialization", "signing accounts", "codex inventory", "node inventory", "docker inventory", "missing yarn", "callback"} {
 		t.Run(cause, func(t *testing.T) {
 			manager, docker, root, pins, _ := pinsFixture(t)
 			before := recordPrevious(t, manager, docker, root, nil)
@@ -198,6 +199,10 @@ func TestInvalidAuxiliaryAndInventoryCandidatesPreservePrevious(t *testing.T) {
 				docker.opVersion = "2.38.0"
 			case "daemon version":
 				docker.daemonVersion = "28.0.0"
+			case "signing initialization":
+				docker.opInitializationFailed = true
+			case "signing accounts":
+				docker.opInitializationOutput = []byte(`[{"email":"private-marker@example.invalid"}]`)
 			case "codex inventory":
 				docker.inventoryOverride.Dependencies[2].Version = "0.0.1"
 			case "node inventory":
@@ -224,15 +229,46 @@ func TestAuxiliaryProbesAreOfflineUnprivilegedAndKeepImages(t *testing.T) {
 	}
 	found := map[string]bool{}
 	for _, call := range docker.calls {
-		if call[0] != "run" || call[len(call)-1] != "--version" {
+		if call[0] != "run" || (call[len(call)-1] != "--version" && call[len(call)-1] != signingInitialization) {
 			continue
 		}
-		image := call[len(call)-2]
-		found[image] = true
 		joined := strings.Join(call, " ")
-		for _, required := range []string{"--network none", "--user 1000:1000", "--read-only", "--cap-drop ALL", "no-new-privileges", "--pull never", "--memory 512m", "--cpus 1", "--pids-limit 128", "--log-driver none", "HTTP_PROXY="} {
+		for _, required := range []string{"--network none", "--read-only", "--cap-drop ALL", "no-new-privileges", "--pull never", "--memory 512m", "--cpus 1", "--pids-limit 128", "--log-driver none", "HTTP_PROXY=", "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777"} {
 			if !strings.Contains(joined, required) {
 				t.Fatalf("missing auxiliary isolation %s", required)
+			}
+		}
+		if call[len(call)-1] == signingInitialization {
+			found["signing initialization"] = true
+			for _, required := range []string{"--user opuser", "--env HOME=/tmp/sdlc-op", "--env OP_CONFIG_DIR=/tmp/sdlc-op/.op", "--entrypoint /bin/sh", pins.SigningImage + " -c", "umask 077", "unset OP_SERVICE_ACCOUNT_TOKEN OP_CONNECT_HOST OP_CONNECT_TOKEN", "exec op account list --format=json"} {
+				if !strings.Contains(joined, required) {
+					t.Fatalf("missing native signing initialization boundary %s", required)
+				}
+			}
+			for _, name := range []string{"OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN"} {
+				if !strings.Contains(joined, "--env "+name+"=") {
+					t.Fatal("native signing initialization did not clear credential environment")
+				}
+			}
+			imageIndex := -1
+			for index, arg := range call {
+				if arg == pins.SigningImage {
+					imageIndex = index
+					break
+				}
+			}
+			if imageIndex < 0 || !reflect.DeepEqual(call[imageIndex+1:], []string{"-c", signingInitialization}) {
+				t.Fatal("native initialization Docker options were passed as CLI arguments")
+			}
+		} else {
+			image := call[len(call)-2]
+			found[image] = true
+			user := "1000:1000"
+			if image == pins.SigningImage {
+				user = "opuser"
+			}
+			if !strings.Contains(joined, "--user "+user) {
+				t.Fatal("auxiliary version probe used the wrong native user")
 			}
 		}
 		for _, arg := range call {
@@ -241,13 +277,47 @@ func TestAuxiliaryProbesAreOfflineUnprivilegedAndKeepImages(t *testing.T) {
 			}
 		}
 	}
-	if !found[pins.SigningImage] || !found[pins.DaemonImage] {
+	if !found[pins.SigningImage] || !found[pins.DaemonImage] || !found["signing initialization"] {
 		t.Fatal("auxiliary digest probes absent")
 	}
 	for _, image := range docker.removed {
 		if image == pins.SigningImage || image == pins.DaemonImage {
 			t.Fatal("auxiliary digest was removed")
 		}
+	}
+}
+
+func TestUnexpectedSigningInitializationOutputPreservesPrevious(t *testing.T) {
+	for _, output := range []struct{ name, value string }{
+		{"blank", ""},
+		{"null", "null"},
+		{"object", "{}"},
+		{"accounts", `[{"email":"private-marker@example.invalid"}]`},
+		{"trailing", "[]\n[]"},
+		{"malformed", "["},
+		{"oversized", "[]" + strings.Repeat(" ", 4095)},
+	} {
+		t.Run(output.name, func(t *testing.T) {
+			manager, docker, root, pins, _ := pinsFixture(t)
+			before := recordPrevious(t, manager, docker, root, nil)
+			docker.opInitializationOutput = []byte(output.value)
+			_, err := manager.BuildWithOptions(context.Background(), "", BuildOptions{Pins: &pins, ExpectedImageID: oldImage})
+			if err == nil || strings.Contains(err.Error(), "private-marker") {
+				t.Fatal("unexpected account output was accepted or exposed", err)
+			}
+			if docker.builds != 0 {
+				t.Fatal("invalid native initialization reached candidate build")
+			}
+			assertPrevious(t, manager, docker, before)
+		})
+	}
+}
+
+func TestSigningInitializationAcceptsEmptyJSONWithWhitespace(t *testing.T) {
+	manager, docker, _, pins, _ := pinsFixture(t)
+	docker.opInitializationOutput = []byte(" \n[\t ]\r\n")
+	if err := manager.probeSigningInitialization(context.Background(), pins.SigningImage); err != nil {
+		t.Fatal("valid empty account array rejected", err)
 	}
 }
 

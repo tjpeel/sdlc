@@ -15,12 +15,14 @@ import (
 )
 
 const signingUsage = `Usage:
-  sdlc signing setup [--profile NAME] [--provider 1password] [--bootstrap-file PRIVATE_TOKEN_FILE]
+  sdlc signing setup [--profile NAME] [--provider 1password] [--replace] [--bootstrap-file PRIVATE_TOKEN_FILE]
   sdlc signing status [--profile NAME] [--verify] [--show-config]
   sdlc signing configure --file PRIVATE_PROFILE [--profile NAME]
   sdlc signing verify [--profile NAME]
 
 setup guides local 1Password provisioning and saves a private signing profile.
+--replace reruns the wizard for an existing profile; Enter keeps current identity values.
+It offers keeping the existing token or saving a new token in a separate private file.
 It requires a terminal; the token is entered with echo disabled, never as an argument.
 status checks local configuration and bootstrap safety without connecting to 1Password.
 --verify contacts 1Password and signs a disposable local commit. It makes no GitHub or model request.
@@ -31,7 +33,7 @@ The signing secret provider defaults to 1password, currently the only implementa
 
 type signingOptions struct {
 	action, name, file, bootstrap, provider string
-	verify, showConfig                      bool
+	verify, showConfig, replace             bool
 }
 
 func parseSigningOptions(args []string, output io.Writer) (signingOptions, error) {
@@ -51,6 +53,7 @@ func parseSigningOptions(args []string, output io.Writer) (signingOptions, error
 	file := flags.String("file", "", "private signing profile outside source repositories")
 	bootstrap := flags.String("bootstrap-file", "", "existing private Service Account token file outside source repositories")
 	provider := flags.String("provider", signing.DefaultProvider, "setup only: signing secret provider (1password)")
+	replace := flags.Bool("replace", false, "setup only: replace existing signing configuration through the wizard")
 	verify := flags.Bool("verify", false, "status only: contact 1Password and verify disposable signing")
 	show := flags.Bool("show-config", false, "status only: display private locator metadata without secrets")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -71,13 +74,14 @@ func parseSigningOptions(args []string, output io.Writer) (signingOptions, error
 		invalid = invalid || (option.Name == "file" && args[0] != "configure") ||
 			(option.Name == "bootstrap-file" && args[0] != "setup") ||
 			(option.Name == "provider" && args[0] != "setup") ||
+			(option.Name == "replace" && args[0] != "setup") ||
 			((option.Name == "verify" || option.Name == "show-config") && args[0] != "status")
 	})
 	if invalid {
-		return options, fmt.Errorf("--file is for configure; --provider and --bootstrap-file are for setup; --verify and --show-config are for status")
+		return options, fmt.Errorf("--file is for configure; --provider, --replace and --bootstrap-file are for setup; --verify and --show-config are for status")
 	}
 	if args[0] == "configure" && *file == "" {
-		return options, fmt.Errorf("signing configure requires --file PRIVATE_PROFILE; use signing setup for guided onboarding")
+		return options, fmt.Errorf("signing configure requires --file PRIVATE_PROFILE for JSON import; use signing setup for onboarding or signing setup --replace to revise an existing profile")
 	}
 	if *provider == "" {
 		return options, fmt.Errorf("signing secret provider must name 1password")
@@ -85,7 +89,7 @@ func parseSigningOptions(args []string, output io.Writer) (signingOptions, error
 	if err := signing.ValidateProvider(*provider); err != nil {
 		return options, err
 	}
-	options = signingOptions{action: args[0], name: *name, file: *file, bootstrap: *bootstrap, provider: *provider, verify: *verify, showConfig: *show}
+	options = signingOptions{action: args[0], name: *name, file: *file, bootstrap: *bootstrap, provider: *provider, verify: *verify, showConfig: *show, replace: *replace}
 	return options, nil
 }
 

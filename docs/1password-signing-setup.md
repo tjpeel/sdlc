@@ -109,7 +109,7 @@ That file must be an absolute path outside Git repositories, owned by your user,
 with mode `0600`, without symlinks or hard links. It must contain only the token.
 The wizard checks the file and uses it as the bootstrap input.
 
-With the hidden prompt, setup creates a `signing-personal-bootstrap` file and
+For first setup, the hidden prompt creates a `signing-personal-bootstrap` file and
 `profiles.personal.local.json` in private installation state. The normal default
 locations are:
 
@@ -120,18 +120,53 @@ locations are:
 
 Setup prints the exact saved paths locally. The configuration contains
 `"provider": "1password"`, the reference, public key/fingerprint and bootstrap
-path; the bootstrap contains the actual bearer token. Files are private, owned and mode `0600`; the installation
-directory is private. Both stay outside source repositories and build contexts.
-Setup never overwrites a bootstrap; `--bootstrap-file` deliberately reuses an
-existing safe file. Setup also refuses to overwrite an existing profile. For an existing
-profile, inspect it privately and use `signing configure` with an external private
-JSON file when a deliberate configuration change is needed.
+path; the bootstrap contains the actual bearer token. Files are private, owned
+and mode `0600`; the installation directory is private. Both stay outside source
+repositories and build contexts. Without `--replace`, setup refuses to overwrite
+an existing profile.
+
+To change an existing signing profile, run the same wizard with `--replace`:
+
+```sh
+sdlc signing setup --profile personal --provider 1password --replace
+```
+
+Replacement requires a valid private saved profile. A token file selected for
+reuse must pass the safety checks; choose a new token to replace a missing or
+unsafe bootstrap.
+At the vault, item and public-key prompts, press Enter to keep the current value.
+A blank fingerprint recalculates it from the public key accepted by the wizard,
+including a replacement public key.
+
+The token prompt offers to keep the existing Service Account token by default,
+or enter a new token through a hidden prompt. A new token goes into a unique
+private bootstrap file; setup never overwrites or deletes the previous file,
+which another profile may share. To select a different safe token file directly,
+add `--bootstrap-file /PATH/TO/YOUR_PRIVATE_BOOTSTRAP` to the replacement command.
+The same file-safety checks apply.
+
+Review the values and confirm the save. Setup switches the profile atomically;
+cancellation or a save failure leaves the existing profile intact. Replacement
+makes no network request. Run `signing status --verify` separately when you want
+to check the new configuration against 1Password.
 
 If bootstrap creation succeeds but saving the profile later fails or is
 cancelled, setup retains the private token file and reports its exact path.
 Another profile may already reference it. Inspect it locally, reuse it through
 `--bootstrap-file`, or delete it only after confirming it is unused. A failed
 write inside bootstrap creation is cleaned up before success is reported.
+
+`signing configure --file` is an advanced import route:
+
+```sh
+sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
+```
+
+The external JSON file must be owned by your user with mode `0600`. It contains
+the profile's `provider`, `version`, `id`, `reference`, `public_key`, `fingerprint`
+and `bootstrap_file` metadata. It contains neither the Service Account token nor
+the private signing key. The wizard creates this JSON for you; using `--replace`
+does not require a hand-written file.
 
 The current CLI accepts older profiles with no `provider` field as 1Password.
 New profiles record that field explicitly. Older binaries reject it as an unknown
@@ -150,6 +185,7 @@ The profile fields have different roles:
 | --- | --- | --- |
 | CLI `--profile personal` | Selects the saved signing profile and matching GitHub login. It is neither a vault name nor a GitHub username. | CLI selection; use `--github-profile personal` for a run. |
 | JSON `provider` | Selects the signing-secret implementation; currently `1password`. | Private installation profile. |
+| JSON `version` | Identifies the signing-profile schema version. | Private installation profile. |
 | JSON `id` | The wizard sets `personal-signing`, an internal signing identity label. It does not select a vault or key. | Private installation profile. |
 | JSON `reference` | Selects the vault, SSH Key item and private-key field, for example `op://YOUR_VAULT_ID/YOUR_ITEM_ID/private key?ssh-format=openssh`. It grants no access on its own. | Private installation profile; keep real locators out of this public repository. |
 | JSON `public_key` and `fingerprint` | The expected signer identity checked against the retrieved key. | Saved profile; public values can also be published intentionally. |

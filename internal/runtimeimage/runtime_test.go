@@ -31,6 +31,8 @@ type fakeDocker struct {
 	buildRecipe                       []byte
 	inventoryOverride                 *Inventory
 	opVersion, daemonVersion          string
+	opInitializationOutput            []byte
+	opInitializationFailed            bool
 	pullFailed, auxiliaryProbeFailed  string
 	buildHook                         func()
 	tagFailed                         bool
@@ -51,6 +53,12 @@ func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, err
 		}
 		return nil, nil
 	case "run":
+		if args[len(args)-1] == signingInitialization {
+			if docker.opInitializationFailed {
+				return nil, errors.New("disposable private native initialization diagnostic")
+			}
+			return docker.opInitializationOutput, nil
+		}
 		if args[len(args)-1] == inventoryPath {
 			if docker.inventoryUnavailable {
 				return nil, errors.New("disposable private inventory error")

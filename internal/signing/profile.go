@@ -221,6 +221,7 @@ const helper = `set -eu
 umask 077
 mkdir -p /tmp/sdlc-op
 export HOME=/tmp/sdlc-op OP_CONFIG_DIR=/tmp/sdlc-op/.op
+unset OP_CONNECT_HOST OP_CONNECT_TOKEN
 IFS= read -r OP_SERVICE_ACCOUNT_TOKEN
 IFS= read -r reference
 export OP_SERVICE_ACCOUNT_TOKEN
@@ -324,7 +325,9 @@ func (resolver Resolver) Resolve(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("cannot identify signing credential container")
 	}
 	profile := sha256.Sum256([]byte(resolver.Profile.ID + "\n" + resolver.Profile.PublicKey))
-	args := []string{"run", "--rm", "--name", "sdlc-signing-" + hex.EncodeToString(identifier[:]), "--label", "io.sdlc.managed=true", "--label", "io.sdlc.kind=signing", "--label", "io.sdlc.profile=" + hex.EncodeToString(profile[:]), "--interactive", "--pull", "never", "--network", "bridge", "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "256m", "--cpus", "1", "--log-driver", "none", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777"}
+	// The official image's named non-root account must match the CLI's user
+	// lookup. A foreign numeric UID makes its private-directory checks fail.
+	args := []string{"run", "--rm", "--name", "sdlc-signing-" + hex.EncodeToString(identifier[:]), "--label", "io.sdlc.managed=true", "--label", "io.sdlc.kind=signing", "--label", "io.sdlc.profile=" + hex.EncodeToString(profile[:]), "--interactive", "--pull", "never", "--network", "bridge", "--user", "opuser", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "256m", "--cpus", "1", "--log-driver", "none", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777"}
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FTP_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "ftp_proxy", "no_proxy"} {
 		args = append(args, "--env", name+"=")
 	}

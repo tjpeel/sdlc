@@ -2,11 +2,14 @@ package signing
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -262,6 +265,162 @@ func StoreNew(directory string, profile Profile, name string) error {
 		return fmt.Errorf("cannot save private signing profile")
 	}
 	success = true
+	return nil
+}
+
+// StoreReplacement replaces only the private profile read by the setup wizard.
+// The caller must hold its AcquireSetup lease until this operation finishes.
+// Bootstrap files are neither opened nor changed.
+func StoreReplacement(directory string, profile Profile, expected Profile, name string) error {
+	if profile.Validate() != nil {
+		return fmt.Errorf("invalid replacement signing profile")
+	}
+	if expected.Validate() != nil {
+		return fmt.Errorf("invalid expected signing profile")
+	}
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+		return fmt.Errorf("signing profile storage must use an absolute canonical directory")
+	}
+	path, err := ProfilePath(directory, name)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(profile.BootstrapFile) == path || filepath.Clean(expected.BootstrapFile) == path {
+		return fmt.Errorf("signing profile storage must differ from bootstrap files")
+	}
+	if bootstrapParents(path, false) != nil || privateDirectory(directory) != nil {
+		return fmt.Errorf("signing profile storage must use owned private directories outside repositories without symlinks")
+	}
+	directoryInfo, err := os.Lstat(directory)
+	if err != nil {
+		return fmt.Errorf("cannot inspect private signing profile storage")
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return fmt.Errorf("cannot open private signing profile storage")
+	}
+	defer root.Close()
+	if replacementDirectory(root, directory, path, directoryInfo) != nil {
+		return fmt.Errorf("signing profile storage changed while opening")
+	}
+	base := filepath.Base(path)
+	targetInfo, err := matchingReplacementProfile(root, base, expected)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot encode signing profile")
+	}
+	var identifier [16]byte
+	if _, err := rand.Read(identifier[:]); err != nil {
+		return fmt.Errorf("cannot prepare replacement signing profile")
+	}
+	temporary := ".signing-profile-" + hex.EncodeToString(identifier[:])
+	if filepath.Clean(profile.BootstrapFile) == filepath.Join(directory, temporary) || filepath.Clean(expected.BootstrapFile) == filepath.Join(directory, temporary) {
+		return fmt.Errorf("signing profile storage must differ from bootstrap files")
+	}
+	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("cannot create private replacement signing profile")
+	}
+	created, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return fmt.Errorf("cannot inspect created signing profile")
+	}
+	success := false
+	defer func() {
+		if !success {
+			removeCreatedFile(root, temporary, created)
+		}
+	}()
+	data := append(encoded, '\n')
+	written, writeErr := file.Write(data)
+	info, statErr := file.Stat()
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil || written != len(data) || statErr != nil || !safeReplacementFile(info) || !os.SameFile(created, info) || syncErr != nil || closeErr != nil {
+		return fmt.Errorf("cannot save private replacement signing profile")
+	}
+	if err := publishReplacement(root, directory, path, directoryInfo, targetInfo, temporary, created, expected, profile); err != nil {
+		return err
+	}
+	success = true
+	return nil
+}
+
+func safeReplacementFile(info os.FileInfo) bool {
+	return info != nil && info.Mode().IsRegular() && info.Mode().Perm() == 0600 && privateOwner(info) == nil
+}
+
+func replacementDirectory(root *os.Root, directory, path string, expected os.FileInfo) error {
+	current, err := os.Lstat(directory)
+	opened, openedErr := root.Stat(".")
+	if err != nil || openedErr != nil || !os.SameFile(expected, current) || !os.SameFile(expected, opened) || bootstrapParents(path, false) != nil || privateDirectory(directory) != nil {
+		return fmt.Errorf("signing profile storage changed during replacement")
+	}
+	return nil
+}
+
+func matchingReplacementProfile(root *os.Root, name string, expected Profile) (os.FileInfo, error) {
+	unsafe := fmt.Errorf("existing signing profile is missing, unsafe or invalid")
+	before, err := root.Lstat(name)
+	if err != nil || !safeReplacementFile(before) || before.Size() <= 0 || before.Size() > 8192 {
+		return nil, unsafe
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, unsafe
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(before, opened) || !safeReplacementFile(opened) {
+		return nil, unsafe
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 8193))
+	if err != nil || len(data) > 8192 {
+		return nil, unsafe
+	}
+	after, statErr := file.Stat()
+	current, currentErr := root.Lstat(name)
+	if statErr != nil || currentErr != nil || !os.SameFile(before, after) || !os.SameFile(before, current) || !safeReplacementFile(after) || !safeReplacementFile(current) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, unsafe
+	}
+	var profile Profile
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&profile) != nil {
+		return nil, unsafe
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF || profile.Validate() != nil {
+		return nil, unsafe
+	}
+	if profile != expected {
+		return nil, fmt.Errorf("existing signing profile changed; repeat signing setup")
+	}
+	return current, nil
+}
+
+func publishReplacement(root *os.Root, directory, path string, directoryInfo, targetInfo os.FileInfo, temporary string, created os.FileInfo, expected, replacement Profile) error {
+	if replacementDirectory(root, directory, path, directoryInfo) != nil {
+		return fmt.Errorf("signing profile storage changed during replacement")
+	}
+	pending, err := matchingReplacementProfile(root, temporary, replacement)
+	if err != nil || !os.SameFile(created, pending) {
+		return fmt.Errorf("replacement signing profile changed before publication")
+	}
+	current, err := matchingReplacementProfile(root, filepath.Base(path), expected)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(targetInfo, current) {
+		return fmt.Errorf("existing signing profile changed; repeat signing setup")
+	}
+	if err := root.Rename(temporary, filepath.Base(path)); err != nil {
+		return fmt.Errorf("cannot replace private signing profile")
+	}
 	return nil
 }
 

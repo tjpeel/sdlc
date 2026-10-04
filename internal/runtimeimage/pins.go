@@ -2,6 +2,7 @@ package runtimeimage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -48,9 +49,9 @@ var auxiliaryVersion = regexp.MustCompile(`\b(?:v)?([0-9]+\.[0-9]+\.[0-9]+)\b`)
 // Auxiliary probes do not mount account state or start the privileged daemon.
 // The digest remains available for jobs that were frozen against older pins.
 func (manager Manager) probeAuxiliaryImages(ctx context.Context, pins runtimepins.Pins) error {
-	for _, item := range []struct{ reference, entrypoint, label string }{
-		{pins.SigningImage, "op", "signing CLI"},
-		{pins.DaemonImage, "docker", "check daemon CLI"},
+	for _, item := range []struct{ reference, entrypoint, label, user string }{
+		{pins.SigningImage, "op", "signing CLI", "opuser"},
+		{pins.DaemonImage, "docker", "check daemon CLI", "1000:1000"},
 	} {
 		pullContext, cancelPull := context.WithTimeout(ctx, 5*time.Minute)
 		err := manager.PullPublic(pullContext, item.reference)
@@ -59,7 +60,7 @@ func (manager Manager) probeAuxiliaryImages(ctx context.Context, pins runtimepin
 			return fmt.Errorf("planned %s image could not be pulled; candidate was not selected", item.label)
 		}
 		probeContext, cancelProbe := context.WithTimeout(ctx, 20*time.Second)
-		args := isolatedRun("none", "1000:1000", item.entrypoint, item.reference)
+		args := isolatedRun("none", item.user, item.entrypoint, item.reference)
 		output, err := manager.Docker.Output(probeContext, append(args, "--version")...)
 		cancelProbe()
 		if err != nil {
@@ -69,6 +70,36 @@ func (manager Manager) probeAuxiliaryImages(ctx context.Context, pins runtimepin
 		if len(output) > 4096 || len(match) != 2 || string(match[1]) != referenceVersion(item.reference) {
 			return fmt.Errorf("planned %s version probe did not match its pin; candidate was not selected", item.label)
 		}
+		if item.entrypoint == "op" {
+			if err := manager.probeSigningInitialization(ctx, item.reference); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+const signingInitialization = `set -eu
+umask 077
+unset OP_SERVICE_ACCOUNT_TOKEN OP_CONNECT_HOST OP_CONNECT_TOKEN
+mkdir /tmp/sdlc-op
+exec op account list --format=json
+`
+
+// A version-only invocation does not exercise native user/config initialization.
+// Give the official CLI a disposable empty home without account state or network.
+func (manager Manager) probeSigningInitialization(ctx context.Context, reference string) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	args := isolatedRun("none", "opuser", "/bin/sh", reference)
+	args = append(args[:len(args)-1], "--env", "HOME=/tmp/sdlc-op", "--env", "OP_CONFIG_DIR=/tmp/sdlc-op/.op", "--env", "OP_SERVICE_ACCOUNT_TOKEN=", "--env", "OP_CONNECT_HOST=", "--env", "OP_CONNECT_TOKEN=", reference, "-c", signingInitialization)
+	output, err := manager.Docker.Output(ctx, args...)
+	if err != nil {
+		return errors.New("planned signing CLI initialization probe failed; candidate was not selected")
+	}
+	var accounts []json.RawMessage
+	if len(output) > 4096 || json.Unmarshal(output, &accounts) != nil || accounts == nil || len(accounts) != 0 {
+		return errors.New("planned signing CLI initialization probe returned unexpected account data; candidate was not selected")
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ type setupPrompt struct {
 	closed   bool
 	fail     int
 	onSecret func()
+	onRead   func(int, bool)
 }
 
 func TestSigningVerificationSelectsInstalledImageAndLegacyDefault(t *testing.T) {
@@ -50,6 +51,9 @@ func TestSigningVerificationSelectsInstalledImageAndLegacyDefault(t *testing.T) 
 
 func (prompt *setupPrompt) Read(_ string, secret bool) ([]byte, error) {
 	prompt.calls++
+	if prompt.onRead != nil {
+		prompt.onRead(prompt.calls, secret)
+	}
 	if secret {
 		prompt.secrets++
 		if prompt.onSecret != nil {
@@ -254,7 +258,7 @@ func TestSigningMissingStatusAndArgumentBoundariesNeverConnect(t *testing.T) {
 			t.Fatal("help tried to use credentials", args, err)
 		}
 	}
-	for _, args := range [][]string{{"unknown"}, {"setup", "--file", "anything"}, {"setup", "--provider=unimplemented"}, {"setup", "--provider="}, {"status", "--provider=1password"}, {"status", "--bootstrap-file", "anything"}, {"verify", "--show-config=false"}, {"configure", "--verify=false"}, {"configure"}, {"setup", "--profile="}, {"status", "--profile=../other"}, {"status", "extra"}} {
+	for _, args := range [][]string{{"unknown"}, {"setup", "--file", "anything"}, {"setup", "--provider=unimplemented"}, {"setup", "--provider="}, {"status", "--provider=1password"}, {"status", "--bootstrap-file", "anything"}, {"status", "--replace=false"}, {"configure", "--replace"}, {"verify", "--replace"}, {"verify", "--show-config=false"}, {"configure", "--verify=false"}, {"configure"}, {"setup", "--profile="}, {"status", "--profile=../other"}, {"status", "extra"}} {
 		if err := signingCommand(context.Background(), args, &bytes.Buffer{}); err == nil {
 			t.Fatal("invalid signing arguments accepted", args)
 		}
@@ -265,5 +269,228 @@ func TestSigningMissingStatusAndArgumentBoundariesNeverConnect(t *testing.T) {
 	}
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {
 		t.Fatal("help or status created installation state")
+	}
+}
+
+func existingSigningSetupFixture(t *testing.T) (string, string, signing.Profile) {
+	t.Helper()
+	directory, public := signingTestState(t)
+	prompt := &setupPrompt{answers: []string{"YOUR_VAULT", "YOUR_KEY", public, "", "y", "fake-original-bootstrap"}}
+	if err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal"}, prompt, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := signing.ProfilePath(directory, "personal")
+	profile, err := signing.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return directory, path, profile
+}
+
+func TestSigningSetupReplaceKeepsTokenAndUpdatesIdentity(t *testing.T) {
+	for _, changeIdentity := range []bool{false, true} {
+		t.Run(fmt.Sprint(changeIdentity), func(t *testing.T) {
+			directory, path, original := existingSigningSetupFixture(t)
+			answers := []string{"", "", "", "", "", "yes"}
+			expected := original
+			if changeIdentity {
+				_, public := signingTestState(t)
+				answers[0], answers[1], answers[2] = "YOUR_NEW_VAULT", "YOUR_NEW_KEY", public
+				var err error
+				expected, err = signing.NewProfile("personal", answers[0], answers[1], public, "", original.BootstrapFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, _ := os.ReadFile(original.BootstrapFile)
+			prompt := &setupPrompt{answers: answers}
+			var output bytes.Buffer
+			if err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal", replace: true}, prompt, &output); err != nil {
+				t.Fatal(err)
+			}
+			actual, err := signing.Load(path)
+			after, _ := os.ReadFile(original.BootstrapFile)
+			if err != nil || actual != expected || !bytes.Equal(before, after) || prompt.secrets != 0 || !prompt.closed || strings.Contains(output.String(), "fake-original-bootstrap") {
+				t.Fatal("replacement changed the token, lost identity defaults, or exposed input", err)
+			}
+		})
+	}
+}
+
+func TestSigningSetupReplaceNewTokenPreservesSharedBootstrap(t *testing.T) {
+	directory, path, original := existingSigningSetupFixture(t)
+	if err := signing.StoreNew(directory, original, "work"); err != nil {
+		t.Fatal(err)
+	}
+	prompt := &setupPrompt{answers: []string{"", "", "", "", "new", "y", "fake-new-bootstrap"}}
+	var output bytes.Buffer
+	if err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal", replace: true}, prompt, &output); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := signing.Load(path)
+	oldToken, _ := os.ReadFile(original.BootstrapFile)
+	newToken, _ := os.ReadFile(actual.BootstrapFile)
+	metadata, _ := os.ReadFile(path)
+	if err != nil || actual.BootstrapFile == original.BootstrapFile || string(oldToken) != "fake-original-bootstrap\n" || string(newToken) != "fake-new-bootstrap\n" || prompt.secrets != 1 {
+		t.Fatal("new token replaced a shared bootstrap or was not saved privately", err)
+	}
+	if strings.Contains(output.String(), "fake-new-bootstrap") || bytes.Contains(metadata, []byte("fake-new-bootstrap")) {
+		t.Fatal("new token entered metadata or output")
+	}
+	if err := signingStatus(directory, "work", false, &bytes.Buffer{}); err != nil {
+		t.Fatal("other profile lost its bootstrap", err)
+	}
+	if err := signingStatus(directory, "personal", false, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSigningSetupReplaceExplicitBootstrap(t *testing.T) {
+	directory, path, original := existingSigningSetupFixture(t)
+	bootstrap := filepath.Join(filepath.Dir(directory), "explicit-bootstrap")
+	if err := os.WriteFile(bootstrap, []byte("fake-explicit-bootstrap\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prompt := &setupPrompt{answers: []string{"", "", "", "", "y"}}
+	if err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal", replace: true, bootstrap: bootstrap}, prompt, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := signing.Load(path)
+	oldToken, _ := os.ReadFile(original.BootstrapFile)
+	if err != nil || actual.BootstrapFile != bootstrap || prompt.secrets != 0 || string(oldToken) != "fake-original-bootstrap\n" {
+		t.Fatal("explicit bootstrap was ignored or original token changed", err)
+	}
+}
+
+func TestSigningSetupReplaceCancellationPreservesExistingFiles(t *testing.T) {
+	for _, kind := range []string{"decline", "token prompt ended", "invalid token choice", "invalid identity", "context cancelled"} {
+		t.Run(kind, func(t *testing.T) {
+			directory, path, original := existingSigningSetupFixture(t)
+			profileBefore, _ := os.ReadFile(path)
+			tokenBefore, _ := os.ReadFile(original.BootstrapFile)
+			entriesBefore, _ := os.ReadDir(directory)
+			prompt := &setupPrompt{answers: []string{"", "", "", "", "new", "yes", "fake-new-bootstrap"}}
+			ctx := context.Background()
+			switch kind {
+			case "decline":
+				prompt.answers[5] = "no"
+			case "token prompt ended":
+				prompt.fail = 7
+			case "invalid token choice":
+				prompt.answers[4] = "unexpected"
+			case "invalid identity":
+				prompt.answers[2] = "fake-invalid-key"
+			case "context cancelled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				defer cancel()
+				prompt.onRead = func(call int, _ bool) {
+					if call == 6 {
+						cancel()
+					}
+				}
+			}
+			var output bytes.Buffer
+			if err := runSetupFixture(ctx, directory, signingOptions{name: "personal", replace: true}, prompt, &output); err == nil {
+				t.Fatal("cancelled or invalid replacement succeeded")
+			}
+			profileAfter, _ := os.ReadFile(path)
+			tokenAfter, _ := os.ReadFile(original.BootstrapFile)
+			entriesAfter, _ := os.ReadDir(directory)
+			if !bytes.Equal(profileBefore, profileAfter) || !bytes.Equal(tokenBefore, tokenAfter) || len(entriesBefore) != len(entriesAfter) || strings.Contains(output.String(), "fake-new-bootstrap") {
+				t.Fatal("unsaved replacement changed or disclosed credentials")
+			}
+		})
+	}
+}
+
+func TestSigningSetupReplaceRejectsConcurrentChangeBeforeTokenPrompt(t *testing.T) {
+	directory, path, original := existingSigningSetupFixture(t)
+	competing := original
+	competing.ID = "competing-signing"
+	prompt := &setupPrompt{answers: []string{"", "", "", "", "new", "yes", "fake-new-bootstrap"}}
+	prompt.onRead = func(call int, _ bool) {
+		if call == 6 {
+			if err := signing.Store(directory, competing, "personal"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal", replace: true}, prompt, &bytes.Buffer{})
+	actual, loadErr := signing.Load(path)
+	if err == nil || !strings.Contains(err.Error(), "changed during setup") || prompt.secrets != 0 || loadErr != nil || actual != competing {
+		t.Fatal("wizard overwrote settings changed while prompting or read a token first", err)
+	}
+}
+
+func TestSigningSetupReplaceRequiresExistingSafeProfile(t *testing.T) {
+	for _, kind := range []string{"missing", "invalid", "unsafe"} {
+		t.Run(kind, func(t *testing.T) {
+			directory, path, _ := existingSigningSetupFixture(t)
+			switch kind {
+			case "missing":
+				os.Remove(path)
+			case "invalid":
+				os.WriteFile(path, []byte("invalid metadata"), 0600)
+			case "unsafe":
+				os.Chmod(path, 0644)
+			}
+			opened := false
+			err := signingSetup(context.Background(), directory, signingOptions{name: "personal", replace: true}, &bytes.Buffer{}, func(context.Context) (signingPrompter, error) {
+				opened = true
+				return &setupPrompt{}, nil
+			})
+			if err == nil || opened {
+				t.Fatal("replacement opened a prompt for unsafe or missing settings")
+			}
+		})
+	}
+}
+
+func TestSigningSetupReplaceNewTokenRepairsMissingBootstrap(t *testing.T) {
+	directory, path, original := existingSigningSetupFixture(t)
+	if err := os.Remove(original.BootstrapFile); err != nil {
+		t.Fatal(err)
+	}
+	prompt := &setupPrompt{answers: []string{"", "", "", "", "new", "yes", "fake-repaired-bootstrap"}}
+	if err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal", replace: true}, prompt, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := signing.Load(path)
+	if err != nil || actual.BootstrapFile == original.BootstrapFile || signing.CheckBootstrap(actual) != nil {
+		t.Fatal("replacement could not restore a missing token", err)
+	}
+}
+
+func TestSigningSetupReplaceSaveFailureRetainsNewTokenAndCurrentProfile(t *testing.T) {
+	directory, path, original := existingSigningSetupFixture(t)
+	competing := original
+	competing.ID = "updated-signing"
+	prompt := &setupPrompt{answers: []string{"", "", "", "", "new", "yes", "fake-retained-new-bootstrap"}}
+	prompt.onSecret = func() {
+		if err := signing.Store(directory, competing, "personal"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var output bytes.Buffer
+	err := runSetupFixture(context.Background(), directory, signingOptions{name: "personal", replace: true}, prompt, &output)
+	actual, loadErr := signing.Load(path)
+	oldToken, _ := os.ReadFile(original.BootstrapFile)
+	if err == nil || !strings.Contains(err.Error(), "bootstrap remains") || strings.Contains(err.Error(), "fake-retained-new-bootstrap") || strings.Contains(output.String(), "fake-retained-new-bootstrap") || loadErr != nil || actual != competing || string(oldToken) != "fake-original-bootstrap\n" {
+		t.Fatal("failed replacement lost a token, overwrote concurrent settings, or disclosed input", err)
+	}
+	entries, readErr := os.ReadDir(directory)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	retained := false
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "signing-personal-bootstrap-") {
+			data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+			retained = err == nil && string(data) == "fake-retained-new-bootstrap\n"
+		}
+	}
+	if !retained {
+		t.Fatal("save failure did not retain the successfully created token for safe recovery")
 	}
 }
