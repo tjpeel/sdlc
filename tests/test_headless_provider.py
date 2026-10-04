@@ -210,7 +210,7 @@ class HeadlessTests(unittest.TestCase):
         for argument in ("-p", "stream-json", "--verbose", "--include-partial-messages",
                          "--forward-subagent-text", "--strict-mcp-config", "--json-schema"):
             self.assertIn(argument, command)
-        self.assertEqual(command[command.index("--setting-sources") + 1], "")
+        self.assertEqual(command[command.index("--setting-sources") + 1], "user")
         settings = json.loads(command[command.index("--settings") + 1])
         self.assertTrue(settings["disableAllHooks"])
         self.assertEqual(settings["enabledPlugins"], {})
@@ -244,6 +244,38 @@ class HeadlessTests(unittest.TestCase):
                     headless.headless("codex", "example-model", "high", "", False, self.cache)
                 client.assert_not_called()
                 path.unlink()
+
+    def test_claude_user_scope_rejects_customization_before_client(self):
+        config = self.session / "claude"
+        config.mkdir(mode=0o700)
+        for name in ("settings.json", "hooks.json", "plugins", "rules",
+                     "commands", "output-styles", "workflows", "mcp.json",
+                     "CLAUDE.local.md", "agents", "skills"):
+            with self.subTest(name=name):
+                path = config / name
+                path.write_text("untrusted customization")
+                with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
+                    headless.headless("claude", "example-model", "high", "", False, self.cache)
+                client.assert_not_called()
+                path.unlink()
+                # Catalogue preparation may establish the other expected link
+                # before rejecting this conflicting path.
+                for catalogue in ("agents", "skills"):
+                    linked = config / catalogue
+                    if linked.is_symlink():
+                        linked.unlink()
+        for name in ("agents", "skills"):
+            with self.subTest(link=name):
+                path = config / name
+                path.symlink_to(self.root, target_is_directory=True)
+                with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
+                    headless.headless("claude", "example-model", "high", "", False, self.cache)
+                client.assert_not_called()
+                path.unlink()
+                for catalogue in ("agents", "skills"):
+                    linked = config / catalogue
+                    if linked.is_symlink():
+                        linked.unlink()
 
     def test_missing_auth_does_not_start_client(self):
         for provider, filename in native.FILES.items():

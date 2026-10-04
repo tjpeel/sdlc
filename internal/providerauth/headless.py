@@ -120,7 +120,10 @@ def native_command(provider, model, effort, resume, readonly):
                "--include-partial-messages", "--forward-subagent-text",
                "--model", model, "--effort", effort,
                "--json-schema", json.dumps(json.loads(SCHEMA.read_text())),
-               "--setting-sources", "", "--settings", json.dumps(settings),
+               # User scope discovers the guarded pinned catalogues. Project
+               # and local settings stay excluded; cached customization is
+               # rejected before this command can start.
+               "--setting-sources", "user", "--settings", json.dumps(settings),
                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                "--permission-mode", "bypassPermissions"]
     if resume:
