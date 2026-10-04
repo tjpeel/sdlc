@@ -191,8 +191,12 @@ provider account calls. Queue reporting retains heartbeat and optional usage dat
 The [disposable .NET example](../examples/dotnet-smoke/README.md) matches the target
 repository shape: a .NET 10 `.slnx`, an API, unit tests and Docker integration
 tests with Mongo. On 4 October 2026 its credential-free check worker passed the
-solution build with zero warnings or errors, four unit tests and one API/Mongo
-integration test. The dedicated daemon used `overlay2`; all check containers,
+solution build with zero warnings or errors, four unit tests and the API/Mongo
+integration scenario in both bridge and localhost modes. It captures a generated
+ignored host-root `.env` as a check-only input, verifies the provider workspace
+does not contain it, changes the host file after capture, and verifies the saved
+input reaches nested Compose through interpolation and `env_file`. API and test
+images exclude the file. The dedicated daemon used `overlay2`; all check containers,
 networks and volumes were removed afterwards. No provider account or GitHub write
 was used. Run the opt-in probe from the SDLC checkout:
 

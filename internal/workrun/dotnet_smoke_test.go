@@ -2,6 +2,7 @@ package workrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,11 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
 
 var dotnetSmokePublicFiles = []string{
-	".dockerignore", ".gitignore", "Directory.Build.props", "Dockerfile", "README.md", "Smoke.slnx", "global.json",
+	".dockerignore", ".gitignore", "Directory.Build.props", "Dockerfile", "README.md", "Smoke.slnx", "global.json", "compose.yml", "test-environment.example",
 	"docs/specification.md", "docs/tickets/01-count-items.md", "scripts/integration.py",
 	"src/Smoke.Api/ItemName.cs", "src/Smoke.Api/Program.cs", "src/Smoke.Api/Smoke.Api.csproj",
 	"tests/Smoke.IntegrationTests/ApiTests.cs", "tests/Smoke.IntegrationTests/Smoke.IntegrationTests.csproj",
@@ -109,35 +111,87 @@ func TestOfflineDotnetSmokeExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace := filepath.Join(realTemp(t), "workspace")
-	if err := os.Mkdir(workspace, 0777); err != nil {
+	hostRepository := filepath.Join(realTemp(t), "host-repository")
+	if err := os.Mkdir(hostRepository, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyDotnetSmokeFixture(source, workspace); err != nil {
+	if err := copyDotnetSmokeFixture(source, hostRepository); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"init", "--initial-branch=main", "--template="}, {"add", "."}, {"-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit", "-m", "Create disposable .NET fixture"}} {
-		if _, err := isolatedGit(ctx, workspace, args...); err != nil {
+		if _, err := isolatedGit(ctx, hostRepository, args...); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if _, err := project.Initialize(ctx, hostRepository); err != nil {
+		t.Fatal(err)
+	}
+	config := project.Config{Version: 1, Checks: [][]string{{"dotnet", "build", "Smoke.slnx"}, {"dotnet", "test", "tests/Smoke.UnitTests/Smoke.UnitTests.csproj"}, {"python3", "scripts/integration.py"}}, InputFiles: []string{".env"}}
+	settings, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceWrite(t, hostRepository, project.ConfigPath, string(settings))
+	id, err := NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := "fake-dotenv-" + id
+	environment := "SMOKE_MONGO_CONNECTION_STRING=mongodb://mongo:27017/?serverSelectionTimeoutMS=2000\nSMOKE_COMPOSE_MARKER=" + marker + "\nSMOKE_ENV_FILE_MARKER=" + marker + "\n"
+	sourceWrite(t, hostRepository, ".env", environment)
+	if _, err := isolatedGit(ctx, hostRepository, "check-ignore", ".env"); err != nil {
+		t.Fatal("host .env must be ignored")
+	}
+	tracked, err := isolatedGit(ctx, hostRepository, "ls-files", "--", ".env")
+	if err != nil || tracked != "" {
+		t.Fatal("host .env must remain untracked")
+	}
+	ticket := ".sdlc/work/dotnet-smoke/tickets/01-count-items.md"
+	sourceWrite(t, hostRepository, ticket, "# Disposable root environment check\n")
+	launch, err := project.Launch(ctx, hostRepository, "dotnet-smoke", "01-count-items.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := realTemp(t)
+	workspace := filepath.Join(directory, "workspace")
+	plan, err := Capture(ctx, launch, workspace, "work/dotnet-env", "main", "example/project", Roles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.CheckInputs) != 1 || plan.CheckInputs[0].Path != ".env" {
+		t.Fatal("configured .env was not captured as a check input")
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, ".env")); !os.IsNotExist(err) {
+		t.Fatal("host .env reached the provider workspace")
+	}
+	checkInputs := filepath.Join(directory, "check-inputs")
+	captured, err := os.ReadFile(filepath.Join(checkInputs, ".env"))
+	if err != nil || string(captured) != environment {
+		t.Fatal("captured .env differs from the host input")
+	}
+	// Execution must use the frozen input, rather than rebinding the live host
+	// file. A live bind would now lack the required Compose variables.
+	sourceWrite(t, hostRepository, ".env", "DISPOSABLE_CHANGED_AFTER_CAPTURE=true\n")
 	// One worker keeps the restore cache while exercising all three gates.
-	command := `import os,pathlib,subprocess
+	command := `import hashlib,os,pathlib,subprocess
 assert os.environ['DOCKER_HOST']=='unix:///run/sdlc/docker.sock'
 assert not pathlib.Path('/provider-auth').exists()
 assert not pathlib.Path('/var/run/docker.sock').exists()
 assert not pathlib.Path(os.environ['CODEX_HOME']).exists()
 assert not pathlib.Path(os.environ['CLAUDE_CONFIG_DIR']).exists()
+assert 'SMOKE_COMPOSE_MARKER' not in os.environ
+assert 'SMOKE_ENV_FILE_MARKER' not in os.environ
+assert hashlib.sha256(pathlib.Path('.env').read_bytes()).hexdigest()==` + fmt.Sprintf("%q", plan.CheckInputs[0].SHA256) + `
 subprocess.run(['dotnet','build','Smoke.slnx','--disable-build-servers','-m:1','-p:UseSharedCompilation=false'],check=True)
 subprocess.run(['dotnet','test','tests/Smoke.UnitTests/Smoke.UnitTests.csproj','--no-build','--no-restore'],check=True)
 subprocess.run(['python3','scripts/integration.py'],check=True)
-print('Credential-free .NET build, unit tests and API/Mongo integration passed')`
+print('Captured root .env, Compose interpolation/env_file, bridge and localhost integration passed')`
 	var output strings.Builder
-	checker := DockerChecker{Runtime: runtime, ImageID: state.ImageID, DockerTests: true}
+	checker := DockerChecker{Runtime: runtime, ImageID: state.ImageID, DockerTests: true, InputDirectory: checkInputs}
 	if err := checker.Check(ctx, workspace, [][]string{{"python3", "-c", command}}, io.MultiWriter(os.Stdout, &output)); err != nil {
 		t.Fatalf(".NET Docker checks: %v", err)
 	}
-	if !strings.Contains(output.String(), "API/Mongo integration passed") {
+	if !strings.Contains(output.String(), "bridge and localhost integration passed") {
 		t.Fatal("missing final fixture evidence")
 	}
 }
