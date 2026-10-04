@@ -66,17 +66,36 @@ separate and may affect other GitHub CLI sessions on the same account. See
 
 ## Machine credentials for unattended Docker delivery
 
-Use a read-only 1Password Service Account for a dedicated automation vault.
-The vault grant covers its contents, so keep it small and exclude unrelated
-credentials. Configure an external private profile containing one OpenSSH key
-reference, Ed25519 public key/fingerprint and bootstrap-file path. Configure each
-GitHub profile separately with `sdlc signing configure --profile NAME --file FILE`.
-`signing verify --profile NAME` proves retrieval, key identity and local signed
-commit verification without a GitHub or model request.
+Follow [1Password signing setup](1password-signing-setup.md) to provision a custom
+automation vault, Read Items Service Account and dedicated Ed25519 key, then save
+the matching GitHub profile with `sdlc signing setup --profile NAME`. The grant
+covers the entire vault; keep unrelated secrets out of it.
+
+The Service Account token provides authentication. A reference such as
+`op://YOUR_VAULT/YOUR_SIGNING_KEY/private key?ssh-format=openssh`
+selects the key field and format; it cannot reduce the account's authority and
+is not sufficient to authenticate on its own. Actual references expose private
+vault/item metadata, so keep them in private local configuration. Public keys
+and fingerprints can be published deliberately; tokens and private keys cannot.
+
+Profiles explicitly record the signing-secret provider as `1password`; older
+profiles without that field keep the same default. Other providers are rejected
+before credential reads or requests. One [open source alternative](proposals/signing-secret-providers.md)
+is planned, with no product selected or implemented.
+
+`signing status --profile NAME` identifies that provider and checks local configuration and bootstrap safety
+offline. Add `--verify` to retrieve the key and verify a disposable signed commit;
+`signing verify` is an alias. No GitHub or model request is involved, and no
+lasting verified status is stored. Normal output omits references and storage
+paths; `--show-config` deliberately displays those metadata locally, never secrets.
+Use `signing configure --profile NAME --file FILE` for an existing private profile.
 
 The bootstrap is currently a plaintext bearer-token file outside all repositories,
 owned by the user with mode `0600`, without symlinks or hard links. The saved
-profile contains no token or private key. SDLC passes bootstrap and reference
+profile contains no token or private key. 1Password advises against plaintext
+Service Account token storage; the current file bootstrap is a known storage
+limitation. See [official token guidance](https://www.1password.dev/service-accounts/get-started).
+SDLC passes bootstrap and reference
 through stdin to a disposable official `op` container, not Docker metadata or
 host environment variables. Only the native CLI child receives the token in its
 process environment. Retrieval has an independent container deadline, managed

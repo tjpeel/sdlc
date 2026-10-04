@@ -536,7 +536,13 @@ and [image removal](https://docs.docker.com/reference/cli/docker/image/rm/) docu
 ```sh
 sdlc runtime status
 sdlc runtime status --offline
+sdlc runtime status --offline --github-profile personal
 ```
+
+| Option | Purpose |
+| --- | --- |
+| `--offline` | Validate the local runtime and show its inventory without upstream update requests. |
+| `--github-profile NAME` | Show the matching signing profile's offline summary; defaults to `default`. |
 
 Status verifies that the selected Docker engine and shared image match the
 recorded build, then checks public upstream metadata for updates. Each image
@@ -572,6 +578,14 @@ contacting upstream services. Login and interactive commands also retain their
 local runtime checks. Status does not install updates, change pins or rebuild
 the image. Review available updates, change the relevant source pins, then run
 `sdlc runtime build`.
+
+Runtime status also shows an offline signing summary for the selected GitHub
+profile, including whether configuration and the private bootstrap are present
+and safe. This summary hides vault/item references and storage paths and never
+retrieves a 1Password key. Missing or unsafe signing setup is reported without
+changing the runtime image/dependency check's exit result. Use `sdlc signing
+status --profile NAME` for a dedicated signing-readiness exit status, or add
+`--verify` there when you intend to contact 1Password and test a real signature.
 
 Update transitive npm dependencies through their parent package or base image;
 they are not separate Dockerfile pins. The available versions can include major
@@ -634,24 +648,60 @@ never prints a token or raw native diagnostics.
 Publication verifies the numeric account and repository IDs and push permission.
 It stops on a mismatch rather than switching accounts.
 
-Configure a dedicated Ed25519 signing key through the official 1Password CLI
-Service Account route. Use a private profile JSON with the key reference, public
-key/fingerprint and an absolute path to a mode-`0600` bootstrap token file outside
-repositories. Store only the public key metadata and references in the profile;
-keep the private key in the dedicated vault. See [credential setup](github-credentials.md).
+Provision the custom 1Password vault, Read Items Service Account and dedicated
+Ed25519 SSH Key item using [1Password signing setup](1password-signing-setup.md).
+Then run the wizard in an interactive terminal:
 
 ```sh
-sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
-sdlc signing verify --profile personal
+sdlc signing setup --profile personal --provider 1password
+sdlc signing status --profile personal
+sdlc signing status --profile personal --verify
 sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --github-profile personal
 ```
 
-`signing verify` uses the saved profile and official 1Password resolver, then
-signs and verifies a disposable Git commit against the expected public key and
-fingerprint in a separate network-disabled Docker container. Secret retrieval
-contacts the configured vault; this command makes no GitHub or model request.
-It checks the local signing route, not GitHub Verified attribution. `--file` is
-for `signing configure` only; both commands default to the `default` profile.
+| Setting or flag context | Current meaning |
+| --- | --- |
+| Signing profile JSON `provider` | `"1password"`; an omitted field in an older profile defaults to 1Password. |
+| `signing setup --provider` | Defaults to `1password`, the only implemented secret provider. Other values fail before token reads or provider requests. |
+| `signing configure`, `status`, `verify` | Use the secret provider saved in the profile; no provider override. Status identifies that provider. |
+| Execution/provider-auth `--provider` | Selects `codex` or `claude` as the engineering client; separate from signing-secret selection. |
+
+One open source signing-secret alternative is [planned](proposals/signing-secret-providers.md).
+No alternative backend or general plugin interface is implemented.
+
+`signing setup` asks for vault/item names or IDs, the public key and an optional
+expected SHA256 fingerprint. A blank fingerprint is calculated from the public
+key. It reads the Service Account token through a hidden prompt, or uses an
+existing private file selected by `--bootstrap-file /PATH/TO/YOUR_PRIVATE_BOOTSTRAP`.
+The wizard saves private local configuration and prints its exact storage paths.
+It refuses to overwrite an existing profile or bootstrap. It creates no vault,
+account or SSH key, makes no network request and cannot certify account grants.
+
+Default installation state is `~/Library/Application Support/sdlc` on macOS and
+`~/.config/sdlc` on Linux (respecting XDG configuration). A named profile uses
+`profiles.personal.local.json`; the hidden prompt creates
+`signing-personal-bootstrap` there. Keep state outside repositories. The bearer
+token remains plaintext in a private owned mode-`0600` file.
+
+Plain `signing status` checks saved configuration, public identity and bootstrap
+safety offline. It prints neither references nor private paths. `--verify`
+contacts the configured vault through official `op`, then checks the key identity
+and signs/verifies a disposable Git commit in a separate network-disabled
+container. It makes no GitHub or model request and does not establish GitHub
+Verified attribution. Success belongs to that invocation; it is not cached.
+
+```sh
+sdlc signing status --profile personal --show-config
+sdlc signing verify --profile personal
+sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
+```
+
+`--show-config` is explicit private inspection: it displays the reference,
+bootstrap path and saved configuration location, never the token or private key.
+Keep that output private. `signing verify` remains an alias for `status --verify`.
+`configure` imports an existing external private JSON profile for deliberate
+configuration changes; `--file` belongs to `configure`. These commands default
+to the `default` profile when `--profile` is omitted.
 
 The signing configuration name must match the selected GitHub profile. Provision
 the public key as a GitHub signing key for the intended account and Git email.

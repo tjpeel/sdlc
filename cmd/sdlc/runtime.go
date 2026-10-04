@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 )
@@ -20,10 +21,12 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	flags.SetOutput(diagnostics)
 	var source string
 	var offline bool
+	var githubProfile string
 	if args[0] == "build" {
 		flags.StringVar(&source, "source", "", "SDLC clone (uses saved source when omitted)")
 	} else {
 		flags.BoolVar(&offline, "offline", false, "verify the local image and list its inventory without checking upstream updates")
+		flags.StringVar(&githubProfile, "github-profile", "default", "show local signing readiness for the matching GitHub profile")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -34,11 +37,21 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if flags.NArg() != 0 {
 		return fmt.Errorf("runtime %s accepts only its named options", args[0])
 	}
+	if args[0] == "status" {
+		if err := githubauth.ValidateProfile(githubProfile); err != nil {
+			return err
+		}
+	}
 	manager, err := runtimeimage.New(output, diagnostics)
 	if err != nil {
 		return err
 	}
 	if args[0] == "status" {
+		// Signing readiness is independent of the image/dependency check. Missing
+		// signing setup is reported for attention without masking runtime errors.
+		if err := signingStatus(manager.Directory, githubProfile, false, output); err != nil {
+			fmt.Fprintf(output, "Signing setup needs attention: %v\n", err)
+		}
 		return runtimeStatus(ctx, manager, runtimeupdates.New(), offline, output)
 	}
 	state, err := manager.Build(ctx, source)

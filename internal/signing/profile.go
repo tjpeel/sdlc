@@ -20,9 +20,12 @@ import (
 	"time"
 )
 
+const DefaultProvider = "1password"
+
 const Image = "1password/op:2.39.0@sha256:3cd5a1febc662c93d46b944b983b301e710da5c016ef63be9d436cf2b1ed30d5"
 
 type Profile struct {
+	Provider      string `json:"provider,omitempty"`
 	Version       int    `json:"version"`
 	ID            string `json:"id"`
 	Reference     string `json:"reference"`
@@ -31,16 +34,38 @@ type Profile struct {
 	BootstrapFile string `json:"bootstrap_file"`
 }
 
+// EffectiveProvider preserves version-1 profiles written before provider selection.
+func (profile Profile) EffectiveProvider() string {
+	if profile.Provider == "" {
+		return DefaultProvider
+	}
+	return profile.Provider
+}
+
+// ValidateProvider rejects unsupported routes before reading credentials or
+// invoking a connected client. Empty values use the historical default.
+func ValidateProvider(provider string) error {
+	if provider != "" && provider != DefaultProvider {
+		return fmt.Errorf("signing secret provider must be 1password; other providers are not implemented")
+	}
+	return nil
+}
+
 func (profile Profile) Validate() error {
+	if err := ValidateProvider(profile.Provider); err != nil {
+		return err
+	}
 	if profile.Version != 1 || !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`).MatchString(profile.ID) {
 		return fmt.Errorf("invalid signing profile identity")
 	}
 	if !strings.HasPrefix(profile.Reference, "op://") || !strings.HasSuffix(profile.Reference, "/private key?ssh-format=openssh") || strings.ContainsAny(profile.Reference, "\x00\r\n\"") || len(profile.Reference) > 1024 {
 		return fmt.Errorf("signing reference must identify an OpenSSH private-key field")
 	}
-	if len(strings.Split(strings.TrimSuffix(strings.TrimPrefix(profile.Reference, "op://"), "/private key?ssh-format=openssh"), "/")) != 2 {
-		return fmt.Errorf("signing reference must identify exactly one vault and item")
+	segments := strings.Split(strings.TrimSuffix(strings.TrimPrefix(profile.Reference, "op://"), "/private key?ssh-format=openssh"), "/")
+	if len(segments) != 2 || !referenceSegment(segments[0]) || !referenceSegment(segments[1]) {
+		return fmt.Errorf("signing reference must identify exactly one nonempty unambiguous vault and item")
 	}
+
 	if !regexp.MustCompile(`^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$`).MatchString(profile.PublicKey) || len(profile.PublicKey) > 256 || !regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`).MatchString(profile.Fingerprint) {
 		return fmt.Errorf("signing profile requires an Ed25519 public key and its SHA256 fingerprint")
 	}

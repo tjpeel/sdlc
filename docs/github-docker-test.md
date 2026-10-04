@@ -91,105 +91,69 @@ token-renewal mechanism.
 
 ## 4 Provision the signing authority
 
-Use a dedicated automation vault, a Service Account with read access only to
-that vault, and a dedicated unencrypted Ed25519 signing key. The account grant
-is vault-wide, not restricted to a single item: put no unrelated secrets there.
-Register the public key as a **signing key** in the intended GitHub account.
-Separate keys and references per GitHub profile make revocation clearer.
-The [dedicated-vault test](1password-test.md) covers provisioning and outside-vault
-denial. Prefer vault/item IDs in references to reduce name-based lookup requests.
+Follow [1Password signing setup](1password-signing-setup.md) to create the dedicated
+custom vault, Read Items Service Account and Ed25519 SSH Key item. Its grant is
+vault-wide; a reference cannot narrow it to one item. The historical
+[1Password test](1password-test.md) records earlier trials, not final provisioning.
+Register the public key as a GitHub **signing key** in the intended account.
 
-For this iteration, SDLC reads the Service Account token from an explicit
-private host file. This supports a locked desktop but is **persistent plaintext**,
-not an OS credential-store integration. A process running as your host user,
-host administrator or Docker administrator can compromise this arrangement.
-Use host disk encryption, ordinary local filesystems and private directories
-without extra ACL grants. Do not use a shared/synchronised directory or broad
-vault grants. The token is sent only to the short-lived official `op` resolver,
-never to the provider, test worker or GitHub publisher.
-
-Run this locally once per profile. It uses a hidden prompt for the token and
-refuses to overwrite existing files; the token never appears in shell history:
+Then run the interactive wizard once per profile:
 
 ```sh
-python3 - <<'PY'
-import getpass, json, os, pathlib, re, sys
-sys.stdin = open('/dev/tty', 'r')
-name = input('Profile name (personal or work): ').strip()
-if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,47}', name):
-    raise SystemExit('Invalid profile name')
-directory = pathlib.Path.home() / '.config' / 'sdlc-private'
-directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-if directory.is_symlink():
-    raise SystemExit('Use a directory without symlinks')
-directory = directory.resolve()
-if any((parent / '.git').exists() for parent in [directory, *directory.parents]):
-    raise SystemExit('Use storage outside all repositories')
-os.chmod(directory, 0o700)
-bootstrap = directory / (name + '-bootstrap')
-profile = directory / (name + '-profile.json')
-if bootstrap.exists() or profile.exists():
-    raise SystemExit('Files already exist; inspect privately before changing them')
-reference = input('OpenSSH private-key reference, without outer quotes: ').strip()
-public = input('Public Ed25519 key: ').split()
-fingerprint = input('Expected SHA256 fingerprint: ').strip()
-if len(public) < 2:
-    raise SystemExit('Public key is incomplete')
-token = getpass.getpass('Service Account token (hidden): ').strip()
-if not token or any(c in token for c in '\r\n\x00'):
-    raise SystemExit('Token must be one line')
-old_mask = os.umask(0o077)
-try:
-    with bootstrap.open('x') as file:
-        file.write(token + '\n')
-    del token
-    with profile.open('x') as file:
-        json.dump({'version': 1, 'id': name + '-signing',
-                   'reference': reference, 'public_key': ' '.join(public[:2]),
-                   'fingerprint': fingerprint, 'bootstrap_file': str(bootstrap)},
-                  file, indent=2)
-        file.write('\n')
-finally:
-    os.umask(old_mask)
-print('Private files prepared; no credential contents printed.')
-PY
+sdlc signing setup --profile personal --provider 1password
+sdlc signing setup --profile work --provider 1password
 ```
 
-An example reference is
-`op://YOUR_VAULT/YOUR_SIGNING_KEY/private key?ssh-format=openssh`.
-The profile contains references and public metadata only. Its bootstrap file
-contains the actual bearer token. Both files must be owned by your user with
-mode `0600`, without symlinks or hard links, outside all Git repositories.
-SDLC rejects unsafe files. Keep the terminal and clipboard private during setup.
+It asks for vault/item names or IDs, the public key and optional expected SHA256
+fingerprint, then reads the token at a hidden prompt. It saves private installation
+configuration and a mode-`0600` bootstrap file outside Git. Use `--bootstrap-file`
+to select an existing safe external token file instead. Setup makes no network
+request and refuses to overwrite existing files; it does not create the
+1Password resources or attest their grant scope.
 
-## 5 Configure and test each signing profile
+The bootstrap is persistent plaintext host storage. Keep it in a private local
+directory without extra ACL grants, outside shared/synchronised storage and all
+repositories. A compromised host user or administrator can read it. Do not put
+its contents in arguments, transcripts or chat. The token reaches only the
+short-lived official `op` resolver, never providers, test workers or the publisher.
+
+## 5 Inspect and test each signing profile
 
 ```sh
-sdlc signing configure --profile personal --file "$HOME/.config/sdlc-private/personal-profile.json"
-sdlc signing verify --profile personal
-sdlc signing configure --profile work --file "$HOME/.config/sdlc-private/work-profile.json"
-sdlc signing verify --profile work
+sdlc runtime status --offline --github-profile personal
+sdlc signing status --profile personal
+sdlc signing status --profile personal --verify
+sdlc signing status --profile work
+sdlc signing status --profile work --verify
 ```
 
-`configure` saves only public metadata and references in private installation
-state. `verify` retrieves the configured key through official `op`, then signs
-and verifies a disposable local commit in a separate container with networking
-disabled. It checks the expected public key and fingerprint; it performs no
-GitHub or model request and prints no key material.
+Runtime status includes an informative offline signing summary for `personal`;
+missing signing setup does not fail an otherwise successful runtime check. Plain
+`signing status` checks saved settings, public identity and bootstrap safety offline
+and returns its own readiness result.
+`--verify` retrieves the configured key through official `op`, then checks the
+expected public key/fingerprint and signs and verifies a disposable commit in a
+separate network-disabled container. It performs no GitHub or model request.
+Success applies to the current check; it is not a cached claim of continued access.
+`signing verify --profile NAME` remains an alias.
 
-Lock or close the 1Password desktop app and repeat `signing verify`. Restart
-Docker after all checks finish and repeat. Expected: no desktop prompt. Stop on
-any mismatch, missing image, vault denial or timeout; inspect configuration
+Normal status prints no vault/item references, private paths or secrets. Use
+`signing status --profile NAME --show-config` only for private local inspection
+of references and storage locations; it never prints token or private-key contents.
+For deliberate changes to an existing profile, `signing configure --profile NAME
+--file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json` remains available.
+
+Lock or close the 1Password desktop app and repeat `signing status --verify`.
+Restart Docker after the checks finish and repeat. Expected: no desktop prompt.
+Stop on a mismatch, missing image, vault denial or timeout; inspect configuration
 privately rather than pasting secret output into chat.
 
-Each retrieval uses a fresh resolver. The token and private reference travel
-through stdin, not Docker configuration or environment arguments. The official
-CLI child receives the token in its environment inside that container. It has
-a 35-second independent deadline, removal on exit and cleanup checks. A surviving
-resolver prevents a retry. The retrieved key enters the publisher through stdin
-and tmpfs; the key file is removed after signing and verification, before push.
-Tmpfs and process memory are not guaranteed secure erasure and may spill into
-host swap. See [tmpfs limitations](https://docs.docker.com/engine/storage/tmpfs/).
+Each retrieval uses a fresh resolver. The token and reference travel through
+stdin; only the native CLI child receives the token in its process environment.
+The resolver has an independent deadline, auto-removal and checked cleanup; a
+surviving resolver blocks retry. The publisher receives the key through stdin
+and tmpfs and removes its key file before push. These measures do not guarantee
+erasure from every buffer or host swap. See [tmpfs limitations](https://docs.docker.com/engine/storage/tmpfs/).
 
 ## 6 Prepare the disposable repository and providers
 

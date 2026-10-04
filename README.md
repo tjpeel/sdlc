@@ -16,7 +16,8 @@ stacked-ticket orchestration remain future work.
 For a joint connected trial, follow the [onboarding runbook](docs/onboarding.md).
 It covers a disposable .NET repository, both providers, CI and review/repair.
 Start with the [GitHub profile and signing test guide](docs/github-docker-test.md)
-to provision separate accounts and a dedicated unattended signing key.
+to provision separate accounts. Use the [1Password signing setup guide](docs/1password-signing-setup.md)
+to create the dedicated vault/account/key and run `sdlc signing setup --profile personal`.
 
 From this clone, with Go 1.24 or later and a local Docker engine running Linux
 containers, select an existing directory on your PATH:
@@ -219,6 +220,7 @@ Running inside SDLC narrows that exposure, while retaining the risks listed abov
 ## Documentation
 
 - [CLI installation and commands](docs/cli.md)
+- [1Password signing provisioning and setup](docs/1password-signing-setup.md)
 - [GitHub profiles and unattended signing tests](docs/github-docker-test.md)
 - [Agreed workflow and remaining work](docs/workflow.md)
 - [Development and validation](docs/development.md)

@@ -59,7 +59,7 @@ func statusInventory() *runtimeimage.Inventory {
 func TestRuntimeArgumentsAndHelpNeverCreateState(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	t.Setenv("SDLC_STATE_DIR", directory)
-	for _, args := range [][]string{{}, {"unknown"}, {"status", "--source", "somewhere"}, {"build", "--offline"}, {"status", "extra"}, {"status", "--offline=invalid"}} {
+	for _, args := range [][]string{{}, {"unknown"}, {"status", "--source", "somewhere"}, {"build", "--offline"}, {"build", "--github-profile", "personal"}, {"status", "--github-profile", "../unsafe"}, {"status", "extra"}, {"status", "--offline=invalid"}} {
 		if err := runtimeCommand(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("accepted invalid options: %v", args)
 		}
