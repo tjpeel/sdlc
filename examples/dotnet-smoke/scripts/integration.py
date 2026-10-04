@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run disposable API, Mongo and test containers on SDLC's check daemon."""
+"""Run disposable Compose API, Mongo and tests on SDLC's check daemon."""
 
 import os
 from pathlib import Path
@@ -13,16 +13,11 @@ DOCKER_SOCKET = "unix:///run/sdlc/docker.sock"
 
 
 def docker(*args, check=True, timeout=600):
-    # An inherited context can override DOCKER_HOST. Pin every command, including
-    # diagnostics and cleanup, to the disposable check daemon.
+    # Pin work, diagnostics and cleanup despite inherited context overrides.
     environment = os.environ.copy()
     environment.pop("DOCKER_CONTEXT", None)
     return subprocess.run(["docker", "--host", DOCKER_SOCKET, *args],
                           check=check, timeout=timeout, env=environment)
-
-
-def run(*args):
-    docker(*args)
 
 
 def interrupted(signum, frame):
@@ -30,53 +25,46 @@ def interrupted(signum, frame):
 
 
 def main():
-    # SDLC supplies this private socket only to --docker-tests check workers.
     if os.environ.get("DOCKER_HOST") != DOCKER_SOCKET:
         sys.exit("DOCKER_HOST must be unix:///run/sdlc/docker.sock from a dedicated SDLC check daemon.")
+    root = Path(__file__).resolve().parent.parent
+    environment_file = root / ".env"
+    if environment_file.is_symlink() or not environment_file.is_file():
+        sys.exit("Integration checks require a regular, non-symlink root .env supplied as a check input.")
     signal.signal(signal.SIGTERM, interrupted)
-    prefix = "dotnet-smoke-" + uuid.uuid4().hex
-    network = prefix + "-network"
-    api_image, tests_image = prefix + "-api:local", prefix + "-tests:local"
-    containers = [prefix + "-mongo", prefix + "-api", prefix + "-tests"]
-    cleanup = []
+    project = "dotnet-smoke-" + uuid.uuid4().hex
+    compose = ["compose", "--project-name", project, "--project-directory", str(root),
+               "--env-file", str(environment_file), "--file", str(root / "compose.yml")]
     result = 0
     try:
-        run("info")
-        context = str(Path(__file__).resolve().parent.parent)
-        for target, image in [("api", api_image), ("tests", tests_image)]:
-            cleanup.append(["image", "rm", "--force", image])
-            run("build", "--target", target, "--tag", image, context)
-        # Creation can succeed on the daemon before a client timeout or signal.
-        cleanup.append(["network", "rm", network])
-        run("network", "create", network)
-        for container in containers:
-            cleanup.append(["rm", "--force", "--volumes", container])
-        run("run", "--detach", "--name", containers[0], "--network", network,
-            "--network-alias", "mongo", "mongo:8.0.16")
-        run("run", "--detach", "--name", containers[1], "--network", network,
-            "--network-alias", "api", "--env",
-            "Mongo__ConnectionString=mongodb://mongo:27017/?serverSelectionTimeoutMS=2000",
-            api_image)
-        run("run", "--name", containers[2], "--network", network,
-            "--env", "SMOKE_API_URL=http://api:8080", tests_image)
-    except (subprocess.SubprocessError, KeyboardInterrupt) as error:
-        print(f"Integration check failed: {error}", file=sys.stderr)
+        docker("info")
+        docker(*compose, "build", "api", "tests", "host-tests")
+        docker(*compose, "up", "-d", "mongo", "api")
+        docker(*compose, "exec", "-T", "api", "/bin/sh", "-c",
+               "test ! -e /source/.env && test ! -e /app/.env")
+        docker(*compose, "run", "--rm", "--no-deps", "tests")
+        docker(*compose, "run", "--rm", "--no-deps", "host-tests")
+    except (subprocess.SubprocessError, KeyboardInterrupt):
+        # Never print rendered Compose configuration or environment values.
+        print("Integration check failed or was cancelled.", file=sys.stderr)
         result = 1
-        for container in containers[:2]:
-            try:
-                docker("logs", container, check=False, timeout=15)
-            except subprocess.SubprocessError:
-                pass
+        try:
+            docker(*compose, "logs", "--no-color", "--tail", "100", "mongo", "api",
+                   check=False, timeout=15)
+        except subprocess.SubprocessError:
+            pass
     finally:
-        for command in reversed(cleanup):
-            try:
-                completed = docker(*command, check=False, timeout=30)
-                if completed.returncode:
-                    print(f"Cleanup failed for {command[-1]}", file=sys.stderr)
-                    result = 1
-            except subprocess.SubprocessError as error:
-                print(f"Cleanup failed for {command[-1]}: {error}", file=sys.stderr)
+        # Compose owns the namespace, including resources created before a
+        # cancelled client returns. Local build tags and Mongo volumes go too.
+        try:
+            completed = docker(*compose, "--profile", "integration", "down", "--volumes", "--remove-orphans", "--rmi", "local",
+                               check=False, timeout=60)
+            if completed.returncode:
+                print("Integration Compose cleanup failed.", file=sys.stderr)
                 result = 1
+        except subprocess.SubprocessError:
+            print("Integration Compose cleanup failed.", file=sys.stderr)
+            result = 1
     return result
 
 

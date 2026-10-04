@@ -1,0 +1,3 @@
+SMOKE_MONGO_CONNECTION_STRING=mongodb://mongo:27017/?serverSelectionTimeoutMS=2000
+SMOKE_COMPOSE_MARKER=fake-dotenv-example
+SMOKE_ENV_FILE_MARKER=fake-dotenv-example

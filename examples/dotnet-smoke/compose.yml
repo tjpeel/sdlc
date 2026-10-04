@@ -1,0 +1,36 @@
+services:
+  mongo:
+    image: mongo:8.0.16
+    ports:
+      - "27017:27017"
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      Mongo__ConnectionString: ${SMOKE_MONGO_CONNECTION_STRING:?Root .env must define SMOKE_MONGO_CONNECTION_STRING}
+    ports:
+      - "18080:8080"
+    depends_on:
+      - mongo
+  tests:
+    profiles: [integration]
+    build:
+      context: .
+      target: tests
+    env_file:
+      - .env
+    environment:
+      SMOKE_API_URL: http://api:8080
+      SMOKE_COMPOSE_MARKER: ${SMOKE_COMPOSE_MARKER:?Root .env must define SMOKE_COMPOSE_MARKER}
+  host-tests:
+    profiles: [integration]
+    build:
+      context: .
+      target: tests
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      SMOKE_API_URL: http://localhost:18080
+      SMOKE_COMPOSE_MARKER: ${SMOKE_COMPOSE_MARKER:?Root .env must define SMOKE_COMPOSE_MARKER}

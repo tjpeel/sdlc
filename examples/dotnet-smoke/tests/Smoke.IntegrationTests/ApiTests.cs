@@ -7,6 +7,12 @@ public class ApiTests
     [Fact]
     public async Task CreatesAndReadsItemThroughMongo()
     {
+        Assert.False(File.Exists("/source/.env"), "The host .env must not be baked into the test image.");
+        var directMarker = Environment.GetEnvironmentVariable("SMOKE_ENV_FILE_MARKER");
+        var interpolatedMarker = Environment.GetEnvironmentVariable("SMOKE_COMPOSE_MARKER");
+        Assert.True(directMarker?.StartsWith("fake-dotenv-", StringComparison.Ordinal) == true
+            && string.Equals(directMarker, interpolatedMarker, StringComparison.Ordinal),
+            "Compose must inject the disposable marker through env_file and interpolation.");
         var endpoint = Environment.GetEnvironmentVariable("SMOKE_API_URL")
             ?? throw new InvalidOperationException("Run scripts/integration.py against the dedicated Docker daemon.");
         using var client = new HttpClient { BaseAddress = new Uri(endpoint), Timeout = TimeSpan.FromSeconds(5) };

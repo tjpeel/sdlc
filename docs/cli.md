@@ -71,6 +71,14 @@ Files already tracked in source remain visible as normal source. Keep credential
 and host paths out of these settings. This file can be committed if its contents
 are suitable for the project repository.
 
+For Compose checks that require an ignored root `.env`, explicitly configure
+`"input_files": [".env"]` and use `sdlc run --docker-tests`. SDLC freezes the file
+at capture and copies it to the check workspace; it does not export its contents
+as process environment variables. Compose's `--env-file` selects interpolation
+input, while service `env_file` supplies container environment. See the
+[tested .NET Compose example](../examples/dotnet-smoke/README.md). Keep the `.env`
+itself ignored and untracked and use settings for disposable test services.
+
 Repeated initialization validates and preserves existing settings, including
 custom checks, rather than replacing them with newly detected defaults. It
 rejects unsupported settings versions, invalid paths and unsafe filesystem links.
