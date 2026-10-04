@@ -212,3 +212,19 @@ cleanup, resource naming and fixed Docker endpoint, including a conflicting
 `DOCKER_CONTEXT`. The complete offline suite now has 202 Python tests. Connected
 implementation, signed publication, CI and opposite-provider review still need a
 test with the account owner.
+
+A separate credential-free probe passed on 4 October 2026 with two check jobs
+running together. Each used its own Docker daemon, published an HTTP service on
+`18080:8080`, and received its own distinct response through `localhost:18080`.
+Both services must be ready before either worker can finish, so startup timing
+cannot hide a port collision. Both jobs completed cleanup. These ports belong to
+the nested daemons; the main engine host receives no published ports. Run it with
+the recorded local SDLC runtime and Docker engine:
+
+```sh
+SDLC_OFFLINE_DOCKER_TESTS=1 go test -timeout 8m -count=1 -v ./internal/workrun \
+  -run '^TestOfflineDockerConcurrentPublishedPorts$'
+```
+
+This probe imports a small disposable service from the runtime's existing Python
+files and requires no nested image pull, provider account or model request.
