@@ -2,9 +2,11 @@ package workrun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -48,6 +50,48 @@ func TestPublisherOutputBounded(t *testing.T) {
 	data := make([]byte, 1024*1024+1)
 	if n, err := output.Write(data); n != len(data) || err != nil || !output.exceeded || output.Len() != 0 {
 		t.Fatal("oversize output retained")
+	}
+}
+
+func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
+	for _, action := range []string{"publish", "checks"} {
+		t.Run(action, func(t *testing.T) {
+			original := PublisherRequest{
+				Action: action,
+				Plan: Plan{
+					PublicationIdentity: frozenTestIdentity(), GitHubProfile: "example",
+					Repository: "example/project", SourceSHA: testBase, BaseSHA: testBase,
+					Base: "main", Branch: "example-ticket", PRTitle: "Example", PRBody: "Example body",
+					Root: "/private/project", Ticket: "/private/ticket.md",
+					Inputs:       []Input{{Path: "ticket.md", SHA256: "example"}},
+					CheckInputs:  []Input{{Path: ".env", SHA256: "example"}},
+					Checks:       [][]string{{"dotnet", "test"}},
+					SigningImage: "controller-signing-pin", DaemonImage: "controller-daemon-pin",
+				},
+				Previous:     Publication{Number: 1, HeadSHA: testSigned, BaseSHA: testBase},
+				ExpectedHead: testHead, ExpectedTree: testTree,
+			}
+			projected := publisherRequestForContainer(original)
+			expected := original
+			expected.Plan.Root, expected.Plan.Ticket = "", ""
+			expected.Plan.Inputs, expected.Plan.CheckInputs, expected.Plan.Checks = nil, nil, nil
+			expected.Plan.SigningImage, expected.Plan.DaemonImage = "", ""
+			if !reflect.DeepEqual(projected, expected) {
+				t.Fatal("publisher request changed the frozen publication boundary")
+			}
+			data, err := json.Marshal(projected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, excluded := range []string{"signing_image", "daemon_image", "/private/project", "/private/ticket.md", ".env"} {
+				if strings.Contains(string(data), excluded) {
+					t.Fatalf("controller-only field reached publisher: %s", excluded)
+				}
+			}
+			if original.Plan.SigningImage != "controller-signing-pin" || original.Plan.DaemonImage != "controller-daemon-pin" || original.Plan.Root != "/private/project" || len(original.Plan.CheckInputs) != 1 {
+				t.Fatal("projection mutated the retained controller plan")
+			}
+		})
 	}
 }
 

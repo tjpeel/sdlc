@@ -149,11 +149,7 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if err := privatePublisherParent(directory); err != nil {
 		return fail("publisher parent must be owned by this user with mode 0700")
 	}
-	request.Plan.Root = ""
-	request.Plan.Ticket = ""
-	request.Plan.Inputs = nil
-	request.Plan.CheckInputs = nil
-	request.Plan.Checks = nil
+	request = publisherRequestForContainer(request)
 	requestDirectory, err := os.MkdirTemp(directory, "publisher-request-")
 	if err != nil {
 		return fail("cannot prepare publisher request")
@@ -254,6 +250,19 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	return response, nil
 }
 
+// Sidecar pins belong to the host controller. Keep the publisher wire format
+// compatible with frozen images, and exclude paths and inputs it never needs.
+func publisherRequestForContainer(request PublisherRequest) PublisherRequest {
+	request.Plan.Root = ""
+	request.Plan.Ticket = ""
+	request.Plan.Inputs = nil
+	request.Plan.CheckInputs = nil
+	request.Plan.Checks = nil
+	request.Plan.SigningImage = ""
+	request.Plan.DaemonImage = ""
+	return request
+}
+
 func stagePublisherBundle(path, destination string) error {
 	const maximum = int64(2 * 1024 * 1024 * 1024)
 	info, err := os.Lstat(path)
@@ -274,12 +283,17 @@ func stagePublisherBundle(path, destination string) error {
 		return err
 	}
 	n, copyErr := io.Copy(dest, io.LimitReader(source, maximum+1))
-	closeErr := dest.Close()
 	after, statErr := source.Stat()
-	if copyErr != nil || closeErr != nil || statErr != nil || n != info.Size() || after.Size() != info.Size() || after.ModTime() != info.ModTime() {
+	if copyErr != nil || statErr != nil || n != info.Size() || after.Size() != info.Size() || after.ModTime() != info.ModTime() {
+		dest.Close()
 		return fmt.Errorf("exported bundle changed during staging")
 	}
-	return nil
+	// The private request directory controls host traversal. The container's
+	// distinct UID needs read access to the mounted public source bundle even
+	// when the controller inherits a restrictive umask.
+	modeErr := dest.Chmod(0644)
+	closeErr := dest.Close()
+	return errors.Join(modeErr, closeErr)
 }
 
 func publisherArguments(image, name, volume, requestPath, statePath string) []string {
