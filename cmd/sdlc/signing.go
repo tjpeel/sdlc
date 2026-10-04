@@ -10,6 +10,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 	"github.com/tjpeel/sdlc/internal/signing"
 )
 
@@ -101,13 +102,10 @@ func signingCommand(ctx context.Context, args []string, output io.Writer) error 
 	case "setup":
 		return signingSetup(ctx, runtime.Directory, options, output, openSigningTerminal)
 	case "status", "verify":
-		if err := signingStatus(runtime.Directory, options.name, options.showConfig, output); err != nil {
-			return err
-		}
 		if options.verify || options.action == "verify" {
-			return verifySigning(ctx, runtime, options.name, output)
+			return verifySigning(ctx, runtime, options.name, output, options.showConfig)
 		}
-		return nil
+		return signingStatus(runtime.Directory, options.name, options.showConfig, output)
 	default:
 		profile, err := signing.Load(options.file)
 		if err != nil {
@@ -158,22 +156,37 @@ func signingStatus(directory, name string, showConfig bool, output io.Writer) er
 	return nil
 }
 
-func verifySigning(ctx context.Context, runtime runtimeimage.Manager, name string, output io.Writer) error {
-	profile, err := signingProfile(runtime, name)
-	if err != nil {
-		return err
-	}
+func verifySigning(ctx context.Context, runtime runtimeimage.Manager, name string, output io.Writer, showConfig bool) error {
 	state, err := runtime.Status(ctx)
 	if err != nil {
 		return err
 	}
+	image, err := selectedSigningImage(state)
+	if err != nil {
+		return err
+	}
+	if err := signingStatus(runtime.Directory, name, showConfig, output); err != nil {
+		return err
+	}
+	profile, err := signingProfile(runtime, name)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(output, "Contacting 1Password to retrieve the configured key, then testing a disposable signed commit in Docker.")
-	if err := (signing.Resolver{Profile: profile}).Verify(ctx, state.ImageID); err != nil {
+	if err := (signing.Resolver{Profile: profile, Image: image}).Verify(ctx, state.ImageID); err != nil {
 		return err
 	}
 	fmt.Fprintf(output, "Signing profile %s: key matches; disposable commit signed and verified. No GitHub or model request was made.\n", name)
 	fmt.Fprintln(output, "Service Account grant scope and GitHub Verified attribution still require separate checks.")
 	return nil
+}
+
+func selectedSigningImage(state runtimeimage.State) (string, error) {
+	image := signing.Image
+	if state.DependencyPins != nil {
+		image = state.DependencyPins.SigningImage
+	}
+	return image, runtimepins.ValidateSigningImage(image)
 }
 
 func signingProfile(runtime runtimeimage.Manager, names ...string) (signing.Profile, error) {

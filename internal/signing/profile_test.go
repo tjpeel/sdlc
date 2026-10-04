@@ -130,6 +130,56 @@ func TestResolverKeepsBearerSecretOffArgumentsAndConfigEnvironment(t *testing.T)
 	}
 }
 
+func TestResolverUsesSelectedPinnedImage(t *testing.T) {
+	profile, _ := fixture(t)
+	image := "1password/op:2.40.1@sha256:" + strings.Repeat("a", 64)
+	resolver := Resolver{Profile: profile, Image: image, Run: func(_ context.Context, _ io.Reader, output io.Writer, args ...string) error {
+		selected := false
+		for _, arg := range args {
+			selected = selected || arg == image
+			if arg == Image {
+				t.Fatal("resolver used the compiled default instead of the selected image")
+			}
+		}
+		if !selected {
+			t.Fatal("selected image missing from Docker command")
+		}
+		_, err := output.Write([]byte("disposable-signing-key"))
+		return err
+	}}
+	key, err := resolver.Resolve(context.Background())
+	if err != nil || string(key) != "disposable-signing-key" {
+		t.Fatalf("selected image resolution: %v", err)
+	}
+	clear(key)
+}
+
+func TestResolverRejectsUnapprovedImageBeforeBootstrapRead(t *testing.T) {
+	for _, image := range []string{
+		"1password/op:latest",
+		"1password/op:2.40.1",
+		"1password/op:2.40.1-beta@sha256:" + strings.Repeat("a", 64),
+		"example.invalid/op:2.40.1@sha256:" + strings.Repeat("a", 64),
+		"1password/op:2.40.1@sha256:short",
+	} {
+		t.Run(image, func(t *testing.T) {
+			profile, _ := fixture(t)
+			if err := os.Remove(profile.BootstrapFile); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			resolver := Resolver{Profile: profile, Image: image, Run: func(context.Context, io.Reader, io.Writer, ...string) error {
+				calls++
+				return nil
+			}}
+			_, err := resolver.Resolve(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "signing image") || calls != 0 {
+				t.Fatalf("invalid image reached bootstrap or Docker: %v, calls=%d", err, calls)
+			}
+		})
+	}
+}
+
 func TestResolverSuppressesSecretDiagnosticsAndBoundsOutput(t *testing.T) {
 	for _, oversize := range []bool{false, true} {
 		profile, _ := fixture(t)

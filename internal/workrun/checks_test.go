@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
 type checkDockerFake struct {
@@ -23,10 +24,14 @@ type checkDockerFake struct {
 	replaced         bool
 	workerState      string
 	inspectFail      bool
+	daemonMissing    bool
 }
 
 func (fake *checkDockerFake) Output(ctx context.Context, args ...string) ([]byte, error) {
 	fake.calls = append(fake.calls, append([]string(nil), args...))
+	if fake.daemonMissing && args[0] == "run" && strings.Contains(strings.Join(args, " "), "--privileged") {
+		return nil, errors.New("pinned daemon is missing from the local image cache")
+	}
 	if args[0] == "rm" || ((args[0] == "volume" || args[0] == "network") && args[1] == "rm") {
 		fake.cleanupCancelled = fake.cleanupCancelled || ctx.Err() != nil
 		if fake.cleanupFail {
@@ -87,6 +92,113 @@ func checkFixture(t *testing.T) (DockerChecker, *checkDockerFake, *checkRunnerFa
 	}
 	docker, runner := &checkDockerFake{}, &checkRunnerFake{}
 	return DockerChecker{Runtime: runtimeimage.Manager{Directory: directory, Docker: docker}, Runner: runner, DockerTests: true}, docker, runner, t.TempDir()
+}
+
+func checkDependencyPins() runtimepins.Pins {
+	pins := runtimepins.Pins{Arguments: map[string]string{}, Images: map[string]string{}, SigningImage: "1password/op:2.40.1@sha256:" + strings.Repeat("b", 64), DaemonImage: "docker:29.9.0-dind@sha256:" + strings.Repeat("c", 64)}
+	for _, name := range []string{"CODEX_VERSION", "CLAUDE_VERSION", "GH_VERSION", "DOTNET_VERSION", "NPM_VERSION", "YARN_VERSION", "COMPOSE_VERSION", "BUILDX_VERSION"} {
+		pins.Arguments[name] = "1.2.3"
+	}
+	pins.Arguments["SKILLS_REVISION"] = strings.Repeat("a", 40)
+	pins.Arguments["AGENTS_REVISION"] = strings.Repeat("b", 40)
+	pins.Images["node"] = "node:22.1.0-bookworm@sha256:" + strings.Repeat("a", 64)
+	pins.Images["golang"] = "golang:1.24.0-bookworm@sha256:" + strings.Repeat("b", 64)
+	pins.Images["docker"] = "docker:29.9.0-cli@sha256:" + strings.Repeat("c", 64)
+	return pins
+}
+
+func TestDockerChecksUseRecordedOrInstalledDaemonImage(t *testing.T) {
+	installed := checkDependencyPins()
+	recorded := "docker:29.8.3-dind@sha256:" + strings.Repeat("d", 64)
+	for _, choice := range []string{"explicit", "installed", "legacy", "recorded"} {
+		t.Run(choice, func(t *testing.T) {
+			checker, docker, _, workspace := checkFixture(t)
+			want := recorded
+			if choice != "explicit" {
+				state := runtimeimage.State{Version: 1, Engine: "offline-test", ImageID: "sha256:" + strings.Repeat("a", 64), DependencyPins: &installed}
+				data, _ := json.Marshal(state)
+				if err := os.WriteFile(filepath.Join(checker.Runtime.Directory, "runtime.json"), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch choice {
+			case "explicit", "recorded":
+				checker.DaemonImage = recorded
+			case "installed":
+				want = installed.DaemonImage
+			case "legacy":
+				checker.UseDefaultDaemonImage = true
+				want = runtimepins.DefaultDaemonImage
+			}
+			if err := checker.Check(context.Background(), workspace, [][]string{{"go", "test", "./..."}}, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			selected, pullPolicy := "", ""
+			for _, call := range docker.calls {
+				for index, arg := range call {
+					if arg == "dockerd-entrypoint.sh" && index+1 < len(call) {
+						selected = call[index+1]
+						for flag, value := range call {
+							if value == "--pull" && flag+1 < len(call) {
+								pullPolicy = call[flag+1]
+							}
+						}
+					}
+				}
+			}
+			if selected != want {
+				t.Fatalf("daemon selection=%q, want %q", selected, want)
+			}
+			wantPull := "never"
+			if choice == "legacy" {
+				wantPull = "missing"
+			}
+			if pullPolicy != wantPull {
+				t.Fatalf("daemon pull policy=%q, want %q", pullPolicy, wantPull)
+			}
+		})
+	}
+}
+
+func TestDockerChecksMissingPinnedDaemonDoesNotImplicitlyPull(t *testing.T) {
+	checker, docker, runner, workspace := checkFixture(t)
+	checker.DaemonImage = "docker:29.9.0-dind@sha256:" + strings.Repeat("c", 64)
+	docker.daemonMissing = true
+	err := checker.Check(context.Background(), workspace, [][]string{{"go", "test", "./..."}}, io.Discard)
+	if err == nil || errors.Is(err, ErrCheckFailed) || len(runner.calls) != 0 {
+		t.Fatalf("missing cached daemon did not stop checks: %v, workers=%v", err, runner.calls)
+	}
+	daemons := 0
+	for _, call := range docker.calls {
+		joined := strings.Join(call, " ")
+		if call[0] == "pull" || strings.Contains(joined, "--pull missing") {
+			t.Fatal("missing pinned daemon triggered a credential-using pull")
+		}
+		if call[0] == "run" && strings.Contains(joined, "--privileged") {
+			daemons++
+			if !strings.Contains(joined, "--pull never") || !strings.Contains(joined, checker.DaemonImage) {
+				t.Fatal("pinned daemon startup changed its image or pull policy")
+			}
+		}
+	}
+	if daemons != 1 {
+		t.Fatal("missing pinned daemon was retried or replaced")
+	}
+}
+
+func TestDockerChecksRejectUnapprovedDaemonBeforeDockerCalls(t *testing.T) {
+	for _, image := range []string{runtimepins.DefaultDaemonImage, "docker:latest", "docker:29.9.0-dind", "docker:29.9.0-dind@sha256:short", "example.invalid/docker:29.9.0-dind@sha256:" + strings.Repeat("c", 64), "docker:29.9.0-cli@sha256:" + strings.Repeat("c", 64)} {
+		t.Run(image, func(t *testing.T) {
+			checker, docker, runner, workspace := checkFixture(t)
+			checker.DaemonImage = image
+			if checker.Check(context.Background(), workspace, [][]string{{"go", "test", "./..."}}, io.Discard) == nil {
+				t.Fatal("unapproved daemon image accepted")
+			}
+			if len(docker.calls) != 0 || len(runner.calls) != 0 {
+				t.Fatal("unapproved daemon image reached Docker")
+			}
+		})
+	}
 }
 
 func TestDockerChecksUseDedicatedDaemonAndUnchangedArgv(t *testing.T) {

@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,11 +18,192 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
+	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 func runArgs(extra ...string) []string {
 	return append([]string{"--reference", "TASK-1", "--ticket", "01-selected.md"}, extra...)
+}
+
+func TestRuntimeRunLeaseBlocksBuildUntilControllerExits(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "private-state")
+	lease, err := leaseRuntimeRun(context.Background(), directory, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	path := filepath.Join(directory, "runtime-build.lock")
+	if build, err := filelock.Acquire(path); err == nil {
+		build.Close()
+		t.Fatal("runtime build overlapped the controller lease")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	other, err := leaseRuntimeRun(ctx, directory, io.Discard)
+	if err != nil {
+		t.Fatal("another controller could not share the runtime", err)
+	}
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	build, err := filelock.Acquire(path)
+	if err != nil {
+		t.Fatal("completed controller retained the runtime lease", err)
+	}
+	build.Close()
+}
+
+func TestRejectedRunSelectionsDoNotCreateRuntimeLeaseState(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	for _, args := range [][]string{
+		runArgs("--repo", "invalid"),
+		runArgs("--effort", "unsupported"),
+		runArgs("--repo", "example/project", "--input", "missing.md"),
+		runArgs("--ticket", "missing.md"),
+		runArgs("--resume", "not-a-run-id"),
+	} {
+		if err := runCommand(context.Background(), args, io.Discard); err == nil {
+			t.Fatalf("invalid selection accepted: %v", args)
+		}
+		if _, err := os.Stat(filepath.Join(root, "private-state")); !os.IsNotExist(err) {
+			t.Fatalf("invalid selection created runtime state: %v", args)
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("invalid selection reached a connected command")
+	}
+}
+
+func TestRunFreezesSelectedSidecarImages(t *testing.T) {
+	pins := runtimepins.Pins{SigningImage: "1password/op:2.40.1@sha256:" + strings.Repeat("a", 64), DaemonImage: "docker:29.9.0-dind@sha256:" + strings.Repeat("b", 64)}
+	var plan workrun.Plan
+	if err := freezeSidecarImages(&plan, runtimeimage.State{DependencyPins: &pins}); err != nil {
+		t.Fatal(err)
+	}
+	wantSigning, wantDaemon := pins.SigningImage, pins.DaemonImage
+	pins.SigningImage = runtimepins.DefaultSigningImage
+	pins.DaemonImage = "docker:29.9.1-dind@sha256:" + strings.Repeat("c", 64)
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resumed workrun.Plan
+	if err := json.Unmarshal(data, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.SigningImage != wantSigning || resumed.DaemonImage != wantDaemon {
+		t.Fatalf("recorded sidecars changed with the installation: %+v", resumed)
+	}
+}
+
+type runDaemonMetadata struct {
+	fail     bool
+	requests []string
+}
+
+func (metadata *runDaemonMetadata) Do(request *http.Request) (*http.Response, error) {
+	metadata.requests = append(metadata.requests, request.URL.Host+request.URL.Path)
+	if metadata.fail {
+		return nil, errors.New("disposable metadata failure")
+	}
+	switch request.URL.Host + request.URL.Path {
+	case "auth.docker.io/token":
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"token":"fake-anonymous-registry-response"}`))}, nil
+	case "registry-1.docker.io/v2/library/docker/manifests/29.8.2-dind":
+		body := []byte(`{"schemaVersion":2}`)
+		sum := sha256.Sum256(body)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Docker-Content-Digest": []string{"sha256:" + hex.EncodeToString(sum[:])}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
+	default:
+		return nil, errors.New("unexpected public metadata request")
+	}
+}
+
+type runDaemonDocker struct {
+	fail  bool
+	calls [][]string
+}
+
+func (docker *runDaemonDocker) Run(_ context.Context, args ...string) error {
+	docker.calls = append(docker.calls, append([]string(nil), args...))
+	if docker.fail {
+		return errors.New("disposable pull failure")
+	}
+	return nil
+}
+
+func (*runDaemonDocker) Output(context.Context, ...string) ([]byte, error) {
+	return nil, errors.New("unexpected Docker metadata operation")
+}
+
+func TestNewDockerTestRunFreezesOrdinaryRuntimeDaemonDigest(t *testing.T) {
+	metadata, docker := &runDaemonMetadata{}, &runDaemonDocker{}
+	checker := runtimeupdates.Checker{Client: metadata}
+	plan := workrun.Plan{DockerTests: true}
+	if err := freezeRuntimeImages(context.Background(), &plan, runtimeimage.State{}, runtimeimage.Manager{Docker: docker}, checker.ResolveDefaultDaemonImage); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtimepins.ValidateDaemonImage(plan.DaemonImage); err != nil || plan.SigningImage != runtimepins.DefaultSigningImage {
+		t.Fatalf("ordinary runtime did not freeze exact sidecars: %+v, %v", plan, err)
+	}
+	if !strings.HasPrefix(plan.DaemonImage, runtimepins.DefaultDaemonImage+"@sha256:") || !reflect.DeepEqual(docker.calls, [][]string{{"pull", plan.DaemonImage}}) || len(metadata.requests) != 2 {
+		t.Fatalf("daemon was not resolved and pulled before admission: plan=%+v, pulls=%v, requests=%v", plan, docker.calls, metadata.requests)
+	}
+}
+
+func TestNewDockerTestRunStopsBeforeFreezingUnavailableDaemon(t *testing.T) {
+	for _, cause := range []string{"metadata", "pull", "unapproved image"} {
+		t.Run(cause, func(t *testing.T) {
+			metadata, docker := &runDaemonMetadata{fail: cause == "metadata"}, &runDaemonDocker{fail: cause == "pull"}
+			checker := runtimeupdates.Checker{Client: metadata}
+			lookup := checker.ResolveDefaultDaemonImage
+			if cause == "unapproved image" {
+				lookup = func(context.Context) (string, error) { return runtimepins.DefaultDaemonImage, nil }
+			}
+			plan := workrun.Plan{DockerTests: true}
+			before := plan
+			if err := freezeRuntimeImages(context.Background(), &plan, runtimeimage.State{}, runtimeimage.Manager{Docker: docker}, lookup); err == nil {
+				t.Fatal("unavailable or mutable daemon was admitted")
+			}
+			if !reflect.DeepEqual(plan, before) || (cause != "pull" && len(docker.calls) != 0) {
+				t.Fatalf("failed preflight froze a plan or reached pull: %+v, %v", plan, docker.calls)
+			}
+		})
+	}
+}
+
+func TestNewRunWithoutDockerTestsNeedsNoDaemonMetadataOrPull(t *testing.T) {
+	metadata, docker := &runDaemonMetadata{fail: true}, &runDaemonDocker{fail: true}
+	var plan workrun.Plan
+	if err := freezeRuntimeImages(context.Background(), &plan, runtimeimage.State{}, runtimeimage.Manager{Docker: docker}, (runtimeupdates.Checker{Client: metadata}).ResolveDefaultDaemonImage); err != nil || len(metadata.requests) != 0 || len(docker.calls) != 0 {
+		t.Fatalf("ordinary checks required a privileged sidecar: %+v, %v", plan, err)
+	}
+}
+
+func TestRunFreezesLegacyDefaultsAndRejectsInvalidSelectedImages(t *testing.T) {
+	var plan workrun.Plan
+	if err := freezeSidecarImages(&plan, runtimeimage.State{}); err != nil || plan.SigningImage != runtimepins.DefaultSigningImage || plan.DaemonImage != "" {
+		t.Fatalf("legacy runtime selection: %+v, %v", plan, err)
+	}
+	before := plan
+	for _, pins := range []runtimepins.Pins{
+		{SigningImage: "1password/op:latest", DaemonImage: "docker:29.9.0-dind@sha256:" + strings.Repeat("b", 64)},
+		{SigningImage: runtimepins.DefaultSigningImage, DaemonImage: runtimepins.DefaultDaemonImage},
+	} {
+		if err := freezeSidecarImages(&plan, runtimeimage.State{DependencyPins: &pins}); err == nil {
+			t.Fatal("invalid sidecar selection was frozen")
+		}
+		if !reflect.DeepEqual(plan, before) {
+			t.Fatal("invalid selection changed the frozen plan")
+		}
+	}
 }
 func TestRunOptionsDefaultsRepeatableInputsAndDockerOptIn(t *testing.T) {
 	options, err := parseRunOptions(runArgs("--input", "spec.md", "--input", "design.md"))

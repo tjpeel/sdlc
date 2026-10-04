@@ -6,6 +6,8 @@ import (
 	"context"
 	"io"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
 type Model struct {
@@ -54,9 +56,27 @@ type Plan struct {
 	CheckInputs         []Input              `json:"check_inputs"`
 	Checks              [][]string           `json:"checks"`
 	DockerTests         bool                 `json:"docker_tests"`
+	SigningImage        string               `json:"signing_image,omitempty"`
+	DaemonImage         string               `json:"daemon_image,omitempty"`
 	Roles               Roles                `json:"roles"`
 	PRTitle             string               `json:"pr_title,omitempty"`
 	PRBody              string               `json:"pr_body,omitempty"`
+}
+
+// ValidateSidecarImages accepts absent pins for journals written before runtime
+// sidecars were selected per installation. Callers retain the historical defaults.
+func (plan Plan) ValidateSidecarImages() error {
+	if plan.SigningImage != "" {
+		if err := runtimepins.ValidateSigningImage(plan.SigningImage); err != nil {
+			return err
+		}
+	}
+	if plan.DaemonImage != "" {
+		if err := runtimepins.ValidateDaemonImage(plan.DaemonImage); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type Finding struct {

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 	"github.com/tjpeel/sdlc/internal/signing"
 )
 
@@ -23,6 +25,27 @@ type setupPrompt struct {
 	closed   bool
 	fail     int
 	onSecret func()
+}
+
+func TestSigningVerificationSelectsInstalledImageAndLegacyDefault(t *testing.T) {
+	selected := "1password/op:2.40.1@sha256:" + strings.Repeat("a", 64)
+	for _, test := range []struct {
+		state runtimeimage.State
+		want  string
+	}{
+		{state: runtimeimage.State{}, want: signing.Image},
+		{state: runtimeimage.State{DependencyPins: &runtimepins.Pins{SigningImage: selected}}, want: selected},
+	} {
+		image, err := selectedSigningImage(test.state)
+		if err != nil || image != test.want {
+			t.Fatalf("verification image=%q, want %q, error=%v", image, test.want, err)
+		}
+	}
+	for _, image := range []string{"", "1password/op:latest", "example.invalid/op:2.40.1@sha256:" + strings.Repeat("a", 64)} {
+		if _, err := selectedSigningImage(runtimeimage.State{DependencyPins: &runtimepins.Pins{SigningImage: image}}); err == nil {
+			t.Fatal("verification accepted an unapproved image", image)
+		}
+	}
 }
 
 func (prompt *setupPrompt) Read(_ string, secret bool) ([]byte, error) {

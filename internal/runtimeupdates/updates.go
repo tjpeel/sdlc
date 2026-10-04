@@ -34,6 +34,7 @@ type HTTPClient interface {
 type Checker struct{ Client HTTPClient }
 type Result struct {
 	Name, Installed, Candidate, Track, Status, Detail string
+	Kind, Source                                      string
 }
 type Report struct {
 	Results      []Result
@@ -59,21 +60,29 @@ func New() Checker {
 // Callers bound the whole check with their context; each HTTP request is also bounded.
 func (checker Checker) Check(ctx context.Context, inventory runtimeimage.Inventory, offline bool,
 	packages func(context.Context) ([]runtimeimage.PackageUpdate, error)) (Report, error) {
+	return checker.check(ctx, inventory, offline, packages, checker.fetcher())
+}
+
+func (checker Checker) fetcher() *fetcher {
+	client := checker.Client
+	if client == nil {
+		client = New().Client
+	}
+	return &fetcher{client: client, responses: make(map[string]*response)}
+}
+
+func (checker Checker) check(ctx context.Context, inventory runtimeimage.Inventory, offline bool,
+	packages func(context.Context) ([]runtimeimage.PackageUpdate, error), fetch *fetcher) (Report, error) {
 	report := Report{Results: make([]Result, len(inventory.Dependencies)), PackageCount: len(inventory.Packages), Offline: offline}
 	if err := runtimeimage.ValidateInventory(inventory); err != nil {
 		return report, err
 	}
 	for i, dependency := range inventory.Dependencies {
-		report.Results[i] = Result{Name: dependency.Name, Installed: dependency.Version, Track: dependency.Track, Status: Offline}
+		report.Results[i] = Result{Name: dependency.Name, Kind: dependency.Kind, Source: dependency.Source, Installed: dependency.Version, Track: dependency.Track, Status: Offline}
 	}
 	if offline {
 		return report, nil
 	}
-	client := checker.Client
-	if client == nil {
-		client = New().Client
-	}
-	fetch := &fetcher{client: client, responses: make(map[string]*response)}
 	jobs := make(chan int, len(inventory.Dependencies))
 	for i := range inventory.Dependencies {
 		jobs <- i
@@ -219,7 +228,7 @@ func (fetch *fetcher) json(ctx context.Context, address string, target any) erro
 }
 
 func (fetch *fetcher) check(ctx context.Context, dependency runtimeimage.Dependency) Result {
-	result := Result{Name: dependency.Name, Installed: dependency.Version, Track: dependency.Track, Status: Unavailable}
+	result := Result{Name: dependency.Name, Kind: dependency.Kind, Source: dependency.Source, Installed: dependency.Version, Track: dependency.Track, Status: Unavailable}
 	var candidate string
 	var err error
 	switch dependency.Kind {
@@ -390,11 +399,11 @@ func (fetch *fetcher) dockerCLI(ctx context.Context) (string, error) {
 				validPath = true
 			}
 		}
-		if parsed.Scheme != "https" || parsed.Host != "api.github.com" || !validPath || parsed.User != nil || parsed.Fragment != "" || parsed.Query().Get("per_page") != "100" {
+		if parsed.Scheme != "https" || parsed.Host != "api.github.com" || !validPath || parsed.User != nil || parsed.Fragment != "" || parsed.Query().Get("per_page") != "100" || len(parsed.Query()["per_page"]) != 1 || len(parsed.Query()["page"]) != 1 {
 			return "", fmt.Errorf("invalid Docker tag pagination")
 		}
 		pageNumber, err := strconv.Atoi(parsed.Query().Get("page"))
-		if err != nil || pageNumber < 2 || len(parsed.Query()) != 2 {
+		if err != nil || pageNumber != page+2 || len(parsed.Query()) != 2 {
 			return "", fmt.Errorf("invalid Docker tag pagination")
 		}
 		// Use only the validated page parameters, retaining the known repository.

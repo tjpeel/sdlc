@@ -52,6 +52,22 @@ for local validation without network access. Older images need one rebuild with
 the updated CLI to record their dependency inventory. See the
 [runtime status guide](docs/cli.md#inspect-the-runtime) for coverage and failure
 behaviour.
+The default report lists major tools and image/catalogue pins, with summaries for
+supporting packages. Use `sdlc runtime status --all` for individual bundled npm
+dependencies and Debian updates.
+
+After checking status, preview and apply dependency updates with:
+
+```sh
+sdlc runtime update --dry-run
+sdlc runtime update
+```
+
+Update resolves exact public releases, refreshes the installed packages and
+rebuilds `sdlc:local`. It selects the candidate after tool, inventory and package
+checks pass. Selected pins stay in private installation state; source pins and
+login storage are preserved. See [runtime updates](docs/cli.md#update-the-runtime)
+for release tracks and dependencies controlled by their parent packages.
 
 Login opens a browser flow through the terminal. Credentials stay in separate
 local Docker storage and survive CLI reinstallation and image rebuilds. These

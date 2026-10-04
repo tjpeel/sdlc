@@ -59,12 +59,12 @@ func statusInventory() *runtimeimage.Inventory {
 func TestRuntimeArgumentsAndHelpNeverCreateState(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	t.Setenv("SDLC_STATE_DIR", directory)
-	for _, args := range [][]string{{}, {"unknown"}, {"status", "--source", "somewhere"}, {"build", "--offline"}, {"build", "--github-profile", "personal"}, {"status", "--github-profile", "../unsafe"}, {"status", "extra"}, {"status", "--offline=invalid"}} {
+	for _, args := range [][]string{{}, {"unknown"}, {"status", "--source", "somewhere"}, {"build", "--offline"}, {"build", "--github-profile", "personal"}, {"status", "--github-profile", "../unsafe"}, {"status", "extra"}, {"status", "--offline=invalid"}, {"update", "--offline"}, {"update", "--github-profile", "personal"}, {"update", "--dry-run=invalid"}, {"update", "extra"}} {
 		if err := runtimeCommand(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("accepted invalid options: %v", args)
 		}
 	}
-	for _, command := range []string{"status", "build"} {
+	for _, command := range []string{"status", "build", "update"} {
 		var diagnostics bytes.Buffer
 		if err := runtimeCommand(context.Background(), []string{command, "--help"}, &bytes.Buffer{}, &diagnostics); err != nil || !strings.Contains(diagnostics.String(), "Usage of runtime "+command) {
 			t.Fatal("help tried to inspect a runtime", err, diagnostics.String())
@@ -83,7 +83,7 @@ func TestRuntimeStatusLegacyInventoryIsExplicit(t *testing.T) {
 	})}
 	for _, offline := range []bool{true, false} {
 		var output bytes.Buffer
-		err := runtimeStatus(context.Background(), manager, checker, offline, &output)
+		err := runtimeStatus(context.Background(), manager, checker, offline, false, &output)
 		if offline && err != nil || !offline && (err == nil || !strings.Contains(err.Error(), "needs a build inventory")) {
 			t.Fatal("incorrect legacy status result", offline, err)
 		}
@@ -103,7 +103,7 @@ func TestRuntimeStatusOfflineListsInventoryWithoutConnections(t *testing.T) {
 		return nil, nil
 	})}
 	var output bytes.Buffer
-	if err := runtimeStatus(context.Background(), manager, checker, true, &output); err != nil {
+	if err := runtimeStatus(context.Background(), manager, checker, true, false, &output); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Codex", "0.159.3", "not checked (offline)", "1 installed; upstream checks skipped"} {
@@ -125,7 +125,7 @@ func TestRuntimeStatusOnlineFailureReturnsIncompleteAndKeepsSuccessfulPackages(t
 		return nil, errors.New("fake upstream unavailable")
 	})}
 	var output bytes.Buffer
-	err := runtimeStatus(context.Background(), manager, checker, false, &output)
+	err := runtimeStatus(context.Background(), manager, checker, false, true, &output)
 	if err == nil || !strings.Contains(err.Error(), "dependency check incomplete") {
 		t.Fatal(err)
 	}
@@ -142,7 +142,34 @@ func TestRuntimeStatusOnlineFailureReturnsIncompleteAndKeepsSuccessfulPackages(t
 func TestRuntimeStatusLocalFailureStopsBeforeUpstream(t *testing.T) {
 	manager := &statusFixture{err: errors.New("fake image mismatch")}
 	var output bytes.Buffer
-	if err := runtimeStatus(context.Background(), manager, runtimeupdates.Checker{}, false, &output); !errors.Is(err, manager.err) || output.Len() != 0 || manager.packageCalls != 0 {
+	if err := runtimeStatus(context.Background(), manager, runtimeupdates.Checker{}, false, false, &output); !errors.Is(err, manager.err) || output.Len() != 0 || manager.packageCalls != 0 {
 		t.Fatal("local failure did not stop status", err, output.String())
+	}
+}
+
+func TestRuntimeStatusSummaryAndAllKeepMajorToolsVisible(t *testing.T) {
+	inventory := statusInventory()
+	inventory.Dependencies = append(inventory.Dependencies, runtimeimage.Dependency{Name: "bundled-example-package", Kind: "npm", Source: "bundled-example-package", Version: "1.0.0"})
+	manager := &statusFixture{state: runtimeimage.State{Inventory: inventory}}
+	checker := runtimeupdates.Checker{Client: statusHTTP(func(*http.Request) (*http.Response, error) {
+		t.Fatal("offline summary contacted metadata")
+		return nil, nil
+	})}
+	for _, all := range []bool{false, true} {
+		var output bytes.Buffer
+		if err := runtimeStatus(context.Background(), manager, checker, true, all, &output); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(output.String(), "bundled-example-package") != all {
+			t.Fatal("bundled package visibility differs from --all", all, output.String())
+		}
+		for _, want := range []string{"Codex", "Claude", "GitHub CLI", "Skills", "Agents", "Node base", ".NET SDK"} {
+			if !strings.Contains(output.String(), want) {
+				t.Fatal("major tool hidden", want, output.String())
+			}
+		}
+	}
+	if manager.packageCalls != 0 {
+		t.Fatal("offline summary refreshed packages")
 	}
 }

@@ -54,6 +54,9 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := journal.Plan.ValidateSidecarImages(); err != nil {
+		return err
+	}
 	if journal.StartedAt.IsZero() {
 		journal.StartedAt = journal.UpdatedAt
 		if journal.StartedAt.IsZero() {
@@ -103,6 +106,9 @@ func Load(directory string) (Journal, error) {
 	}
 	if journal.Plan.Roles.Implementation.Provider == journal.Plan.Roles.Review.Provider {
 		return Journal{}, fmt.Errorf("run providers must differ")
+	}
+	if err := journal.Plan.ValidateSidecarImages(); err != nil {
+		return Journal{}, err
 	}
 	return journal, nil
 }

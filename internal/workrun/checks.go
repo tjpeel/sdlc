@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
 // CheckCommandRunner streams a check's output without invoking a host shell.
@@ -39,13 +40,17 @@ type DockerChecker struct {
 	InputDirectory string
 	ImageID        string
 	DockerTests    bool
+	DaemonImage    string
+	// Old journals have no daemon pin. Preserve their original default even
+	// when the installation now has different dependency pins.
+	UseDefaultDaemonImage bool
 }
 
 // ErrCheckFailed identifies a completed check with a nonzero exit status.
 // Startup, transport, cancellation and cleanup errors are operational failures.
 var ErrCheckFailed = errors.New("repository check failed")
 
-const checkDaemonImage = "docker:29.8.2-dind"
+const checkDaemonImage = runtimepins.DefaultDaemonImage
 const checkSocket = "/run/sdlc/docker.sock"
 
 // Explicit empties also override Docker CLI proxy injection from host config.
@@ -95,6 +100,12 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	daemonImage := checker.DaemonImage
+	if daemonImage != "" {
+		if err := runtimepins.ValidateDaemonImage(daemonImage); err != nil {
+			return err
+		}
+	}
 	if len(commands) == 0 {
 		return errors.New("repository checks are required")
 	}
@@ -117,6 +128,15 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 	}
 	if checker.ImageID != "" && checker.ImageID != state.ImageID {
 		return errors.New("repository check runtime differs from the job's pinned image")
+	}
+	if daemonImage == "" {
+		daemonImage = checkDaemonImage
+		if !checker.UseDefaultDaemonImage && state.DependencyPins != nil {
+			daemonImage = state.DependencyPins.DaemonImage
+			if err := runtimepins.ValidateDaemonImage(daemonImage); err != nil {
+				return err
+			}
+		}
 	}
 	workspace, err = filepath.Abs(workspace)
 	if err != nil {
@@ -207,13 +227,19 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 	}
 	if checker.DockerTests {
 		cleanups = append(cleanups, []string{"rm", "--force", name + "-daemon"})
-		daemonArgs := checkContainerEnvironment([]string{"run", "--detach", "--name", name + "-daemon", "--pull", "missing", "--privileged", "--network", name,
+		daemonPull := "never"
+		if daemonImage == checkDaemonImage {
+			// Legacy jobs retain their original tag and pull policy. New jobs
+			// prepare an exact public digest before entering the controller.
+			daemonPull = "missing"
+		}
+		daemonArgs := checkContainerEnvironment([]string{"run", "--detach", "--name", name + "-daemon", "--pull", daemonPull, "--privileged", "--network", name,
 			"--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace", "--mount", "type=volume,src=" + volumes[1] + ",dst=/run/sdlc", "--mount", "type=volume,src=" + volumes[2] + ",dst=/var/lib/docker",
 			"--env", "DOCKER_TLS_CERTDIR="})
 		// VFS cannot snapshot build layers containing Unix sockets, including
 		// sockets left by .NET build services. Pin the classic OverlayFS backend
 		// explicitly: Docker 29 otherwise enables the containerd image store.
-		daemonArgs = append(daemonArgs, "--entrypoint", "dockerd-entrypoint.sh", checkDaemonImage, "dockerd", "--host=unix://"+checkSocket, "--tls=false", "--group=root", "--feature=containerd-snapshotter=false", "--storage-driver=overlay2")
+		daemonArgs = append(daemonArgs, "--entrypoint", "dockerd-entrypoint.sh", daemonImage, "dockerd", "--host=unix://"+checkSocket, "--tls=false", "--group=root", "--feature=containerd-snapshotter=false", "--storage-driver=overlay2")
 		if err = call(daemonArgs...); err != nil {
 			return fmt.Errorf("start repository check daemon: %w", err)
 		}

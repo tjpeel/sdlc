@@ -535,6 +535,7 @@ and [image removal](https://docs.docker.com/reference/cli/docker/image/rm/) docu
 
 ```sh
 sdlc runtime status
+sdlc runtime status --all
 sdlc runtime status --offline
 sdlc runtime status --offline --github-profile personal
 ```
@@ -542,6 +543,7 @@ sdlc runtime status --offline --github-profile personal
 | Option | Purpose |
 | --- | --- |
 | `--offline` | Validate the local runtime and show its inventory without upstream update requests. |
+| `--all` | List bundled npm dependencies and individual Debian updates instead of summarizing them. |
 | `--github-profile NAME` | Show the matching signing profile's offline summary; defaults to `default`. |
 
 Status verifies that the selected Docker engine and shared image match the
@@ -558,13 +560,22 @@ The report covers:
 - Node.js within its installed major version, and .NET SDK and runtimes within
   their installed major/minor release channels;
 - the pinned Node base image digest against its current tag;
+- the Go publisher builder, Docker CLI image, isolated Docker test daemon and
+  1Password resolver against their public releases and image digests;
 - every installed Debian package against signed Bookworm, Bookworm updates and
   Bookworm security repository candidates.
 
+The default display lists the main tools, catalogue commits and image pins.
+Bundled npm packages and Debian updates appear as counts; use `--all` for their
+individual results. Most of those supporting packages come from the base image
+or the tools' published dependency trees. Their latest versions are diagnostic
+information, rather than independent pins that SDLC should force into a tool.
+
 Catalogue ancestry distinguishes newer commits from divergent revisions. A changed
 base image digest means its tag changed; it does not establish release ordering.
-Unchanged Debian packages are counted, while available updates and missing
-candidates are listed. These checks cover the shared runtime. They do not check
+Unchanged Debian packages are counted; `--all` lists available updates and missing
+candidates. These checks cover the runtime and its build and sidecar
+images. They do not check
 host tools, project dependencies or provider authentication.
 
 The online check has a 45-second limit and uses public metadata from npm, GitHub,
@@ -576,8 +587,8 @@ nonzero exit code. Updates alone do not cause a nonzero exit code.
 Use `--offline` to verify the local runtime and list its inventory without
 contacting upstream services. Login and interactive commands also retain their
 local runtime checks. Status does not install updates, change pins or rebuild
-the image. Review available updates, change the relevant source pins, then run
-`sdlc runtime build`.
+the image. Preview and apply updates with `sdlc runtime update --dry-run` and
+`sdlc runtime update`.
 
 Runtime status also shows an offline signing summary for the selected GitHub
 profile, including whether configuration and the private bootstrap are present
@@ -586,6 +597,76 @@ retrieves a 1Password key. Missing or unsafe signing setup is reported without
 changing the runtime image/dependency check's exit result. Use `sdlc signing
 status --profile NAME` for a dedicated signing-readiness exit status, or add
 `--verify` there when you intend to contact 1Password and test a real signature.
+
+## Update the runtime
+
+After inspecting status, run from any directory:
+
+```sh
+sdlc runtime update --dry-run
+sdlc runtime update
+```
+
+`--dry-run` fetches public release metadata and checks Debian candidates in a
+disposable container. It prints the planned versions and build actions without
+pulling new images, saving pins or rebuilding. It makes no provider model request
+or vault connection. The executing command repeats planning before rebuilding;
+it does not apply an earlier preview whose metadata may have changed.
+
+The update covers Codex, Claude Code, GitHub CLI, npm, Yarn, Compose, Buildx, the
+skills and agents catalogues, Node, .NET SDK/runtime packs and installed Debian
+packages. It also refreshes the Go publisher builder, Docker CLI image, isolated
+Docker test daemon and 1Password resolver. Numeric versions never move backwards;
+catalogues advance only through a same or descendant `main` revision. Node keeps
+its installed major, .NET its installed major/minor, Go its builder major/minor,
+and 1Password its v2 channel. Debian stays on Bookworm and its signed update and
+security repositories. Docker CLI and plugins use stable releases.
+
+Every selected image has an exact version and verified manifest digest. Compose
+and Buildx can advance independently of the versions bundled in Docker's CLI
+image; their official release binaries are checked against the published
+checksums before installation. Update uses a clean build with `--pull` and
+`--no-cache`, upgrades installed Debian packages, and reinstalls the selected
+native clients. These build flags refresh different parts of the image, as
+described in [Docker's build guidance](https://docs.docker.com/build/building/best-practices/).
+With npm 12 or later, the build permits installation scripts only for the exact
+pinned Codex and Claude packages, as supported by [npm's global install policy](https://docs.npmjs.com/cli/install/).
+It does not enable npm's unrestricted script bypass.
+Public image pulls and update builds use a temporary Docker configuration without
+host registry credentials or credential helpers. Version and checksum checks
+verify the selected artifacts; they cannot establish that a release is free of
+malicious code. The host Docker client and Buildx installed alongside it or in
+system plugin directories remain trusted host software. Configured plugins from
+the host's Docker settings are not inherited by the update build.
+
+The source clone is used to construct the existing allowlisted private build
+context. Selected pins alter only that context's Dockerfile. Successful selection
+records the pins and exact build recipe in private `runtime.json`; the tracked
+source checkout is not edited or committed by this command. Subsequent builds
+from the same saved source retain these pins. An explicit different source uses
+its own defaults. Use `--source /PATH/TO/SDLC_CLONE` if the clone moves.
+
+Missing managed metadata, divergent catalogue history, a failed build, mismatched
+installed tool/runtime versions or incomplete/stale Debian candidates stop
+selection. The previous shared image and runtime record remain selected.
+Existing running controllers hold a shared lease; finish them before updating.
+Credential-free version probes do not start the privileged test daemon or log in
+to any account. Login volumes and signing profiles keep their existing storage.
+
+Published parent packages govern transitive npm dependencies. Update refreshes
+those parents and their dependency resolution, and reports children that remain
+behind or unavailable. It does not force arbitrary child versions outside the
+parents' declared requirements. The final status report lists remaining updates;
+an unavailable post-build metadata check returns a nonzero result even when the
+validated new runtime was already selected. Host tools, project packages, model
+identifiers and account permissions are outside runtime dependency updates.
+
+Run dependency updates between ticket runs. Saved work still requires its
+recorded runtime image; rebuilding is not a migration of a paused session.
+New Docker test runs record an exact daemon digest and require that image to be
+cached before starting checks. Older saved runs without a daemon reference keep
+their legacy default tag and may pull it if absent. That tag can change upstream;
+start a new run to use the digest-pinned path.
 
 Update transitive npm dependencies through their parent package or base image;
 they are not separate Dockerfile pins. The available versions can include major

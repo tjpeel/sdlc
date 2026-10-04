@@ -195,6 +195,10 @@ func TestRunCommandRegistersProviderQueueBeforeCheckingProviderAuthentication(t 
 	if queued.State != "prepared" || queued.Activity.WaitingProvider != "codex" || queued.Activity.WaitingSince.IsZero() || queued.Stopped || queued.Journal == nil {
 		t.Fatalf("incorrect queued lifecycle: %+v", queued)
 	}
+	if build, err := filelock.Acquire(filepath.Join(state, "runtime-build.lock")); err == nil {
+		build.Close()
+		t.Fatal("runtime build entered while the controller waited between provider phases")
+	}
 	assertQueuedRunNoConnectedCalls(t, state, marker)
 	if err := held.Close(); err != nil {
 		t.Fatal(err)
@@ -220,6 +224,11 @@ func TestRunCommandRegistersProviderQueueBeforeCheckingProviderAuthentication(t 
 		t.Fatalf("provider lease leaked after missing authentication: %v", err)
 	}
 	lease.Close()
+	build, err := filelock.Acquire(filepath.Join(state, "runtime-build.lock"))
+	if err != nil {
+		t.Fatal("stopped controller retained its runtime lease", err)
+	}
+	build.Close()
 }
 
 func TestRunCommandCancelsQueuedProviderAndRetainsRegisteredCheckpoint(t *testing.T) {
@@ -264,7 +273,7 @@ func TestRunCommandCancelsQueuedProviderAndRetainsRegisteredCheckpoint(t *testin
 	if err := held.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{providerPath, filepath.Join(queued.Directory, "run.lock")} {
+	for _, path := range []string{providerPath, filepath.Join(queued.Directory, "run.lock"), filepath.Join(state, "runtime-build.lock")} {
 		lease, err := filelock.Acquire(path)
 		if err != nil {
 			t.Fatalf("cancelled controller leaked lease %s: %v", filepath.Base(path), err)

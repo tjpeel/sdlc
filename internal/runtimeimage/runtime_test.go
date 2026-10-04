@@ -27,6 +27,13 @@ type fakeDocker struct {
 	builds                            int
 	context                           string
 	removed                           []string
+	buildArgs                         [][]string
+	buildRecipe                       []byte
+	inventoryOverride                 *Inventory
+	opVersion, daemonVersion          string
+	pullFailed, auxiliaryProbeFailed  string
+	buildHook                         func()
+	tagFailed                         bool
 }
 
 func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, error) {
@@ -51,7 +58,11 @@ func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, err
 			if docker.inventoryFailed {
 				return []byte(`{"version":0}`), nil
 			}
-			data, _ := json.Marshal(testInventory())
+			inventory := testInventory()
+			if docker.inventoryOverride != nil {
+				inventory = *docker.inventoryOverride
+			}
+			data, _ := json.Marshal(inventory)
 			return data, nil
 		}
 		if args[len(args)-1] == "package-updates" {
@@ -60,6 +71,18 @@ func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, err
 			}
 			return docker.packageOutput, nil
 		}
+		if args[len(args)-1] == "--version" {
+			image := args[len(args)-2]
+			if docker.auxiliaryProbeFailed == image {
+				return nil, errors.New("disposable private auxiliary diagnostic")
+			}
+			if strings.HasPrefix(image, "1password/op:") {
+				return []byte(docker.opVersion), nil
+			}
+			if strings.HasPrefix(image, "docker:") {
+				return []byte("Docker version " + docker.daemonVersion + ", build disposable"), nil
+			}
+		}
 		if docker.probeFailed {
 			return nil, errors.New("tool startup failed")
 		}
@@ -67,6 +90,9 @@ func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, err
 	case "image":
 		if args[1] == "rm" {
 			docker.removed = append(docker.removed, args[2])
+			if args[2] == Image {
+				docker.current = ""
+			}
 			return nil, nil
 		}
 		name := args[len(args)-1]
@@ -82,10 +108,21 @@ func (docker *fakeDocker) Output(_ context.Context, args ...string) ([]byte, err
 }
 
 func (docker *fakeDocker) Run(_ context.Context, args ...string) error {
+	docker.calls = append(docker.calls, append([]string{}, args...))
 	switch args[0] {
+	case "pull":
+		if docker.pullFailed == args[1] {
+			return errors.New("disposable private pull diagnostic")
+		}
+		return nil
 	case "build":
 		docker.builds++
 		docker.context = args[len(args)-1]
+		docker.buildArgs = append(docker.buildArgs, append([]string{}, args...))
+		docker.buildRecipe, _ = os.ReadFile(filepath.Join(docker.context, "Dockerfile"))
+		if docker.buildHook != nil {
+			docker.buildHook()
+		}
 		if docker.buildFailed {
 			return errors.New("build failed")
 		}
@@ -93,6 +130,9 @@ func (docker *fakeDocker) Run(_ context.Context, args ...string) error {
 	case "image":
 		if args[1] == "tag" && args[3] == Image {
 			docker.current = args[2]
+			if docker.tagFailed && args[2] == newImage {
+				return errors.New("disposable tag failure after application")
+			}
 			return nil
 		}
 	}

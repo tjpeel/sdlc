@@ -18,11 +18,13 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
 const DefaultProvider = "1password"
 
-const Image = "1password/op:2.39.0@sha256:3cd5a1febc662c93d46b944b983b301e710da5c016ef63be9d436cf2b1ed30d5"
+const Image = runtimepins.DefaultSigningImage
 
 type Profile struct {
 	Provider      string `json:"provider,omitempty"`
@@ -208,6 +210,7 @@ func Store(directory string, profile Profile, names ...string) error {
 type Command func(context.Context, io.Reader, io.Writer, ...string) error
 type Resolver struct {
 	Profile Profile
+	Image   string
 	Run     Command
 }
 
@@ -290,6 +293,12 @@ func (output *boundedOutput) Write(data []byte) (int, error) {
 }
 
 func (resolver Resolver) Resolve(ctx context.Context) ([]byte, error) {
+	image := resolver.Image
+	if image == "" {
+		image = Image
+	} else if err := runtimepins.ValidateSigningImage(image); err != nil {
+		return nil, err
+	}
 	if err := resolver.Profile.Validate(); err != nil {
 		return nil, err
 	}
@@ -320,7 +329,7 @@ func (resolver Resolver) Resolve(ctx context.Context) ([]byte, error) {
 		args = append(args, "--env", name+"=")
 	}
 	// The timeout is PID 1 inside the container, independent of host cleanup.
-	args = append(args, "--entrypoint", "/usr/bin/timeout", Image, "--kill-after=5s", "35s", "/bin/sh", "-c", helper)
+	args = append(args, "--entrypoint", "/usr/bin/timeout", image, "--kill-after=5s", "35s", "/bin/sh", "-c", helper)
 	run := resolver.Run
 	if run == nil {
 		run = localCommand

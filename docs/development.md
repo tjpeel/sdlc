@@ -137,6 +137,29 @@ Both offline status and a complete online metadata check passed; the online
 check found available updates without installing them or accessing provider
 storage.
 
+Runtime updates have offline tests for complete public pin resolution, catalogue
+ancestry, legacy recipe provenance, stale-plan rejection, candidate version and
+.NET runtime matching, package checks, rollback and active controller leases.
+Default status summarizes bundled npm packages and Debian updates; `--all`
+retains individual results and incomplete metadata remains visible. Go tests,
+race checks, vet, six CLI target builds and all 202 Python tests pass.
+
+A local macOS/ARM64 probe passed a fresh dependency rebuild, exact tool and image
+pin checks, and all 423 Debian package candidates. The rebuilt image passed the
+public .NET fixture's build, four unit tests, and API/Mongo integration checks
+through both service networking and localhost. Synthetic `.env` inputs reached
+only the check worker. The probe used private temporary state and a separate
+runtime tag, cleaned its test resources and preserved the installed runtime.
+No provider login, model request, vault access or GitHub write ran. Run it with:
+
+```sh
+SDLC_RUNTIME_UPDATE_DOCKER_TESTS=1 SDLC_RUNTIME_UPDATE_DOTNET_TESTS=1 \
+  go test -count=1 -v -timeout 75m ./cmd/sdlc -run '^TestRuntimeUpdateDocker$'
+```
+
+This probe uses public registries and a dedicated privileged Docker test daemon;
+it is opt-in and does not run in CI.
+
 Ticket discovery is checked with disposable Git repositories for numeric order,
 opaque references, missing folders, malformed and duplicate numbers, unsafe
 links, ignored/untracked private inputs and unchanged checkout metadata. Ticket

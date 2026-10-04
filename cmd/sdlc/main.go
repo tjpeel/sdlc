@@ -26,7 +26,7 @@ func main() {
 		return
 	}
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
-		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--github-profile NAME]")
+		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
 		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
 		fmt.Println("       sdlc auth login|status|logout --service github [--profile NAME] [status: --verify]")
 		fmt.Println("       sdlc signing setup|status|verify [--profile NAME] | signing configure --file PRIVATE_PROFILE [--profile NAME]")

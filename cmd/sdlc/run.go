@@ -16,12 +16,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
+	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 	"github.com/tjpeel/sdlc/internal/signing"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
@@ -135,6 +138,12 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	var runtimeLease *os.File
+	defer func() {
+		if runtimeLease != nil {
+			runtimeLease.Close()
+		}
+	}()
 	var journal workrun.Journal
 	var directory string
 	if options.resume != "" {
@@ -187,6 +196,10 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if inCI() {
 			return fmt.Errorf("account-authenticated ticket runs are supported here only as local single-user CLI jobs; CI requires a separately supported authentication route")
 		}
+		runtimeLease, err = leaseRuntimeRun(ctx, runtime.Directory, output)
+		if err != nil {
+			return err
+		}
 		id, err := workrun.NewID()
 		if err != nil {
 			return err
@@ -218,6 +231,9 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		journal.ImageID = state.ImageID
+		if err := freezeRuntimeImages(ctx, &journal.Plan, state, runtime, runtimeupdates.ResolveDefaultDaemonImage); err != nil {
+			return err
+		}
 		identity, err := freezePublicationIdentity(ctx, runtime, work.Root, journal.Plan.Repository, options.githubProfile)
 		if err != nil {
 			return err
@@ -236,6 +252,12 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if journal.Plan.PublicationIdentity == nil {
 		return fmt.Errorf("this legacy run has no frozen Docker publication identity; start a new run")
+	}
+	if runtimeLease == nil {
+		runtimeLease, err = leaseRuntimeRun(ctx, runtime.Directory, output)
+		if err != nil {
+			return err
+		}
 	}
 	profile, err := signingProfile(runtime, journal.Plan.GitHubProfile)
 	if err != nil {
@@ -256,7 +278,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		}
 		answer = string(data)
 	}
-	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests}
+	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests, DaemonImage: journal.Plan.DaemonImage, UseDefaultDaemonImage: journal.Plan.DaemonImage == ""}
 	if len(journal.Plan.CheckInputs) > 0 {
 		checker.InputDirectory = filepath.Join(directory, "check-inputs")
 	}
@@ -278,7 +300,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	githubManager.Profile = journal.Plan.GitHubProfile
 	githubManager.OnWait = manager.OnWait
 	githubManager.OnAcquired = manager.OnAcquired
-	resolver := signing.Resolver{Profile: profile}
+	resolver := signing.Resolver{Profile: profile, Image: journal.Plan.SigningImage}
 	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
@@ -292,6 +314,62 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	err = runner.Run(ctx, directory, &journal, answer)
 	fmt.Fprintf(output, "Private run state: %q\nResume: sdlc run --reference %q --ticket %q --resume %s\n", directory, options.reference, ticket, journal.ID)
 	return err
+}
+
+// Keep the selected runtime available across the controller's phase boundaries,
+// including checks and publication after a provider releases its own lease.
+func leaseRuntimeRun(ctx context.Context, directory string, output io.Writer) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, fmt.Errorf("cannot open SDLC state directory: %w", err)
+	}
+	lease, err := filelock.AcquireContext(ctx, filepath.Join(directory, "runtime-build.lock"), filelock.Shared, func() {
+		queueMessage(output, "runtime", "runtime_busy")
+	})
+	if err != nil {
+		return nil, fmt.Errorf("runtime lease unavailable: %w", err)
+	}
+	return lease, nil
+}
+
+func freezeSidecarImages(plan *workrun.Plan, state runtimeimage.State) error {
+	signingImage, daemonImage := runtimepins.DefaultSigningImage, ""
+	if state.DependencyPins != nil {
+		if err := runtimepins.ValidateSigningImage(state.DependencyPins.SigningImage); err != nil {
+			return err
+		}
+		if err := runtimepins.ValidateDaemonImage(state.DependencyPins.DaemonImage); err != nil {
+			return err
+		}
+		signingImage = state.DependencyPins.SigningImage
+		daemonImage = state.DependencyPins.DaemonImage
+	}
+	plan.SigningImage, plan.DaemonImage = signingImage, daemonImage
+	return plan.ValidateSidecarImages()
+}
+
+func freezeRuntimeImages(ctx context.Context, plan *workrun.Plan, state runtimeimage.State, runtime runtimeimage.Manager, resolveDaemon func(context.Context) (string, error)) error {
+	selected := *plan
+	if err := freezeSidecarImages(&selected, state); err != nil {
+		return err
+	}
+	if selected.DockerTests && selected.DaemonImage == "" {
+		image, err := resolveDaemon(ctx)
+		if err != nil {
+			return fmt.Errorf("cannot freeze repository check daemon: %w", err)
+		}
+		if err := runtimepins.ValidateDaemonImage(image); err != nil {
+			return err
+		}
+		if err := runtime.PullPublic(ctx, image); err != nil {
+			return fmt.Errorf("cannot prepare pinned repository check daemon: %w", err)
+		}
+		selected.DaemonImage = image
+	}
+	*plan = selected
+	return nil
 }
 
 func freezePublicationIdentity(ctx context.Context, runtime runtimeimage.Manager, root, repository string, names ...string) (result *workrun.PublicationIdentity, resultErr error) {

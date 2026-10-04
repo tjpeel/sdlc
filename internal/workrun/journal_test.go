@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
 func TestJournalRoundTripRetainsRecoveryEvidence(t *testing.T) {
@@ -44,6 +45,54 @@ func TestJournalRoundTripRetainsRecoveryEvidence(t *testing.T) {
 	info, err := os.Stat(filepath.Join(dir, "journal.json"))
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("unsafe journal permissions: %v %v", info, err)
+	}
+}
+
+func TestJournalRetainsFrozenSidecarImagesAndLegacyAbsence(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "pinned"}[pinned], func(t *testing.T) {
+			directory, journal := testRun(t)
+			if pinned {
+				journal.Plan.SigningImage = "1password/op:2.40.1@sha256:" + strings.Repeat("a", 64)
+				journal.Plan.DaemonImage = "docker:29.9.0-dind@sha256:" + strings.Repeat("b", 64)
+			}
+			if err := Save(directory, journal); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := Load(directory)
+			if err != nil || loaded.Plan.SigningImage != journal.Plan.SigningImage || loaded.Plan.DaemonImage != journal.Plan.DaemonImage {
+				t.Fatalf("sidecar selection changed on resume: %+v, %v", loaded.Plan, err)
+			}
+		})
+	}
+}
+
+func TestJournalRejectsUnapprovedSidecarImages(t *testing.T) {
+	for _, kind := range []string{"signing", "daemon", "legacy daemon override"} {
+		t.Run(kind, func(t *testing.T) {
+			directory, journal := testRun(t)
+			switch kind {
+			case "signing":
+				journal.Plan.SigningImage = "example.invalid/op:2.40.1@sha256:" + strings.Repeat("a", 64)
+			case "daemon":
+				journal.Plan.DaemonImage = "docker:29.9.0-dind"
+			case "legacy daemon override":
+				journal.Plan.DaemonImage = runtimepins.DefaultDaemonImage
+			}
+			if err := Save(directory, journal); err == nil {
+				t.Fatal("invalid image was saved")
+			}
+			data, err := json.Marshal(journal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "journal.json"), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(directory); err == nil {
+				t.Fatal("invalid image was loaded for resume")
+			}
+		})
 	}
 }
 

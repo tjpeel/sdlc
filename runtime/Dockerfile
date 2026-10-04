@@ -16,8 +16,15 @@ ARG CLAUDE_VERSION=2.1.287
 ARG DOTNET_VERSION=10.0.401
 ARG SKILLS_REVISION=56e38979baf389b058ae91c6812abae8d8dbcafa
 ARG AGENTS_REVISION=347f58e598515c51c42fab4a7f699380db725fd3
+# An installation update fills these exact versions in its private build recipe.
+# Source builds retain the versions supplied by the pinned Node/Docker images.
+ARG NPM_VERSION=
+ARG YARN_VERSION=
+ARG COMPOSE_VERSION=
+ARG BUILDX_VERSION=
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     ca-certificates curl git gosu jq libicu72 libssl3 libunwind8 \
     openssh-client openssh-server python3 ripgrep zlib1g \
     && rm -rf /var/lib/apt/lists/*
@@ -34,12 +41,49 @@ RUN set -eu; \
     tar -xzf "$archive"; \
     install -m 0755 "gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
     rm -rf /tmp/gh_*
-RUN npm install -g "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+# npm 12 blocks install scripts by default. Permit only the two pinned clients.
+RUN set -eu; \
+    if [ -n "$NPM_VERSION" ]; then npm install -g "npm@${NPM_VERSION}"; fi; \
+    if [ -n "$YARN_VERSION" ]; then \
+        rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg; \
+        npm install -g "yarn@${YARN_VERSION}"; \
+    fi; \
+    set --; \
+    npm_release="$(npm --version)"; \
+    if [ "${npm_release%%.*}" -ge 12 ]; then \
+        set -- "--allow-scripts=@openai/codex@${CODEX_VERSION},@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
+    fi; \
+    npm install -g "$@" "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
     && codex --version && claude --version && gh --version
 
 COPY --from=publisher-build /out/sdlc-publisher /usr/local/bin/sdlc-publisher
 COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-tools /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+# Docker's image can bundle older plugins than their independent releases.
+# Installation updates replace only the selected plugins with verified official
+# release binaries; ordinary builds keep the pinned image's bundled versions.
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) arch=amd64; compose_arch=x86_64 ;; \
+        arm64) arch=arm64; compose_arch=aarch64 ;; \
+        *) exit 1 ;; \
+    esac; \
+    install_plugin() { \
+        project="$1"; version="$2"; archive="$3"; target="$4"; \
+        [ -n "$version" ] || return 0; \
+        release="https://github.com/docker/$project/releases/download/v$version"; \
+        mkdir -p /tmp/sdlc-plugin; \
+        curl -fsSL "$release/$archive" -o "/tmp/sdlc-plugin/$archive"; \
+        curl -fsSL "$release/checksums.txt" -o /tmp/sdlc-plugin/checksums.txt; \
+        awk -v name="$archive" '$2 == name || $2 == "*" name { print }' \
+            /tmp/sdlc-plugin/checksums.txt > /tmp/sdlc-plugin/selected-checksum.txt; \
+        test "$(wc -l < /tmp/sdlc-plugin/selected-checksum.txt)" -eq 1; \
+        (cd /tmp/sdlc-plugin && sha256sum -c selected-checksum.txt); \
+        install -m 0755 "/tmp/sdlc-plugin/$archive" "/usr/local/libexec/docker/cli-plugins/$target"; \
+        rm -rf /tmp/sdlc-plugin; \
+    }; \
+    install_plugin compose "$COMPOSE_VERSION" "docker-compose-linux-$compose_arch" docker-compose; \
+    install_plugin buildx "$BUILDX_VERSION" "buildx-v$BUILDX_VERSION.linux-$arch" docker-buildx
 # Microsoft publishes SHA-512 hashes for every SDK archive. Select an exact
 # version and architecture and verify before extraction; do not execute an installer.
 RUN set -eu; \
