@@ -1,7 +1,8 @@
 # Documentation
 
 - [Connected onboarding](onboarding.md): the joint test runbook and remaining gates before real tickets.
-- [GitHub credentials and signing](github-credentials.md): current host credential delivery, secure setup options and proposed hardening.
+- [GitHub credentials and signing](github-credentials.md): current supervised host delivery and the required machine credential route.
+- [Unattended Docker delivery](proposals/unattended-docker-delivery.md): required publisher, machine signing and controller supervision; not implemented yet.
 - [CLI](cli.md): install, build the shared image, log in, configure instructions, open interactive sessions and run one ticket through draft PR delivery and review.
 - [Workflow](workflow.md): the implemented single-ticket process and future stacked-ticket design.
 - [Ticket-stream prompt](prompts/implement-ticket-stream.md): drive the existing skills for selected tickets.
