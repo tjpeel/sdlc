@@ -209,6 +209,29 @@ func TestBlockedChecksDetailUsesCheckFailureOutput(t *testing.T) {
 	}
 }
 
+func TestDetailStopsRequestingAnAnswerAfterRunResumes(t *testing.T) {
+	view := runstatus.View{Available: true, Reference: "count-limit", Ticket: "02-count-limit.md", Questions: []string{"Is this ticket ready?"}}
+	for _, state := range []string{"waiting_for_human", "implementing", "reviewing", "ready"} {
+		t.Run(state, func(t *testing.T) {
+			view.State = state
+			view.Live = state == "implementing" || state == "reviewing"
+			var output bytes.Buffer
+			if err := Detail(&output, view, time.Now(), false); err != nil {
+				t.Fatal(err)
+			}
+			text := output.String()
+			if !strings.Contains(text, "Stage: "+state) {
+				t.Fatalf("current state missing: %s", text)
+			}
+			for _, prompt := range []string{"Question:", "Is this ticket ready?", "--answer-file"} {
+				if strings.Contains(text, prompt) != (state == "waiting_for_human") {
+					t.Fatalf("incorrect answer prompt %q after state transition: %s", prompt, text)
+				}
+			}
+		})
+	}
+}
+
 func TestDetailShowsContextPercentageOnlyForReportedMatchingWindow(t *testing.T) {
 	tokens, window, zero, aggregate := int64(200), int64(1000), int64(0), int64(5000)
 	for _, scenario := range []struct {

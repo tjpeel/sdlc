@@ -249,8 +249,10 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 		}
 		fmt.Fprintf(&text, "Local checks: %s | sessions: %d | repair rounds: %d\n", checks, j.Attempt, j.Rounds)
 	}
-	for _, question := range v.Questions {
-		fmt.Fprintf(&text, "Question: %s\n", question)
+	if v.State == "waiting_for_human" {
+		for _, question := range v.Questions {
+			fmt.Fprintf(&text, "Question: %s\n", question)
+		}
 	}
 	for _, finding := range v.Findings {
 		fmt.Fprintf(&text, "Finding: %s %s:%d %s — %s\n", finding.Priority, finding.Path, finding.Line, finding.Scenario, finding.Recommendation)
