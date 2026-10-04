@@ -25,6 +25,7 @@ native = load("headless_auth", "container.py")
 headless = load("headless_test", "headless.py")
 headless.native = native
 ID = "00000000-0000-4000-8000-000000000001"
+CODEX_WORKSPACE_TRUST = '[projects."/workspace"]\ntrust_level = "trusted"\n'
 
 
 class HeadlessTests(unittest.TestCase):
@@ -107,7 +108,12 @@ class HeadlessTests(unittest.TestCase):
         return command, env, config
 
     def test_codex_fresh_and_specific_resume_keep_native_session(self):
-        command, env, config = self.run_client("codex")
+        def native_trust_record(path):
+            # The unmodified native client records this on the first launch.
+            target = path.parent / "config.toml"
+            target.write_text(CODEX_WORKSPACE_TRUST)
+            target.chmod(0o600)
+        command, env, config = self.run_client("codex", effect=native_trust_record)
         self.assertEqual(command[:2], ["codex", "exec"])
         for argument in ("--json", "--output-schema", "--ignore-rules",
                          'approval_policy="never"', "features.hooks=false",
@@ -117,12 +123,87 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(command[command.index("--model") + 1], "example-model")
         self.assertIn('model_reasoning_effort="high"', command)
         self.assertEqual((config / "agents").readlink(), self.agents)
+        native_config = config / "config.toml"
+        self.assertEqual(len(native_config.read_bytes()), 48)
+        before = native_config.stat()
         command, _, next_config = self.run_client("codex", ID)
         self.assertEqual(config, next_config)
         self.assertEqual(command[:3], ["codex", "exec", "resume"])
         self.assertEqual(command[-2:], [ID, "-"])
         self.assertNotIn("--last", command)
         self.assertTrue((config / "native-transcript.jsonl").exists())
+        self.assertEqual(native_config.read_text(), CODEX_WORKSPACE_TRUST)
+        self.assertEqual(before.st_ino, native_config.stat().st_ino)
+
+    def test_codex_workspace_trust_rejects_other_config_shapes_before_client(self):
+        for contents in (
+                "", "invalid TOML", b"\xff", "projects = []\n",
+                '[projects."/another-workspace"]\ntrust_level = "trusted"\n',
+                '[projects."/workspace"]\ntrust_level = "untrusted"\n',
+                '[projects."/workspace"]\ntrust_level = true\n',
+                '[projects."/workspace"]\ntrust_level = "trusted"\nmodel = "example-model"\n',
+                CODEX_WORKSPACE_TRUST + '[projects."/another-workspace"]\ntrust_level = "trusted"\n',
+                'model = "example-model"\n' + CODEX_WORKSPACE_TRUST,
+                'model_provider = "example-provider"\n' + CODEX_WORKSPACE_TRUST,
+                'cli_auth_credentials_store = "keyring"\n' + CODEX_WORKSPACE_TRUST,
+                'auth = {type = "test"}\n' + CODEX_WORKSPACE_TRUST,
+                'features = {hooks = true}\n' + CODEX_WORKSPACE_TRUST,
+                'features = {plugins = true}\n' + CODEX_WORKSPACE_TRUST,
+                CODEX_WORKSPACE_TRUST + '[mcp_servers.example]\ncommand = "fake-command"\n',
+                CODEX_WORKSPACE_TRUST + '[model_providers.example]\nname = "Example"\n'):
+            with self.subTest(contents=contents):
+                config = self.session / "codex"
+                config.mkdir(exist_ok=True, mode=0o700)
+                path = config / "config.toml"
+                path.write_bytes(contents if isinstance(contents, bytes) else contents.encode())
+                path.chmod(0o600)
+                with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
+                    headless.headless("codex", "example-model", "high", ID, False, self.cache)
+                client.assert_not_called()
+                path.unlink()
+
+    def test_codex_workspace_trust_rejects_unsafe_file_metadata_before_client(self):
+        for cause in ("symlink", "hardlink", "public", "directory", "oversized", "foreign owner"):
+            with self.subTest(cause=cause):
+                config = self.session / "codex"
+                config.mkdir(exist_ok=True, mode=0o700)
+                path = config / "config.toml"
+                target = self.root / "native-trust.toml"
+                target.write_text(CODEX_WORKSPACE_TRUST)
+                target.chmod(0o600)
+                if cause == "symlink":
+                    path.symlink_to(target)
+                elif cause == "hardlink":
+                    os.link(target, path)
+                elif cause == "directory":
+                    path.mkdir(mode=0o700)
+                else:
+                    path.write_text(CODEX_WORKSPACE_TRUST + ("#" * 4096 if cause == "oversized" else ""))
+                    path.chmod(0o644 if cause == "public" else 0o600)
+                with patch.object(subprocess, "Popen") as client:
+                    if cause == "foreign owner":
+                        # Disposable file owner remains unchanged; test metadata
+                        # against a different expected uid without privileges.
+                        with patch.object(os, "getuid", return_value=os.getuid() + 1), self.assertRaises(ValueError):
+                            headless.validate_codex_workspace_trust(path)
+                    else:
+                        with self.assertRaises(ValueError):
+                            headless.headless("codex", "example-model", "high", ID, False, self.cache)
+                    client.assert_not_called()
+                if path.is_dir():
+                    path.rmdir()
+                else:
+                    path.unlink()
+                self.assertEqual(target.read_text(), CODEX_WORKSPACE_TRUST)
+                target.unlink()
+
+    def test_codex_workspace_trust_exception_does_not_apply_to_claude(self):
+        config = self.session / "claude"
+        config.mkdir(mode=0o700)
+        (config / "config.toml").write_text(CODEX_WORKSPACE_TRUST)
+        with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
+            headless.headless("claude", "example-model", "high", ID, False, self.cache)
+        client.assert_not_called()
 
     def test_claude_streaming_uses_isolated_settings_and_native_subscription(self):
         command, _, config = self.run_client("claude", ID, readonly=True)

@@ -8,11 +8,50 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 SESSION = Path("/session")
 PROMPT = Path("/prompt.txt")
 SCHEMA = Path("/schema.json")
 CODEX_AGENTS = Path("/etc/codex/agents")
+MAXIMUM_CODEX_TRUST_RECORD = 4096
+
+
+def codex_trust_metadata(info):
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+            and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600
+            and 0 < info.st_size <= MAXIMUM_CODEX_TRUST_RECORD)
+
+
+def validate_codex_workspace_trust(path):
+    """Allow only the native client's private trust marker for this workspace."""
+    try:
+        before = path.lstat()
+        if not codex_trust_metadata(before):
+            raise ValueError("unsafe native trust record")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (not codex_trust_metadata(opened)
+                    or not os.path.samestat(before, opened)):
+                raise ValueError("changed native trust record")
+            data = stream.read(MAXIMUM_CODEX_TRUST_RECORD + 1)
+            after = os.fstat(stream.fileno())
+        current = path.lstat()
+        if (len(data) > MAXIMUM_CODEX_TRUST_RECORD
+                or not codex_trust_metadata(after)
+                or not codex_trust_metadata(current)
+                or not os.path.samestat(before, after)
+                or not os.path.samestat(before, current)
+                or any((info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                       != (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                       for info in (opened, after, current))):
+            raise ValueError("changed native trust record")
+        record = tomllib.loads(data.decode("utf-8"))
+        if record != {"projects": {"/workspace": {"trust_level": "trusted"}}}:
+            raise ValueError("unexpected native trust record")
+    except (OSError, ValueError, UnicodeError):
+        raise ValueError("unexpected session customization") from None
 
 
 def safe_directory(path, shared=False):
@@ -143,13 +182,16 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
             raise ValueError('unexpected native instructions')
         else:
             target.symlink_to(instructions)
-    # Only native transcripts survive. Settings are supplied by this controller
-    # on every launch; project extensions are hidden by the container mounts.
+    # Native transcripts and the exact workspace-trust marker survive. Settings
+    # are supplied on every launch; project extensions are hidden by mounts.
     for name in ("config.toml", "settings.json", "hooks.json", "plugins",
                  "rules", "commands", "output-styles", "workflows", "mcp.json",
                  "CLAUDE.local.md"):
         path = config / name
         if path.exists() or path.is_symlink():
+            if provider == "codex" and name == "config.toml":
+                validate_codex_workspace_trust(path)
+                continue
             raise ValueError("unexpected session customization")
     with tempfile.TemporaryDirectory(prefix="sdlc-headless-", dir=native.HOME_BASE) as home:
         env = native.interactive_environment(home)
