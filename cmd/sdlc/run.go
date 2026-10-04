@@ -16,15 +16,17 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/signing"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -38,10 +40,10 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
-	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, resume, answerFile string
-	inputs                                                                                                              selectedInputs
-	dockerTests, dryRun                                                                                                 bool
-	timeout                                                                                                             time.Duration
+	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, resume, answerFile, githubProfile string
+	inputs                                                                                                                             selectedInputs
+	dockerTests, dryRun                                                                                                                bool
+	timeout                                                                                                                            time.Duration
 }
 
 func parseRunOptions(args []string) (runOptions, error) {
@@ -50,6 +52,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&options.reference, "reference", "", "selected work folder")
 	flags.StringVar(&options.ticket, "ticket", "", "exact numbered ticket filename")
+	flags.StringVar(&options.githubProfile, "github-profile", "default", "named GitHub login and signing profile")
 	flags.StringVar(&options.provider, "provider", "codex", "implementation provider")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
 	flags.StringVar(&options.branch, "branch", "", "destination branch; defaults to a unique ticket branch")
@@ -72,6 +75,12 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	if options.provider != "codex" && options.provider != "claude" {
 		return options, fmt.Errorf("provider must be codex or claude")
+	}
+	if options.githubProfile == "" {
+		return options, fmt.Errorf("--github-profile cannot be empty")
+	}
+	if err := githubauth.ValidateProfile(options.githubProfile); err != nil {
+		return options, err
 	}
 	if options.timeout < time.Minute || options.timeout > 24*time.Hour {
 		return options, fmt.Errorf("timeout must be between 1m and 24h")
@@ -163,7 +172,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`).MatchString(repository) {
 			return fmt.Errorf("--repo must name a GitHub OWNER/REPO")
 		}
-		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{GitHubProfile: options.githubProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
 		if options.dryRun {
 			// Selection is known before capture; content hashes are not. Keep
 			// the offline plan useful without reading requirement bodies.
@@ -196,6 +205,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if err != nil {
 			return err
 		}
+		plan.GitHubProfile = options.githubProfile
 		plan.DockerTests = options.dockerTests
 		journal.Plan = plan
 		shared, err := (instructions.Manager{Directory: runtime.Directory}).Show()
@@ -208,6 +218,12 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		journal.ImageID = state.ImageID
+		identity, err := freezePublicationIdentity(ctx, runtime, work.Root, journal.Plan.Repository, options.githubProfile)
+		if err != nil {
+			return err
+		}
+		journal.Plan.PublicationIdentity = identity
+		journal.Plan.Repository = identity.RepositoryName
 		if err := workrun.Save(directory, &journal); err != nil {
 			return err
 		}
@@ -217,6 +233,17 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if inCI() {
 		return fmt.Errorf("account-authenticated ticket runs require a local single-user CLI job")
+	}
+	if journal.Plan.PublicationIdentity == nil {
+		return fmt.Errorf("this legacy run has no frozen Docker publication identity; start a new run")
+	}
+	profile, err := signingProfile(runtime, journal.Plan.GitHubProfile)
+	if err != nil {
+		return err
+	}
+	frozen := journal.Plan.PublicationIdentity
+	if profile.ID != frozen.ProfileID || profile.PublicKey != frozen.SSHPublicKey || profile.Fingerprint != frozen.SSHFingerprint {
+		return fmt.Errorf("signing profile differs from the recorded run; restore the approved profile before resuming")
 	}
 	if err := printRunPlan(output, journal, false); err != nil {
 		return err
@@ -247,7 +274,12 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			_ = tracker.ClearWait(provider)
 		}
 	}
-	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.GitHubPublisher{}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	githubManager := githubauth.New(runtime)
+	githubManager.Profile = journal.Plan.GitHubProfile
+	githubManager.OnWait = manager.OnWait
+	githubManager.OnAcquired = manager.OnAcquired
+	resolver := signing.Resolver{Profile: profile}
+	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)
@@ -260,6 +292,53 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	err = runner.Run(ctx, directory, &journal, answer)
 	fmt.Fprintf(output, "Private run state: %q\nResume: sdlc run --reference %q --ticket %q --resume %s\n", directory, options.reference, ticket, journal.ID)
 	return err
+}
+
+func freezePublicationIdentity(ctx context.Context, runtime runtimeimage.Manager, root, repository string, names ...string) (result *workrun.PublicationIdentity, resultErr error) {
+	name := "default"
+	if len(names) == 1 {
+		name = names[0]
+	}
+	profile, err := signingProfile(runtime, name)
+	if err != nil {
+		return nil, fmt.Errorf("configure a private signing profile before launching work: %w", err)
+	}
+	manager := githubauth.New(runtime)
+	manager.Profile = name
+	session, err := manager.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if session.Close() != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("GitHub preflight cleanup failed"))
+		}
+	}()
+	account, err := session.Identity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	repositoryIdentity, err := session.Repository(ctx, repository)
+	if err != nil {
+		return nil, err
+	}
+	values := map[string]string{}
+	for _, name := range []string{"user.name", "user.email"} {
+		command := exec.CommandContext(ctx, "git", "-C", root, "config", "--get", name)
+		for _, entry := range os.Environ() {
+			key := strings.SplitN(entry, "=", 2)[0]
+			if !strings.HasPrefix(key, "GIT_") && key != "GH_TOKEN" && key != "GITHUB_TOKEN" && key != "SSH_AUTH_SOCK" {
+				command.Env = append(command.Env, entry)
+			}
+		}
+		data, err := command.Output()
+		if err != nil {
+			return nil, fmt.Errorf("set project Git name and email before launching work")
+		}
+		values[name] = strings.TrimSpace(string(data))
+	}
+	identity := &workrun.PublicationIdentity{GitHubProfile: name, RepositoryID: repositoryIdentity.ID, RepositoryName: repositoryIdentity.Name, GitHubVolume: session.Volume, ProfileID: profile.ID, GitHubID: account.ID, GitHubLogin: account.Login, GitName: values["user.name"], GitEmail: values["user.email"], SSHPublicKey: profile.PublicKey, SSHFingerprint: profile.Fingerprint}
+	return identity, identity.Validate()
 }
 
 func printRunPlan(output io.Writer, journal workrun.Journal, dry bool) error {

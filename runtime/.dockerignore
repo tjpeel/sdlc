@@ -10,3 +10,19 @@ bin/**
 !bin/ssh-sign-file
 !bin/sdlc_agents.py
 !bin/ticket_input.py
+
+# Sanitized native publisher source closure, prepared by sdlc runtime build.
+!source/
+source/**
+!source/go.mod
+!source/cmd/
+!source/cmd/sdlc-publisher/
+!source/cmd/sdlc-publisher/*.go
+!source/internal/
+!source/internal/*/
+!source/internal/*/*.go
+!source/internal/githubauth/container.py
+!source/internal/providerauth/container.py
+!source/internal/providerauth/headless.py
+!source/internal/instructions/default.md
+source/**/*_test.go

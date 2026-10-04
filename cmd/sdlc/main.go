@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/tjpeel/sdlc/internal/buildinfo"
+	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
@@ -27,6 +28,8 @@ func main() {
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline]")
 		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
+		fmt.Println("       sdlc auth login|status|logout --service github [--profile NAME] [status: --verify]")
+		fmt.Println("       sdlc signing configure --file PRIVATE_PROFILE [--profile NAME] | signing verify [--profile NAME]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc init (from a project repository)")
 		fmt.Println("       sdlc work --reference REFERENCE (list local tickets in numeric order)")
@@ -85,6 +88,15 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "instructions" {
 		if err := instructionsCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "signing" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := signingCommand(ctx, os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "sdlc:", err)
 			os.Exit(1)
 		}
@@ -293,15 +305,21 @@ func instructionsCommand(args []string, output io.Writer) error {
 type authOptions struct {
 	action    string
 	providers []string
+	service   string
+	profile   string
+	verify    bool
 }
 
 func parseAuthOptions(args []string) (authOptions, error) {
 	var options authOptions
-	if len(args) == 0 || (args[0] != "login" && args[0] != "status") {
+	if len(args) == 0 || (args[0] != "login" && args[0] != "status" && args[0] != "logout") {
 		return options, fmt.Errorf("unknown authentication command; run sdlc --help")
 	}
 	flags := flag.NewFlagSet("auth "+args[0], flag.ContinueOnError)
 	provider := flags.String("provider", defaultProvider, "codex or claude (default: codex)")
+	profile := flags.String("profile", "default", "GitHub account profile")
+	service := flags.String("service", "", "github: separate native GitHub CLI login")
+	verify := flags.Bool("verify", false, "status only: verify GitHub login through a connected request")
 	var all bool
 	if args[0] == "status" {
 		flags.BoolVar(&all, "all", false, "check both providers instead of the default Codex; cannot combine with --provider")
@@ -310,20 +328,44 @@ func parseAuthOptions(args []string) (authOptions, error) {
 		return options, err
 	}
 	if flags.NArg() != 0 {
-		return options, fmt.Errorf("auth accepts --provider, or --all for status")
+		return options, fmt.Errorf("auth accepts --provider, --all for provider status, or --service github --profile NAME")
 	}
 	if *provider != "codex" && *provider != "claude" {
 		return options, fmt.Errorf("provider must be codex or claude")
 	}
-	var suppliedProvider, suppliedAll bool
+	var suppliedProvider, suppliedAll, suppliedVerify, suppliedService, suppliedProfile bool
 	flags.Visit(func(option *flag.Flag) {
 		switch option.Name {
 		case "provider":
 			suppliedProvider = true
 		case "all":
 			suppliedAll = true
+		case "verify":
+			suppliedVerify = true
+		case "profile":
+			suppliedProfile = true
+		case "service":
+			suppliedService = true
 		}
 	})
+	if suppliedService && *service == "" {
+		return options, fmt.Errorf("--service must name github")
+	}
+	if *service != "" {
+		if *service != "github" || suppliedProvider || suppliedAll || (suppliedVerify && args[0] != "status") {
+			return options, fmt.Errorf("GitHub auth requires --service github without --provider or --all; --verify is for status only")
+		}
+		if *profile == "" {
+			return options, fmt.Errorf("--profile cannot be empty")
+		}
+		if err := githubauth.ValidateProfile(*profile); err != nil {
+			return options, err
+		}
+		return authOptions{action: args[0], service: "github", profile: *profile, verify: *verify}, nil
+	}
+	if args[0] == "logout" || suppliedVerify || suppliedProfile {
+		return options, fmt.Errorf("logout, --verify and --profile require --service github")
+	}
 	if suppliedAll && suppliedProvider {
 		return options, fmt.Errorf("cannot combine --all with --provider")
 	}
@@ -342,6 +384,11 @@ func auth(ctx context.Context, args []string) error {
 	runtime, err := runtimeimage.New(os.Stdout, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("cannot locate SDLC installation state")
+	}
+	if options.service == "github" {
+		manager := githubauth.New(runtime)
+		manager.Profile = options.profile
+		return githubAuthCommand(ctx, manager, options, os.Stdout)
 	}
 	manager := providerauth.New(runtime)
 	if options.action == "login" {
@@ -379,6 +426,60 @@ func auth(ctx context.Context, args []string) error {
 		return fmt.Errorf("one or more providers need an account login")
 	}
 	return nil
+}
+
+func githubAuthCommand(ctx context.Context, manager githubauth.Manager, options authOptions, output io.Writer) error {
+	manager.OnWait = func(provider, reason string) { queueMessage(output, provider, reason) }
+	name, err := githubauth.NormalizeProfile(manager.Profile)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "GitHub profile: %s\n", name)
+	switch options.action {
+	case "login":
+		fmt.Fprintln(output, "Log in through the official GitHub CLI browser flow. Establish your organisation SSO session first.")
+		fmt.Fprintln(output, "Login is saved as plaintext in a private Docker volume. Keep this terminal private; coding and test containers do not receive this volume.")
+		if err := manager.Login(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintf(output, "github: login completed; stored configuration found by a fresh container. Verify with sdlc auth status --service github --profile %s --verify.\n", name)
+		return nil
+	case "logout":
+		if err := manager.Logout(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintln(output, "github: local Docker login removed. This does not revoke the credential at GitHub; revoke GitHub CLI authorisation in your account settings if compromised.")
+		return nil
+	case "status":
+		state, err := manager.Status(ctx, options.verify)
+		if err != nil {
+			return err
+		}
+		switch state {
+		case "stored":
+			fmt.Fprintln(output, "github: saved login configuration found (offline storage check; validity and organisation access unverified)")
+			return nil
+		case "verified":
+			session, err := manager.Acquire(ctx)
+			if err != nil {
+				return err
+			}
+			identity, err := session.Identity(ctx)
+			closeErr := session.Close()
+			if err != nil || closeErr != nil {
+				return fmt.Errorf("cannot confirm saved GitHub account identity")
+			}
+			fmt.Fprintf(output, "github: verified account %s (ID %d); repository permissions and organisation SSO must be checked separately\n", identity.Login, identity.ID)
+			return nil
+		case "missing":
+			return fmt.Errorf("GitHub login is missing; run sdlc auth login --service github --profile %s", name)
+		case "invalid":
+			return fmt.Errorf("GitHub configuration is unsafe or invalid; inspect private authentication storage before retrying")
+		default:
+			return fmt.Errorf("GitHub login verification failed; check SSO, network and account authorisation before retrying")
+		}
+	}
+	return fmt.Errorf("unknown GitHub authentication action")
 }
 
 func queueMessage(output io.Writer, provider, reason string) {

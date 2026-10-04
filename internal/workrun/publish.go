@@ -37,7 +37,14 @@ func localCommand(ctx context.Context, name string, args ...string) ([]byte, err
 
 // GitHubPublisher receives an exported bundle, never the worker's .git config.
 // Its repository and signing/publication credentials are not worker mounts.
-type GitHubPublisher struct{ Command Command }
+type GitHubPublisher struct {
+	Command                            Command
+	Frozen                             *PublicationIdentity
+	ExpectedHead, ExpectedTree         string
+	SigningKeyPath, AllowedSignersPath string
+	BundlePath                         string
+	AfterSigning                       func() error
+}
 
 func (publisher GitHubPublisher) command(ctx context.Context, name string, args ...string) ([]byte, error) {
 	run := publisher.Command
@@ -48,7 +55,11 @@ func (publisher GitHubPublisher) command(ctx context.Context, name string, args 
 }
 
 func (publisher GitHubPublisher) git(ctx context.Context, directory string, args ...string) (string, error) {
-	base := []string{"-C", directory, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "credential.helper=", "-c", "credential.https://github.com.helper=!gh auth git-credential"}
+	helper := "!gh auth git-credential"
+	if publisher.Frozen != nil {
+		helper = "!/usr/local/bin/gh auth git-credential"
+	}
+	base := []string{"-C", directory, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "credential.https://github.com.helper=" + helper}
 	data, err := publisher.command(ctx, "git", append(base, args...)...)
 	return strings.TrimSpace(string(data)), err
 }
@@ -58,6 +69,20 @@ var githubRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-
 func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspace, directory string, previous Publication, output io.Writer) (Publication, error) {
 	if !githubRepository.MatchString(plan.Repository) || !objectID.MatchString(plan.BaseSHA) {
 		return Publication{}, fmt.Errorf("publication requires an explicit GitHub repository and base revision")
+	}
+	if publisher.Frozen != nil {
+		if err := publisher.Frozen.Validate(); err != nil {
+			return Publication{}, err
+		}
+		if !objectID.MatchString(plan.SourceSHA) || !objectID.MatchString(publisher.ExpectedHead) || !objectID.MatchString(publisher.ExpectedTree) || publisher.SigningKeyPath == "" || publisher.AllowedSignersPath == "" {
+			return Publication{}, fmt.Errorf("frozen publication requires tested revisions and signing")
+		}
+		if err := publisher.verifyIdentity(ctx); err != nil {
+			return Publication{}, err
+		}
+		if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+			return Publication{}, err
+		}
 	}
 	if _, err := publisher.command(ctx, "gh", "auth", "status", "--hostname", "github.com"); err != nil {
 		return Publication{}, err
@@ -91,12 +116,30 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 	if err := realDirectory(local); err != nil {
 		return Publication{}, err
 	}
-	if _, err := publisher.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", filepath.Join(directory, "source.bundle"), "HEAD:refs/sdlc/candidate"); err != nil {
+	bundle := publisher.BundlePath
+	if bundle == "" {
+		bundle = filepath.Join(directory, "source.bundle")
+	}
+	if publisher.Frozen != nil {
+		if _, err := publisher.git(ctx, local, "bundle", "verify", bundle); err != nil {
+			return Publication{}, fmt.Errorf("exported bundle verification failed")
+		}
+	}
+	if _, err := publisher.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", bundle, "HEAD:refs/sdlc/candidate"); err != nil {
 		return Publication{}, err
 	}
 	candidate, err := publisher.git(ctx, local, "rev-parse", "refs/sdlc/candidate")
 	if err != nil || !objectID.MatchString(candidate) {
 		return Publication{}, fmt.Errorf("cannot identify exported candidate")
+	}
+	if publisher.Frozen != nil {
+		tree, err := publisher.git(ctx, local, "rev-parse", candidate+"^{tree}")
+		if err != nil || candidate != publisher.ExpectedHead || tree != publisher.ExpectedTree {
+			return Publication{}, fmt.Errorf("exported candidate differs from tested revision")
+		}
+		if _, err := publisher.git(ctx, local, "fsck", "--strict", "--no-reflogs"); err != nil {
+			return Publication{}, fmt.Errorf("exported objects failed integrity checks")
+		}
 	}
 	if _, err := publisher.git(ctx, local, "merge-base", "--is-ancestor", plan.SourceSHA, candidate); err != nil {
 		return Publication{}, fmt.Errorf("implementation no longer descends from its original source")
@@ -115,17 +158,21 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		return Publication{}, err
 	}
 	settings := []string{}
-	for _, key := range []string{"user.name", "user.email", "commit.gpgsign", "gpg.format", "gpg.program", "gpg.ssh.program", "gpg.ssh.allowedSignersFile", "user.signingKey"} {
-		args := []string{"config", "--get", key}
-		if key == "commit.gpgsign" {
-			args = []string{"config", "--type=bool", "--get", key}
-		}
-		value, err := publisher.git(ctx, plan.Root, args...)
-		if err == nil && value != "" {
-			if strings.ContainsAny(value, "\x00\r\n") {
-				return Publication{}, fmt.Errorf("unsafe host signing setting")
+	if publisher.Frozen != nil {
+		settings = []string{"-c", "user.name=" + publisher.Frozen.GitName, "-c", "user.email=" + publisher.Frozen.GitEmail, "-c", "commit.gpgsign=true", "-c", "gpg.format=ssh", "-c", "gpg.ssh.program=/usr/bin/ssh-keygen", "-c", "gpg.ssh.allowedSignersFile=" + publisher.AllowedSignersPath, "-c", "user.signingKey=" + publisher.SigningKeyPath}
+	} else {
+		for _, key := range []string{"user.name", "user.email", "commit.gpgsign", "gpg.format", "gpg.program", "gpg.ssh.program", "gpg.ssh.allowedSignersFile", "user.signingKey"} {
+			args := []string{"config", "--get", key}
+			if key == "commit.gpgsign" {
+				args = []string{"config", "--type=bool", "--get", key}
 			}
-			settings = append(settings, "-c", key+"="+value)
+			value, err := publisher.git(ctx, plan.Root, args...)
+			if err == nil && value != "" {
+				if strings.ContainsAny(value, "\x00\r\n") {
+					return Publication{}, fmt.Errorf("unsafe host signing setting")
+				}
+				settings = append(settings, "-c", key+"="+value)
+			}
 		}
 	}
 	parent := plan.SourceSHA
@@ -144,6 +191,14 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		if signed := mapping[commit]; signed != "" {
 			if !objectID.MatchString(signed) {
 				return Publication{}, fmt.Errorf("invalid retained signed revision")
+			}
+			if publisher.Frozen != nil {
+				originalTree, err := publisher.git(ctx, local, "show", "-s", "--format=%T", commit)
+				signedTree, treeErr := publisher.git(ctx, local, "show", "-s", "--format=%T", signed)
+				signedParent, parentErr := publisher.git(ctx, local, "show", "-s", "--format=%P", signed)
+				if err != nil || treeErr != nil || parentErr != nil || originalTree != signedTree || signedParent != parent {
+					return Publication{}, fmt.Errorf("retained signed commit differs from exported history")
+				}
 			}
 			if signing {
 				if _, err := publisher.git(ctx, local, append(append([]string{}, settings...), "verify-commit", signed)...); err != nil {
@@ -194,6 +249,11 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 	if err != nil || workerTree != publishedTree {
 		return Publication{}, fmt.Errorf("publication tree differs from verified implementation")
 	}
+	if publisher.AfterSigning != nil {
+		if err := publisher.AfterSigning(); err != nil {
+			return Publication{}, fmt.Errorf("signing credential cleanup failed before publication")
+		}
+	}
 	prs, err := publisher.command(ctx, "gh", "pr", "list", "--repo", plan.Repository, "--head", plan.Branch, "--state", "all", "--json", "number,url,baseRefName,headRefOid,state")
 	if err != nil {
 		return Publication{}, err
@@ -228,8 +288,19 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 	if remoteHead != "" && remoteHead != parent && remoteHead != previous.HeadSHA {
 		return Publication{}, fmt.Errorf("destination branch changed externally; refusing publication")
 	}
+	if publisher.Frozen != nil {
+		if err := publisher.verifyIdentity(ctx); err != nil {
+			return Publication{}, err
+		}
+		if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+			return Publication{}, err
+		}
+	}
 	if remoteHead != parent {
-		if _, err := publisher.git(ctx, local, "push", "--porcelain", "https://github.com/"+plan.Repository+".git", parent+":refs/heads/"+plan.Branch); err != nil {
+		// An exact lease also rejects a competing fast-forward between the
+		// last inspection and push. An empty expected value requires absence.
+		lease := "--force-with-lease=refs/heads/" + plan.Branch + ":" + remoteHead
+		if _, err := publisher.git(ctx, local, "push", "--porcelain", lease, "https://github.com/"+plan.Repository+".git", parent+":refs/heads/"+plan.Branch); err != nil {
 			return Publication{}, err
 		}
 	}
@@ -247,10 +318,20 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		title = plan.Reference + ": " + title
 	}
 	if len(matches) == 0 {
+		if publisher.Frozen != nil {
+			if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+				return Publication{}, err
+			}
+		}
 		if _, err := publisher.command(ctx, "gh", "pr", "create", "--repo", plan.Repository, "--head", plan.Branch, "--base", plan.Base, "--draft", "--title", title, "--body-file", bodyPath); err != nil {
 			return Publication{}, err
 		}
 	} else {
+		if publisher.Frozen != nil {
+			if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+				return Publication{}, err
+			}
+		}
 		if _, err := publisher.command(ctx, "gh", "pr", "edit", fmt.Sprint(matches[0].Number), "--repo", plan.Repository, "--title", title, "--body-file", bodyPath); err != nil {
 			return Publication{}, err
 		}
@@ -275,6 +356,20 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 }
 
 func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publication) (CIResult, error) {
+	if !githubRepository.MatchString(plan.Repository) || pr.Number < 1 || !objectID.MatchString(pr.BaseSHA) || !objectID.MatchString(pr.HeadSHA) {
+		return CIResult{}, fmt.Errorf("CI inspection requires exact publication identity")
+	}
+	if publisher.Frozen != nil {
+		if err := publisher.Frozen.Validate(); err != nil {
+			return CIResult{}, err
+		}
+		if err := publisher.verifyIdentity(ctx); err != nil {
+			return CIResult{}, err
+		}
+		if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+			return CIResult{}, err
+		}
+	}
 	data, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state")
 	if err != nil {
 		return CIResult{}, err
@@ -289,6 +384,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	data, checkErr := publisher.command(ctx, "gh", "pr", "checks", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "name,bucket,state,link")
 	// gh exits nonzero for pending/failed checks; parse its structured output.
+	_ = checkErr
 	var checks []struct {
 		Name   string `json:"name"`
 		Bucket string `json:"bucket"`
@@ -296,7 +392,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 		Link   string `json:"link"`
 	}
 	if json.Unmarshal(data, &checks) != nil || checks == nil {
-		return CIResult{}, fmt.Errorf("required CI checks could not be read: %w", checkErr)
+		return CIResult{}, fmt.Errorf("required CI checks could not be read")
 	}
 	result := CIResult{Status: "passed", Details: string(data)}
 	if len(checks) == 0 {
@@ -332,5 +428,54 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	if json.Unmarshal(after, &confirmed) != nil || confirmed.Base != pr.BaseSHA || confirmed.Head != pr.HeadSHA || confirmed.State != "OPEN" {
 		return CIResult{}, fmt.Errorf("PR revision changed during CI inspection")
 	}
+	if publisher.Frozen != nil {
+		if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+			return CIResult{}, err
+		}
+	}
 	return result, nil
+}
+
+func (identity PublicationIdentity) Validate() error {
+	if identity.RepositoryID <= 0 || !githubRepository.MatchString(identity.RepositoryName) || identity.ProfileID == "" || identity.GitHubID <= 0 || !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`).MatchString(identity.GitHubLogin) || identity.GitName == "" || identity.GitEmail == "" || !strings.HasPrefix(identity.SSHPublicKey, "ssh-") || !strings.HasPrefix(identity.SSHFingerprint, "SHA256:") {
+		return fmt.Errorf("frozen publication identity is incomplete")
+	}
+	for _, value := range []string{identity.ProfileID, identity.GitName, identity.GitEmail, identity.SSHPublicKey, identity.SSHFingerprint} {
+		if strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("frozen publication identity is invalid")
+		}
+	}
+	return nil
+}
+
+func (publisher GitHubPublisher) verifyRemoteBoundary(ctx context.Context, plan Plan) error {
+	data, err := publisher.command(ctx, "gh", "api", "repos/"+plan.Repository)
+	var repository struct {
+		ID   int64  `json:"id"`
+		Name string `json:"full_name"`
+	}
+	if err != nil || json.Unmarshal(data, &repository) != nil || repository.ID != publisher.Frozen.RepositoryID || repository.Name != publisher.Frozen.RepositoryName || repository.Name != plan.Repository {
+		return fmt.Errorf("repository identity changed; refusing publication")
+	}
+	data, err = publisher.command(ctx, "gh", "api", "repos/"+plan.Repository+"/branches/"+url.PathEscape(plan.Base))
+	var base struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err != nil || json.Unmarshal(data, &base) != nil || base.Commit.SHA != plan.BaseSHA {
+		return fmt.Errorf("remote base changed; refusing publication")
+	}
+	return nil
+}
+func (publisher GitHubPublisher) verifyIdentity(ctx context.Context) error {
+	data, err := publisher.command(ctx, "gh", "api", "user")
+	var identity struct {
+		ID    int64  `json:"id"`
+		Login string `json:"login"`
+	}
+	if err != nil || json.Unmarshal(data, &identity) != nil || identity.ID != publisher.Frozen.GitHubID || identity.Login != publisher.Frozen.GitHubLogin {
+		return fmt.Errorf("GitHub account differs from frozen publication identity")
+	}
+	return nil
 }

@@ -236,7 +236,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if !revision.Clean {
 				return runner.stop(directory, journal, "blocked", "commit the candidate changes before requesting isolated verification")
 			}
-			if journal.Evidence.Tree != revision.Tree || !journal.Evidence.Passed {
+			if journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed {
 				if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
 					return runner.stop(directory, journal, "blocked", err.Error())
 				}
@@ -251,7 +251,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				}
 				checkErr := runner.Checker.Check(ctx, journal.Workspace, journal.Plan.Checks, io.MultiWriter(log, runner.Output))
 				closeErr := log.Close()
-				journal.Evidence = CheckEvidence{revision.Tree, checkErr == nil, journal.Plan.Checks, filepath.Base(path)}
+				journal.Evidence = CheckEvidence{Head: revision.Head, Tree: revision.Tree, Passed: checkErr == nil, Commands: journal.Plan.Checks, Log: filepath.Base(path)}
 				if closeErr != nil {
 					return runner.stop(directory, journal, "blocked", "cannot retain verification evidence")
 				}
@@ -286,7 +286,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 		case "publishing":
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
-			if err != nil || !revision.Clean || !journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree {
+			if err != nil || !revision.Clean || !journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head {
 				return runner.stop(directory, journal, "blocked", "source changed after verification; rerun checks before publishing")
 			}
 			path := filepath.Join(directory, "source.bundle")
@@ -524,7 +524,11 @@ func PrepareReview(ctx context.Context, journal Journal, directory string) (stri
 	// A crash between snapshot creation and session start must not prevent the
 	// next invocation from preparing a new independent review.
 	workspace := filepath.Join(directory, fmt.Sprintf("review-source-%d-%s", journal.Attempt+1, id))
-	if _, err := isolatedGit(ctx, directory, "clone", "--no-local", "--no-hardlinks", "--no-checkout", "--template=", filepath.Join(directory, "publication.git"), workspace); err != nil {
+	publicationRepository := filepath.Join(directory, "publication.git")
+	if journal.Plan.PublicationIdentity != nil {
+		publicationRepository = filepath.Join(directory, "publisher", "publication.git")
+	}
+	if _, err := isolatedGit(ctx, directory, "clone", "--no-local", "--no-hardlinks", "--no-checkout", "--template=", publicationRepository, workspace); err != nil {
 		return "", err
 	}
 	if _, err := isolatedGit(ctx, workspace, "checkout", "--detach", journal.Publication.HeadSHA); err != nil {

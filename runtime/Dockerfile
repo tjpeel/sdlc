@@ -1,4 +1,12 @@
-FROM docker:29.8.2-cli AS docker-tools
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS publisher-build
+WORKDIR /src
+COPY source/go.mod ./go.mod
+COPY source/cmd/ ./cmd/
+COPY source/internal/ ./internal/
+RUN CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/sdlc-publisher ./cmd/sdlc-publisher
+
+FROM docker:29.8.2-cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68b1457ead25c35c AS docker-tools
 
 FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
 
@@ -29,6 +37,7 @@ RUN set -eu; \
 RUN npm install -g "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
     && codex --version && claude --version && gh --version
 
+COPY --from=publisher-build /out/sdlc-publisher /usr/local/bin/sdlc-publisher
 COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-tools /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 # Microsoft publishes SHA-512 hashes for every SDK archive. Select an exact

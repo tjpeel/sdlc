@@ -104,12 +104,21 @@ func fixture(t *testing.T) (Manager, *fakeDocker, string) {
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
 	root := filepath.Join(t.TempDir(), "source with spaces")
-	for _, name := range []string{"Dockerfile", ".dockerignore", "entrypoint.py", "dependencies.py", "bin/sdlc-job"} {
+	for _, name := range runtimeAssets {
 		path := filepath.Join(root, "runtime", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(path, []byte("synthetic fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{"go.mod": "module github.com/tjpeel/sdlc\n\ngo 1.24.0\n", "cmd/sdlc-publisher/main.go": "package main\nfunc main() {}\n"} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -125,8 +134,11 @@ func TestBuildAndStatusUseOneImageAndSavedSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolved, _ := filepath.EvalSymlinks(root)
-	if state.ImageID != newImage || docker.current != newImage || docker.context != filepath.Join(resolved, "runtime") {
-		t.Fatal("build did not select shared runtime context and verified image")
+	if state.ImageID != newImage || docker.current != newImage || state.Source != resolved || docker.context == filepath.Join(resolved, "runtime") {
+		t.Fatal("build did not use sanitized runtime context and verified image")
+	}
+	if _, err := os.Stat(docker.context); !os.IsNotExist(err) {
+		t.Fatal("temporary runtime context was retained")
 	}
 	if state.Engine != "test-engine" || state.Tools == "" {
 		t.Fatal("runtime record has no engine or tool evidence")

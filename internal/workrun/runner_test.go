@@ -324,6 +324,19 @@ func TestRunnerChangedCommittedTreeInvalidatesPriorEvidence(t *testing.T) {
 		t.Fatalf("stale tree reused: %+v", j.Evidence)
 	}
 }
+func TestRunnerCommitAmendRequiresFreshChecksEvenWithSameTree(t *testing.T) {
+	dir, j := testRun(t)
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("checks_requested"), testOutcome("implemented"), testOutcome("reviewed")}}
+	c := &fakeChecker{}
+	repo := &fakeRepository{revisions: []Revision{{testHead, testTree, true}, {testSigned, testTree, true}, {testSigned, testTree, true}}}
+	r := fakeRunner(p, c, &fakePublisher{}, repo)
+	if err := r.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	if c.calls != 2 || j.Evidence.Head != testSigned {
+		t.Fatalf("amended commit reused stale evidence: %+v", j.Evidence)
+	}
+}
 func TestRunnerClaudeImplementationUsesCodexReview(t *testing.T) {
 	dir, j := testRun(t)
 	j.Plan.Roles = DefaultModels().Claude

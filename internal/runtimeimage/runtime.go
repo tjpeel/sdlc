@@ -180,13 +180,12 @@ func (manager Manager) Build(ctx context.Context, source string) (State, error) 
 	if err != nil {
 		return State{}, err
 	}
-	contextDirectory := filepath.Join(root, "runtime")
-	for _, name := range []string{"Dockerfile", ".dockerignore", "entrypoint.py", "dependencies.py", "bin/sdlc-job"} {
-		info, err := os.Stat(filepath.Join(contextDirectory, name))
-		if err != nil || !info.Mode().IsRegular() {
-			return State{}, fmt.Errorf("source must be the SDLC clone with runtime/%s", name)
-		}
+	contextDirectory, cleanupContext, err := buildContext(root)
+	if err != nil {
+		return State{}, err
 	}
+	defer cleanupContext()
+
 	if err := os.MkdirAll(manager.Directory, 0700); err != nil {
 		return State{}, err
 	}

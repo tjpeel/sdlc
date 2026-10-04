@@ -24,23 +24,39 @@ type Input struct {
 	SHA256 string `json:"sha256"`
 }
 
+type PublicationIdentity struct {
+	GitHubProfile  string `json:"github_profile"`
+	RepositoryID   int64  `json:"repository_id"`
+	RepositoryName string `json:"repository_name"`
+	GitHubVolume   string `json:"github_volume"`
+	ProfileID      string `json:"profile_id"`
+	GitHubID       int64  `json:"github_id"`
+	GitHubLogin    string `json:"github_login"`
+	GitName        string `json:"git_name"`
+	GitEmail       string `json:"git_email"`
+	SSHPublicKey   string `json:"ssh_public_key"`
+	SSHFingerprint string `json:"ssh_fingerprint"`
+}
+
 type Plan struct {
-	Root        string     `json:"root"`
-	Reference   string     `json:"reference"`
-	Ticket      string     `json:"ticket"`
-	StartingSHA string     `json:"starting_sha"`
-	SourceSHA   string     `json:"source_sha"`
-	Branch      string     `json:"branch"`
-	Base        string     `json:"base"`
-	BaseSHA     string     `json:"base_sha"`
-	Repository  string     `json:"repository"`
-	Inputs      []Input    `json:"inputs"`
-	CheckInputs []Input    `json:"check_inputs"`
-	Checks      [][]string `json:"checks"`
-	DockerTests bool       `json:"docker_tests"`
-	Roles       Roles      `json:"roles"`
-	PRTitle     string     `json:"pr_title,omitempty"`
-	PRBody      string     `json:"pr_body,omitempty"`
+	GitHubProfile       string               `json:"github_profile,omitempty"`
+	PublicationIdentity *PublicationIdentity `json:"publication_identity,omitempty"`
+	Root                string               `json:"root"`
+	Reference           string               `json:"reference"`
+	Ticket              string               `json:"ticket"`
+	StartingSHA         string               `json:"starting_sha"`
+	SourceSHA           string               `json:"source_sha"`
+	Branch              string               `json:"branch"`
+	Base                string               `json:"base"`
+	BaseSHA             string               `json:"base_sha"`
+	Repository          string               `json:"repository"`
+	Inputs              []Input              `json:"inputs"`
+	CheckInputs         []Input              `json:"check_inputs"`
+	Checks              [][]string           `json:"checks"`
+	DockerTests         bool                 `json:"docker_tests"`
+	Roles               Roles                `json:"roles"`
+	PRTitle             string               `json:"pr_title,omitempty"`
+	PRBody              string               `json:"pr_body,omitempty"`
 }
 
 type Finding struct {
@@ -85,6 +101,7 @@ type Provider interface {
 }
 
 type CheckEvidence struct {
+	Head     string     `json:"head,omitempty"`
 	Tree     string     `json:"tree"`
 	Passed   bool       `json:"passed"`
 	Commands [][]string `json:"commands"`
