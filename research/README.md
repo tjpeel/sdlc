@@ -22,6 +22,7 @@ is not an approved route for the installed CLI.
 - [Colima trial](notes/colima-trial.md)
 - [Guided host control test](notes/host-control-test.md)
 - [Herdr remote assessment](notes/herdr-remote-assessment.md)
+- [Omarchy and Linux execution](notes/omarchy-linux-assessment.md)
 - [Historical runtime validation](notes/historical-runtime-validation.md)
 
 ## Earlier container runner
