@@ -48,13 +48,13 @@ This route supports unattended secret retrieval without the desktop app. It does
 not expose a service-account SSH signing API. See
 [CLI machine authentication](https://www.1password.dev/service-accounts/use-with-1password-cli).
 
-Store a repository-scoped GitHub credential and a dedicated SDLC SSH signing key
-in that vault. A small initial deployment can use a fine-grained PAT with only
-the required repository permissions; organisation policy and the actual `gh`
-operations need validation. GitHub App installation tokens are the longer-term
-option: restrict installation and token permissions, then refresh their one-hour
-tokens through the documented flow. Neither route grants commit signing merely
-by authenticating a push. See the
+Store the GitHub App private key and a dedicated SDLC SSH signing key in that
+vault. Mint installation tokens on demand, restricted to the job's repository and
+permissions, and issue fresh tokens before their one-hour expiry as needed.
+Organisation policy and the actual `gh` operations need validation. A fine-grained
+PAT is an interim option for the current supervised trial; the reviewed GitHub
+documentation does not provide an unattended PAT-creation API.
+Neither route grants commit signing merely by authenticating a push. See the
 [credential guide](../github-credentials.md) and
 [installation token flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
 
@@ -132,8 +132,9 @@ Docker-administrator compromise remains outside this isolation boundary.
    existing `Publisher` interface, but exchange a fixed request, bundle and
    publication-only state rather than host filesystem paths. Require signing and
    verify identity/tree equality. Test with disposable keys and fake GitHub replies.
-2. Add private machine-credential profiles and official 1Password Service Account
-   resolution, including bootstrap delivery, expiry, redaction and cleanup.
+2. Add private machine-credential profiles, official 1Password Service Account
+   resolution and on-demand GitHub App installation tokens, including bootstrap
+   delivery, token renewal, expiry, redaction and cleanup.
    Inventory the credential client. Test resolution offline with fake responses;
    real vault setup and minimal-scope GitHub access are one-time joint tasks.
 3. Add the Docker controller launcher, supervision and restart reconciliation.
@@ -143,6 +144,12 @@ Docker-administrator compromise remains outside this isolation boundary.
 These are required before treating the solution as unattended Docker delivery.
 The existing onboarding trial can still diagnose provider, test and host
 publication behavior while these iterations are built.
+
+The [dedicated-vault test](../1password-test.md) proves secret retrieval and local
+signing first. OIDC-backed secret retrieval is an alternative for an eligible
+1Password Business deployment with an established issuer; it is not needed for
+the local proof. The Broker preview still requires an integration encryption key.
+See [custom OIDC setup](https://www.1password.dev/brokered-access/custom-workflow).
 
 ## Acceptance
 

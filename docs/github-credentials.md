@@ -219,6 +219,9 @@ a new SSH route just for SDLC. See
 
 ## Machine credentials for unattended Docker delivery
 
+Use the [step-by-step vault and signing test](1password-test.md) to prove this
+boundary in disposable containers before connecting it to ticket publication.
+
 Use a 1Password Service Account with the official CLI, scoped to `read_items` in
 a dedicated automation vault. `OP_SERVICE_ACCOUNT_TOKEN` supports `op read`,
 `op run` and `op inject` without a desktop approval session. Built-in Personal,
@@ -311,13 +314,27 @@ These changes are not implemented by this documentation iteration:
    vault references, emails and credential paths. Constrain the repository/ref
    and disable Git hooks/config execution from the project. Signing errors must
    stop before push, without changing lightweight ticket discovery.
-4. For sustained automation, consider a GitHub App installed only on selected
+4. For on-demand GitHub access, use a GitHub App installed only on selected
    repositories. Installation tokens expire after one hour and can be restricted
    to repository/permission subsets. Keep the App private key within the trusted
    credential resolver/publisher, refresh tokens through the documented flow and
    configure commit signing separately.
    This is a future implementation choice, not an existing SDLC flag. See
    [installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
+
+Unlike that App flow, the reviewed fine-grained PAT documentation provides a
+human settings form, not an unattended token-creation API. A PAT can support the
+current supervised trial; the planned machine publisher should mint scoped App
+tokens on demand. The App key and Service Account bootstrap token still carry
+persistent authority. See [PAT creation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
+For environments that already have trusted workload identity, 1Password's
+Business Credential Broker preview can authorise Environment-variable retrieval
+through OIDC. It still requires an integration encryption key, and custom OIDC
+requires an issuer and its trust configuration. It does not give Service Accounts
+item-level grants or make ordinary local Docker an identity issuer. See
+[Broker setup](https://www.1password.dev/brokered-access) and
+[custom OIDC requirements](https://www.1password.dev/brokered-access/custom-workflow).
 
 An App push credential does not turn a local human commit into a verified bot
 signature. GitHub's automatic bot verification has separate requirements; use
