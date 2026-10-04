@@ -223,6 +223,9 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
                         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                         "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "1",
                         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                        # Foreground delegates complete before native structured
+                        # output can end the parent turn with work still pending.
+                        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
                         "ENABLE_CLAUDEAI_MCP_SERVERS": "false"})
         command = native_command(provider, model, effort, resume, readonly)
         auth_link(config, provider, directory)

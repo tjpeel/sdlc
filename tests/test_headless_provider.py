@@ -206,7 +206,9 @@ class HeadlessTests(unittest.TestCase):
         client.assert_not_called()
 
     def test_claude_streaming_uses_isolated_settings_and_native_subscription(self):
-        command, _, config = self.run_client("claude", ID, readonly=True)
+        with patch.dict(os.environ, {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "0"}):
+            command, env, config = self.run_client("claude", ID, readonly=True)
+        self.assertEqual(env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
         for argument in ("-p", "stream-json", "--verbose", "--include-partial-messages",
                          "--forward-subagent-text", "--strict-mcp-config", "--json-schema"):
             self.assertIn(argument, command)
