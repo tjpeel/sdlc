@@ -483,6 +483,16 @@ func TestPrepareReviewRetryUsesFreshSnapshotAtSameAttempt(t *testing.T) {
 	}
 	hash := sha256.Sum256(data)
 	j.Plan.Inputs = []Input{{Path: "requirements.md", SHA256: hex.EncodeToString(hash[:])}}
+	for path, content := range map[string]string{
+		filepath.Join(j.Workspace, ".env"): "fake-private-check-input",
+		filepath.Join(dir, "checks-1.log"): "fake-private-check-diagnostic",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j.Plan.CheckInputs = []Input{{Path: ".env", SHA256: strings.Repeat("a", 64)}}
+	j.Evidence = CheckEvidence{Head: head, Tree: tree, Passed: true, Log: "checks-1.log"}
 	first, err := PrepareReview(ctx, *j, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -501,6 +511,11 @@ func TestPrepareReviewRetryUsesFreshSnapshotAtSameAttempt(t *testing.T) {
 		captured, err := os.ReadFile(filepath.Join(workspace, "requirements.md"))
 		if err != nil || string(captured) != string(data) {
 			t.Fatal("snapshot lost requirements")
+		}
+		for _, private := range []string{".env", "checks-1.log"} {
+			if _, err := os.Lstat(filepath.Join(workspace, private)); !os.IsNotExist(err) {
+				t.Fatal("review snapshot exposed private check inputs or diagnostics")
+			}
 		}
 	}
 }
