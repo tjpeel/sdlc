@@ -443,8 +443,9 @@ disposable repository to prove:
   and output contain no tokens or private signing keys.
 
 See [machine credentials](github-credentials.md#machine-credentials-for-unattended-docker-delivery)
-for supported 1Password access and signing distinctions. Human ticket questions
-and provider account restrictions remain legitimate attention states.
+and the [dedicated-vault test](1password-test.md) for supported 1Password access
+and signing distinctions. Human ticket questions and provider account restrictions
+remain legitimate attention states.
 
 ## Remaining work before real tickets
 
@@ -485,11 +486,12 @@ consumer behavior, queue semantics or the real repositories' full integration
 setup. Add generic consumer/queue/initializer examples only where they reveal a
 gap, and keep private repository material out of public fixtures.
 
-Later items include GitHub App tokens, wider recovery and cleanup controls, stacked
+Later items include wider recovery and cleanup controls, stacked
 ticket orchestration, a reliable provider context gauge where native metadata
-permits it, and other-host validation. Machine secret resolution and detached
-Docker supervision are required above, not optional later improvements. Run
-capture currently rejects linked worktrees, submodules and symlinks; use a
+permits it, and other-host validation. On-demand App tokens, machine secret
+resolution and detached Docker supervision are required above, not optional later
+improvements. Run capture currently rejects linked worktrees, submodules and
+symlinks; use a
 compatible ordinary checkout. Broader recovery after external branch/base changes
 is not implemented.
 
