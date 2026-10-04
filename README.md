@@ -172,6 +172,13 @@ The remaining risks are:
 - **Pins and update checks do not establish safety.** A pinned release or skill
   can contain malicious code. `sdlc runtime status` reports version availability,
   not a vulnerability scan, malware check or endorsement of an update.
+- **Unattended signing grants machine authority.** A publisher that signs without
+  desktop approval must hold usable signing capability and GitHub access.
+  Compromising that publisher, its credential resolver or the Docker host can
+  misuse them. Use a dedicated signing key and scoped credentials, and keep both
+  away from repository code and test dependencies. The required
+  [unattended Docker publisher](docs/proposals/unattended-docker-delivery.md) is
+  not implemented yet; current publication happens on the host.
 - **Disposable state has operational costs.** Current workspace changes are
   discarded on interactive-session exit; ticket checkpoints persist privately.
   Provider volumes have no storage quota, so session code

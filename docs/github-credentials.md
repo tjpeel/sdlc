@@ -1,11 +1,12 @@
 # GitHub credentials and commit signing
 
-SDLC can use the host's existing GitHub access and Git signing setup without
-giving either to Docker workers. This is the recommended route for the first
-local trial. Initial GitHub cloning happens on the host; SDLC captures that local
-checkout. Signing and publishing happen in the host controller after isolated
-checks. Research below was checked against official documentation on 4 October
-2026; proposed changes are identified separately from current behavior.
+Unattended SDLC delivery must not depend on desktop 1Password unlock or approval
+prompts. The planned route uses machine credentials and a dedicated signing key
+inside a separate Docker publisher. It is not implemented yet. The current host
+publisher is useful for a supervised diagnostic trial, but does not meet this
+requirement. Initial GitHub cloning currently happens on the host; SDLC captures
+that local checkout. Research below was checked against official documentation
+on 4 October 2026; proposed changes are identified separately from current behavior.
 
 ## Current credential flow
 
@@ -36,6 +37,9 @@ tree belong to an [archived prototype](../research/README.md); do not use that
 private-key/PAT injection route as the onboarding path for the Go CLI.
 
 ## GitHub authentication on the host
+
+This section describes the current supervised trial, not the required unattended
+Docker publication path.
 
 Existing native `gh` login works with the current publisher. When login is
 required, use `gh auth login --hostname github.com --git-protocol https` and
@@ -83,7 +87,9 @@ permission error. See the [official CLI implementation](https://github.com/cli/c
 ### External 1Password wrapper
 
 This works through current host environment support; it is not native SDLC
-secret-store integration. Install/configure the official 1Password CLI and create
+secret-store integration. Desktop-authenticated `op run` can still prompt for
+approval or unlock. Wrapping a command does not make its authentication
+unattended. Install/configure the official 1Password CLI and create
 a private file **outside all source repositories**, readable only by your user,
 containing a secret reference rather than the token itself:
 
@@ -137,7 +143,8 @@ Git supports helpers/askpass for credential retrieval. For a future dedicated
 helper, validate the HTTPS host and exact repository and consider
 `credential.useHttpPath=true`; by default, HTTP credential matching ignores the
 repository path. A helper that returns a token inside a worker still exposes
-that token there. Keep Git network operations on the host publication path.
+that token there. Keep Git network operations within the trusted publication
+boundary: currently the host, and the separate publisher in the planned design.
 See [Git credentials](https://git-scm.com/docs/gitcredentials).
 
 ## Git identity and signed commits
@@ -165,6 +172,9 @@ config values for this route. See
 [GitHub email forms](https://docs.github.com/en/account-and-profile/reference/email-addresses-reference).
 
 ### Host 1Password SSH signing
+
+Use this route only for supervised diagnostics. It does not establish that
+signing will continue after the desktop app locks or the machine restarts.
 
 Keep the private key in 1Password. Configure host Git for SSH signing and provide
 its **public** key as `user.signingkey`. 1Password's supported macOS signing
@@ -207,21 +217,75 @@ email and verified GitHub email must agree for GitHub verification; do not force
 a new SSH route just for SDLC. See
 [GPG email verification](https://docs.github.com/en/authentication/troubleshooting-commit-signature-verification/using-a-verified-email-address-in-your-gpg-key).
 
-### Unattended signing and container forwarding
+## Machine credentials for unattended Docker delivery
+
+Use a 1Password Service Account with the official CLI, scoped to `read_items` in
+a dedicated automation vault. `OP_SERVICE_ACCOUNT_TOKEN` supports `op read`,
+`op run` and `op inject` without a desktop approval session. Built-in Personal,
+Private, Employee and default Shared vaults are excluded; vault grants and
+permissions are fixed at creation. Remove conflicting Connect configuration so
+the selected authentication route is explicit. See
+[service-account CLI authentication](https://www.1password.dev/service-accounts/use-with-1password-cli)
+and [service-account provisioning](https://www.1password.dev/service-accounts/get-started).
+
+Keep only the intended SDLC credentials in that vault; vault-wide read access
+must not expose unrelated personal or production secrets.
+
+The service-account token is itself a secret. One-time provisioning must supply
+it through a protected runtime secret mechanism that works without desktop
+approval. Keeping it only in a vault that requires that same token to open does
+not solve bootstrap. Do not put it in an image, source checkout, Docker command
+line, recorded container environment or run journal. The supported CLI receives
+it in its own child environment after the trusted resolver reads the runtime
+secret. The durable store and recovery procedure must be selected and tested
+before claiming unattended restart support.
+
+A service account retrieves secret fields; it is not the desktop SSH signing
+agent. Use a dedicated SDLC signing key, never an exported personal signing key.
+The official `op read` command supports retrieving an SSH private key in OpenSSH
+format. A separate publisher can write it directly to a private temporary file
+and use Git SSH signing. This gives that container access to the private key.
+See [SSH-key retrieval and private output files](https://www.1password.dev/cli/reference/commands/read)
+and [Git signing configuration](https://git-scm.com/docs/git-config#Documentation/git-config.txt-usersigningKey).
+
+Keep key files in restricted tmpfs storage, remove them at completion and give
+neither signing capability nor GitHub credentials to provider or check workers.
+Tmpfs avoids the container's writable layer but can reach host swap; it is not
+an unconditional guarantee of memory-only storage. Docker Compose file secrets
+are mounted files, not an encrypted secret store. See
+[tmpfs limitations](https://docs.docker.com/engine/storage/tmpfs/)
+and [Compose secret delivery](https://docs.docker.com/compose/how-tos/use-secrets/).
+
+Register the dedicated public key as a GitHub signing key for the approved
+identity, and require local verification of that exact signer before every push.
+A machine signature proves control of the key; it does not prove a human approved
+each change. Freeze the approved name/email from the project's effective Git
+configuration at launch, rather than mounting the host's entire Git configuration.
+The [unattended Docker delivery plan](proposals/unattended-docker-delivery.md)
+defines the publisher boundary, supervision and acceptance checks.
+
+1Password Connect is another supported machine-access route, with a server
+credential, API token and local cache to operate. It adds infrastructure and
+still needs secure bootstrap; it does not supply desktop-agent signing. Start
+with a Service Account unless caching or deployment needs justify Connect. See
+[Connect deployment](https://www.1password.dev/connect/get-started).
+
+### Why desktop approval and forwarding are insufficient
 
 1Password can authorise an application and subprocesses for a session; approval
-rules and lock state determine whether later signing needs interaction. Test the
-chosen authority window rather than assuming an unlocked app will sign all night.
-Fully unattended signing and biometric approval for every signature are
-incompatible requirements. See [1Password agent security](https://www.1password.dev/ssh/agent/security)
+rules and lock state determine whether later signing needs interaction. Extending
+the authority window cannot guarantee unattended signing after lock or restart.
+Do not use it as the production automation path. See
+[1Password agent security](https://www.1password.dev/ssh/agent/security)
 and [key selection](https://www.1password.dev/ssh/agent/config).
 
 Docker Desktop documents an SSH-agent bridge at
 `/run/host-services/ssh-auth.sock` on Mac/Linux, and 1Password documents SSH
 forwarding. Those documents do not establish that the ordinary Docker bridge
 selects an arbitrary custom 1Password socket. A raw macOS socket mount or macOS
-`op-ssh-sign` path is not a verified Linux-container signing setup. The host route
-avoids that integration entirely. See [Docker agent forwarding](https://docs.docker.com/desktop/features/networking/networking-how-tos/#ssh-agent-forwarding)
+`op-ssh-sign` path is not a verified Linux-container signing setup. A bridge also
+does not remove the desktop agent's approval requirement. See
+[Docker agent forwarding](https://docs.docker.com/desktop/features/networking/networking-how-tos/#ssh-agent-forwarding)
 and [1Password forwarding](https://www.1password.dev/ssh/agent/forwarding).
 
 Security implication: a forwarded agent keeps private key bytes on the host but
@@ -234,32 +298,35 @@ agent, restrict the keys and its requests and validate the bridge first.
 
 These changes are not implemented by this documentation iteration:
 
-1. Add a host publication preflight that records the intended repository,
-   effective GitHub account, approved Git identity and signing requirement before
-   provider work. Fail required-signing errors early without changing ticket
-   discovery into a content validator.
+1. Add a separate Docker publisher with machine credential resolution. It must
+   sign and publish without desktop 1Password, forwarded personal agents or
+   interactive fallback. Keep secrets outside provider/check containers.
 2. Freeze approved identity/public signing settings for a run, reject unexpected
    changes on resume, and verify the same account/token scope at publication.
    Normalize source-relative signing paths and preserve supported format-specific
    signer settings. Do not save a token or private key in the run journal.
-3. Add native secret-store profiles that resolve only within host GitHub
-   operations. Keep public templates free of real vault references, emails and
-   credential paths. Constrain the repository/ref and disable unneeded host Git
-   hooks/config execution on the publication path.
+3. Add publication preflight and private secret-store profiles. Record the
+   intended repository, GitHub account or App installation, approved Git identity
+   and required signer before provider work. Keep public templates free of real
+   vault references, emails and credential paths. Constrain the repository/ref
+   and disable Git hooks/config execution from the project. Signing errors must
+   stop before push, without changing lightweight ticket discovery.
 4. For sustained automation, consider a GitHub App installed only on selected
    repositories. Installation tokens expire after one hour and can be restricted
-   to repository/permission subsets. Keep the App private key on the host,
-   refresh tokens through the documented flow and keep human signing separate.
+   to repository/permission subsets. Keep the App private key within the trusted
+   credential resolver/publisher, refresh tokens through the documented flow and
+   configure commit signing separately.
    This is a future implementation choice, not an existing SDLC flag. See
    [installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
 
 An App push credential does not turn a local human commit into a verified bot
 signature. GitHub's automatic bot verification has separate requirements; use
-the existing signing key when human attribution is required. See
+the approved dedicated signing key and identity. See
 [bot verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-bots).
 
-Keeping credentials on the host reduces what compromised project dependencies
-can reach. It does not protect against a compromised host/controller, and an
-authenticated provider can still reach its own native account cache. Read the
+Separating publication credentials from workers reduces what compromised project
+dependencies can reach. It does not protect against a compromised host,
+Docker administrator, controller or publisher. An authenticated provider can
+still reach its own native account cache. Read the
 [remaining security risks](../README.md#security-boundary-and-risks) before
 granting unattended publication authority.
