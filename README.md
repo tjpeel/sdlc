@@ -12,6 +12,10 @@ remain future work.
 
 ## Get started
 
+For a joint connected trial, follow the [onboarding runbook](docs/onboarding.md).
+It covers a disposable .NET repository, host GitHub access and signing, both
+providers, CI, review/repair and the remaining gates before real tickets.
+
 From this clone, with Go 1.24 or later and a local Docker engine running Linux
 containers, select an existing directory on your PATH:
 
