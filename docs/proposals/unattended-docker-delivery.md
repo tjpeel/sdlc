@@ -1,193 +1,145 @@
 # Unattended Docker delivery
 
-Status: proposed on 4 October 2026. This records a required capability, not a
-completed implementation or a connected validation result.
+Status: partially implemented on 4 October 2026. Native GitHub profiles, the
+trusted Docker publisher and mandatory 1Password-backed signing are implemented.
+The host controller remains a foreground process. Detached supervision and
+restart reconciliation are proposed, and connected end-to-end delivery remains
+unvalidated.
 
-After one-time provisioning, a local single-user ticket job must implement,
-check, sign, publish and review within Docker without desktop 1Password approval.
-Closing the launching terminal must not stop the job. Human questions, revoked
-credentials, provider refusals and exhausted limits must still stop work and
-appear in the dashboard. Unattended operation does not override those gates.
+The intended result is a local single-user ticket job that implements, checks,
+signs, publishes and reviews after one-time provisioning without desktop
+1Password approval. It must eventually survive closure of the launching terminal.
+Human questions, revoked credentials, provider refusals and exhausted limits
+must still stop work and appear in the dashboard.
 
-## Current gap
-
-Provider sessions, source inspection and checks already use Docker. GitHub
-publication and signing still run in the foreground host controller. Signing is
-optional, identity is read again on publication, and there is no detached
-controller supervisor. A host `op run` wrapper or remembered desktop signing
-approval does not meet the requirement.
-
-## Required boundaries
+## Implemented boundaries
 
 | Component | Authority and inputs |
 | --- | --- |
-| Host CLI | Select a ticket, start or attach to a local job, stream private output and show attention state. Provisioning is separate from each run. |
-| Trusted Docker controller | Own the frozen plan, private journal and run lock; launch workers and the publisher; reconcile interrupted operations. Engine access makes it a trusted component. It must never run repository commands itself. |
-| Provider worker | Selected source, ticket and its own native provider cache. No publication token, signing key, secret-store bootstrap token or host Docker socket. |
-| Check worker and isolated test daemon | Committed candidate, selected check-only inputs and checks. No provider cache or publication credentials. Each test daemon remains separate. |
-| Trusted Docker publisher | Validated bundle, fixed publication manifest, narrow publication state and machine credentials. No test scripts, provider cache, worker Git configuration or host Docker socket. |
+| Host controller | Owns the frozen plan, private journal, run lock and Docker operations; remains attached to the launching terminal. |
+| Provider worker | Selected source, ticket and its own native provider cache; no GitHub cache, signing key, vault bootstrap or host Docker socket. |
+| Check worker and isolated test daemon | Committed candidate, exact check inputs and checks; no provider or publication credentials. Each test daemon remains separate. |
+| Trusted Docker publisher | Candidate bundle, fixed publication request, narrow state, selected read-only GitHub cache and temporary signing key; no project checkout, provider cache or Docker socket. |
+| Official 1Password CLI container | The approved signing-key reference and bootstrap supplied over stdin; independent 35-second timeout, managed labels and automatic removal. |
 
-The publisher must accept requests only from the trusted controller. It is not a
-general command, signing or arbitrary-repository endpoint for workers. Import Git
-objects into controlled metadata without checking out or executing project code;
-disable hooks, filesystem monitors and project-supplied credential/signer programs.
-Preserve the existing equality check between the tested tree and the published
-tree. Restrict publication to the approved repository, branch and base.
+The publisher binary is built from a bounded public source closure and baked into
+the recorded runtime image. It imports Git objects into controlled metadata
+without running project code, hooks, filters or repository-supplied credential
+and signer programs. It requires check evidence for the exact candidate head and
+tree, signs every delivered commit, verifies the approved public key and confirms
+the signed tree matches the checked tree.
 
-Do not mount the entire private run directory into the publisher: it also contains
-provider sessions and diagnostic output. Give each component only its required
-state. Network access should be limited where practical to the selected vault
-service and GitHub for the publisher; enforce this in the runtime rather than
-relying on prompts.
+Before provider work, the controller freezes effective project Git name/email,
+GitHub profile and numeric account ID, repository numeric ID and canonical name,
+signing public key/fingerprint and runtime image. Publication rechecks the
+selected account/repository, push permission, base and expected remote branch
+head. An exact push lease rejects competing changes. CI and review remain tied
+to the recorded published revision. Identity changes stop delivery; there is no
+host credential fallback or automatic account switch.
 
-## Machine credentials and signing
+## Profiles and signing
 
-The first secret-store integration should use the official 1Password CLI with a
-Service Account, scoped to read-only access in a dedicated automation vault.
-This route supports unattended secret retrieval without the desktop app. It does
-not expose a service-account SSH signing API. See
+GitHub authentication uses the unmodified official `gh` browser/device login
+flow with HTTPS. Each named profile has an independent native configuration
+volume and lease while sharing the runtime image:
+
+```sh
+sdlc auth login --service github --profile personal
+sdlc auth status --service github --profile personal
+sdlc auth status --service github --profile personal --verify
+sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
+sdlc signing verify --profile personal
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-ticket.md --github-profile personal
+```
+
+Omitting the name selects `default`. A separate `work` profile can coexist with
+`personal`; each uses its matching named signing configuration. Native GitHub
+credentials persist as plaintext in private managed Docker volumes. Offline
+status checks storage presence; explicit `--verify` makes a native connected
+status request and prints the selected login and numeric account ID, without a
+token. Logout removes the local native login, without revoking remote
+authority. Codex and Claude still each use one account cache per installation.
+
+This route does not require a GitHub App installation. An App is an optional
+alternative for an environment with the required administrative access; App
+installation-token resolution is not implemented by this native login route.
+See the [credential guide](../github-credentials.md).
+
+Signing requires a dedicated Ed25519 key retrieved by the official 1Password CLI
+with a Service Account and read-only access to its dedicated automation vault.
+The configured profile stores public metadata and references. The private key
+stays in the vault until resolution; it is passed over stdin into publisher
+private tmpfs, verified against the frozen public key and removed before push.
+The runtime uses its own signer and trust file. No desktop approval or forwarded
+personal SSH agent is part of this route. See
 [CLI machine authentication](https://www.1password.dev/service-accounts/use-with-1password-cli).
 
-Store the GitHub App private key and a dedicated SDLC SSH signing key in that
-vault. Mint installation tokens on demand, restricted to the job's repository and
-permissions, and issue fresh tokens before their one-hour expiry as needed.
-Organisation policy and the actual `gh` operations need validation. A fine-grained
-PAT is an interim option for the current supervised trial; the reviewed GitHub
-documentation does not provide an unattended PAT-creation API.
-Neither route grants commit signing merely by authenticating a push. See the
-[credential guide](../github-credentials.md) and
-[installation token flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
+`sdlc signing verify --profile NAME` resolves the approved key through the
+official CLI and verifies a disposable signed Git commit in a separate
+network-disabled container. It makes no GitHub or model request and does not
+prove GitHub Verified attribution.
 
-The trusted resolver reads the bootstrap token from a runtime secret and supplies
-`OP_SERVICE_ACCOUNT_TOKEN` only to the official CLI child process. Resolve the
-GitHub token and signing key inside the publisher boundary, never through Docker
-arguments, image build variables, logs or journals. Clear conflicting
-authentication configuration. Do not fall back to desktop login or another
-identity when resolution fails.
+The resolver's bootstrap is an explicit mode-`0600` plaintext bearer-token file
+outside repositories. It must remain outside provider caches, Docker build
+contexts and committed source. OS credential-store integration is not
+implemented. SDLC does not encrypt this file or Docker volumes; host disk/swap
+protection and Docker-administrator trust remain necessary. Register the public
+key with GitHub for the intended signing identity and verify attribution in the
+disposable connected trial.
 
-The bootstrap token needs a durable protected store that can supply it after a
-restart without a desktop prompt. A token saved only in the vault it opens is
-insufficient. Selecting and testing that store is part of implementation and
-one-time onboarding, not an assumption that Docker supplies encrypted storage.
-Keep it outside source, provider caches and build contexts. Ordinary Compose
-file secrets are file mounts; protection at rest depends on the backing store.
-See [Compose secrets](https://docs.docker.com/compose/how-tos/use-secrets/).
+## Validation so far
 
-Retrieve only a dedicated machine signing key into a private temporary file using
-the official CLI's output-file support. Require mode `0600`, restricted tmpfs,
-noninteractive key loading and removal at completion. If the key is encrypted,
-its unlock secret must also use the machine route; a passphrase prompt would
-reintroduce the same failure. A dedicated automated signer is an alternative,
-but forwarding the personal desktop agent is not the default. See
-[SSH-key retrieval](https://www.1password.dev/cli/reference/commands/read).
+Offline tests use disposable keys and fake GitHub responses. They exercise the
+native cache and logout with networking disabled, signing and signature checks,
+account/repository identity checks, tested revision gates, exact push leases,
+restricted mounts and cleanup. They do not establish live vault access, GitHub
+Verified attribution, provider entitlement or a completed repair cycle.
+Use the [Docker GitHub test guide](../github-docker-test.md) for the staged trial.
 
-Freeze the approved effective project Git name/email, public-key fingerprint,
-required signing policy, repository, account or App installation, credential
-profile and immutable publisher image identity before provider work. Journal
-only those nonsecret values in private state. Do not copy host Git configuration
-or signer paths into Linux unchanged. Configure the controlled publisher with
-its own signer and public trust file. Sign every published commit and verify the
-exact approved key before push; never silently publish unsigned commits.
+## Remaining supervision and recovery work
 
-Register the dedicated public key with GitHub as a signing key for the intended
-identity and validate Verified attribution in the disposable trial. A signature
-from this automated key means the machine had authority to sign; it does not
-mean the owner approved each change at a screen.
+The controller must become a trusted owned Docker process that continues after
+the host launcher disconnects. Add explicit launch, attach, stop and restart
+ownership around the existing private journal, run lock and activity registry.
+Do not restart an attention state into further provider work automatically.
 
-## Supervision and recovery
+Paths and volumes must be resolved from the Docker daemon's perspective. A
+controller's internal path is not automatically a valid bind source for sibling
+workers. Host dashboard attachment and resumed runs must use the same journal
+and registry without path or run-identity drift. Persist checkpoints separately
+from temporary secrets and reconcile surviving containers and leases after
+interruption.
 
-Package the Linux controller and publisher binaries and required credential
-client in recorded runtime images. The host CLI becomes a launcher and viewer;
-an owned controller container continues after terminal closure. Reuse the
-existing private journal, run lock and activity registry, with explicit launch,
-attach, stop and restart ownership. Do not automatically restart an attention
-state into further provider work.
+Before retrying a push or PR request with a lost response, reconcile the exact
+remote head and existing PR. Revocation, vault failure or provider denial must
+produce a bounded attention state without input prompts or identity fallback.
+These recovery cases need further tests beyond successful foreground delivery.
 
-Define paths and volumes from the Docker daemon's perspective. A controller's
-internal path is not automatically a valid host bind source for sibling workers.
-Persist run checkpoints separately from temporary secrets. Reconcile containers,
-leases and publication state after interruption; retain same-provider cache
-serialization and per-check test daemons.
+## Acceptance for full unattended delivery
 
-Define how the host dashboard and container controller locate the same journal
-and activity registry. Current state stores absolute workspace/project/run paths
-and validates them during loading and resume. Use explicit host/container path
-translation or a consistent mapping; container-only paths must not make host
-attachment or resumption fail.
+After one-time provisioning, a disposable connected trial must:
 
-Before retrying a push or PR request whose response was lost, inspect the exact
-remote branch/head and existing PR. Reject unexpected movement and avoid duplicate
-publication. Refresh credentials only through their supported machine flow.
-Expiry, revocation, vault failure or provider denial must produce a clear attention
-state without hanging for input or switching accounts.
+- Complete implementation, a signed draft PR, current-head CI, independent review
+  and an actual repair without desktop secret approval prompts.
+- Keep working after the launching terminal closes and remain visible in the
+  host dashboard.
+- Restart at a safe checkpoint with the same recorded identities, paths and
+  publication state, without duplicate publication.
+- Stop on revoked credentials, provider denials and exhausted limits without
+  switching accounts, and retain no secrets in output or journals.
 
-The controller's engine authority can expose other containers and mounted
-secrets. It belongs to the trusted control plane, never a model or test worker.
-A read-only Docker socket mount does not restrict the Docker API's power. Host or
-Docker-administrator compromise remains outside this isolation boundary.
-
-## Implementation order
-
-1. Add the separate Docker publisher and frozen publication preflight. Keep the
-   existing `Publisher` interface, but exchange a fixed request, bundle and
-   publication-only state rather than host filesystem paths. Require signing and
-   verify identity/tree equality. Test with disposable keys and fake GitHub replies.
-2. Add private machine-credential profiles, official 1Password Service Account
-   resolution and on-demand GitHub App installation tokens, including bootstrap
-   delivery, token renewal, expiry, redaction and cleanup.
-   Inventory the credential client. Test resolution offline with fake responses;
-   real vault setup and minimal-scope GitHub access are one-time joint tasks.
-3. Add the Docker controller launcher, supervision and restart reconciliation.
-   Keep dashboard attachment independent of job lifetime, and prove that no
-   recurring desktop approval is needed across publication, repair and restart.
-
-These are required before treating the solution as unattended Docker delivery.
-The existing onboarding trial can still diagnose provider, test and host
-publication behavior while these iterations are built.
-
-The [dedicated-vault test](../1password-test.md) proves secret retrieval and local
-signing first. OIDC-backed secret retrieval is an alternative for an eligible
-1Password Business deployment with an established issuer; it is not needed for
-the local proof. The Broker preview still requires an integration encryption key.
-See [custom OIDC setup](https://www.1password.dev/brokered-access/custom-workflow).
-
-## Acceptance
-
-Offline tests must use disposable credentials and keys, fake GitHub responses
-and network-disabled fixtures:
-
-- Sign and verify the expected identity; missing credentials, wrong signer,
-  changed account/image/base or changed tested tree stop before push.
-- Prove secrets are absent from model/check mounts, container configuration,
-  process arguments, journals and logs; assert narrow publisher input/state mounts.
-- Handle lost push/PR responses and competing controllers without duplicate work.
-- Continue after the launcher disconnects; stop and restart with correct owned
-  resource cleanup and persisted attention states.
-- Load the same journal and registry from the host dashboard after a controller
-  restart, attach to its output and resume without path or run-identity drift.
-
-After one-time provisioning, the joint disposable-repository trial must:
-
-- Run with the 1Password desktop app locked or closed and no forwarded desktop
-  agent. Close the launching terminal and observe continued dashboard activity.
-- Complete implementation, signed draft PR, current-head CI, opposite-provider
-  review and a real repair cycle without secret approval prompts. A clean review
-  does not prove the repair path.
-- Restart at a safe checkpoint and prove machine credential retrieval and
-  signature verification still work, without changing provider identities.
-- Revoke or expire a disposable credential and observe a bounded attention state,
-  without interactive fallback. Confirm no secrets remain in retained output.
+The current foreground controller does not satisfy the terminal-closure or
+restart requirements. The [dedicated-vault test](../1password-test.md) and Docker
+GitHub trial validate narrower provisioning and publication steps first.
 
 ## Remaining risk
 
-An unattended publisher must possess usable signing and publication authority.
-Compromise of it, its resolver, the controller or Docker host can misuse that
-authority. Restrict vault contents, repository permissions, signing keys and
-network access; use bounded credential lifetimes and rotate after compromise.
-Isolation reduces the reach of compromised test dependencies, not host trust.
+The publisher and resolver possess usable signing and publication authority.
+Compromise of either component, the controller or Docker host can misuse it.
+Restrict vault contents, repository permissions and key scope. Network
+destination restrictions and encryption at rest are not implemented.
 
-Tmpfs can spill into host swap, and deleting a temporary file is not guaranteed
-secure erasure. Account for host disk/swap protection and avoid durable key
-copies. See [Docker tmpfs limitations](https://docs.docker.com/engine/storage/tmpfs/).
-Provider workers still have their own native account caches; machine GitHub
-credentials do not change the [provider usage rules](../provider-usage.md).
+Tmpfs can spill into host swap, and file removal is not guaranteed secure
+erasure. See [Docker tmpfs limitations](https://docs.docker.com/engine/storage/tmpfs/).
+Provider workers retain their own native account caches and remain subject to
+the [provider usage rules](../provider-usage.md).

@@ -1,13 +1,15 @@
 # Ticket workflow
 
 The installed Go CLI coordinates work from a local Git repository through one
-shared SDLC Docker image. macOS and Linux are the primary hosts; Windows needs a
-Linux-container engine. [The CLI guide](cli.md) covers setup and exact commands.
+shared SDLC Docker image for provider workers, checks and publication, with a
+separate official 1Password CLI image for signing-key resolution. macOS and Linux
+are the primary hosts; Windows needs a Linux-container engine. [The CLI guide](cli.md) covers setup and exact commands.
 
 ## Implemented: one selected ticket
 
-Install the CLI, build the shared runtime, authenticate the selected provider,
-then run `sdlc init` in the project. Review the checks in `.sdlc/project.json`.
+Install the CLI, build the shared runtime, authenticate the selected provider and
+configure the [GitHub and signing profile](cli.md#github-login-and-signing), then
+run `sdlc init` in the project. Review the checks in `.sdlc/project.json`.
 Shared instructions are private installation settings; each run captures their
 current body. The image contains pinned public skills and agent definitions.
 Runtime status reports available updates; automatic update prompts remain future
@@ -56,6 +58,14 @@ owner's local single-user CLI job and reject CI execution; see the
 [provider rules](provider-usage.md). No live provider run has yet validated the
 new execution path.
 
+Before provider execution, SDLC freezes the selected GitHub profile, numeric
+account and repository IDs, canonical repository name, effective project Git
+name/email, approved Ed25519 public key and runtime image. `--github-profile`
+selects matching named GitHub/signing configurations; `default` is the default.
+Native GitHub credentials persist in separate private plaintext Docker volumes.
+Host credentials do not override the selection. Each Codex/Claude cache still
+holds one account per installation.
+
 The delivery sequence is:
 
 1. The implementation follows `tjpeel-engineering-implement` and its testing,
@@ -64,11 +74,15 @@ The delivery sequence is:
 2. The controller runs configured check argument arrays against a disposable copy
    of the committed tree. Passing evidence resumes the exact original native
    implementation session. Changed trees need fresh checks.
-3. After local review and `tjpeel-pr-draft` metadata, the host controller recreates
-   candidate commits using host Git identity/signing settings, verifies enabled
-   signatures and confirms the published tree matches the checked tree. Host Git
-   and `gh` push the branch and create or update its draft PR. No secret-store
-   retrieval is implemented; configure host signing and GitHub authentication.
+3. After local review and `tjpeel-pr-draft` metadata, the trusted Docker publisher
+   imports the candidate bundle into controlled Git metadata. It requires passing
+   evidence for the exact candidate head/tree, signs every delivered commit with
+   the frozen identity, verifies the approved key and checked tree, and rechecks
+   account/repository IDs, base and remote head. An exact push
+   lease rejects competing changes. Its read-only GitHub profile cache and the
+   signing key resolved by the separate official 1Password Service Account CLI
+   remain outside provider/check workers. The key enters over stdin into tmpfs
+   and its file is removed before push. No host authentication fallback is used.
 4. Every reported CI check must pass for the recorded current PR base/head.
    Missing checks wait for up to two minutes for CI to start, then block with a
    retained checkpoint; configure CI and resume. Pending checks wait; failed, cancelled or skipped
@@ -119,15 +133,31 @@ that separation. Repository code could read the provider cache or disclose other
 accessible data. Network destination restrictions and credential encryption are
 not implemented. See the [security risks](../README.md#security-boundary-and-risks).
 
+The signing bootstrap is an explicit mode-`0600` plaintext bearer-token file
+outside repositories; the private key stays in the dedicated vault until resolved
+into temporary container storage. SDLC provides no OS credential store or volume
+encryption. The separate resolver has a 35-second internal timeout, managed
+labels and automatic container removal. Native GitHub login needs no App
+installation; Apps remain an optional alternative when administration permits.
+Offline tests cover native cache/logout and disposable signed publication with
+fake GitHub replies. Connected end-to-end delivery remains unvalidated; follow
+the [Docker GitHub test guide](github-docker-test.md).
+
 ## Progress and resume
 
 Controllers can overlap in one repository using separate captured workspaces and
 branches. Codex and Claude use separate cache leases; the same provider's native
 operations queue through cleanup. Queue waiting is cancellable and appears in
-the dashboard. Runtime builds require exclusive ownership of the shared runtime.
+the dashboard. GitHub profiles have independent cache leases, with authentication/publication
+serialized within each profile on the same runtime image. Runtime builds require
+exclusive ownership of the shared runtime.
 Each integration check invocation uses its own Docker daemon and namespace,
 allowing the same internal service ports across invocations. Host capacity,
 external services, account limits and merge conflicts still need coordination.
+
+The host controller remains a foreground process. Closing its terminal can stop
+execution; detached controller supervision and restart reconciliation are not
+implemented. Closing only the dashboard does not stop a running controller.
 
 `sdlc dashboard` watches registered local runs across repositories without
 contacting providers or controlling execution. It separates controller heartbeat
@@ -155,7 +185,7 @@ and policy refusals also retain a stopped checkpoint. Repair the cause before
 resume; never switch identities or repeatedly restart to evade provider limits.
 
 Resume preserves the original provider/model settings, checks, inputs, runtime
-image and shared instructions. Implementation repairs resume the exact recorded
+image, shared instructions and frozen GitHub/signing identity. Implementation repairs resume the exact recorded
 native session; independent review always starts fresh. Retain the journal and
 native session files. See [resume commands](cli.md#logs-questions-and-resume).
 
@@ -182,8 +212,8 @@ for a human answer. No automatic merge is planned.
 
 The [ticket-stream prompt](prompts/implement-ticket-stream.md) is a design template
 for a harness with prepared repositories and inputs, not the prompt submitted by
-`sdlc run`. Secret-store integration, stream orchestration, broader recovery and
-cleanup management, and an outer-harness `sdlc` skill remain deferred. The SDLC
+`sdlc run`. Stream orchestration, detached controller supervision/restart recovery, OS
+credential-store integration and an outer-harness `sdlc` skill remain deferred. The SDLC
 repository itself continues development on `main`; ticket branches belong to the
 project requesting work.
 

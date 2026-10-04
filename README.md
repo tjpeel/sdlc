@@ -7,14 +7,16 @@ The CLI supports installation and reinstallation, version reporting, building an
 inspecting the shared runtime, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions, and single-ticket execution through checks, a draft PR, CI and
-independent review, and a live dashboard of local runs. Secret-store integration and stacked-ticket orchestration
-remain future work.
+independent review, and a live dashboard of local runs. Dedicated 1Password
+signing-key retrieval is implemented. Detached controller supervision and
+stacked-ticket orchestration remain future work.
 
 ## Get started
 
 For a joint connected trial, follow the [onboarding runbook](docs/onboarding.md).
-It covers a disposable .NET repository, host GitHub access and signing, both
-providers, CI, review/repair and the remaining gates before real tickets.
+It covers a disposable .NET repository, both providers, CI and review/repair.
+Start with the [GitHub profile and signing test guide](docs/github-docker-test.md)
+to provision separate accounts and a dedicated unattended signing key.
 
 From this clone, with Go 1.24 or later and a local Docker engine running Linux
 containers, select an existing directory on your PATH:
@@ -103,10 +105,13 @@ The default implementer is Codex at medium effort; Claude reviews at high effort
 The implementation account must be logged in. If the opposite reviewer has no
 login, delivery proceeds through the draft PR and CI, then pauses at
 `awaiting_reviewer`. Authenticate that provider and resume the recorded run.
-The command signs with configured host Git settings and publishes using host
-`gh`; it leaves the PR draft and never merges. Read the [run guide](docs/cli.md#run-one-ticket)
-and [provider rules](docs/provider-usage.md) before a connected run. No live
-provider run has been validated for this implementation.
+Select a GitHub account with `--github-profile personal` or `work`. Each has a
+separate native login and matching signing profile on the shared image. The Docker
+publisher signs every delivered commit with the dedicated approved key, uses the
+captured project Git name/email, and publishes through native `gh`. It leaves the
+PR draft and never merges. Read the [run guide](docs/cli.md#run-one-ticket)
+and [provider rules](docs/provider-usage.md) before a connected run. No complete live
+provider/publication trial has been validated for this implementation.
 
 Watch registered runs across repositories from another terminal:
 
@@ -176,9 +181,14 @@ The remaining risks are:
   desktop approval must hold usable signing capability and GitHub access.
   Compromising that publisher, its credential resolver or the Docker host can
   misuse them. Use a dedicated signing key and scoped credentials, and keep both
-  away from repository code and test dependencies. The required
-  [unattended Docker publisher](docs/proposals/unattended-docker-delivery.md) is
-  not implemented yet; current publication happens on the host.
+  away from repository code and test dependencies. The publisher is implemented
+  with a read-only native GitHub login volume and tmpfs signing key; neither is
+  mounted in provider or check workers. Native GitHub OAuth access can cover
+  several repositories: a frozen destination limits intended operations, not
+  what a stolen token could access. The explicit Service Account bootstrap file
+  is plaintext, private host storage; OS credential-store integration and
+  detached controller supervision remain future work. See the
+  [credential boundaries](docs/github-credentials.md).
 - **Disposable state has operational costs.** Current workspace changes are
   discarded on interactive-session exit; ticket checkpoints persist privately.
   Provider volumes have no storage quota, so session code
@@ -209,6 +219,7 @@ Running inside SDLC narrows that exposure, while retaining the risks listed abov
 ## Documentation
 
 - [CLI installation and commands](docs/cli.md)
+- [GitHub profiles and unattended signing tests](docs/github-docker-test.md)
 - [Agreed workflow and remaining work](docs/workflow.md)
 - [Development and validation](docs/development.md)
 - [Keeping public commits free of private material](docs/publication-safety.md)

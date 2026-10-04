@@ -10,12 +10,11 @@ checks, captured root `.env` and concurrent nested-Docker port reuse have passed
 The connected delivery path has not yet passed a complete trial. This document
 prepares that trial; it does not record a connected test result.
 
-Unattended execution inside Docker is a required next gate. Steps 1–12 exercise
-the current implementation under supervision: signing/publication still happen
-on the host and the controller stays attached to its terminal. They cannot prove
-unattended delivery. Desktop 1Password approval, remembered signing consent and
-a host `op run` wrapper are not the required production path. See the
-[unattended Docker delivery plan](proposals/unattended-docker-delivery.md).
+The isolated Docker publisher and dedicated 1Password signing route are
+implemented. Start with [GitHub profiles and signing](github-docker-test.md).
+Steps 1–12 test them under supervision; the host controller stays attached to
+its terminal. Terminal-independent execution and restart reconciliation remain
+required gates. See the [delivery plan](proposals/unattended-docker-delivery.md).
 
 Replace `/PATH/TO/SDLC`, `/PATH/TO/NEW_TEST_REPOSITORY` and `OWNER/REPO` with the
 chosen paths and repository. Run each step separately and resolve failures
@@ -31,9 +30,9 @@ Have these available for the session:
   Go and host Codex/Claude binaries are not required after SDLC is installed;
   the provider clients and .NET SDK run in the shared image.
 - Your authorised Codex and Claude accounts, with access to the chosen models.
-  The browser may be needed for initial login. The current supervised host
-  signing trial may need 1Password unlock/approval; required unattended Docker
-  signing must use a separately provisioned machine credential route.
+  The browser may be needed for initial login. Provision a native GitHub profile,
+  a dedicated signing key and a read-only 1Password Service Account using the
+  signing guide. Desktop approval is not the ticket-publication route.
 - A new private GitHub repository with Actions enabled. Create it empty, without
   an initial README, licence or `.gitignore`, so the local baseline can be pushed.
 - The intended Git name, verified or actual GitHub noreply email, and a signing
@@ -122,33 +121,25 @@ not conflict with unattended delivery. Shared instructions apply to all projects
 using this installation. The runtime contains pinned engineering skills and
 agent policies; no host skill directory needs mounting.
 
-## 4 Prepare current host publication for supervised diagnostics
+## 4 Provision the Docker publication profile
 
-Follow [GitHub credentials and commit signing](github-credentials.md) to choose
-either existing host `gh` credential-store login or a repository-scoped token
-supplied by a host secret-store wrapper. Keep the token and private signing key
-on the host for this current path. The required separate Docker publisher is
-not implemented yet; it will receive its own machine credentials while provider
-and test workers continue to receive none.
-
-With the chosen credential route active, check:
+Follow [GitHub profiles and signing](github-docker-test.md) through its signing
+verification step. Use `personal` below, or replace it with your selected profile.
+The new native login must be authorised for the disposable repository, including
+organisation SSO. Existing host SSH access alone does not prove this.
 
 ```sh
-gh auth status --active --hostname github.com
-gh api --hostname github.com user --jq .login
-gh api repos/OWNER/REPO --jq '{full_name,private,default_branch,permissions}'
+sdlc auth status --service github --profile personal --verify
+sdlc signing verify --profile personal
 ```
 
-Expected: the intended account and exact private test repository, with push
-access. The repository query is preparation; an empty repository has no usable
-base commit yet. These reads do not prove PR creation or CI-query permissions;
-the connected trial will exercise those operations. Never use `--show-token` or
-paste a token into the terminal, a remote URL, a ticket or `.env`.
-
-When using the documented 1Password `op run` wrapper, run these `gh` commands and
-each connected `sdlc run` inside the same wrapper. Desktop-authenticated `op` can
-still prompt; this is a diagnostic route. A normal Git clone/push also needs the
-explicit `gh auth git-credential` helper described in that guide.
+Expected: the intended GitHub login/numeric ID and a disposable local commit
+signed and verified with the dedicated key, without a desktop approval prompt.
+No token or private-key output should appear. GitHub repository push permission
+is checked at run launch; actual PR/CI access remains part of the live trial.
+Host `gh` and signing settings below are only for bootstrapping the baseline,
+not for ticket publication. Do not wrap `sdlc run` in a host `op run` credential
+wrapper; the publisher uses its own profile.
 
 ## 5 Export the fixture into the new repository
 
@@ -181,9 +172,10 @@ For SSH signing, also check `gpg.ssh.allowedSignersFile`; SDLC verifies locally
 after signing. Use absolute host paths for trust/key/signer files. Optional
 `gpg.format` may be unset for default OpenPGP signing; optional
 `gpg.ssh.program`/`gpg.program` may be unset when the default signer is correct.
-Resolve signing with the host setup in the credential
-guide before creating the baseline. Keep account, identity and signing settings
-stable through run and resume; current SDLC reads them again at publication.
+Resolve signing for this initial host baseline with your existing approved
+setup. Ticket publication uses the separate Docker signing profile. SDLC freezes
+the project Git identity and approved signer before provider work and requires
+the recorded profile on resume.
 
 ## 6 Add CI before the first ticket
 
@@ -310,6 +302,7 @@ git check-ignore .sdlc/work/dotnet-smoke/specification.md \
 sdlc work --reference dotnet-smoke
 sdlc run --reference dotnet-smoke --ticket 01-count-items.md \
   --input .sdlc/work/dotnet-smoke/specification.md --repo OWNER/REPO \
+  --github-profile personal \
   --docker-tests --dry-run
 ```
 
@@ -330,6 +323,7 @@ requests and can push a branch and create/update a draft PR:
 ```sh
 sdlc run --reference dotnet-smoke --ticket 01-count-items.md \
   --input .sdlc/work/dotnet-smoke/specification.md --repo OWNER/REPO \
+  --github-profile personal \
   --docker-tests
 ```
 
@@ -346,7 +340,7 @@ Record the run ID and PR URL privately. Expected observations are:
 2. The implementation produces the count endpoint and committed candidate.
 3. Build, unit and Compose integration checks run in credential-free workers.
    Mongo and API published ports belong to a separate nested daemon.
-4. The host recreates and signs commits, verifies the tested tree, pushes the
+4. The Docker publisher recreates and signs commits, verifies the tested tree, pushes the
    branch and creates a draft PR. Check its identity and Verified badge.
 5. The exact PR head receives successful CI checks.
 6. Claude independently reviews that published revision. Actionable findings
@@ -404,6 +398,7 @@ should not be repeated after that endpoint has been delivered. Launch with
 ```sh
 sdlc run --reference dotnet-smoke --ticket NUMBERED_FILE \
   --input .sdlc/work/dotnet-smoke/specification.md --repo OWNER/REPO \
+  --github-profile personal \
   --provider claude --docker-tests --dry-run
 ```
 
@@ -419,15 +414,16 @@ dashboard. Separate check daemons can reuse internal ports, as already shown by
 the offline port probe. Concurrency does not resolve conflicting changes,
 inter-ticket dependencies or movement of `main`.
 
-## 13 Validate unattended Docker delivery when implemented
+## 13 Validate unattended publication and future supervision
 
-This is a required acceptance stage, currently blocked on implementation. It is
-not a command supported by today's CLI. One-time joint provisioning will select
-the automation vault, minimal GitHub permissions, approved Git identity and
-dedicated signing key; it will also choose a protected bootstrap store that
-works without desktop approval. No real credentials belong in this public guide.
+The [GitHub/signing test guide](github-docker-test.md) can now prove native cache
+persistence, separate accounts, locked-desktop key retrieval, required signing,
+and bounded denial without model requests. Complete those checks now.
 
-After the separate publisher and controller supervision are implemented, use the
+The controller supervision portion below remains blocked on implementation.
+No real credentials belong in this public guide.
+
+After detached controller supervision is implemented, use the
 disposable repository to prove:
 
 - The 1Password desktop app can be locked or closed, with no personal agent
@@ -458,7 +454,7 @@ remain legitimate attention states.
 | Required joint test | Human attention and interruption recovery | A recorded run resumes the correct native session after a private answer or resolved stop. |
 | Required repository onboarding | Selected API or consumer checks | Existing baseline checks pass; exact SDK/test-runner commands and disposable Compose settings are configured. The first bounded ticket validates that repository's SDLC worker topology. |
 | Required before relying on unattended repair | Connected actionable review feedback | A real finding causes repair, retest and fresh review. Keep this open after a clean trial; offline loop tests alone do not establish connected repair. |
-| Required for unattended Docker delivery | Separate publisher, machine credentials and publication preflight | No desktop unlock/approval after provisioning; required signing, repository/account/identity binding and narrow mounts are validated. Current signing remains optional and publication runs on the host. |
+| Required for unattended Docker delivery | Separate publisher, machine credentials and publication preflight | No desktop unlock/approval after provisioning; required signing, repository/account/identity binding and narrow mounts are validated. The Docker publisher and required signing are implemented and tested offline; live OAuth/SSO, attribution and locked-desktop delivery remain to be proven. |
 | Required for unattended Docker delivery | Docker controller supervision, bootstrap recovery and expiry handling | Terminal closure and safe restart preserve the job; machine credentials remain available without prompts; invalid credentials stop with attention. Current controller is foreground only. |
 
 The connected gates establish the supervised workflow. Both unattended Docker
@@ -488,9 +484,10 @@ gap, and keep private repository material out of public fixtures.
 
 Later items include wider recovery and cleanup controls, stacked
 ticket orchestration, a reliable provider context gauge where native metadata
-permits it, and other-host validation. On-demand App tokens, machine secret
-resolution and detached Docker supervision are required above, not optional later
-improvements. Run capture currently rejects linked worktrees, submodules and
+permits it, and other-host validation. Detached Docker supervision and managed
+bootstrap recovery remain required above. The explicit plaintext-file resolver
+is implemented; OS credential-store integration remains future work. GitHub App
+tokens are an optional alternative where installation is permitted. Run capture currently rejects linked worktrees, submodules and
 symlinks; use a
 compatible ordinary checkout. Broader recovery after external branch/base changes
 is not implemented.

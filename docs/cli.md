@@ -4,7 +4,8 @@ The Go CLI provides local installation/reinstallation, build identity, shared
 runtime image build/status checks, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions and single-ticket runs through publication, CI and independent
-review, plus a live dashboard of local runs. Secret-store access and stacked-ticket orchestration remain future work.
+review, plus a live dashboard of local runs. GitHub profiles and mandatory SSH signing
+use separate Docker containers; stacked-ticket orchestration remains future work.
 
 ## Install or reinstall
 
@@ -84,8 +85,8 @@ custom checks, rather than replacing them with newly detected defaults. It
 rejects unsupported settings versions, invalid paths and unsafe filesystem links.
 No project checks run during initialization. It needs only local Git access;
 it does not fetch source, contact providers, bind an account profile or require
-Docker. `sdlc run` captures source and starts ticket execution; secret-store
-integration remains future work. `sdlc interactive` still opens an empty workspace after initialization.
+Docker. `sdlc run` captures source and starts ticket execution after GitHub and
+signing preflight. `sdlc interactive` still opens an empty workspace after initialization.
 
 If a later setup step fails, earlier completed steps can remain. Fix the reported
 problem and rerun initialization; existing settings and exclude rules are retained.
@@ -154,6 +155,7 @@ recorded paths and hashes. The offline plan cannot prove account or model access
 | `--base` | `main`; must exist locally, be included in source HEAD, and match the GitHub base at publication. |
 | `--branch` | Unique `work/<reference>/<ticket-stem>-<run-prefix>` branch. |
 | `--repo` | GitHub `OWNER/REPO`, inferred from a single credential-free GitHub origin URL. |
+| `--github-profile` | `default`; selects an independent GitHub login and its matching named signing configuration. |
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
 | `--docker-tests` | Enable the separate privileged integration-test daemon. |
@@ -161,6 +163,11 @@ recorded paths and hashes. The offline plan cannot prove account or model access
 | `--resume` | Continue a recorded run ID with its original settings. |
 | `--answer-file` | Bounded nonempty UTF-8 human answer, only with `--resume`. |
 | `--dry-run` | Print an offline plan. |
+
+Before execution, configure the selected [GitHub and signing profile](#github-login-and-signing).
+SDLC freezes its account ID, repository ID/canonical name, effective project Git
+name/email, signing public key and runtime image. A changed identity or missing
+push permission stops the run. It uses no host GitHub credential fallback.
 
 The implementation login is required before launch. A missing opposite-provider
 login allows implementation, local checks, draft PR publication and CI to finish,
@@ -267,12 +274,23 @@ enforced execution boundary: repository code can still read its provider cache
 or send accessible data over the network. Review the [remaining risks](../README.md#security-boundary-and-risks).
 
 After passing checks and the implementation's whole-ticket local review, the
-host controller imports the candidate bundle into separate Git metadata. It
-recreates commits using configured host identity and signing settings, verifies
-signatures when signing is enabled, and checks that the final tree matches the
-verified tree. Host `git` and authenticated `gh` publish the branch and create or
-update a draft PR. Configure host Git identity/signing and `gh auth login` first;
-secret-store retrieval is not implemented. Workers receive no publication access.
+host controller starts the trusted publisher baked into the runtime image. It
+imports the candidate bundle into controlled Git metadata without running project
+code. It requires check evidence for the recorded candidate head and tree,
+recreates every delivered commit with the frozen Git identity and dedicated
+Ed25519 key, verifies signatures against the approved public key, and confirms
+the signed tree matches the checked tree. Account/repository IDs, canonical
+repository name, push permission, base and expected remote head are checked
+before publication; an exact push lease rejects competing branch changes.
+
+The publisher receives the selected GitHub profile volume read-only and the
+resolved signing key through stdin into private tmpfs. It removes the key file
+before push. The separate official 1Password CLI container receives its bootstrap
+token over stdin, has a 35-second internal timeout and is removed after use.
+Neither container receives provider caches, host GitHub configuration, a desktop
+SSH agent or a Docker socket. No GitHub App installation is required for this
+native CLI route. See the [Docker GitHub test guide](github-docker-test.md).
+A connected end-to-end provider, vault and GitHub delivery has not yet been validated.
 
 Every reported PR check must pass on the recorded current base/head. Pending
 checks are polled; failures, cancellation and skipping require repair. When no
@@ -330,6 +348,9 @@ For reviewer login or an operational stop, resume without an answer file:
 sdlc auth login --provider claude
 sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --resume RECORDED_RUN_ID
 ```
+
+Resume retains the recorded GitHub profile, account/repository IDs and signing
+identity; it does not switch accounts or signing configurations.
 
 Resume accepts only `--reference`, `--ticket`, `--resume`, `--answer-file`,
 `--timeout` and `--dry-run`. Implementation turns and repairs resume the exact
@@ -435,7 +456,13 @@ installation. Waiting is cancellable and makes no FIFO or fairness guarantee.
 inside the registered controller before implementation, so queued runs remain
 visible in the dashboard. Reviewer authentication is checked at the review stage.
 
-Provider operations hold a shared runtime lease. Runtime builds need exclusive
+GitHub profiles such as `personal` and `work` use separate native caches and
+leases while sharing the runtime image. Authentication and publication serialize
+within one profile; separate profiles can coexist. Codex and Claude still each
+have one account cache per installation. Profile selection does not authorise
+switching identities to evade limits or access denials.
+
+Provider and GitHub operations hold a shared runtime lease. Runtime builds need exclusive
 ownership and retain their existing immediate failure when the runtime is in use.
 A provider waiting behind a build checks runtime identity after acquiring its
 lease; an existing run still rejects an image that differs from its recorded image.
@@ -463,8 +490,11 @@ sdlc runtime build --source .
 sdlc runtime status
 ```
 
-The build uses only `runtime/` as its Docker context and the dependency and
-catalogue pins in its Dockerfile. It supplies no account profile, signing key,
+The build prepares a private temporary context containing only the allowlisted
+runtime assets and the publisher's Go source/import closure and approved embedded
+helpers. Symlinks, special files and oversized inputs are rejected. The pinned Go
+builder produces a static publisher; only its binary enters the final image.
+The Dockerfile retains the dependency and catalogue pins. It supplies no account profile, signing key,
 GitHub token or provider login. Skills and agents come from the pinned public
 GitHub repositories during the image build.
 
@@ -496,8 +526,9 @@ docker image rm sdlc-codex-spike:local
 
 The new tag points to the same image ID, so the runtime record and provider login
 volumes remain valid. Remove the old tag only after status succeeds; this keeps
-superseded-image cleanup working on the next build. No image rebuild or provider
-login is needed for this rename. See Docker's [image tagging](https://docs.docker.com/reference/cli/docker/image/tag/)
+superseded-image cleanup working on the next build. The tag rename itself preserves provider login. Rebuild from the current SDLC
+source to add the baked publisher before using the new publication route; the
+credential volumes remain separate. See Docker's [image tagging](https://docs.docker.com/reference/cli/docker/image/tag/)
 and [image removal](https://docs.docker.com/reference/cli/docker/image/rm/) documentation.
 
 ## Inspect the runtime
@@ -571,6 +602,71 @@ engine and image identity; reinstalling the executable preserves it.
 macOS/ARM64 installation, reinstallation and local image build have been checked.
 Both commands cross compile for macOS, Linux and Windows on ARM64 and x86-64.
 Native Linux and Windows CLI execution still needs verification.
+
+## GitHub login and signing
+
+Authenticate each intended GitHub account through the official CLI's browser/device
+flow in an isolated container. Keep the login terminal private:
+
+```sh
+sdlc auth login --service github --profile personal
+sdlc auth status --service github --profile personal
+sdlc auth status --service github --profile personal --verify
+sdlc auth logout --service github --profile personal
+```
+
+Omit `--profile` for `default`. Names use 1–48 lowercase letters, digits, hyphens
+or underscores and start with a letter or digit. Use a separate profile for each
+account, for example `personal` and `work`; both share the same runtime image.
+The native login uses HTTPS and stores its own `gh` file-backed credentials in a
+private managed volume. These are persistent plaintext credentials: SDLC does
+not encrypt Docker volumes. Rebuilds and reinstalls preserve them. Host tokens,
+host `gh` configuration and another profile's active account cannot override the
+selected cache. A profile with stored login refuses another login. Verify it
+with `status --verify`; log out before reauthorizing or changing accounts, or
+create a separate profile for another account. Logout removes the local native login; it does not revoke remote
+authority or delete the volume.
+
+Default status checks private cache storage offline, without proving token
+validity or account access. `--verify` explicitly contacts GitHub through native
+`gh auth status`, then prints the selected login and numeric account ID. It
+never prints a token or raw native diagnostics.
+Publication verifies the numeric account and repository IDs and push permission.
+It stops on a mismatch rather than switching accounts.
+
+Configure a dedicated Ed25519 signing key through the official 1Password CLI
+Service Account route. Use a private profile JSON with the key reference, public
+key/fingerprint and an absolute path to a mode-`0600` bootstrap token file outside
+repositories. Store only the public key metadata and references in the profile;
+keep the private key in the dedicated vault. See [credential setup](github-credentials.md).
+
+```sh
+sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
+sdlc signing verify --profile personal
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --github-profile personal
+```
+
+`signing verify` uses the saved profile and official 1Password resolver, then
+signs and verifies a disposable Git commit against the expected public key and
+fingerprint in a separate network-disabled Docker container. Secret retrieval
+contacts the configured vault; this command makes no GitHub or model request.
+It checks the local signing route, not GitHub Verified attribution. `--file` is
+for `signing configure` only; both commands default to the `default` profile.
+
+The signing configuration name must match the selected GitHub profile. Provision
+the public key as a GitHub signing key for the intended account and Git email.
+Signing is mandatory; missing vault access, bootstrap or the approved key stops
+publication. The bootstrap file is itself a persistent plaintext bearer secret.
+Restrict its permissions, keep it out of source/build contexts and use host disk
+protection. OS credential-store integration is not implemented. No desktop
+1Password approval or forwarded personal SSH agent is used by this route.
+
+Unattended signing currently requires macOS or Linux host file ownership
+checks. Windows signing stops until equivalent ownership protection is
+implemented; installation and other CLI capabilities have their own support.
+
+For the disposable trial and current validation limits, use the
+[Docker GitHub test guide](github-docker-test.md).
 
 ## Provider login
 
@@ -654,8 +750,7 @@ through a local rebuild.
 
 Treat these volumes as passwords. They are file-backed Docker storage, without
 encryption supplied by SDLC; anyone with Docker administration access can read
-them. This persistence is separate from the planned 1Password integration for
-work secrets. SDLC refuses to mount volumes with unexpected ownership labels,
+them. This persistence is separate from the 1Password signing-key resolver. SDLC refuses to mount volumes with unexpected ownership labels,
 drivers or driver options, and refuses linked or publicly readable credential
 files.
 
