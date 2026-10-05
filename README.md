@@ -146,11 +146,18 @@ Watch registered runs across repositories from another terminal:
 sdlc dashboard
 sdlc dashboard --run RECORDED_RUN_ID --logs
 sdlc dashboard --json
+sdlc dashboard --page 2
+sdlc dashboard --notify desktop --sound
 ```
 
 The dashboard shows heartbeat status, current stage and model, questions, check
 results and PR links. It puts attention items first and reads private run state
-without contacting providers. Closing it leaves controllers working. Headless
+without contacting providers. Ten runs appear per page; completed work follows
+questions, problems and active work. `dashboard forget --run RUN_ID` hides a
+stopped run while preserving all saved work. Private report export and retention
+are described in [run history](docs/run-history.md). Optional local macOS alerts
+use `--notify desktop --sound`; add this to `sdlc run` for alerts without an open
+dashboard. Closing the dashboard leaves controllers working. Headless
 controllers remain attached to their original terminal; detached execution is
 future work. See the [dashboard guide](docs/cli.md#watch-local-runs).
 

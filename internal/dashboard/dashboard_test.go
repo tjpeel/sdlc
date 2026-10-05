@@ -30,7 +30,7 @@ func TestOrderedPutsQuestionsAndBrokenControllersBeforeReadyAndActiveRuns(t *tes
 	for _, view := range ordered {
 		ids = append(ids, view.ID)
 	}
-	want := []string{"question", "stale", "unavailable", "blocked-old", "ready", "active"}
+	want := []string{"question", "stale", "unavailable", "blocked-old", "active", "ready"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("attention order: %v, want %v", ids, want)
 	}

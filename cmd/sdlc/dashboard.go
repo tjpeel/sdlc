@@ -12,16 +12,19 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/dashboard"
+	"github.com/tjpeel/sdlc/internal/notify"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
 
-const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--run RUN_ID] [--logs] [--interval 2s]\nShows registered local runs across repositories, with attention items first.\nA terminal refreshes live by default; redirected output produces one snapshot.\n--run accepts a full ID or a unique prefix of at least six characters.\n--logs adds a bounded private output tail to a selected run.\nClosing the dashboard leaves run controllers working."
+const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--page N] [--run RUN_ID] [--logs] [--interval 2s]\n  [--notify off|desktop|bell] [--sound]\nHistory: sdlc dashboard forget --run RUN_ID\nExport: sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY\nShows at most ten runs per page: questions, problems, queued/running work, then completed work.\nA terminal refreshes live by default; redirected output produces one snapshot.\nIn a live terminal: n Enter = next page, p Enter = previous page, q Enter = close.\n--run accepts a full ID or a unique prefix of at least six characters.\n--logs adds a bounded private output tail to a selected run.\nforget removes a stopped run from the dashboard and retains all saved work.\nNotifications are optional and report fixed messages without private work details.\nClosing the dashboard leaves run controllers working."
 
 type dashboardOptions struct {
 	once, watch, json, logs bool
 	run                     string
 	interval                time.Duration
+	page                    int
+	notifications           notify.Options
 }
 
 func parseDashboardOptions(args []string) (dashboardOptions, error) {
@@ -33,6 +36,9 @@ func parseDashboardOptions(args []string) (dashboardOptions, error) {
 	flags.BoolVar(&options.json, "json", false, "one JSON snapshot")
 	flags.BoolVar(&options.logs, "logs", false, "bounded private output tail")
 	flags.StringVar(&options.run, "run", "", "selected run ID or unique prefix")
+	flags.IntVar(&options.page, "page", 1, "history page, ten runs per page")
+	flags.StringVar(&options.notifications.Mode, "notify", "off", "local notifications: off, desktop or bell")
+	flags.BoolVar(&options.notifications.Sound, "sound", false, "desktop notification sound")
 	flags.DurationVar(&options.interval, "interval", 2*time.Second, "refresh interval")
 	if err := flags.Parse(args); err != nil {
 		return options, err
@@ -46,6 +52,15 @@ func parseDashboardOptions(args []string) (dashboardOptions, error) {
 	if options.interval < 250*time.Millisecond || options.interval > time.Minute {
 		return options, fmt.Errorf("refresh interval must be between 250ms and 1m")
 	}
+	if options.page < 1 || (options.run != "" && options.page != 1) {
+		return options, fmt.Errorf("page must be positive and only applies to the overview")
+	}
+	if err := options.notifications.Validate(); err != nil {
+		return options, err
+	}
+	if options.notifications.Mode != "off" && (options.once || options.json) {
+		return options, fmt.Errorf("notifications require a watching dashboard")
+	}
 	return options, nil
 }
 
@@ -58,8 +73,18 @@ func dashboardTerminal(output io.Writer) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0 && file.Name() != os.DevNull
 }
 
-// dashboardCommand only reads installation metadata and run-local status/logs.
+// The overview only reads local metadata. Forget is an explicit index mutation.
 func dashboardCommand(ctx context.Context, args []string, output io.Writer) error {
+	return dashboardCommandWithNotifications(ctx, args, output, notify.New)
+}
+
+func dashboardCommandWithNotifications(ctx context.Context, args []string, output io.Writer, newSender func(notify.Options, io.Writer) (notify.Sender, error)) error {
+	if len(args) > 0 && args[0] == "export" {
+		return dashboardExportCommand(ctx, args[1:], output)
+	}
+	if len(args) > 0 && (args[0] == "forget" || args[0] == "remove") {
+		return dashboardForgetCommand(ctx, args[1:], output)
+	}
 	options, err := parseDashboardOptions(args)
 	if errors.Is(err, flag.ErrHelp) {
 		_, err = fmt.Fprintln(output, dashboardUsage)
@@ -75,6 +100,25 @@ func dashboardCommand(ctx context.Context, args []string, output io.Writer) erro
 	registry := runstatus.New(runtime.Directory)
 	terminal := dashboardTerminal(output)
 	watch := options.watch || (terminal && !options.once && !options.json)
+	if options.notifications.Mode != "off" && !watch {
+		return fmt.Errorf("notifications require --watch or a live terminal")
+	}
+	if options.notifications.Mode == "bell" && !terminal {
+		return fmt.Errorf("bell notifications require a terminal")
+	}
+	sender, err := newSender(options.notifications, output)
+	if err != nil {
+		return err
+	}
+	observer := notify.NewObserver(sender)
+	warned := false
+	var commands <-chan string
+	if terminal && watch && options.run == "" {
+		if input, openErr := openDashboardInput(); openErr == nil {
+			defer input.Close()
+			commands = readDashboardInput(ctx, input)
+		}
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -85,6 +129,14 @@ func dashboardCommand(ctx context.Context, args []string, output io.Writer) erro
 			return err
 		}
 		views = dashboard.Ordered(views)
+		newWarning := false
+		if options.notifications.Mode != "off" {
+			notificationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			newWarning = observer.Observe(notificationCtx, views) != nil && !warned
+			cancel()
+		}
+		warned = warned || newWarning
+		allViews := views
 		if options.run != "" {
 			selected, err := dashboard.Select(views, options.run)
 			if err != nil {
@@ -98,12 +150,21 @@ func dashboardCommand(ctx context.Context, args []string, output io.Writer) erro
 			}
 		}
 		if options.json {
-			return writeDashboardJSON(output, views, now)
+			rows, page := dashboard.Page(views, options.page)
+			return writeDashboardJSONPage(output, rows, now, page)
 		}
 		if options.run != "" {
 			err = dashboard.Detail(output, views[0], now, options.logs)
 		} else {
-			err = dashboard.List(output, views, now)
+			_, page := dashboard.Page(allViews, options.page)
+			options.page = page.Page
+			err = dashboard.ListPage(output, allViews, now, options.page)
+			if commands != nil && err == nil {
+				_, err = fmt.Fprintln(output, "Live paging: n Enter / p Enter. Close: q Enter.")
+			}
+		}
+		if err == nil && (newWarning || terminal && warned) {
+			_, err = fmt.Fprintln(output, "SDLC could not deliver a local notification; check local notification settings. Runs continue.")
 		}
 		if err != nil || !watch {
 			return err
@@ -114,12 +175,28 @@ func dashboardCommand(ctx context.Context, args []string, output io.Writer) erro
 			timer.Stop()
 			return nil
 		case <-timer.C:
+		case command, ok := <-commands:
+			timer.Stop()
+			if !ok {
+				commands = nil
+				continue
+			}
+			page, quit := dashboardPageAction(options.page, command)
+			if quit {
+				return nil
+			}
+			options.page = page
 		}
 	}
 }
 
 // Exclude the full journal: it contains prompts and implementation instructions.
 func writeDashboardJSON(output io.Writer, views []runstatus.View, now time.Time) error {
+	rows, page := dashboard.Page(views, 1)
+	return writeDashboardJSONPage(output, rows, now, page)
+}
+
+func writeDashboardJSONPage(output io.Writer, views []runstatus.View, now time.Time, page dashboard.Pagination) error {
 	type row struct {
 		ID              string          `json:"id"`
 		Root            string          `json:"root"`
@@ -158,5 +235,6 @@ func writeDashboardJSON(output io.Writer, views []runstatus.View, now time.Time)
 		Version int       `json:"version"`
 		At      time.Time `json:"at"`
 		Runs    []row     `json:"runs"`
-	}{1, now, rows})
+		dashboard.Pagination
+	}{1, now, rows, page})
 }

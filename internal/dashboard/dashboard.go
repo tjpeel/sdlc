@@ -73,6 +73,9 @@ func priority(v runstatus.View) int {
 	if !v.Available || v.State == "blocked" || v.State == "failed" || v.Stale || (v.Stopped && v.NeedsAttention && v.State != "ready" && v.State != "awaiting_reviewer") {
 		return 1
 	}
+	if v.State == "ready" {
+		return 4
+	}
 	if v.NeedsAttention {
 		return 2
 	}
@@ -114,6 +117,42 @@ func Select(views []runstatus.View, id string) (runstatus.View, error) {
 }
 
 func List(output io.Writer, views []runstatus.View, now time.Time) error {
+	return ListPage(output, views, now, 1)
+}
+
+// PageSize bounds every overview, including redirected output and JSON.
+const PageSize = 10
+
+type Pagination struct {
+	Page     int `json:"page"`
+	PageSize int `json:"page_size"`
+	Total    int `json:"total"`
+	Pages    int `json:"pages"`
+}
+
+// Page clamps a page after removals and keeps attention ordering across history.
+func Page(views []runstatus.View, requested int) ([]runstatus.View, Pagination) {
+	ordered := Ordered(views)
+	pages := (len(ordered) + PageSize - 1) / PageSize
+	if pages == 0 {
+		pages = 1
+	}
+	if requested < 1 {
+		requested = 1
+	}
+	if requested > pages {
+		requested = pages
+	}
+	start := (requested - 1) * PageSize
+	end := start + PageSize
+	if end > len(ordered) {
+		end = len(ordered)
+	}
+	return ordered[start:end], Pagination{requested, PageSize, len(ordered), pages}
+}
+
+func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested int) error {
+	rows, page := Page(views, requested)
 	live, attention := 0, 0
 	for _, v := range views {
 		if v.Live {
@@ -130,10 +169,13 @@ func List(output io.Writer, views []runstatus.View, now time.Time) error {
 		_, err := fmt.Fprintln(output, "No registered runs. New runs register when their controller starts; resume older runs to register them.")
 		return err
 	}
+	if _, err := fmt.Fprintf(output, "Page %d/%d  |  showing %d–%d of %d (up to %d per page)\n\n", page.Page, page.Pages, (page.Page-1)*PageSize+1, (page.Page-1)*PageSize+len(rows), page.Total, PageSize); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(output, "%-4s %-12s %-17s %-21s %-19s %-8s %-7s %-7s\n", "", "RUN", "REPOSITORY", "TICKET", "STAGE", "CONTROL", "PROVIDER", "ACTIVITY"); err != nil {
 		return err
 	}
-	for _, v := range Ordered(views) {
+	for _, v := range rows {
 		mark := ""
 		if v.NeedsAttention {
 			mark = "!"
@@ -163,7 +205,7 @@ func List(output io.Writer, views []runstatus.View, now time.Time) error {
 			}
 		}
 	}
-	_, err := fmt.Fprintln(output, "\nSelect: sdlc dashboard --run RUN_ID   Snapshot: --once   JSON: --json\nCtrl-C closes this view; run controllers continue independently.")
+	_, err := fmt.Fprintln(output, "\nSelect: sdlc dashboard --run RUN_ID   History: --page N   Snapshot: --once   JSON: --json\nRemove from dashboard: sdlc dashboard forget --run RUN_ID (saved work is retained)\nCtrl-C closes this view; run controllers continue independently.")
 	return err
 }
 

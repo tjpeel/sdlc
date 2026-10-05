@@ -20,6 +20,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/instructions"
+	"github.com/tjpeel/sdlc/internal/notify"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runstatus"
@@ -30,7 +31,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -48,6 +49,7 @@ type runOptions struct {
 	inputs                                                                                                                             selectedInputs
 	dockerTests, dryRun                                                                                                                bool
 	timeout                                                                                                                            time.Duration
+	notifications                                                                                                                      notify.Options
 }
 
 func parseRunOptions(args []string) (runOptions, error) {
@@ -71,6 +73,8 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.BoolVar(&options.dockerTests, "docker-tests", false, "enable privileged Docker integration-test daemon")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "print selection without Docker, login checks or execution")
 	flags.DurationVar(&options.timeout, "timeout", 2*time.Hour, "maximum duration of this controller invocation")
+	flags.StringVar(&options.notifications.Mode, "notify", "off", "local notifications: off, desktop or bell")
+	flags.BoolVar(&options.notifications.Sound, "sound", false, "desktop notification sound")
 	if err := flags.Parse(args); err != nil {
 		return options, err
 	}
@@ -95,11 +99,14 @@ func parseRunOptions(args []string) (runOptions, error) {
 	if options.timeout < time.Minute || options.timeout > 24*time.Hour {
 		return options, fmt.Errorf("timeout must be between 1m and 24h")
 	}
+	if err := options.notifications.Validate(); err != nil {
+		return options, err
+	}
 	if options.resume != "" {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "reference", "ticket", "resume", "answer-file", "timeout", "dry-run":
+			case "reference", "ticket", "resume", "answer-file", "timeout", "dry-run", "notify", "sound":
 			default:
 				invalid = f.Name
 			}
@@ -122,6 +129,14 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if options.notifications.Mode == "bell" && !dashboardTerminal(output) {
+		return fmt.Errorf("bell notifications require a terminal; use desktop for unattended runs")
+	}
+	sender, err := notify.New(options.notifications, output)
+	if err != nil {
+		return err
+	}
+	observe := runNotifications(ctx, output, sender)
 	ctx, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	current, err := os.Getwd()
@@ -331,12 +346,27 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)
+		if err == nil {
+			// Resume may resolve an old question or failure immediately. Seed an
+			// active baseline and alert only if the controller stops there again.
+			observe(runNotificationBaseline(snapshot), false)
+		}
 		return err
 	}
-	runner.OnState = func(snapshot workrun.Journal) error { return tracker.Update(snapshot) }
+	runner.OnState = func(snapshot workrun.Journal) error {
+		if err := tracker.Update(snapshot); err != nil {
+			return err
+		}
+		observe(snapshot, false)
+		return nil
+	}
 	runner.OnOutput = func(data []byte) { tracker.Activity(data) }
 	runner.OnNativeOutput = func(data []byte) { tracker.NativeEvent(data) }
-	runner.OnFinish = func() error { return tracker.Close() }
+	runner.OnFinish = func() error {
+		err := tracker.Close()
+		observe(journal, true)
+		return err
+	}
 	err = runner.Run(ctx, directory, &journal, answer)
 	fmt.Fprintf(output, "Private run state: %q\nResume: sdlc run --reference %q --ticket %q --resume %s\n", directory, options.reference, ticket, journal.ID)
 	return err

@@ -417,21 +417,29 @@ cannot guarantee that a provider stops before returning its handoff.
 sdlc dashboard
 sdlc dashboard --once
 sdlc dashboard --json
+sdlc dashboard --page 2
+sdlc dashboard --notify desktop --sound
 sdlc dashboard --run RECORDED_RUN_ID --logs
+sdlc dashboard forget --run RECORDED_RUN_ID
 ```
 
 The dashboard reads the installation's private run registry across repositories.
-It needs neither Docker nor provider login and never resumes, stops or modifies a
-run. Attention items appear first: human questions, failures, unavailable state,
-stale or interrupted controllers, missing reviewer login and draft PRs ready for
-human review. A fresh heartbeat means the controller is live; elapsed time and
+Viewing needs neither Docker nor provider login and does not resume or stop a
+run. Human questions appear first, then failures, unavailable state, stale or
+interrupted controllers, missing reviewer login, queued/running work and finally
+completed draft PRs ready for human review. Within each group, newer updates come
+first. Every overview, including JSON, contains at most ten runs; `--page N` pages
+through the complete ordered history. JSON also reports page, page size, total
+and page count. Page numbers clamp when the history shrinks. A fresh heartbeat
+means the controller is live; elapsed time and
 stage do not estimate percentage completion. Long sessions can be quiet without
 being stale. Missing or corrupt records remain visible as unavailable.
 
 In a terminal, the view refreshes every two seconds. Redirected output defaults to
 one snapshot. Use `--watch` to append snapshots to redirected output, `--once` for
-one terminal snapshot, or `--json` for one structured snapshot. Set `--interval`
-between `250ms` and `1m`. `--run` accepts a full run ID or a unique hexadecimal
+one terminal snapshot, or `--json` for one structured snapshot. In a live terminal,
+type `n` then Enter for the next page, `p` then Enter for the previous page, or `q`
+then Enter to close. Set `--interval` between `250ms` and `1m`. `--run` accepts a full run ID or a unique hexadecimal
 prefix of at least six characters. Details include questions, findings, check
 evidence, PR links and the existing resume command. Optional `--logs` reads a
 bounded tail from that selected run's private output; it requires `--run` and
@@ -452,6 +460,39 @@ process; its original terminal must stay open. Headless means no provider termin
 UI, rather than detached execution. Resume older runs to register them; dry runs
 do not register. The registry and logs can contain private repository paths and
 work details, so keep dashboard output private too.
+
+Runs have no automatic expiry. `dashboard forget --run RUN_ID` (also `remove`)
+removes one stopped run's registry entry while keeping its journal, logs, inputs,
+workspace and lock files. It checks the actual controller lock; a stale heartbeat
+alone is insufficient. Resuming re-registers the retained run. Corrupt records or
+missing run directories must be repaired before removal. Removal and report
+export currently fail closed on Windows because Unix ownership checks do not
+establish private Windows file ownership.
+
+Use `sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY` before forgetting
+a run to keep a portable checkpoint report outside Git checkouts. The destination
+must already exist with mode `0700`; reports have mode `0600` and cannot overwrite
+an existing export. See [run history and retention](run-history.md) for the report
+contents, full artifact inventory and backup guidance.
+
+Optional `--notify desktop [--sound]` sends fixed local macOS notifications for
+human questions, blocked/failed/interrupted runs, missing reviewer login and new
+completions. A watching dashboard also detects unavailable records and stale
+heartbeats, including runs on another page or outside a selected detail view.
+`--notify bell` rings the terminal bell and requires a terminal. Notifications
+default to `off`; desktop delivery can be suppressed by macOS notification or
+Focus settings. Sound requires desktop mode. No repository names, ticket text,
+questions, paths or logs enter notification messages.
+
+For alerts while the dashboard is closed, add the same `--notify desktop --sound`
+flags to `sdlc run`, including resume. This host preference does not change frozen
+execution settings. Each controller/watcher deduplicates unchanged attention
+states and keeps existing completed history quiet at startup. Starting another
+watcher can repeat current attention alerts; enabling both run and dashboard
+alerts can produce duplicates. Notification delivery failures do not stop runs.
+A controller cannot report its own sudden death; leave a watching dashboard open
+for stale-heartbeat alerts. No email, webhook or remote notification service is
+contacted.
 
 ## Concurrent runs and account caches
 

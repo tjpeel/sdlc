@@ -171,8 +171,15 @@ implemented. Closing only the dashboard does not stop a running controller.
 `sdlc dashboard` watches registered local runs across repositories without
 contacting providers or controlling execution. It separates controller heartbeat
 from output activity, displays attention reasons and retains unavailable records.
-Select details with `--run RUN_ID`, optionally adding `--logs` for a bounded private
-tail. Usage fields are optional native measurements; aggregate counters never
+Overviews show ten runs per page, with completed work below attention items and
+active work. Use `--page N`, or n/p followed by Enter in a live terminal, to page
+history. Select details with `--run RUN_ID`, optionally adding `--logs` for a bounded
+private tail. `dashboard forget --run RUN_ID` removes only the registration after
+checking controller ownership. Saved work has no automatic expiry. Private
+`dashboard export` reports and full backup guidance are in [run history](run-history.md).
+Optional local macOS notifications use `--notify desktop --sound` on the run or
+watching dashboard. Dashboard alerts also cover stale controllers; delivery
+failure cannot stop ticket execution. Usage fields are optional native measurements; aggregate counters never
 stand in for current context occupancy. See the [dashboard guide](cli.md#watch-local-runs).
 
 Private state is stored under:
@@ -221,8 +228,8 @@ for a human answer. No automatic merge is planned.
 
 The [ticket-stream prompt](prompts/implement-ticket-stream.md) is a design template
 for a harness with prepared repositories and inputs, not the prompt submitted by
-`sdlc run`. Stream orchestration, detached controller supervision/restart recovery, OS
-credential-store integration and an outer-harness `sdlc` skill remain deferred. The SDLC
+`sdlc run`. Stream orchestration, detached controller supervision/restart recovery
+and an outer-harness `sdlc` skill remain deferred. The SDLC
 repository itself continues development on `main`; ticket branches belong to the
 project requesting work.
 
