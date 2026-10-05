@@ -218,17 +218,33 @@ func TestRunnerMissingReviewerResumesWithoutImplementation(t *testing.T) {
 	}
 }
 func TestRunnerReviewFindingsRepairSameSession(t *testing.T) {
-	dir, j := testRun(t)
-	review := testOutcome("reviewed")
-	review.Findings = []Finding{{Priority: "P1", Path: "app.go", Line: 1, Scenario: "nil input panics", Recommendation: "guard nil input"}}
-	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), review, testOutcome("implemented"), testOutcome("reviewed")}}
-	pub := &fakePublisher{}
-	r := fakeRunner(p, &fakeChecker{}, pub, &fakeRepository{})
-	if err := r.Run(context.Background(), dir, j, ""); err != nil {
-		t.Fatal(err)
-	}
-	if len(p.calls) != 4 || p.calls[2].ResumeID != testNative || p.calls[2].Model != p.calls[0].Model || !strings.Contains(p.calls[2].Prompt, "nil input panics") || p.calls[3].ResumeID != "" || p.calls[1].Directory == p.calls[3].Directory || pub.previous[1].Number != 1 {
-		t.Fatal("repair lost session, findings, fresh review, or existing PR")
+	defaults := DefaultModels()
+	for _, roles := range []Roles{defaults.Codex, defaults.Claude} {
+		t.Run(roles.Implementation.Provider, func(t *testing.T) {
+			dir, j := testRun(t)
+			j.Plan.Roles = roles
+			review := testOutcome("reviewed")
+			review.Findings = []Finding{{Priority: "P1", Path: "app.go", Line: 1, Scenario: "nil input panics", Recommendation: "guard nil input"}}
+			p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), review, testOutcome("implemented"), testOutcome("reviewed")}}
+			pub := &fakePublisher{}
+			checks := &fakeChecker{}
+			r := fakeRunner(p, checks, pub, &fakeRepository{})
+			if err := r.Run(context.Background(), dir, j, ""); err != nil {
+				t.Fatal(err)
+			}
+			// This fixture keeps the tree unchanged, so its passing checks remain valid.
+			if len(p.calls) != 4 || pub.calls != 2 || pub.ci < 2 || checks.calls != 1 {
+				t.Fatalf("unexpected repair stages: sessions=%d publications=%d CI=%d checks=%d", len(p.calls), pub.calls, pub.ci, checks.calls)
+			}
+			for i, expected := range []Model{roles.Implementation, roles.Review, roles.Implementation, roles.Review} {
+				if p.calls[i].Model != expected {
+					t.Fatalf("stage %d used the wrong provider, model or reasoning: %+v", i, p.calls[i].Model)
+				}
+			}
+			if p.calls[2].ResumeID != testNative || !strings.Contains(p.calls[2].Prompt, "nil input panics") || p.calls[1].ResumeID != "" || p.calls[3].ResumeID != "" || p.calls[1].Directory == p.calls[3].Directory || pub.previous[1].Number != 1 {
+				t.Fatal("repair lost session, findings, fresh review, or existing PR")
+			}
+		})
 	}
 }
 func TestRunnerHumanQuestionRequiresAnswer(t *testing.T) {
