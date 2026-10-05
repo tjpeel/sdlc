@@ -138,8 +138,8 @@ func materializeSnapshot(ctx context.Context, root, sha string) error {
 		}
 		meta, path, ok := strings.Cut(entry, "\t")
 		fields := strings.Fields(meta)
-		if !ok || len(fields) != 3 || (fields[0] != "100644" && fields[0] != "100755") || excluded(path) || filepath.IsAbs(path) || strings.Contains(path, "..") {
-			return errors.New("snapshot tree contains unsupported or private path")
+		if !ok || len(fields) != 3 || (fields[0] != "100644" && fields[0] != "100755") || trackedExcluded(path) || filepath.IsAbs(path) || strings.Contains(path, "..") {
+			return fmt.Errorf("snapshot tree contains unsupported or private path: %q", path)
 		}
 		data, err := isolatedGit(ctx, root, "show", sha+":"+path)
 		if err != nil {
@@ -157,5 +157,8 @@ func materializeSnapshot(ctx context.Context, root, sha string) error {
 			return err
 		}
 	}
-	return nil
+	// Capture distinguishes committed templates from untracked environment
+	// files using the source index. Populate it without running checkout filters.
+	_, err = isolatedGit(ctx, root, "read-tree", sha)
+	return err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -264,6 +265,123 @@ func TestCaptureRejectsSourceBehindOrDivergedFromSelectedBase(t *testing.T) {
 			}
 			if head := git("rev-parse", "HEAD"); head != launch.Head {
 				t.Fatal("capture changed source HEAD")
+			}
+		})
+	}
+}
+
+func captureTemplateFixture(t *testing.T, launch project.LaunchResult, destination string, snapshot bool) error {
+	t.Helper()
+	ctx := context.Background()
+	if !snapshot {
+		_, err := Capture(ctx, launch, destination, "ticket-work", "main", "example/repository", Roles{})
+		return err
+	}
+	bundle := filepath.Join(realTemp(t), "source.bundle")
+	if _, err := isolatedGit(ctx, launch.Root, "update-ref", "refs/sdlc/snapshot", launch.Head); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := isolatedGit(ctx, launch.Root, "bundle", "create", bundle, "refs/sdlc/snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := CaptureSnapshot(ctx, launch, BranchSnapshot{Branch: "main", SHA: launch.Head, Bundle: bundle}, destination, "ticket-work", "example/repository", Roles{})
+	return err
+}
+
+func commitSourceFixture(t *testing.T, root string, launch *project.LaunchResult) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := SafeGit(ctx, root, "commit", "-m", "Add public test fixture"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := SafeGit(ctx, root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch.Head = strings.TrimSpace(head)
+}
+
+func TestCaptureRetainsCommittedEnvironmentTemplate(t *testing.T) {
+	for _, snapshot := range []bool{false, true} {
+		name := "source"
+		if snapshot {
+			name = "snapshot"
+		}
+		t.Run(name, func(t *testing.T) {
+			root, launch := sourceFixture(t)
+			const path = "tools/healthcheck/.env.example"
+			const content = "PUBLIC_EXAMPLE=value\n"
+			sourceWrite(t, root, path, content)
+			if _, err := SafeGit(context.Background(), root, "add", "--", path); err != nil {
+				t.Fatal(err)
+			}
+			commitSourceFixture(t, root, &launch)
+			sourceWrite(t, root, "tools/local/.env.example", "UNTRACKED_EXAMPLE=value\n")
+			destination := filepath.Join(realTemp(t), "workspace")
+			if err := captureTemplateFixture(t, launch, destination, snapshot); err != nil {
+				t.Fatalf("committed environment template rejected: %v", err)
+			}
+			if data, err := os.ReadFile(filepath.Join(destination, path)); err != nil || string(data) != content {
+				t.Fatalf("committed template not retained: %v %q", err, data)
+			}
+			if _, err := os.Lstat(filepath.Join(destination, "tools/local/.env.example")); !os.IsNotExist(err) {
+				t.Fatal("untracked template entered provider workspace")
+			}
+		})
+	}
+}
+
+func TestCaptureRejectsPrivateAndUnsafeTrackedTemplates(t *testing.T) {
+	for _, snapshot := range []bool{false, true} {
+		name := "source"
+		if snapshot {
+			name = "snapshot"
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, fixture := range []struct {
+				path string
+				mode string
+			}{
+				{path: "tools/.env"},
+				{path: "tools/.env.production"},
+				{path: "tools/.env.example.local"},
+				{path: "tools/hostile\n\x1b[31m/.env"},
+				{path: ".secrets/.env.example"},
+				{path: "tools/healthcheck/.env.example", mode: "120000"},
+				{path: "tools/healthcheck/.env.example", mode: "160000"},
+			} {
+				t.Run(fixture.path+fixture.mode, func(t *testing.T) {
+					root, launch := sourceFixture(t)
+					ctx := context.Background()
+					const content = "PUBLIC_REJECTION_FIXTURE=value\n"
+					if fixture.mode == "" {
+						sourceWrite(t, root, fixture.path, content)
+						if _, err := SafeGit(ctx, root, "add", "--force", "--", fixture.path); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						object := launch.Head
+						if fixture.mode == "120000" {
+							var err error
+							object, err = SafeGit(ctx, root, "rev-parse", "HEAD:README.md")
+							if err != nil {
+								t.Fatal(err)
+							}
+						}
+						if _, err := SafeGit(ctx, root, "update-index", "--add", "--cacheinfo", fixture.mode+","+strings.TrimSpace(object)+","+fixture.path); err != nil {
+							t.Fatal(err)
+						}
+					}
+					commitSourceFixture(t, root, &launch)
+					destination := filepath.Join(realTemp(t), "workspace")
+					err := captureTemplateFixture(t, launch, destination, snapshot)
+					if err == nil || !strings.Contains(err.Error(), strconv.Quote(fixture.path)) || strings.ContainsAny(err.Error(), "\n\r\x1b") || strings.Contains(err.Error(), content) {
+						t.Fatalf("expected rejection with escaped offending path %q: %v", fixture.path, err)
+					}
+					if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+						t.Fatal("rejected capture retained provider workspace")
+					}
+				})
 			}
 		})
 	}

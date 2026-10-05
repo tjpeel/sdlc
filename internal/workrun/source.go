@@ -142,11 +142,11 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 	}
 	for _, entry := range strings.Split(tree, "\x00") {
 		_, treePath, _ := strings.Cut(entry, "\t")
-		if excluded(treePath) {
-			return plan, errors.New("source HEAD tracks excluded private material")
+		if trackedExcluded(treePath) {
+			return plan, fmt.Errorf("source HEAD tracks excluded private material: %q", treePath)
 		}
 		if entry != "" && !strings.HasPrefix(entry, "100644 ") && !strings.HasPrefix(entry, "100755 ") {
-			return plan, errors.New("source tree contains unsupported symlinks or submodules")
+			return plan, fmt.Errorf("source tree contains unsupported symlinks or submodules: %q", treePath)
 		}
 	}
 	// Read the tree into the index only: raw source copies avoid checkout filters.
@@ -164,8 +164,8 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 		return plan, e
 	}
 	for _, path := range strings.Split(tracked, "\x00") {
-		if path != "" && excluded(path) {
-			return plan, errors.New("source tracks excluded private material")
+		if path != "" && trackedExcluded(path) {
+			return plan, fmt.Errorf("source tracks excluded private material: %q", path)
 		}
 	}
 	selected := map[string]bool{}
@@ -184,7 +184,8 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 		if path == "" {
 			continue
 		}
-		if excluded(path) || (codexPath(path) && !strings.Contains("\x00"+tracked, "\x00"+path+"\x00")) || (selected[path] && !strings.Contains("\x00"+tracked, "\x00"+path+"\x00")) || (configured[path] && !strings.Contains("\x00"+tracked, "\x00"+path+"\x00")) {
+		isTracked := strings.Contains("\x00"+tracked, "\x00"+path+"\x00")
+		if (excluded(path) && !(isTracked && !trackedExcluded(path))) || (codexPath(path) && !isTracked) || (selected[path] && !isTracked) || (configured[path] && !isTracked) {
 			if _, err = SafeGit(ctx, destination, "update-index", "--force-remove", "--", path); err != nil {
 				return plan, err
 			}
@@ -283,6 +284,16 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 	}
 	complete = true
 	return plan, nil
+}
+
+// Committed environment templates are public source only when none of their
+// parent directories are excluded. Untracked files still use excluded.
+func trackedExcluded(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	if filepath.Base(path) == ".env.example" {
+		return excluded(filepath.Dir(path))
+	}
+	return excluded(path)
 }
 
 func excluded(path string) bool {
