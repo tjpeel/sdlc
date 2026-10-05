@@ -51,7 +51,9 @@ type DockerPublisher struct {
 	Auth             githubauth.Manager
 	CredentialVolume string
 	SigningKey       func(context.Context) ([]byte, error)
-	Runner           PublisherCommandRunner
+	// ValidatePair rechecks host pairing metadata before any publication operation.
+	ValidatePair func() error
+	Runner       PublisherCommandRunner
 }
 
 func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspace, directory string, previous Publication, output io.Writer) (Publication, error) {
@@ -118,6 +120,11 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if err := request.Plan.PublicationIdentity.Validate(); err != nil {
 		return PublisherResponse{}, err
 	}
+	if publisher.ValidatePair != nil {
+		if err := publisher.ValidatePair(); err != nil {
+			return PublisherResponse{}, err
+		}
+	}
 	if publisher.Runtime.Docker == nil || publisher.ImageID == "" {
 		return fail("publication requires pinned Docker runtime and GitHub credential volume")
 	}
@@ -134,6 +141,13 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 			resultErr = errors.Join(resultErr, fmt.Errorf("GitHub publisher lease cleanup failed"))
 		}
 	}()
+	// Pairing can be replaced while acquisition waits. The native auth lease
+	// now prevents the pairing wizard from changing it during publication.
+	if publisher.ValidatePair != nil {
+		if err := publisher.ValidatePair(); err != nil {
+			return PublisherResponse{}, err
+		}
+	}
 	identity, err := session.Identity(ctx)
 	frozen := request.Plan.PublicationIdentity
 	frozenProfile, profileErr := githubauth.NormalizeProfile(frozen.GitHubProfile)
@@ -260,6 +274,7 @@ func publisherRequestForContainer(request PublisherRequest) PublisherRequest {
 	request.Plan.Checks = nil
 	request.Plan.SigningImage = ""
 	request.Plan.DaemonImage = ""
+	request.Plan.SigningProfile = ""
 	return request
 }
 

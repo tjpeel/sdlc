@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/signing"
@@ -29,6 +30,10 @@ import (
 func queuedRunFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	root := runGitFixture(t)
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{{"config", "user.name", "Example User"}, {"config", "user.email", "example@example.invalid"}} {
 		command := exec.Command("git", append([]string{"-C", root}, args...)...)
 		if output, err := command.CombinedOutput(); err != nil {
@@ -37,6 +42,9 @@ func queuedRunFixture(t *testing.T) (string, string, string) {
 	}
 	state, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(state, 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SDLC_STATE_DIR", state)
@@ -61,6 +69,13 @@ func queuedRunFixture(t *testing.T) (string, string, string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(state, "profiles.local.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	pair := githubprofile.Pair{Version: 1, GitHubProfile: "default", AccountID: 1, Login: "testuser", SigningProfile: "default", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
+	if err := githubprofile.Store(state, pair, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := githubprofile.SaveSelection(state, root, "example/project", pair); err != nil {
 		t.Fatal(err)
 	}
 	const installation = "dddddddddddddddddddddddddddddddd"
@@ -93,6 +108,9 @@ case "$1 $2" in
     if [ "$previous" = repository ] && [ "$last" = example/project ]; then
       printf '%%s\n' '{"id":99,"name":"example/project","push":true}'; exit 0
     fi
+    if [ "$previous" = signing-keys ] && [ "$last" = testuser ]; then
+      printf '%%s\n' '["%s"]'; exit 0
+    fi
     case "$last" in
       status) printf '%%s\n' '{"state":"stored"}' ;;
       identity) printf 'github-identity\n' >> "$(dirname "$0")/metadata-calls"; printf '%%s\n' '{"id":1,"login":"testuser"}' ;;
@@ -100,7 +118,7 @@ case "$1 $2" in
     esac ;;
   *) printf forbidden > "$(dirname "$0")/called"; exit 99 ;;
 esac
-`, image, volume, volume, string(metadata), volume)
+`, image, volume, volume, string(metadata), volume, profile.PublicKey)
 	if err := os.WriteFile(filepath.Join(state, "fake-bin", "docker"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

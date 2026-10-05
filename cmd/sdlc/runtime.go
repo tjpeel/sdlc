@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/githubauth"
+	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 )
@@ -34,7 +35,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	} else {
 		flags.BoolVar(&offline, "offline", false, "verify the local image and list its inventory without checking upstream updates")
 		flags.BoolVar(&all, "all", false, "include bundled npm dependencies and individual Debian updates")
-		flags.StringVar(&githubProfile, "github-profile", "default", "show local signing readiness for the matching GitHub profile")
+		flags.StringVar(&githubProfile, "github-profile", "default", "show local paired signing readiness for this GitHub profile")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -55,9 +56,11 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		return err
 	}
 	if args[0] == "status" {
-		// Signing readiness is independent of the image/dependency check. Missing
-		// signing setup is reported for attention without masking runtime errors.
-		if err := signingStatus(manager.Directory, githubProfile, false, output); err != nil {
+		// Pairing/signing readiness does not mask runtime/dependency errors.
+		pair, pairErr := githubprofile.Load(manager.Directory, githubProfile)
+		if pairErr != nil {
+			fmt.Fprintln(output, "GitHub pairing needs attention: run sdlc github pair --profile "+githubProfile+".")
+		} else if err := pairedSigningStatus(manager, pair, output); err != nil {
 			fmt.Fprintf(output, "Signing setup needs attention: %v\n", err)
 		}
 		return runtimeStatus(ctx, manager, runtimeupdates.New(), offline, all, output)
@@ -70,6 +73,18 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		return err
 	}
 	return printRuntime(output, state)
+}
+
+func pairedSigningStatus(runtime runtimeimage.Manager, pair githubprofile.Pair, output io.Writer) error {
+	printPair(output, pair, "")
+	profile, err := signingProfile(runtime, pair.SigningProfile)
+	if err != nil {
+		return err
+	}
+	if err := pair.CheckSigning(profile); err != nil {
+		return err
+	}
+	return signingStatus(runtime.Directory, pair.SigningProfile, false, output)
 }
 
 func printRuntime(output io.Writer, state runtimeimage.State) error {

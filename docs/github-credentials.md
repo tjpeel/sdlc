@@ -2,7 +2,8 @@
 
 The current route uses the unmodified official GitHub CLI's browser login in
 Docker and a dedicated signing key retrieved through the official 1Password
-CLI. Each named GitHub profile has separate login storage and signing settings,
+CLI. Each named GitHub profile has separate login storage and an explicit pairing
+to a signing profile, whose name can differ,
 while all profiles share the runtime image. No GitHub App installation, host
 OAuth-token export, subscription-token replay or desktop SSH-agent forwarding
 is involved.
@@ -18,7 +19,7 @@ validated. Official references were checked on 4 October 2026.
 | Operation | Current behaviour |
 | --- | --- |
 | Initial clone/fetch | Prepare the checkout on the host using existing approved access. SDLC captures a local checkout; authenticated URL cloning is not implemented. |
-| Account selection | `auth ... --service github --profile NAME` provisions one separate native login; `run --github-profile NAME` selects it and its matching signing configuration. Omission selects `default`. |
+| Account selection | Native `auth ... --service github --profile NAME` provisions login. `github pair --profile NAME --signing-profile KEY_NAME` checks the account and public signing-key registration. `github use --profile NAME` saves repository selection; fresh runs use that selection or a unique pair whose login owns the repository. |
 | Worker source | A captured local bundle creates a disposable checkout with no origin. Worker commits have a generic unsigned identity. |
 | Publication identity | The controller freezes effective project `user.name`/`user.email`, numeric GitHub account/repository IDs, canonical repository name, credential volume, signing profile/public key/fingerprint and runtime image before provider work. |
 | Signing | A separate official `op` container retrieves one dedicated Ed25519 key. The Docker publisher recreates linear commits, requires SSH signatures, verifies the approved key and preserves the exact tested tree. |
@@ -29,6 +30,23 @@ The host's GitHub login, `GH_TOKEN`, `GITHUB_TOKEN` and `SSH_AUTH_SOCK` do not
 select the Docker publisher's account. It never switches accounts or falls back
 to those credentials after denial. Resume keeps the recorded profile and key;
 changing flags cannot move an existing run to another account.
+
+Pairing calls the public `GET users/{username}/ssh_signing_keys` endpoint through
+the [official `gh api` command](https://cli.github.com/manual/gh_api), without extra
+permissions, GitHub writes or secret retrieval.
+`github status --profile NAME --verify` rechecks the global account/key pair;
+repository-mode `github status --verify` also checks push permission. These checks
+do not establish vault access or GitHub Verified attribution.
+
+Pairs and repository selections stay in private external SDLC state, with
+mode-`0700` directories and mode-`0600` files. They contain public identity
+metadata, without vault references, bootstrap paths or tokens. Selection binds
+the canonical checkout root and origin repository; changed remotes or pair
+metadata require `github use` again. Each worktree has its own selection.
+Unbound organisation repositories or ambiguous owner pairs require explicit
+selection. `run --github-profile NAME` selects a registered pair only when it
+does not conflict with a saved selection. Existing frozen run journals retain
+the legacy same-name signer route.
 
 ## Native GitHub login and organisation access
 
@@ -68,7 +86,8 @@ separate and may affect other GitHub CLI sessions on the same account. See
 
 Follow [1Password signing setup](1password-signing-setup.md) to provision a custom
 automation vault, Read Items Service Account and dedicated Ed25519 key, then save
-the matching GitHub profile with `sdlc signing setup --profile NAME`. The grant
+a signing profile with `sdlc signing setup --profile KEY_NAME`. Pair it with the
+intended GitHub profile using `github pair --profile NAME --signing-profile KEY_NAME`. The grant
 covers the entire vault; keep unrelated secrets out of it.
 
 The Service Account token provides authentication. A reference such as

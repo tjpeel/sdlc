@@ -73,7 +73,7 @@ func TestRejectedRunSelectionsDoNotCreateRuntimeLeaseState(t *testing.T) {
 		if err := runCommand(context.Background(), args, io.Discard); err == nil {
 			t.Fatalf("invalid selection accepted: %v", args)
 		}
-		if _, err := os.Stat(filepath.Join(root, "private-state")); !os.IsNotExist(err) {
+		if _, err := os.Stat(os.Getenv("SDLC_STATE_DIR")); !os.IsNotExist(err) {
 			t.Fatalf("invalid selection created runtime state: %v", args)
 		}
 	}
@@ -277,7 +277,11 @@ func runGitFixture(t *testing.T) string {
 	git("add", "README.md", "spec.md", ".sdlc/project.json")
 	git("commit", "-m", "Create disposable fixture")
 	t.Chdir(root)
-	t.Setenv("SDLC_STATE_DIR", filepath.Join(root, "private-state"))
+	stateParent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SDLC_STATE_DIR", filepath.Join(stateParent, "private-state"))
 	return root
 }
 func forbidConnectedRunCommands(t *testing.T, root string) string {
@@ -333,7 +337,7 @@ func TestRunDryRunIsOfflineAndPreservesProviderRoles(t *testing.T) {
 					t.Fatalf("offline plan disclosed input body %q", body)
 				}
 			}
-			for _, path := range []string{marker, filepath.Join(root, "private-state")} {
+			for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR")} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Fatalf("offline plan touched %s", path)
 				}

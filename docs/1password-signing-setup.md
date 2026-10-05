@@ -78,8 +78,8 @@ cannot.
 
 ## 4 Save the local signing profile
 
-Run the wizard in an interactive terminal, choosing the same profile name you
-will use for GitHub:
+Run the wizard in an interactive terminal. Signing profile names are independent
+of GitHub profile names; `personal` below is an example signing profile:
 
 ```sh
 sdlc signing setup --profile personal --provider 1password
@@ -183,7 +183,7 @@ The profile fields have different roles:
 
 | Setting | Meaning | Where it belongs |
 | --- | --- | --- |
-| CLI `--profile personal` | Selects the saved signing profile and matching GitHub login. It is neither a vault name nor a GitHub username. | CLI selection; use `--github-profile personal` for a run. |
+| Signing CLI `--profile personal` | Selects only the saved signing profile. It is neither a vault name nor a GitHub username. | Pair it to a native login with `github pair --profile ACCOUNT_NAME --signing-profile personal`. |
 | JSON `provider` | Selects the signing-secret implementation; currently `1password`. | Private installation profile. |
 | JSON `version` | Identifies the signing-profile schema version. | Private installation profile. |
 | JSON `id` | The wizard sets `personal-signing`, an internal signing identity label. It does not select a vault or key. | Private installation profile. |
@@ -191,8 +191,9 @@ The profile fields have different roles:
 | JSON `public_key` and `fingerprint` | The expected signer identity checked against the retrieved key. | Saved profile; public values can also be published intentionally. |
 | JSON `bootstrap_file` | Absolute path to the host file containing the actual Service Account token. It is not a reference to the token's recovery item in 1Password. | Private installation profile; the referenced bearer-token file stays private and external. |
 
-Signing setup is per GitHub profile, rather than per repository. Reuse the profile
-with `--github-profile personal` across repositories that account can publish to.
+Signing setup is installation-wide. Explicitly pair a signing profile to the
+intended native account, then use that pair across authorised repositories with
+`github use --profile ACCOUNT_NAME`.
 No bearer token or signing profile belongs in a project's `.sdlc/project.json`.
 Placeholder references are suitable for committed examples; actual locators
 remain private metadata even though they contain no secret value.
@@ -209,7 +210,8 @@ sdlc signing status --profile personal
 sdlc signing status --profile personal --verify
 ```
 
-`runtime status` includes a local signing summary for the selected GitHub profile;
+`runtime status` follows the selected GitHub account's registered pair to its
+signing profile; an unpaired account reports attention. It includes a local summary;
 it does not contact 1Password or expose locator metadata. A missing or unsafe
 signing setup does not change the runtime image/dependency check's exit result.
 Use the dedicated signing command when its readiness needs its own exit status.
@@ -249,7 +251,19 @@ choose **Signing key**, and add the dedicated public key. This registration is
 separate from an SSH authentication key and from SDLC's GitHub login.
 See [adding a GitHub SSH signing key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account).
 
-Authenticate the matching GitHub profile separately and continue with the
+Authenticate the intended GitHub profile separately, then pair it:
+
+```sh
+sdlc github pair --profile personal --signing-profile personal
+sdlc github status --profile personal --verify
+```
+
+The names can differ; `--signing-profile` defaults to the account profile name
+when omitted. Pairing checks native account identity and public-key registration
+without fetching the 1Password secret or writing to GitHub. Use `pair --replace`
+for a deliberate change. Existing auth and signing setup remain; pair each
+account once for new runs. From an initialized repository, save the pair with
+`github use --profile personal`, then continue with the
 [GitHub Docker trial](github-docker-test.md). Local signature verification does
 not prove GitHub's Verified attribution or permission to publish a repository.
 Repeat provisioning with a separate key and suitable vault/account grant for

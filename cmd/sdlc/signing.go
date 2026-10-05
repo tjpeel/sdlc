@@ -27,7 +27,7 @@ It requires a terminal; the token is entered with echo disabled, never as an arg
 status checks local configuration and bootstrap safety without connecting to 1Password.
 --verify contacts 1Password and signs a disposable local commit. It makes no GitHub or model request.
 --show-config displays private vault/item references and paths, never secret contents.
-The signing profile name must match the GitHub profile selected for a run.
+Pair this key with a logged-in account using sdlc github pair --profile ACCOUNT --signing-profile NAME.
 The signing secret provider defaults to 1password, currently the only implementation.
 `
 
@@ -49,7 +49,7 @@ func parseSigningOptions(args []string, output io.Writer) (signingOptions, error
 	}
 	flags := flag.NewFlagSet("signing "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	name := flags.String("profile", "default", "matching named GitHub profile")
+	name := flags.String("profile", "default", "named signing configuration")
 	file := flags.String("file", "", "private signing profile outside source repositories")
 	bootstrap := flags.String("bootstrap-file", "", "existing private Service Account token file outside source repositories")
 	provider := flags.String("provider", signing.DefaultProvider, "setup only: signing secret provider (1password)")

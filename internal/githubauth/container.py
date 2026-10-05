@@ -1,4 +1,5 @@
 """Let the official gh client manage its private native configuration."""
+import base64
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,8 @@ import subprocess
 import sys
 
 CONFIG = Path('/github-auth')
+SIGNING_KEYS_OUTPUT_LIMIT = 1024 * 1024
+SIGNING_KEY_LIMIT = 8192
 
 
 def environment(login=False):
@@ -106,10 +109,34 @@ def valid_repository(repository):
             and parts[1] not in ('.', '..'))
 
 
-def run(action, directory=CONFIG, repository=None):
+def valid_login(login):
+    return (isinstance(login, str) and re.fullmatch(r'[A-Za-z0-9-]{1,39}', login)
+            and not login.startswith('-') and not login.endswith('-') and '--' not in login)
+
+
+def valid_signing_key(key):
+    if (not isinstance(key, str) or not key or len(key) > SIGNING_KEY_LIMIT
+            or any(ord(char) < 32 or ord(char) > 126 for char in key)):
+        return False
+    fields = key.split()
+    if (len(fields) < 2 or not re.fullmatch(
+            r'(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com)', fields[0])):
+        return False
+    try:
+        decoded = base64.b64decode(fields[1], validate=True)
+        return bool(decoded) and base64.b64encode(decoded).decode('ascii') == fields[1]
+    except ValueError:
+        return False
+
+
+def run(action, directory=CONFIG, repository=None, login=None):
     if action == 'repository' and not valid_repository(repository):
         return 1
     if action != 'repository' and repository is not None:
+        return 1
+    if action == 'signing-keys' and not valid_login(login):
+        return 1
+    if action != 'signing-keys' and login is not None:
         return 1
     os.umask(0o077)
     if action == 'init':
@@ -135,6 +162,30 @@ def run(action, directory=CONFIG, repository=None):
             return 1
         print(json.dumps({'id': record['id'], 'login': record['login']}))
         return 0
+    if action == 'signing-keys':
+        if not present:
+            return 1
+        keys = []
+        for page in range(1, 11):
+            result = subprocess.run(
+                ['gh', 'api', '--hostname', 'github.com',
+                 'users/' + login + '/ssh_signing_keys?per_page=100&page=' + str(page),
+                 '--jq', '[.[] | .key]'],
+                env=environment(), cwd='/home/node', capture_output=True, timeout=30)
+            if result.returncode or len(result.stdout) > SIGNING_KEYS_OUTPUT_LIMIT:
+                return 1
+            record = json.loads(result.stdout)
+            if (not isinstance(record, list) or len(record) > 100
+                    or not all(valid_signing_key(key) for key in record)):
+                return 1
+            keys.extend(record)
+            encoded = json.dumps(keys)
+            if len(encoded.encode('utf-8')) > SIGNING_KEYS_OUTPUT_LIMIT:
+                return 1
+            if len(record) < 100:
+                print(encoded)
+                return 0
+        return 1
     if action == 'repository':
         if not present:
             return 1
@@ -196,14 +247,15 @@ def run(action, directory=CONFIG, repository=None):
 
 
 def main():
-    if len(sys.argv) not in (2, 3) or sys.argv[1] not in ('init', 'login', 'status', 'verify', 'identity', 'repository', 'logout'):
+    if len(sys.argv) not in (2, 3) or sys.argv[1] not in ('init', 'login', 'status', 'verify', 'identity', 'repository', 'signing-keys', 'logout'):
         return 1
     action = sys.argv[1]
-    repository = sys.argv[2] if len(sys.argv) == 3 else None
-    if (action == 'repository') != (repository is not None):
+    argument = sys.argv[2] if len(sys.argv) == 3 else None
+    if (action in ('repository', 'signing-keys')) != (argument is not None):
         return 1
     try:
-        return run(action, repository=repository)
+        return run(action, repository=argument if action == 'repository' else None,
+                   login=argument if action == 'signing-keys' else None)
     except Exception:
         if action in ('status', 'verify'):
             print(json.dumps({'state': 'invalid'}))

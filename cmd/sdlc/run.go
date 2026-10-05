@@ -18,6 +18,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubauth"
+	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
@@ -55,7 +56,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&options.reference, "reference", "", "selected work folder")
 	flags.StringVar(&options.ticket, "ticket", "", "exact numbered ticket filename")
-	flags.StringVar(&options.githubProfile, "github-profile", "default", "named GitHub login and signing profile")
+	flags.StringVar(&options.githubProfile, "github-profile", "", "registered GitHub account/key pair; defaults to repository selection")
 	flags.StringVar(&options.provider, "provider", "codex", "implementation provider")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
 	flags.StringVar(&options.branch, "branch", "", "destination branch; defaults to a unique ticket branch")
@@ -79,7 +80,13 @@ func parseRunOptions(args []string) (runOptions, error) {
 	if options.provider != "codex" && options.provider != "claude" {
 		return options, fmt.Errorf("provider must be codex or claude")
 	}
-	if options.githubProfile == "" {
+	explicitEmptyProfile := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "github-profile" && f.Value.String() == "" {
+			explicitEmptyProfile = true
+		}
+	})
+	if explicitEmptyProfile {
 		return options, fmt.Errorf("--github-profile cannot be empty")
 	}
 	if err := githubauth.ValidateProfile(options.githubProfile); err != nil {
@@ -181,7 +188,24 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`).MatchString(repository) {
 			return fmt.Errorf("--repo must name a GitHub OWNER/REPO")
 		}
-		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{GitHubProfile: options.githubProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		pair, selectionErr := githubprofile.Select(runtime.Directory, work.Root, repository, options.githubProfile)
+		if selectionErr != nil {
+			// An offline plan remains useful before onboarding. Unsafe or changed
+			// metadata and ambiguous choices always fail, including dry runs.
+			if !options.dryRun || !(errors.Is(selectionErr, githubprofile.ErrSelectionRequired) || os.IsNotExist(selectionErr)) {
+				return selectionErr
+			}
+		} else {
+			options.githubProfile = pair.GitHubProfile
+			profile, err := signingProfile(runtime, pair.SigningProfile)
+			if err != nil {
+				return err
+			}
+			if err := pair.CheckSigning(profile); err != nil {
+				return err
+			}
+		}
+		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
 		if options.dryRun {
 			// Selection is known before capture; content hashes are not. Keep
 			// the offline plan useful without reading requirement bodies.
@@ -219,6 +243,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		plan.GitHubProfile = options.githubProfile
+		plan.SigningProfile = pair.SigningProfile
 		plan.DockerTests = options.dockerTests
 		journal.Plan = plan
 		shared, err := (instructions.Manager{Directory: runtime.Directory}).Show()
@@ -234,7 +259,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 		if err := freezeRuntimeImages(ctx, &journal.Plan, state, runtime, runtimeupdates.ResolveDefaultDaemonImage); err != nil {
 			return err
 		}
-		identity, err := freezePublicationIdentity(ctx, runtime, work.Root, journal.Plan.Repository, options.githubProfile)
+		identity, err := freezePublicationIdentity(ctx, runtime, work.Root, journal.Plan.Repository, pair)
 		if err != nil {
 			return err
 		}
@@ -259,13 +284,14 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 	}
-	profile, err := signingProfile(runtime, journal.Plan.GitHubProfile)
+	profile, err := runSigningProfile(runtime, journal.Plan)
 	if err != nil {
 		return err
 	}
-	frozen := journal.Plan.PublicationIdentity
-	if profile.ID != frozen.ProfileID || profile.PublicKey != frozen.SSHPublicKey || profile.Fingerprint != frozen.SSHFingerprint {
-		return fmt.Errorf("signing profile differs from the recorded run; restore the approved profile before resuming")
+	if options.resume != "" {
+		if err := resumeGitHubPreflight(ctx, runtime, journal); err != nil {
+			return err
+		}
 	}
 	if err := printRunPlan(output, journal, false); err != nil {
 		return err
@@ -301,7 +327,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	githubManager.OnWait = manager.OnWait
 	githubManager.OnAcquired = manager.OnAcquired
 	resolver := signing.Resolver{Profile: profile, Image: journal.Plan.SigningImage}
-	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	runner := workrun.Runner{Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve, ValidatePair: func() error { _, err := runSigningProfile(runtime, journal.Plan); return err }}, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)
@@ -372,14 +398,21 @@ func freezeRuntimeImages(ctx context.Context, plan *workrun.Plan, state runtimei
 	return nil
 }
 
-func freezePublicationIdentity(ctx context.Context, runtime runtimeimage.Manager, root, repository string, names ...string) (result *workrun.PublicationIdentity, resultErr error) {
-	name := "default"
-	if len(names) == 1 {
-		name = names[0]
+func freezePublicationIdentity(ctx context.Context, runtime runtimeimage.Manager, root, repository string, pair githubprofile.Pair) (result *workrun.PublicationIdentity, resultErr error) {
+	name := pair.GitHubProfile
+	current, err := githubprofile.Load(runtime.Directory, name)
+	if err != nil {
+		return nil, fmt.Errorf("register the account/key pairing with sdlc github pair before launching work: %w", err)
 	}
-	profile, err := signingProfile(runtime, name)
+	if current != pair {
+		return nil, fmt.Errorf("account/key pairing changed after repository selection; retry after inspecting github status")
+	}
+	profile, err := signingProfile(runtime, pair.SigningProfile)
 	if err != nil {
 		return nil, fmt.Errorf("configure a private signing profile before launching work: %w", err)
+	}
+	if err := pair.CheckSigning(profile); err != nil {
+		return nil, err
 	}
 	manager := githubauth.New(runtime)
 	manager.Profile = name
@@ -396,9 +429,19 @@ func freezePublicationIdentity(ctx context.Context, runtime runtimeimage.Manager
 	if err != nil {
 		return nil, err
 	}
+	if account.ID != pair.AccountID || account.Login != pair.Login {
+		return nil, fmt.Errorf("GitHub login differs from the paired account; restore it or deliberately pair --replace")
+	}
+	if err := registeredSigningKey(ctx, session, account, pair.PublicKey); err != nil {
+		return nil, err
+	}
 	repositoryIdentity, err := session.Repository(ctx, repository)
 	if err != nil {
 		return nil, err
+	}
+	current, err = githubprofile.Load(runtime.Directory, name)
+	if err != nil || current != pair {
+		return nil, fmt.Errorf("account/key pairing changed during preflight")
 	}
 	values := map[string]string{}
 	for _, name := range []string{"user.name", "user.email"} {
@@ -421,7 +464,11 @@ func freezePublicationIdentity(ctx context.Context, runtime runtimeimage.Manager
 
 func printRunPlan(output io.Writer, journal workrun.Journal, dry bool) error {
 	if dry {
-		fmt.Fprintln(output, "Offline plan; authentication and model access have not been checked.")
+		notice := "Offline plan; authentication and model access have not been checked."
+		if journal.Plan.SigningProfile == "" && journal.Plan.PublicationIdentity == nil {
+			notice += " GitHub account/key selection is unconfigured; complete sdlc github pair and github use before execution."
+		}
+		fmt.Fprintln(output, notice)
 	}
 	return json.NewEncoder(output).Encode(struct {
 		ID    string       `json:"run_id,omitempty"`

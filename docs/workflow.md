@@ -9,7 +9,8 @@ are the primary hosts; Windows needs a Linux-container engine. [The CLI guide](c
 
 Install the CLI, build the shared runtime, authenticate the selected provider and
 configure the [GitHub and signing profile](cli.md#github-login-and-signing), then
-run `sdlc init` in the project. Review the checks in `.sdlc/project.json`.
+run `sdlc init` in the project and `sdlc github use --profile NAME` to save its
+account/key selection outside the checkout. Review `.sdlc/project.json` checks.
 Shared instructions are private installation settings; each run captures their
 current body. The image contains pinned public skills and agent definitions.
 Runtime status reports available updates; automatic update prompts remain future
@@ -60,8 +61,16 @@ new execution path.
 
 Before provider execution, SDLC freezes the selected GitHub profile, numeric
 account and repository IDs, canonical repository name, effective project Git
-name/email, approved Ed25519 public key and runtime image. `--github-profile`
-selects matching named GitHub/signing configurations; `default` is the default.
+name/email, approved Ed25519 public key and runtime image. `github pair`
+explicitly binds a native account to a signing profile after checking public-key
+registration; names can differ. Fresh runs use saved repository selection or a
+unique pair whose login owns the repository. Unbound organisation repositories
+and ambiguous selections require `github use`; `--github-profile` can select a
+registered pair for an unbound checkout but cannot override a conflicting saved
+selection. Changed remote/pair metadata require deliberate reselection. Pair and
+repository records contain public identity metadata in private external state,
+without vault references or tokens. Existing frozen journals retain their legacy
+same-name signing route.
 Native GitHub credentials persist in separate private plaintext Docker volumes.
 Host credentials do not override the selection. Each Codex/Claude cache still
 holds one account per installation.

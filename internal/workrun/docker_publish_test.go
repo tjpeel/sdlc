@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/tjpeel/sdlc/internal/githubauth"
+	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
 
 func frozenTestIdentity() *PublicationIdentity {
@@ -18,6 +22,101 @@ func TestDockerPublisherRejectsLegacyIdentityWithoutHostCommands(t *testing.T) {
 	publisher := DockerPublisher{}
 	if _, err := publisher.invoke(context.Background(), t.TempDir(), PublisherRequest{Action: "publish"}); err == nil {
 		t.Fatal("legacy run published")
+	}
+}
+
+func TestDockerPublisherChecksPairBeforeRuntimeOrCredentialAccess(t *testing.T) {
+	calls := 0
+	publisher := DockerPublisher{ValidatePair: func() error { calls++; return errors.New("paired identity changed") }}
+	_, err := publisher.invoke(context.Background(), t.TempDir(), PublisherRequest{Action: "publish", Plan: Plan{PublicationIdentity: frozenTestIdentity(), SigningProfile: "key"}})
+	if err == nil || !strings.Contains(err.Error(), "paired identity changed") || calls != 1 {
+		t.Fatal("pair mismatch reached runtime", err)
+	}
+}
+
+type pairingRaceDocker struct {
+	image, volume string
+	acquired      bool
+	identityCalls int
+}
+
+func (docker *pairingRaceDocker) Output(_ context.Context, args ...string) ([]byte, error) {
+	switch args[0] {
+	case "context":
+		return []byte(`"unix:///fake.sock"`), nil
+	case "info":
+		return []byte(`{"id":"fake-engine","os":"linux"}`), nil
+	case "image":
+		return []byte(docker.image), nil
+	case "volume":
+		if args[1] == "ls" {
+			return []byte(docker.volume), nil
+		}
+		return json.Marshal([]map[string]any{{"Name": docker.volume, "Driver": "local", "Options": map[string]string{}, "Labels": map[string]string{"io.sdlc.managed": "true", "io.sdlc.kind": "github-auth", "io.sdlc.installation": strings.Repeat("d", 32), "io.sdlc.provider": "github"}}})
+	case "ps", "rm":
+		return nil, nil
+	case "run":
+		if args[len(args)-1] == "status" {
+			docker.acquired = true
+			return []byte(`{"state":"stored"}`), nil
+		}
+		docker.identityCalls++
+	}
+	return nil, errors.New("unexpected fake operation")
+}
+func (*pairingRaceDocker) Run(context.Context, ...string) error {
+	return errors.New("unexpected fake runtime mutation")
+}
+func (*pairingRaceDocker) Interactive(context.Context, ...string) error {
+	return errors.New("unexpected fake login")
+}
+
+type forbiddenPairPublisher struct{ calls int }
+
+func (runner *forbiddenPairPublisher) Run(context.Context, io.Reader, io.Writer, ...string) error {
+	runner.calls++
+	return errors.New("unexpected publisher operation")
+}
+
+func TestDockerPublisherRechecksPairChangedDuringCredentialAcquisition(t *testing.T) {
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	docker := &pairingRaceDocker{image: "sha256:" + strings.Repeat("a", 64), volume: "sdlc-github-auth-" + strings.Repeat("d", 32) + "-github"}
+	runtime := runtimeimage.Manager{Directory: directory, Docker: docker}
+	state, err := json.Marshal(runtimeimage.State{Version: 1, Engine: "fake-engine", ImageID: docker.image})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "runtime.json"), state, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "github-installation.json"), []byte(`{"id":"`+strings.Repeat("d", 32)+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	auth := githubauth.New(runtime)
+	auth.Docker = docker
+	t.Setenv("DOCKER_HOST", "")
+	t.Setenv("DOCKER_CONTEXT", "")
+	validations, keyCalls := 0, 0
+	runner := &forbiddenPairPublisher{}
+	publisher := DockerPublisher{Runtime: runtime, ImageID: docker.image, Auth: auth, Runner: runner, SigningKey: func(context.Context) ([]byte, error) {
+		keyCalls++
+		return nil, errors.New("unexpected secret retrieval")
+	}, ValidatePair: func() error {
+		validations++
+		if docker.acquired {
+			return errors.New("pair changed during acquisition")
+		}
+		return nil
+	}}
+	_, err = publisher.invoke(context.Background(), directory, PublisherRequest{Action: "publish", Plan: Plan{PublicationIdentity: frozenTestIdentity(), SigningProfile: "key"}})
+	if err == nil || !strings.Contains(err.Error(), "pair changed during acquisition") || validations != 2 || keyCalls != 0 || runner.calls != 0 || docker.identityCalls != 0 {
+		t.Fatal("publication bypassed changed pairing", err, validations, keyCalls, runner.calls, docker.identityCalls)
 	}
 }
 func TestFrozenPublicationRejectsIdentityBeforeSourceOrRemoteMutation(t *testing.T) {
@@ -59,7 +158,7 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 			original := PublisherRequest{
 				Action: action,
 				Plan: Plan{
-					PublicationIdentity: frozenTestIdentity(), GitHubProfile: "example",
+					PublicationIdentity: frozenTestIdentity(), GitHubProfile: "example", SigningProfile: "example-key",
 					Repository: "example/project", SourceSHA: testBase, BaseSHA: testBase,
 					Base: "main", Branch: "example-ticket", PRTitle: "Example", PRBody: "Example body",
 					Root: "/private/project", Ticket: "/private/ticket.md",
@@ -76,6 +175,7 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 			expected.Plan.Root, expected.Plan.Ticket = "", ""
 			expected.Plan.Inputs, expected.Plan.CheckInputs, expected.Plan.Checks = nil, nil, nil
 			expected.Plan.SigningImage, expected.Plan.DaemonImage = "", ""
+			expected.Plan.SigningProfile = ""
 			if !reflect.DeepEqual(projected, expected) {
 				t.Fatal("publisher request changed the frozen publication boundary")
 			}
@@ -83,12 +183,12 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, excluded := range []string{"signing_image", "daemon_image", "/private/project", "/private/ticket.md", ".env"} {
+			for _, excluded := range []string{"signing_image", "signing_profile", "daemon_image", "/private/project", "/private/ticket.md", ".env"} {
 				if strings.Contains(string(data), excluded) {
 					t.Fatalf("controller-only field reached publisher: %s", excluded)
 				}
 			}
-			if original.Plan.SigningImage != "controller-signing-pin" || original.Plan.DaemonImage != "controller-daemon-pin" || original.Plan.Root != "/private/project" || len(original.Plan.CheckInputs) != 1 {
+			if original.Plan.SigningProfile != "example-key" || original.Plan.SigningImage != "controller-signing-pin" || original.Plan.DaemonImage != "controller-daemon-pin" || original.Plan.Root != "/private/project" || len(original.Plan.CheckInputs) != 1 {
 				t.Fatal("projection mutated the retained controller plan")
 			}
 		})

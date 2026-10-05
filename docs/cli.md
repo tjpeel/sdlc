@@ -85,7 +85,9 @@ custom checks, rather than replacing them with newly detected defaults. It
 rejects unsupported settings versions, invalid paths and unsafe filesystem links.
 No project checks run during initialization. It needs only local Git access;
 it does not fetch source, contact providers, bind an account profile or require
-Docker. `sdlc run` captures source and starts ticket execution after GitHub and
+Docker. `init` takes no arguments. After initialization, use
+`sdlc github use --profile personal` to save repository selection outside the
+checkout; account setup does not write Git configuration. `sdlc run` captures source and starts ticket execution after GitHub and
 signing preflight. `sdlc interactive` still opens an empty workspace after initialization.
 
 If a later setup step fails, earlier completed steps can remain. Fix the reported
@@ -145,7 +147,9 @@ specification automatically or launch the next ticket. `--dry-run` prints the
 plan without Docker, authentication checks or execution. The plan lists selected
 provider inputs and configured check inputs without reading their bodies; their
 content hashes remain empty until source capture. A resumed run's plan shows its
-recorded paths and hashes. The offline plan cannot prove account or model access.
+recorded paths and hashes. The offline plan cannot prove account or model access. A missing pair produces
+a warning with the requested or unresolved profile; malformed or changed pair
+metadata and ambiguous selection fail even during dry-run.
 
 | Flag | Default and purpose |
 | --- | --- |
@@ -154,8 +158,8 @@ recorded paths and hashes. The offline plan cannot prove account or model access
 | `--input` | Repeatable exact path relative to the project; visible to both providers. |
 | `--base` | `main`; must exist locally, be included in source HEAD, and match the GitHub base at publication. |
 | `--branch` | Unique `work/<reference>/<ticket-stem>-<run-prefix>` branch. |
-| `--repo` | GitHub `OWNER/REPO`, inferred from a single credential-free GitHub origin URL. |
-| `--github-profile` | `default`; selects an independent GitHub login and its matching named signing configuration. |
+| `--repo` | GitHub.com `OWNER/REPO`, inferred from a single credential-free GitHub origin URL. Required for SSH aliases or custom hosts that cannot be inferred. |
+| `--github-profile` | Select a registered account/key pair for an unbound repository; omission uses saved repository selection or a unique pair whose login owns the repository. A conflicting saved selection fails. |
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
 | `--docker-tests` | Enable the separate privileged integration-test daemon. |
@@ -167,7 +171,11 @@ recorded paths and hashes. The offline plan cannot prove account or model access
 Before execution, configure the selected [GitHub and signing profile](#github-login-and-signing).
 SDLC freezes its account ID, repository ID/canonical name, effective project Git
 name/email, signing public key and runtime image. A changed identity or missing
-push permission stops the run. It uses no host GitHub credential fallback.
+push permission or public signing-key registration stops the run. It uses no host GitHub credential fallback.
+Unbound organisation repositories and ambiguous owner pairs require
+`github use --profile NAME` before launch. Saved selection binds the canonical
+checkout root and origin repository; changed remotes or pair metadata require
+a deliberate new `github use` selection.
 
 The implementation login is required before launch. A missing opposite-provider
 login allows implementation, local checks, draft PR publication and CI to finish,
@@ -350,7 +358,8 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --resume RECORDE
 ```
 
 Resume retains the recorded GitHub profile, account/repository IDs and signing
-identity; it does not switch accounts or signing configurations.
+identity; it does not switch accounts or signing configurations. Existing frozen
+journals retain their legacy same-name signing route.
 
 Resume accepts only `--reference`, `--ticket`, `--resume`, `--answer-file`,
 `--timeout` and `--dry-run`. Implementation turns and repairs resume the exact
@@ -544,7 +553,7 @@ sdlc runtime status --offline --github-profile personal
 | --- | --- |
 | `--offline` | Validate the local runtime and show its inventory without upstream update requests. |
 | `--all` | List bundled npm dependencies and individual Debian updates instead of summarizing them. |
-| `--github-profile NAME` | Show the matching signing profile's offline summary; defaults to `default`. |
+| `--github-profile NAME` | Follow the account's registered pair to its signing profile for an offline summary; unpaired accounts report attention. Omission selects `default` for this runtime summary. |
 
 Status verifies that the selected Docker engine and shared image match the
 recorded build, then checks public upstream metadata for updates. Each image
@@ -590,10 +599,10 @@ local runtime checks. Status does not install updates, change pins or rebuild
 the image. Preview and apply updates with `sdlc runtime update --dry-run` and
 `sdlc runtime update`.
 
-Runtime status also shows an offline signing summary for the selected GitHub
-profile, including whether configuration and the private bootstrap are present
+Runtime status also follows the selected GitHub account's registered pair to
+show an offline signing summary, including whether configuration and the private bootstrap are present
 and safe. This summary hides vault/item references and storage paths and never
-retrieves a 1Password key. Missing or unsafe signing setup is reported without
+retrieves a 1Password key. An unpaired account reports attention. Missing or unsafe signing setup is reported without
 changing the runtime image/dependency check's exit result. Use `sdlc signing
 status --profile NAME` for a dedicated signing-readiness exit status, or add
 `--verify` there when you intend to contact 1Password and test a real signature.
@@ -734,10 +743,14 @@ Ed25519 SSH Key item using [1Password signing setup](1password-signing-setup.md)
 Then run the wizard in an interactive terminal:
 
 ```sh
-sdlc signing setup --profile personal --provider 1password
-sdlc signing status --profile personal
-sdlc signing status --profile personal --verify
-sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --github-profile personal
+sdlc signing setup --profile personal-key --provider 1password
+sdlc signing status --profile personal-key
+sdlc signing status --profile personal-key --verify
+sdlc github pair --profile personal --signing-profile personal-key
+# From the initialized project:
+sdlc github use --profile personal
+sdlc github status --verify
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md
 ```
 
 | Setting or flag context | Current meaning |
@@ -762,7 +775,7 @@ request and cannot certify account grants.
 Use the wizard to change an existing profile:
 
 ```sh
-sdlc signing setup --profile personal --provider 1password --replace
+sdlc signing setup --profile personal-key --provider 1password --replace
 ```
 
 `--replace` requires a valid private saved profile. Any token file selected for
@@ -780,8 +793,8 @@ a separate `signing status --verify` command.
 
 Default installation state is `~/Library/Application Support/sdlc` on macOS and
 `~/.config/sdlc` on Linux (respecting XDG configuration). A named profile uses
-`profiles.personal.local.json`; first setup through the hidden prompt creates
-`signing-personal-bootstrap` there. Keep state outside repositories. The bearer
+`profiles.personal-key.local.json`; first setup through the hidden prompt creates
+`signing-personal-key-bootstrap` there. Keep state outside repositories. The bearer
 token remains plaintext in a private owned mode-`0600` file.
 
 Plain `signing status` checks saved configuration, public identity and bootstrap
@@ -792,9 +805,9 @@ container. It makes no GitHub or model request and does not establish GitHub
 Verified attribution. Success belongs to that invocation; it is not cached.
 
 ```sh
-sdlc signing status --profile personal --show-config
-sdlc signing verify --profile personal
-sdlc signing configure --profile personal --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
+sdlc signing status --profile personal-key --show-config
+sdlc signing verify --profile personal-key
+sdlc signing configure --profile personal-key --file /PATH/TO/YOUR_PRIVATE_SIGNING_PROFILE.json
 ```
 
 `--show-config` is explicit private inspection: it displays the reference,
@@ -808,13 +821,59 @@ changes through `setup --replace` do not require a hand-written JSON file.
 `--file` belongs to `configure`. These commands default to the `default` profile
 when `--profile` is omitted.
 
-The signing configuration name must match the selected GitHub profile. Provision
-the public key as a GitHub signing key for the intended account and Git email.
+Signing profile names are independent of GitHub profile names. Register the
+public key as a GitHub signing key for the intended account and Git email, then
+create an explicit pair as described below.
 Signing is mandatory; missing vault access, bootstrap or the approved key stops
 publication. The bootstrap file is itself a persistent plaintext bearer secret.
 Restrict its permissions, keep it out of source/build contexts and use host disk
 protection. OS credential-store integration is not implemented. No desktop
 1Password approval or forwarded personal SSH agent is used by this route.
+
+### Pair accounts and select a repository
+
+```sh
+sdlc github pair --profile personal --signing-profile personal-key
+sdlc github status --profile personal
+sdlc github status --profile personal --verify
+# From the initialized project:
+sdlc github use --profile personal
+sdlc github status
+sdlc github status --verify
+```
+
+`pair` uses official native `gh` to prove the selected account and check that
+its configured public key is registered as an SSH signing key. It makes no
+GitHub writes and does not retrieve a 1Password token or private key. Omit
+`--signing-profile` to use the same name as `--profile`; different names are
+supported. Use `pair --replace` for a deliberate changed pairing. Existing
+native login and signing configurations remain available; pair each account
+once before new runs.
+
+`use` checks the saved pair offline and records repository selection in private
+host state. It does not check live repository access; launch checks that access.
+Without a saved selection, repository status and fresh runs use only a unique
+pair whose account login equals the repository owner. An unbound organisation
+repository or ambiguous selection requires `use`. An explicit run
+`--github-profile` can select a registered pair for an unbound checkout; a
+conflict with saved selection requires a deliberate `use` change.
+
+`status --profile NAME` inspects the global pair. Without `--profile`, it resolves
+the current repository from origin and saved selection or the unique owner pair.
+Repository-mode `status`, `use` and `run` accept `--repo OWNER/REPO` when an SSH
+alias or custom origin host cannot be inferred. Only GitHub.com is supported.
+`status --verify` checks the selected native account, public-key registration and,
+in repository mode, push permission. It does not retrieve a signing secret or
+prove GitHub's Verified attribution.
+
+Pair records and repository selections live outside checkouts in private SDLC
+state, with mode-`0700` directories and mode-`0600` files. Records contain public
+IDs, login, key and fingerprint, with no vault references, bootstrap paths or
+tokens. Repository selection binds the canonical checkout root and origin
+repository. Changed remotes or pair metadata fail until `use` is repeated.
+Each linked worktree has its own selection, although run capture currently
+requires an ordinary checkout. All accounts share one native runtime image;
+each retains its separate auth cache.
 
 Unattended signing currently requires macOS or Linux host file ownership
 checks. Windows signing stops until equivalent ownership protection is

@@ -124,13 +124,16 @@ agent policies; no host skill directory needs mounting.
 ## 4 Provision the Docker publication profile
 
 Follow [GitHub profiles and signing](github-docker-test.md) through its signing
-verification step. Use `personal` below, or replace it with your selected profile.
+verification and pairing steps. Use `personal` for the native account and
+`personal-key` for its signing profile below, or choose your own names.
 The new native login must be authorised for the disposable repository, including
 organisation SSO. Existing host SSH access alone does not prove this.
 
 ```sh
 sdlc auth status --service github --profile personal --verify
-sdlc signing verify --profile personal
+sdlc signing verify --profile personal-key
+sdlc github pair --profile personal --signing-profile personal-key
+sdlc github status --profile personal --verify
 ```
 
 Expected: the intended GitHub login/numeric ID and a disposable local commit
@@ -256,7 +259,22 @@ cp test-environment.example .env
 chmod 600 .env
 git check-ignore .env
 sdlc init
+sdlc github use --profile personal
+sdlc github status --verify
 ```
+
+`init` takes no arguments and configures local project files. `github use`
+checks the pair offline and saves selection in private external state, without
+writing Git configuration. `github status --verify` checks native identity,
+repository push access and public-key registration, without fetching a secret.
+For an SSH alias or custom origin host, add `--repo OWNER/REPO` to `use`,
+repository `status` and `run`; only GitHub.com is supported.
+
+Fresh runs use this saved pair. Without selection, only a unique account pair
+whose login equals the repository owner is inferred; an organisation repository
+or ambiguous selection needs `github use`. Changed remotes or pair metadata
+require deliberate reselection. Dry-run warns for a missing pair, while changed,
+malformed or ambiguous metadata fails.
 
 Set `.sdlc/project.json` to:
 

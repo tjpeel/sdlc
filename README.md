@@ -17,7 +17,10 @@ For a joint connected trial, follow the [onboarding runbook](docs/onboarding.md)
 It covers a disposable .NET repository, both providers, CI and review/repair.
 Start with the [GitHub profile and signing test guide](docs/github-docker-test.md)
 to provision separate accounts. Use the [1Password signing setup guide](docs/1password-signing-setup.md)
-to create the dedicated vault/account/key and run `sdlc signing setup --profile personal`.
+to create the dedicated vault/account/key and run `sdlc signing setup --profile personal-key`.
+Pair it once with `sdlc github pair --profile personal --signing-profile personal-key`.
+This checks the native account and its public signing-key registration without
+retrieving a secret or writing to GitHub.
 
 From this clone, with Go 1.25 or later and a local Docker engine running Linux
 containers, select an existing directory on your PATH:
@@ -87,12 +90,15 @@ From the project repository, prepare local settings with:
 
 ```sh
 sdlc init
+sdlc github use --profile personal
+sdlc github status
 ```
 
 This discovers Git state, project files and ticket paths, protects private work
 with a local Git exclude rule, and creates `.sdlc/project.json`. Review the
-suggested checks before using them. It works without Docker or provider login;
-execution starts with `sdlc run`. See the
+suggested checks before using them. `init` takes no arguments and works without Docker or provider login;
+`github use` saves the checked pair for this checkout in private external state.
+Execution starts with `sdlc run`. See the
 [project initialization guide](docs/cli.md#initialize-a-project).
 
 For a disposable .NET 10 `.slnx` project with an API, unit tests and Docker/Mongo
@@ -122,8 +128,12 @@ The default implementer is Codex at medium effort; Claude reviews at high effort
 The implementation account must be logged in. If the opposite reviewer has no
 login, delivery proceeds through the draft PR and CI, then pauses at
 `awaiting_reviewer`. Authenticate that provider and resume the recorded run.
-Select a GitHub account with `--github-profile personal` or `work`. Each has a
-separate native login and matching signing profile on the shared image. The Docker
+A fresh run uses the saved repository pair, or the unique pair whose login owns
+the repository. For an organisation or ambiguous account selection, run
+`github use --profile personal` first. `--github-profile` can select a registered
+pair for an unbound checkout; it cannot override a conflicting saved selection.
+Each account has a separate native login and explicitly paired signing profile
+on the shared image. The Docker
 publisher signs every delivered commit with the dedicated approved key, uses the
 captured project Git name/email, and publishes through native `gh`. It leaves the
 PR draft and never merges. Read the [run guide](docs/cli.md#run-one-ticket)

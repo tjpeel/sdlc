@@ -29,6 +29,7 @@ func main() {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
 		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
 		fmt.Println("       sdlc auth login|status|logout --service github [--profile NAME] [status: --verify]")
+		fmt.Println("       sdlc github pair [--profile NAME] [--signing-profile NAME] | github use --profile NAME | github status [--verify]")
 		fmt.Println("       sdlc signing setup|status|verify [--profile NAME] | signing configure --file PRIVATE_PROFILE [--profile NAME]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc init (from a project repository)")
@@ -88,6 +89,15 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "instructions" {
 		if err := instructionsCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "github" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := githubCommand(ctx, os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "sdlc:", err)
 			os.Exit(1)
 		}
@@ -443,6 +453,7 @@ func githubAuthCommand(ctx context.Context, manager githubauth.Manager, options 
 			return err
 		}
 		fmt.Fprintf(output, "github: login completed; stored configuration found by a fresh container. Verify with sdlc auth status --service github --profile %s --verify.\n", name)
+		fmt.Fprintf(output, "Next pair its registered signing key: sdlc github pair --profile %s --signing-profile KEY_PROFILE\n", name)
 		return nil
 	case "logout":
 		if err := manager.Logout(ctx); err != nil {

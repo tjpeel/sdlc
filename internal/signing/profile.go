@@ -68,22 +68,30 @@ func (profile Profile) Validate() error {
 		return fmt.Errorf("signing reference must identify exactly one nonempty unambiguous vault and item")
 	}
 
-	if !regexp.MustCompile(`^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$`).MatchString(profile.PublicKey) || len(profile.PublicKey) > 256 || !regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`).MatchString(profile.Fingerprint) {
-		return fmt.Errorf("signing profile requires an Ed25519 public key and its SHA256 fingerprint")
-	}
-	encoded := strings.TrimPrefix(profile.PublicKey, "ssh-ed25519 ")
-	public, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil || len(public) != 51 || !bytes.Equal(public[:19], []byte("\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20")) {
-		return fmt.Errorf("invalid Ed25519 public key")
-	}
-	hash := sha256.Sum256(public)
-	if profile.Fingerprint != "SHA256:"+base64.RawStdEncoding.EncodeToString(hash[:]) {
-		return fmt.Errorf("signing public key and fingerprint differ")
+	if err := ValidatePublicIdentity(profile.PublicKey, profile.Fingerprint); err != nil {
+		return err
 	}
 	if !filepath.IsAbs(profile.BootstrapFile) {
 		return fmt.Errorf("bootstrap file must be an absolute path outside source repositories")
 	}
 	return outsideRepository(profile.BootstrapFile)
+}
+
+// ValidatePublicIdentity checks public metadata without inspecting any secret.
+func ValidatePublicIdentity(publicKey, fingerprint string) error {
+	if !regexp.MustCompile(`^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$`).MatchString(publicKey) || len(publicKey) > 256 || !regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`).MatchString(fingerprint) {
+		return fmt.Errorf("signing profile requires an Ed25519 public key and its SHA256 fingerprint")
+	}
+	encoded := strings.TrimPrefix(publicKey, "ssh-ed25519 ")
+	public, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(public) != 51 || !bytes.Equal(public[:19], []byte("\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20")) {
+		return fmt.Errorf("invalid Ed25519 public key")
+	}
+	hash := sha256.Sum256(public)
+	if fingerprint != "SHA256:"+base64.RawStdEncoding.EncodeToString(hash[:]) {
+		return fmt.Errorf("signing public key and fingerprint differ")
+	}
+	return nil
 }
 
 func outsideRepository(path string) error {

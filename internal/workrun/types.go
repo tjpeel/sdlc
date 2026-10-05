@@ -42,6 +42,7 @@ type PublicationIdentity struct {
 
 type Plan struct {
 	GitHubProfile       string               `json:"github_profile,omitempty"`
+	SigningProfile      string               `json:"signing_profile,omitempty"`
 	PublicationIdentity *PublicationIdentity `json:"publication_identity,omitempty"`
 	Root                string               `json:"root"`
 	Reference           string               `json:"reference"`

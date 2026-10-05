@@ -6,7 +6,8 @@ vault references and repository names locally. Never put account configuration,
 tokens, private keys or transcripts in this public clone.
 
 The shared runtime image supports several GitHub profiles. Each profile has its
-own native `gh` login volume, lease and signing configuration. A run selects one
+own native `gh` login volume and lease, plus an explicitly paired signing
+profile whose name can differ. A run selects one
 profile and retains its numeric account/repository IDs, canonical repository
 name, Git identity, approved public key and image. Codex and Claude still have
 one saved account per provider.
@@ -100,8 +101,8 @@ Register the public key as a GitHub **signing key** in the intended account.
 Then run the interactive wizard once per profile:
 
 ```sh
-sdlc signing setup --profile personal --provider 1password
-sdlc signing setup --profile work --provider 1password
+sdlc signing setup --profile personal-key --provider 1password
+sdlc signing setup --profile work-key --provider 1password
 ```
 
 It asks for vault/item names or IDs, the public key and optional expected SHA256
@@ -120,14 +121,27 @@ short-lived official `op` resolver, never providers, test workers or the publish
 ## 5 Inspect and test each signing profile
 
 ```sh
+sdlc signing status --profile personal-key
+sdlc signing status --profile personal-key --verify
+sdlc signing status --profile work-key
+sdlc signing status --profile work-key --verify
+sdlc github pair --profile personal --signing-profile personal-key
+sdlc github pair --profile work --signing-profile work-key
+sdlc github status --profile personal --verify
 sdlc runtime status --offline --github-profile personal
-sdlc signing status --profile personal
-sdlc signing status --profile personal --verify
-sdlc signing status --profile work
-sdlc signing status --profile work --verify
 ```
 
-Runtime status includes an informative offline signing summary for `personal`;
+Pairing checks the selected native account and its public signing-key
+registration through official `gh`; it fetches no 1Password secret and makes no
+GitHub write. Omit `--signing-profile` to use the account profile name. Use
+`pair --replace` to change a pair deliberately. Pair each existing account once;
+native login and signing configuration remain available. `github status
+--profile NAME` inspects the global pair; its `--verify` rechecks the native
+account and public-key registration, without proving secret-store access or
+Verified attribution.
+
+Runtime status follows the account pair to the signing profile; unpaired
+accounts report attention. It includes an informative offline summary;
 missing signing setup does not fail an otherwise successful runtime check. Plain
 `signing status` checks saved settings, public identity and bootstrap safety offline
 and returns its own readiness result.
@@ -165,6 +179,8 @@ not implemented. Set the effective identity in that repository:
 git config --local user.name 'YOUR_GIT_NAME'
 git config --local user.email 'YOUR_VERIFIED_EMAIL'
 sdlc init
+sdlc github use --profile personal
+sdlc github status --verify
 sdlc auth status --all
 ```
 
@@ -177,6 +193,13 @@ and push its baseline, configure CI and prepare a real bounded ticket. Review
 `.sdlc/project.json`; disposable Compose inputs belong in `input_files`, not
 provider-visible requirements. Baseline/local base must match GitHub.
 
+`init` takes no arguments. `github use` checks the pair offline and saves
+selection outside the checkout in private mode-`0700`/`0600` state, without Git
+configuration writes. Records hold public IDs/login/key/fingerprint, with no
+vault reference, bootstrap path or token. Selection binds the canonical checkout
+root and origin repository; each worktree has its own selection. Changed remotes
+or pair metadata require `use` again.
+
 ## 7 Select the profile and run one ticket
 
 From that repository:
@@ -188,10 +211,20 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-count-items.md \
   --github-profile personal --docker-tests
 ```
 
-Use `--github-profile work` for the other account. The matching signing
-configuration is required. `--dry-run` is offline selection only; the real run
-checks the saved account and repository push access before provider execution.
-For an SSH alias that cannot be inferred from `origin`, supply `--repo OWNER/REPO`.
+A fresh run can omit `--github-profile` to use saved repository selection or a
+unique registered pair whose login equals the repository owner. An unbound
+organisation repository or ambiguous owner pairs require `github use`. Use
+`github use --profile work` to change this checkout deliberately; a conflicting
+run flag fails. An explicit run profile selects a registered pair when the
+checkout is unbound.
+
+`--dry-run` is offline selection only. A missing pair prints the requested or
+unresolved profile with a warning; malformed/changed metadata and ambiguous
+selection fail. The real run checks native account, repository push access and
+public signing-key registration before provider execution. For an SSH alias or
+custom origin host, supply `--repo OWNER/REPO` to `run`, `github use` and
+repository-mode `github status`. Only GitHub.com is supported. Omitted-profile
+`github status` resolves the repository; `--profile NAME` inspects the global pair.
 
 Watch `sdlc dashboard` in another terminal. Expected: streamed implementation,
 passing isolated tests, a signed draft PR, current-head CI, opposite-provider

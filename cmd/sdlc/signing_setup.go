@@ -233,7 +233,7 @@ func signingSetup(ctx context.Context, directory string, options signingOptions,
 	fmt.Fprintln(output, "Signing setup saved. No 1Password, GitHub or model request was made.")
 	fmt.Fprintln(output, "The token is reopened for each verification or publication and sent only to the signing resolver; no desktop approval is required.")
 	fmt.Fprintf(output, "Next: sdlc signing status --profile %s\nThen: sdlc signing verify --profile %s (contacts 1Password; needs the runtime and pinned op image).\n", options.name, options.name)
-	fmt.Fprintf(output, "Use the same account selection with sdlc auth login --service github --profile %s and sdlc run --github-profile %s.\n", options.name, options.name)
+	fmt.Fprintf(output, "Pair this key with your logged-in GitHub account: sdlc github pair --profile ACCOUNT --signing-profile %s\nThen select the account in an organisation checkout: sdlc github use --profile ACCOUNT\n", options.name)
 	return nil
 }
 

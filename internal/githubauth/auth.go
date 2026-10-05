@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -257,9 +258,9 @@ func containerArgs(image, name, volume, provider, action string) []string {
 		args = append(args, "--network", "none", "--user", "0:0", "--cap-add", "CHOWN", "--cap-add", "FOWNER")
 	} else {
 		args = append(args, "--user", "1000:1000")
-		if action == "status" || action == "verify" || action == "identity" || action == "repository" {
+		if action == "status" || action == "verify" || action == "identity" || action == "repository" || action == "signing-keys" {
 			network := "none"
-			if action == "verify" || action == "identity" || action == "repository" {
+			if action == "verify" || action == "identity" || action == "repository" || action == "signing-keys" {
 				network = "bridge"
 			}
 			args = append(args, "--network", network)
@@ -542,6 +543,56 @@ type RepositoryIdentity struct {
 
 var repositoryOwner = regexp.MustCompile(`^[A-Za-z0-9-]{1,39}$`)
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
+
+func validLogin(login string) bool {
+	return repositoryOwner.MatchString(login) && !strings.HasPrefix(login, "-") && !strings.HasSuffix(login, "-") && !strings.Contains(login, "--")
+}
+
+const signingKeysOutputLimit = 1024 * 1024
+const signingKeyLimit = 8192
+
+var signingKeyType = regexp.MustCompile(`^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com)$`)
+
+func validSigningKey(key string) bool {
+	if len(key) == 0 || len(key) > signingKeyLimit {
+		return false
+	}
+	for _, char := range key {
+		if char < 32 || char > 126 {
+			return false
+		}
+	}
+	fields := strings.Fields(key)
+	if len(fields) < 2 || !signingKeyType.MatchString(fields[0]) {
+		return false
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(fields[1])
+	return err == nil && len(decoded) > 0
+}
+
+// SigningKeys lists a user's public SSH signing keys through the official gh client.
+// A full tenth page fails because it cannot establish that the list is complete.
+func (session *Session) SigningKeys(ctx context.Context, login string) ([]string, error) {
+	if !validLogin(login) {
+		return nil, fmt.Errorf("GitHub login is invalid")
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	output, err := session.manager.container(ctx, session.ImageID, session.Volume, "github", "signing-keys", login)
+	if err != nil {
+		return nil, fmt.Errorf("cannot verify GitHub SSH signing keys")
+	}
+	var keys []string
+	if len(output) > signingKeysOutputLimit || json.Unmarshal(output, &keys) != nil || keys == nil || len(keys) >= 1000 {
+		return nil, fmt.Errorf("GitHub SSH signing keys returned an invalid response")
+	}
+	for _, key := range keys {
+		if !validSigningKey(key) {
+			return nil, fmt.Errorf("GitHub SSH signing keys returned an invalid response")
+		}
+	}
+	return keys, nil
+}
 
 func validRepository(value string) bool {
 	parts := strings.Split(value, "/")
