@@ -232,6 +232,16 @@ func TestInspectWorkRequiresIgnoredAndUntrackedInputs(t *testing.T) {
 				t.Fatal("unsafe private work accepted")
 			}
 			if after := workSnapshot(t, root); !reflect.DeepEqual(before, after) {
+				for path, original := range before {
+					if current, exists := after[path]; !exists || current != original {
+						t.Errorf("work inspection changed path %q", path)
+					}
+				}
+				for path := range after {
+					if _, exists := before[path]; !exists {
+						t.Errorf("work inspection created path %q", path)
+					}
+				}
 				t.Fatal("failed protection check wrote state")
 			}
 		})
