@@ -23,6 +23,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
+	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 	"github.com/tjpeel/sdlc/internal/workrun"
@@ -615,6 +616,7 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	}
 	options := d.options
 	options.all, options.watch, options.alternate = false, false, false
+	options.featureOwned = true
 	options.root, options.reference, options.ticket, options.runID = d.plan.Root, d.plan.Reference, ticket.File, previous.RunID
 	options.base, options.branch, options.repository, options.githubProfile = target.Base, "", d.settings.Repository, d.settings.GitHubProfile
 	options.inputs, options.dockerTests = d.settings.Inputs, d.settings.DockerTests
@@ -646,8 +648,17 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 		// ambiguous leftovers rather than guessing whether work was executed.
 		if inspectErr == nil {
 			entries, err := os.ReadDir(directory)
-			if err != nil || len(entries) != 0 {
+			if err != nil {
 				return *previous, fmt.Errorf("incomplete ticket preparation retained; inspect the private run before retrying")
+			}
+			if len(entries) != 0 {
+				owner, err := runstatus.ValidatePreparationRetry(directory, d.preparationIdentity(ticket.File, previous.RunID))
+				if err != nil {
+					return *previous, err
+				}
+				if err := owner.Close(); err != nil {
+					return *previous, err
+				}
 			}
 		}
 		snapshot, cleanup, err := d.snapshot(ctx, target, d.directory)
@@ -663,6 +674,14 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	runErr := runSelectedCommand(ctx, options, stream)
 	directory, journal, loadErr := d.loadRun(ticket.File, *previous)
 	if loadErr != nil {
+		if runErr != nil {
+			canonical, err := workrun.RunDirectory(d.plan.Root, d.plan.Reference, ticket.File, previous.RunID, false)
+			if err == nil {
+				if _, err := os.Lstat(filepath.Join(canonical, "journal.json")); os.IsNotExist(err) {
+					return *previous, runErr
+				}
+			}
+		}
 		return *previous, errors.Join(runErr, loadErr)
 	}
 	return resultForRun(directory, journal), runErr
@@ -856,6 +875,10 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 				candidate := workseries.Result{RunID: entry.Name()}
 				directory, journal, err := d.loadRun(ticket.File, candidate)
 				if err != nil {
+					if prepared, retryErr := d.retryPreparation(ticket.File, candidate); retryErr == nil {
+						matches = append(matches, prepared)
+						continue
+					}
 					return fmt.Errorf("existing ticket run cannot be safely adopted: %w", err)
 				}
 				matches = append(matches, resultForRun(directory, journal))
@@ -878,6 +901,16 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 			// damaged existing journal or adopt a different native session.
 			path := filepath.Join(d.plan.Root, ".sdlc", "work", d.plan.Reference, "runs", strings.TrimSuffix(ticket.File, ".md"), previous.RunID, "journal.json")
 			if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
+				marker := filepath.Join(filepath.Dir(path), "preparation.json")
+				if _, markerErr := os.Lstat(marker); markerErr == nil {
+					prepared, retryErr := d.retryPreparation(ticket.File, previous)
+					if retryErr != nil {
+						return retryErr
+					}
+					state.Results[ticket.File] = prepared
+				} else if !os.IsNotExist(markerErr) {
+					return markerErr
+				}
 				continue
 			}
 			return err
@@ -890,4 +923,27 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 		state.Results[ticket.File] = refreshed
 	}
 	return nil
+}
+
+func (d *seriesDriver) preparationIdentity(ticket, id string) runstatus.PreparationFailure {
+	return runstatus.PreparationFailure{ID: id, Root: d.plan.Root, Reference: d.plan.Reference, Ticket: ticket, Roles: d.settings.Roles[ticket]}
+}
+
+func (d *seriesDriver) retryPreparation(ticket string, previous workseries.Result) (workseries.Result, error) {
+	directory, err := workrun.RunDirectory(d.plan.Root, d.plan.Reference, ticket, previous.RunID, false)
+	if err != nil {
+		return previous, err
+	}
+	if previous.Directory != "" && previous.Directory != directory {
+		return previous, fmt.Errorf("feature run directory changed")
+	}
+	owner, err := runstatus.ValidatePreparationRetry(directory, d.preparationIdentity(ticket, previous.RunID))
+	if err != nil {
+		return previous, err
+	}
+	defer owner.Close()
+	// Directory identifies an execution workspace to the scheduler. A caught
+	// preparation failure has no journal or workspace to reconcile yet.
+	previous.State, previous.Directory = "prepared", ""
+	return previous, nil
 }

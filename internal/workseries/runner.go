@@ -305,6 +305,7 @@ func (r Runner) launch(ctx context.Context, s *State, save func() error, write f
 			}
 		}
 		old.State = "running"
+		old.StopReason = ""
 		s.Results[key] = old
 		if err := save(); err != nil {
 			return false, err
@@ -336,19 +337,8 @@ func (r Runner) launch(ctx context.Context, s *State, save func() error, write f
 		key := filepath.Base(item.ticket.File)
 		current := s.Results[key]
 		if item.err != nil {
-			if knownState(item.result.State) && item.result.State != "" {
-				item.result = completeResult(current, item.result)
-				if item.result.StopReason == "" {
-					item.result.StopReason = item.err.Error()
-				}
-				s.Results[key] = item.result
-				write("%s %s: %v\n", key, item.result.State, item.err)
-			} else {
-				current.State = "blocked"
-				current.StopReason = item.err.Error()
-				s.Results[key] = current
-				write("%s blocked: %v\n", key, item.err)
-			}
+			r.reconcileFailed(s, key, current, item.result, item.err)
+			write("%s %s: %v\n", key, s.Results[key].State, item.err)
 		} else {
 			item.result = completeResult(current, item.result)
 			if !knownState(item.result.State) {

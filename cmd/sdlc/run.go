@@ -55,6 +55,7 @@ type runOptions struct {
 	parallel                                                                                                                           int
 	// Controller-only selections are never accepted as CLI flags.
 	root, runID                           string
+	featureOwned                          bool
 	snapshot                              *workrun.BranchSnapshot
 	frozenImage                           string
 	frozenIdentity                        *workrun.PublicationIdentity
@@ -173,7 +174,7 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	return runSelectedCommand(ctx, options, output)
 }
 
-func runSelectedCommand(ctx context.Context, options runOptions, output io.Writer) error {
+func runSelectedCommand(ctx context.Context, options runOptions, output io.Writer) (resultErr error) {
 	if options.notifications.Mode == "bell" && !options.terminal && !dashboardTerminal(output) {
 		return fmt.Errorf("bell notifications require a terminal; use desktop for unattended runs")
 	}
@@ -216,6 +217,21 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	}()
 	var journal workrun.Journal
 	var directory string
+	var preparationOwner *os.File
+	defer func() {
+		if preparationOwner == nil {
+			return
+		}
+		defer preparationOwner.Close()
+		if resultErr != nil {
+			if _, err := os.Lstat(filepath.Join(directory, "journal.json")); os.IsNotExist(err) {
+				failure := runstatus.PreparationFailure{Version: 1, ID: journal.ID, Root: work.Root, Reference: options.reference, Ticket: ticket, Roles: journal.Plan.Roles, FailedAt: time.Now().UTC(), Reason: resultErr.Error(), FeatureOwned: options.featureOwned}
+				if err := runstatus.New(runtime.Directory).RegisterPreparationFailure(directory, failure, preparationOwner); err != nil {
+					resultErr = errors.Join(resultErr, fmt.Errorf("cannot report preparation failure: %w", err))
+				}
+			}
+		}
+	}()
 	if options.runID != "" && options.resume == "" {
 		if candidate, inspectErr := workrun.RunDirectory(work.Root, options.reference, ticket, options.runID, false); inspectErr == nil {
 			if _, inspectErr := os.Lstat(filepath.Join(candidate, "journal.json")); inspectErr == nil {
@@ -312,6 +328,20 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if err != nil {
 			return err
 		}
+		if _, err := os.Lstat(filepath.Join(directory, "preparation.json")); err == nil {
+			expected := runstatus.PreparationFailure{ID: id, Root: work.Root, Reference: options.reference, Ticket: ticket, Roles: roles}
+			if !options.featureOwned {
+				return fmt.Errorf("failed preparation requires its original feature controller or a new ticket run")
+			}
+			preparationOwner, err = runstatus.ValidatePreparationRetry(directory, expected)
+		} else if os.IsNotExist(err) {
+			preparationOwner, err = runstatus.OwnPreparation(directory)
+		} else {
+			return err
+		}
+		if err != nil {
+			return err
+		}
 		branch := options.branch
 		if branch == "" {
 			branch = "work/" + branchPart(options.reference) + "/" + branchPart(strings.TrimSuffix(ticket, ".md")) + "-" + id[:8]
@@ -373,6 +403,13 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if err := workrun.Save(directory, &journal); err != nil {
 			return err
 		}
+		if err := runstatus.New(runtime.Directory).Register(directory, journal); err != nil {
+			return err
+		}
+		if err := preparationOwner.Close(); err != nil {
+			return err
+		}
+		preparationOwner = nil
 	}
 	if options.dryRun {
 		return printRunPlan(output, journal, true)

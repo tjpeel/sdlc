@@ -11,13 +11,162 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/project"
+	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 	"github.com/tjpeel/sdlc/internal/workrun"
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
+
+func TestFeatureAdoptsOnlyOwnedMetadataPreparationFailure(t *testing.T) {
+	for _, change := range []string{"metadata only", "busy", "workspace", "models", "standalone", "corrupt journal"} {
+		t.Run(change, func(t *testing.T) {
+			driver, result := featureAdoptionFixture(t, "blocked")
+			directory, _, err := driver.loadRun("01-selected.md", result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(directory, "journal.json")); err != nil {
+				t.Fatal(err)
+			}
+			owner, err := runstatus.OwnPreparation(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := driver.preparationIdentity("01-selected.md", result.RunID)
+			p.Version, p.FeatureOwned, p.FailedAt, p.Reason = 1, true, time.Now().UTC(), "public capture failure"
+			if change == "models" {
+				p.Roles = workrun.DefaultModels().Claude
+			}
+			if change == "standalone" {
+				p.FeatureOwned = false
+			}
+			registry := runstatus.New(os.Getenv("SDLC_STATE_DIR"))
+			if err := registry.RegisterPreparationFailure(directory, p, owner); err != nil {
+				owner.Close()
+				t.Fatal(err)
+			}
+			if change == "busy" {
+				defer owner.Close()
+			} else {
+				owner.Close()
+			}
+			if change == "workspace" {
+				if err := os.Mkdir(filepath.Join(directory, "workspace"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if change == "corrupt journal" {
+				if err := os.WriteFile(filepath.Join(directory, "journal.json"), []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result.State, result.StopReason = "blocked", p.Reason
+			checkpoint := workseries.State{Version: 1, Plan: driver.plan, Results: map[string]workseries.Result{"01-selected.md": result}}
+			err = driver.adoptRuns(&checkpoint)
+			if change != "metadata only" {
+				if err == nil {
+					t.Fatalf("unsafe %s preparation reset", change)
+				}
+				if checkpoint.Results["01-selected.md"].State != "blocked" {
+					t.Fatal("failed adoption changed blocked state")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := checkpoint.Results["01-selected.md"]
+			if got.State != "prepared" || got.RunID != result.RunID || got.StopReason != p.Reason || got.Directory != "" {
+				t.Fatalf("retry identity/reason changed: %+v", got)
+			}
+			if persisted, err := runstatus.LoadPreparation(directory); err != nil || persisted.Reason != p.Reason {
+				t.Fatal("adoption erased original failure", err)
+			}
+			checkpoint.Results = map[string]workseries.Result{}
+			if err := driver.adoptRuns(&checkpoint); err != nil {
+				t.Fatal(err)
+			}
+			if checkpoint.Results["01-selected.md"].RunID != result.RunID {
+				t.Fatal("unrecorded failure adopted with different ID")
+			}
+		})
+	}
+}
+
+type preparationRetargetDriver struct {
+	controller *seriesDriver
+	target     workseries.Target
+	executed   []workseries.Result
+	reconciled int
+}
+
+func (d *preparationRetargetDriver) Base(context.Context, string) (workseries.Target, error) {
+	return d.target, nil
+}
+
+func (d *preparationRetargetDriver) Execute(_ context.Context, _ workseries.Ticket, target workseries.Target, previous *workseries.Result) (workseries.Result, error) {
+	result := *previous
+	result.State, result.Base, result.BaseSHA = "ready", target.Base, target.SHA
+	result.HeadSHA = strings.Repeat("b", 40)
+	d.executed = append(d.executed, result)
+	return result, nil
+}
+
+func (d *preparationRetargetDriver) Observe(_ context.Context, result workseries.Result) (workseries.Observation, error) {
+	return workseries.Observation{State: "OPEN", Base: result.Base, BaseSHA: result.BaseSHA, HeadSHA: result.HeadSHA}, nil
+}
+
+func (d *preparationRetargetDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, target workseries.Target, result workseries.Result) (workseries.Result, error) {
+	d.reconciled++
+	return d.controller.Reconcile(ctx, ticket, target, result)
+}
+
+func TestFeaturePreparationRetryUsesMovedBaseWithoutReconciliation(t *testing.T) {
+	controller, result := featureAdoptionFixture(t, "blocked")
+	directory, journal, err := controller.loadRun("01-selected.md", result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(directory, "journal.json")); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := runstatus.OwnPreparation(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := controller.preparationIdentity("01-selected.md", result.RunID)
+	p.Version, p.FeatureOwned, p.FailedAt, p.Reason = 1, true, time.Now().UTC(), "public capture failure"
+	if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).RegisterPreparationFailure(directory, p, owner); err != nil {
+		owner.Close()
+		t.Fatal(err)
+	}
+	owner.Close()
+	result.State, result.StopReason, result.Base, result.BaseSHA = "blocked", p.Reason, journal.Plan.Base, journal.Plan.BaseSHA
+	state := workseries.State{Version: 1, Plan: controller.plan, Results: map[string]workseries.Result{
+		"01-selected.md": result,
+		"02-other.md":    {RunID: strings.Repeat("2", 24), State: "merged", MergeSHA: journal.Plan.BaseSHA},
+	}}
+	if err := controller.adoptRuns(&state); err != nil {
+		t.Fatal(err)
+	}
+	seriesDirectory, err := workseries.Directory(controller.plan.Root, controller.plan.Reference, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := &preparationRetargetDriver{controller: controller, target: workseries.Target{Base: "main", SHA: strings.Repeat("c", 40)}}
+	err = (workseries.Runner{Driver: boundary}).Run(context.Background(), seriesDirectory, &state)
+	if err != nil || boundary.reconciled != 0 || len(boundary.executed) != 1 {
+		t.Fatalf("metadata-only retry attempted execution reconciliation: %v; reconciled %d; executed %+v", err, boundary.reconciled, boundary.executed)
+	}
+	got := state.Results["01-selected.md"]
+	if got.RunID != result.RunID || got.BaseSHA != boundary.target.SHA || got.Base != boundary.target.Base || got.State != "ready" {
+		t.Fatalf("retry lost identity or refreshed target: %+v", got)
+	}
+}
 
 func TestFeatureStreamsKeepConcurrentTicketLinesSeparate(t *testing.T) {
 	var output bytes.Buffer

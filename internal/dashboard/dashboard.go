@@ -300,19 +300,26 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 		fmt.Fprintf(&text, "Finding: %s %s:%d %s — %s\n", finding.Priority, finding.Path, finding.Line, finding.Scenario, finding.Recommendation)
 	}
 	fmt.Fprintf(&text, "Private state: %s\n", v.Directory)
-	if v.Available {
+	if v.Available && v.Journal != nil {
 		fmt.Fprintf(&text, "Resume from repository: sdlc run --reference %s --ticket %s --resume %s", quote(v.Reference), quote(filepath.Base(v.Ticket)), v.ID)
 		if v.State == "waiting_for_human" {
 			text.WriteString(" --answer-file /PATH/TO/PRIVATE_ANSWER.txt")
 		}
 		text.WriteByte('\n')
+	} else if v.Preparation {
+		if v.FeatureOwned {
+			fmt.Fprintf(&text, "Retry feature from repository: sdlc run --reference %s --all\n", quote(v.Reference))
+		} else {
+			fmt.Fprintln(&text, "Repeat the original ticket command after correcting the preparation failure.")
+		}
+		fmt.Fprintln(&text, "Preparation state is retained; uncertain leftovers require inspection before retrying.")
 	}
 	for _, line := range strings.Split(text.String(), "\n") {
 		if _, err := fmt.Fprintln(output, SafeText(line)); err != nil {
 			return err
 		}
 	}
-	if logs && v.Available {
+	if logs && v.Available && v.Journal != nil {
 		if _, err := fmt.Fprintln(output, "Recent output (private; bounded tail):"); err != nil {
 			return err
 		}

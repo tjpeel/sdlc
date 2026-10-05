@@ -86,6 +86,18 @@ func TestRunnerPersistsStoppedExecutionMetadata(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksFailedActiveExecution(t *testing.T) {
+	dir, s := testState(t, Ticket{File: "01-one.md"})
+	d := &fakeDriver{executeResult: Result{State: "running", Branch: "retained-branch"}, executeErr: errors.New("source preparation failed")}
+	if err := (Runner{Driver: d}).Run(context.Background(), dir, s); err == nil {
+		t.Fatal("preparation failure did not require attention")
+	}
+	got := s.Results["01-one.md"]
+	if got.State != "blocked" || got.StopReason != "source preparation failed" || got.RunID == "" || got.Branch != "retained-branch" || len(d.executed) != 1 {
+		t.Fatalf("failed execution state lost or retried: %+v, %v", got, d.executed)
+	}
+}
+
 func TestRunnerRetargetsPreparedCheckpointWithoutReconcile(t *testing.T) {
 	dir, s := testState(t, Ticket{File: "01-one.md"})
 	s.Results["01-one.md"] = Result{RunID: "111111111111111111111111", State: "prepared", Base: "main", BaseSHA: sha("old-base")}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/githubprofile"
+	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
@@ -27,6 +30,60 @@ import (
 
 func runArgs(extra ...string) []string {
 	return append([]string{"--reference", "TASK-1", "--ticket", "01-selected.md"}, extra...)
+}
+
+func TestRunCaptureFailureIsVisibleBeforeExecutionJournal(t *testing.T) {
+	for _, reportingFails := range []bool{false, true} {
+		t.Run(fmt.Sprint(reportingFails), func(t *testing.T) {
+			root := runGitFixture(t)
+			marker := forbidConnectedRunCommands(t, root)
+			state, profile := pairingFixture(t)
+			t.Setenv("SDLC_STATE_DIR", state)
+			t.Setenv("CI", "")
+			pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
+			if err := githubprofile.Store(state, pair, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("README.md", filepath.Join(root, "unsafe-source")); err != nil {
+				t.Fatal(err)
+			}
+			options, err := parseRunOptions(runArgs("--repo", "example/project", "--github-profile", "personal"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			options.featureOwned = true
+			if reportingFails {
+				if err := os.WriteFile(filepath.Join(state, "runs"), []byte("public registry obstruction"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var output bytes.Buffer
+			err = runSelectedCommand(context.Background(), options, &output)
+			if err == nil || !strings.Contains(err.Error(), "regular files without symlinks") {
+				t.Fatalf("capture failure not reproduced: %v", err)
+			}
+			if reportingFails {
+				if !strings.Contains(err.Error(), "cannot report preparation failure") {
+					t.Fatalf("reporting error replaced original failure: %v", err)
+				}
+				return
+			}
+			views, listErr := runstatus.New(state).List(time.Now())
+			if listErr != nil || len(views) != 1 {
+				t.Fatalf("preparation failure absent from dashboard: %+v %v", views, listErr)
+			}
+			v := views[0]
+			if v.Journal != nil || v.State != "blocked" || !v.NeedsAttention || !v.FeatureOwned || v.StopReason != err.Error() {
+				t.Fatalf("original capture failure lost: %+v", v)
+			}
+			if _, err := os.Lstat(filepath.Join(v.Directory, "journal.json")); !os.IsNotExist(err) {
+				t.Fatal("failed capture created an execution journal")
+			}
+			if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+				t.Fatal("preparation failure reached external account/provider commands")
+			}
+		})
+	}
 }
 
 func TestRuntimeRunLeaseBlocksBuildUntilControllerExits(t *testing.T) {

@@ -251,7 +251,7 @@ func TestForgetRejectsUnsafeStorageAndUntrustedMetadata(t *testing.T) {
 				if kind == "oversize entry" {
 					data = strings.Repeat("x", maxJSON+1)
 				} else if kind != "corrupt entry" {
-					record := entry{1, journal.ID, directory, journal.Plan.Root, journal.Plan.Reference, journal.Plan.Ticket}
+					record := entry{1, journal.ID, directory, journal.Plan.Root, journal.Plan.Reference, journal.Plan.Ticket, false}
 					if kind == "wrong ID" {
 						record.ID = "abcdefabcdefabcdefabcdef"
 					} else {
@@ -332,7 +332,7 @@ func TestForgetTakesControllerBeforeRegistryMutexAndRechecksIdentity(t *testing.
 		t.Fatal("forget never acquired controller lock")
 	}
 	path := filepath.Join(r.stateDir, "runs", journal.ID+".json")
-	if err := replaceJSON(path, entry{1, journal.ID, directory, journal.Plan.Root, "changed-reference", journal.Plan.Ticket}); err != nil {
+	if err := replaceJSON(path, entry{1, journal.ID, directory, journal.Plan.Root, "changed-reference", journal.Plan.Ticket, false}); err != nil {
 		r.mu.Unlock()
 		t.Fatal(err)
 	}

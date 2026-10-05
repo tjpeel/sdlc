@@ -15,6 +15,23 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
+func TestPreparationDetailProvidesSupportedRetryWithoutJournalOrLogs(t *testing.T) {
+	for _, feature := range []bool{false, true} {
+		view := runstatus.View{Available: true, Preparation: true, FeatureOwned: feature, Reference: "example", Ticket: "01-ticket.md", State: "blocked", StopReason: "public capture failure", NeedsAttention: true}
+		var output bytes.Buffer
+		if err := Detail(&output, view, time.Now(), true); err != nil {
+			t.Fatal(err)
+		}
+		text := output.String()
+		if !strings.Contains(text, "public capture failure") || !strings.Contains(text, "Preparation state is retained") || strings.Contains(text, "--resume") || strings.Contains(text, "Recent output") || strings.Contains(text, "Local checks") {
+			t.Fatalf("unsupported preparation details: %s", text)
+		}
+		if strings.Contains(text, "--all") != feature || strings.Contains(text, "Repeat the original ticket command") == feature {
+			t.Fatalf("wrong preparation retry guidance: %s", text)
+		}
+	}
+}
+
 func TestOrderedPutsQuestionsAndBrokenControllersBeforeReadyAndActiveRuns(t *testing.T) {
 	now := time.Now().UTC()
 	views := []runstatus.View{
@@ -210,7 +227,7 @@ func TestBlockedChecksDetailUsesCheckFailureOutput(t *testing.T) {
 }
 
 func TestDetailStopsRequestingAnAnswerAfterRunResumes(t *testing.T) {
-	view := runstatus.View{Available: true, Reference: "count-limit", Ticket: "02-count-limit.md", Questions: []string{"Is this ticket ready?"}}
+	view := runstatus.View{Available: true, Reference: "count-limit", Ticket: "02-count-limit.md", Questions: []string{"Is this ticket ready?"}, Journal: &workrun.Journal{}}
 	for _, state := range []string{"waiting_for_human", "implementing", "reviewing", "ready"} {
 		t.Run(state, func(t *testing.T) {
 			view.State = state

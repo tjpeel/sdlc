@@ -29,12 +29,13 @@ type Registry struct {
 func New(stateDir string) *Registry { return &Registry{stateDir: filepath.Clean(stateDir)} }
 
 type entry struct {
-	Version   int    `json:"version"`
-	ID        string `json:"id"`
-	Directory string `json:"directory"`
-	Root      string `json:"root"`
-	Reference string `json:"reference"`
-	Ticket    string `json:"ticket"`
+	Version     int    `json:"version"`
+	ID          string `json:"id"`
+	Directory   string `json:"directory"`
+	Root        string `json:"root"`
+	Reference   string `json:"reference"`
+	Ticket      string `json:"ticket"`
+	Preparation bool   `json:"preparation,omitempty"`
 }
 
 // View keeps controller liveness independent of the journal's workflow stage.
@@ -52,6 +53,7 @@ type View struct {
 	PR                                                workrun.Publication
 	Activity                                          Snapshot
 	Journal                                           *workrun.Journal
+	Preparation, FeatureOwned                         bool
 }
 
 // Register requires a valid persisted journal, so an entry cannot advertise a
@@ -97,11 +99,18 @@ func (r *Registry) Register(directory string, journal workrun.Journal) error {
 		if old.Version != 1 || old.ID != journal.ID || old.Directory != directory || old.Root != persisted.Plan.Root || old.Reference != persisted.Plan.Reference || old.Ticket != persisted.Plan.Ticket {
 			return fmt.Errorf("run identity is already registered elsewhere")
 		}
-		return os.Chmod(path, 0600)
+		if old.Preparation {
+			canonical, err := workrun.RunDirectory(old.Root, old.Reference, filepath.Base(old.Ticket), old.ID, false)
+			if err != nil || canonical != directory {
+				return fmt.Errorf("preparation promotion requires its canonical execution journal")
+			}
+		}
+		old.Preparation = false
+		return replaceJSON(path, old)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("existing registry entry is unavailable: %w", err)
 	}
-	return replaceJSON(path, entry{1, journal.ID, directory, persisted.Plan.Root, persisted.Plan.Reference, persisted.Plan.Ticket})
+	return replaceJSON(path, entry{Version: 1, ID: journal.ID, Directory: directory, Root: persisted.Plan.Root, Reference: persisted.Plan.Reference, Ticket: persisted.Plan.Ticket})
 }
 
 func (r *Registry) List(now time.Time) ([]View, error) {
@@ -132,7 +141,16 @@ func (r *Registry) List(now time.Time) ([]View, error) {
 			v.Root, v.Reference, v.Ticket, v.Directory = e.Root, e.Reference, e.Ticket, e.Directory
 			j, err := workrun.Load(e.Directory)
 			if err != nil {
-				v.Error = err.Error()
+				p, preparationErr := LoadPreparation(e.Directory)
+				if !e.Preparation || preparationErr != nil || p.ID != id || p.Root != e.Root || p.Reference != e.Reference || e.Ticket != ".sdlc/work/"+p.Reference+"/tickets/"+p.Ticket {
+					v.Error = err.Error()
+				} else {
+					v.Available, v.Stopped, v.NeedsAttention = true, true, true
+					v.State, v.StopReason = "blocked", p.Reason
+					v.Preparation, v.FeatureOwned = true, p.FeatureOwned
+					v.Role, v.Provider, v.Model, v.Effort = "implementation", p.Roles.Implementation.Provider, p.Roles.Implementation.Name, p.Roles.Implementation.Effort
+					v.StartedAt, v.UpdatedAt = p.FailedAt, p.FailedAt
+				}
 			} else if j.ID != id || j.Plan.Root != e.Root || j.Plan.Reference != e.Reference || j.Plan.Ticket != e.Ticket {
 				v.Error = "journal identity does not match registry"
 			} else {
