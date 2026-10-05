@@ -1,6 +1,7 @@
 # Test GitHub profiles and unattended signing
 
-Use a private disposable repository for the first connected trial. This guide
+For full onboarding, follow the [user guide](user-guide.md). Use this focused
+validation guide with a private disposable repository. It
 uses `personal` and `work` as example profile names; replace paths, identities,
 vault references and repository names locally. Never put account configuration,
 tokens, private keys or transcripts in this public clone.
@@ -15,7 +16,9 @@ one saved account per provider.
 The publisher and credential resolver run in Docker without desktop approval
 after provisioning. The controller remains a foreground host process: **keep
 its terminal open**. Terminal-independent execution and restart recovery remain
-separate work. No connected end-to-end ticket has been validated yet.
+separate work. Supervised private trials have passed end-to-end delivery with
+both implementation providers. New account/key pairing and later dashboard
+changes still need their own validation; this guide does not certify a new setup.
 
 ## 1 Reinstall and rebuild
 
@@ -262,7 +265,8 @@ as well. See [Service Account revocation](https://www.1password.dev/service-acco
 
 ## Remaining gates
 
-- Complete live GitHub/SSO, signing attribution and Codex/Claude delivery trials.
+- Validate the new account/key pairing in connected work and organisation
+  OAuth/SSO access; earlier supervised trials used a private personal repository.
 - Add a detached Docker controller, attachment and crash/restart reconciliation.
 - Replace the explicit plaintext bootstrap file with a supported unattended
   host credential store or managed workload identity.

@@ -13,14 +13,17 @@ stacked-ticket orchestration remain future work.
 
 ## Get started
 
-For a joint connected trial, follow the [onboarding runbook](docs/onboarding.md).
-It covers a disposable .NET repository, both providers, CI and review/repair.
-Start with the [GitHub profile and signing test guide](docs/github-docker-test.md)
-to provision separate accounts. Use the [1Password signing setup guide](docs/1password-signing-setup.md)
-to create the dedicated vault/account/key and run `sdlc signing setup --profile personal-key`.
-Pair it once with `sdlc github pair --profile personal --signing-profile personal-key`.
-This checks the native account and its public signing-key registration without
-retrieving a secret or writing to GitHub.
+Follow the [user guide](docs/user-guide.md) for the full route: install, build,
+sign into Codex/Claude/GitHub, provision a dedicated 1Password signing authority,
+pair accounts and keys, configure a project, and start and monitor a ticket.
+Account setup is done once; each project needs reviewed checks and an account
+selection. The guide includes replacement, resume and history retention steps.
+
+For a supervised trial on a disposable .NET repository, use the
+[test runbook](docs/onboarding.md). The [proposed host-harness skill](docs/skills/sdlc-drive/SKILL.md)
+defines how a harness can drive the current CLI while keeping its context small.
+It is not installed automatically. A [single guided setup command](docs/proposals/unified-onboarding.md)
+is proposed follow-up work; current onboarding uses the documented commands.
 
 From this clone, with Go 1.25 or later and a local Docker engine running Linux
 containers, select an existing directory on your PATH:
@@ -104,7 +107,8 @@ Execution starts with `sdlc run`. See the
 For a disposable .NET 10 `.slnx` project with an API, unit tests and Docker/Mongo
 integration tests, use the [smoke-test example](examples/dotnet-smoke/README.md).
 Its public ticket template adds a count endpoint. The build and tests have passed
-in credential-free SDLC workers; connected provider execution remains to be tested.
+in credential-free SDLC workers; supervised private trials using this style of
+project have also passed connected delivery and review/repair.
 
 List a work folder's tickets in numeric filename order:
 
@@ -137,8 +141,10 @@ on the shared image. The Docker
 publisher signs every delivered commit with the dedicated approved key, uses the
 captured project Git name/email, and publishes through native `gh`. It leaves the
 PR draft and never merges. Read the [run guide](docs/cli.md#run-one-ticket)
-and [provider rules](docs/provider-usage.md) before a connected run. No complete live
-provider/publication trial has been validated for this implementation.
+and [provider rules](docs/provider-usage.md) before a connected run. Supervised
+private trials have passed delivery/review/repair with both implementation
+providers. Later account/key pairing, history/dashboard changes and desktop
+notification delivery still need separate validation.
 
 Watch registered runs across repositories from another terminal:
 
@@ -252,6 +258,7 @@ Running inside SDLC narrows that exposure, while retaining the risks listed abov
 
 ## Documentation
 
+- [User guide: full onboarding, ticket execution and recovery](docs/user-guide.md)
 - [CLI installation and commands](docs/cli.md)
 - [1Password signing provisioning and setup](docs/1password-signing-setup.md)
 - [GitHub profiles and unattended signing tests](docs/github-docker-test.md)
@@ -259,4 +266,8 @@ Running inside SDLC narrows that exposure, while retaining the risks listed abov
 - [Development and validation](docs/development.md)
 - [Keeping public commits free of private material](docs/publication-safety.md)
 - [Provider usage rules and authentication boundaries](docs/provider-usage.md)
+- [Run history, private reports and dashboard removal](docs/run-history.md)
+- [Connected validation runbook](docs/onboarding.md)
+- [Proposed host-harness SDLC skill](docs/skills/sdlc-drive/SKILL.md)
+- [Proposed unified onboarding command](docs/proposals/unified-onboarding.md)
 - [Research and earlier prototypes](research/README.md)

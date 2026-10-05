@@ -116,7 +116,9 @@ sdlc run --reference dotnet-smoke --ticket 01-count-items.md \
 ```
 
 For the connected trial, first configure the test repository's GitHub remote,
-host Git author/signing, host `gh` login and a CI workflow that reports PR checks.
+effective Git author name/email, SDLC GitHub/signing pair and a CI workflow that
+reports PR checks. Follow the [user guide](../../docs/user-guide.md); host `gh`
+login and a host SSH signing agent do not supply SDLC's publication credentials.
 This fixture includes no CI workflow. SDLC pauses if the PR has no reported
 checks after its CI startup wait. The account-based SDLC controller runs locally;
 CI runs the repository's checks separately. In the original SDLC checkout,

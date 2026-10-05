@@ -1,14 +1,17 @@
-# Connected onboarding and test plan
+# Connected validation runbook
 
-Use this guide for the first joint connected SDLC trial, then for onboarding a
-real .NET repository. Start with a new private, disposable GitHub repository and
-the public .NET fixture. The aim is to prove implementation, isolated checks,
+Use the [user guide](user-guide.md) for ordinary onboarding and daily use. This
+runbook is for a supervised connected trial. Start with a new private, disposable
+GitHub repository and the public .NET fixture. The aim is to prove implementation, isolated checks,
 signed draft publication, CI, opposite-provider review and repair together.
 
-Prepared on 4 October 2026. The Go/Python offline suites, real .NET API/Mongo
+Initially prepared on 4 October 2026. The Go/Python offline suites, real .NET API/Mongo
 checks, captured root `.env` and concurrent nested-Docker port reuse have passed.
-The connected delivery path has not yet passed a complete trial. This document
-prepares that trial; it does not record a connected test result.
+Subsequent supervised private trials passed signed draft publication, CI,
+opposite-provider review and repair with both implementation providers. This
+runbook describes repeatable checks, not a transcript. Later account/key pairing,
+dashboard/history changes and desktop notification delivery need their own
+connected or normal-terminal validation; earlier trials do not establish those results.
 
 The isolated Docker publisher and dedicated 1Password signing route are
 implemented. Start with [GitHub profiles and signing](github-docker-test.md).
@@ -209,7 +212,7 @@ jobs:
       - run: dotnet test tests/Smoke.UnitTests/Smoke.UnitTests.csproj --no-build --no-restore
 ```
 
-This is a proposed workflow for tomorrow, not a validated hosted CI result. Its
+This is a minimal CI example for the disposable repository. Its
 purpose is to exercise PR-triggered checks and SDLC's CI gate; integration checks
 run separately in SDLC's dedicated daemon. It needs no provider credentials,
 GitHub PAT, signing key or real test secrets. The checkout pin is the
@@ -463,6 +466,12 @@ remain legitimate attention states.
 
 ## Remaining work before real tickets
 
+Supervised private trials have since passed both provider directions, signed
+publication, current-head CI and actionable review feedback followed by repair
+and a fresh review. The table remains a checklist for validating a new setup;
+it is not a claim that every case below is untested. New account/key pairing,
+organisation access and terminal-independent supervision remain separate gates.
+
 | Priority | Item | Completion evidence |
 | --- | --- | --- |
 | Required joint test | Supported account mode, saved login persistence and actual requested-model access for both providers | Native login/persistence and selected headless roles succeed; reported model IDs agree where available. Missing model reports remain unknown. |
@@ -472,7 +481,7 @@ remain legitimate attention states.
 | Required joint test | Human attention and interruption recovery | A recorded run resumes the correct native session after a private answer or resolved stop. |
 | Required repository onboarding | Selected API or consumer checks | Existing baseline checks pass; exact SDK/test-runner commands and disposable Compose settings are configured. The first bounded ticket validates that repository's SDLC worker topology. |
 | Required before relying on unattended repair | Connected actionable review feedback | A real finding causes repair, retest and fresh review. Keep this open after a clean trial; offline loop tests alone do not establish connected repair. |
-| Required for unattended Docker delivery | Separate publisher, machine credentials and publication preflight | No desktop unlock/approval after provisioning; required signing, repository/account/identity binding and narrow mounts are validated. The Docker publisher and required signing are implemented and tested offline; live OAuth/SSO, attribution and locked-desktop delivery remain to be proven. |
+| Required for unattended Docker delivery | Separate publisher, machine credentials and publication preflight | No desktop unlock/approval after provisioning; required signing, repository/account/identity binding and narrow mounts are validated. Earlier supervised signing/delivery passed; new pairing and organisation OAuth/SSO need their own validation. |
 | Required for unattended Docker delivery | Docker controller supervision, bootstrap recovery and expiry handling | Terminal closure and safe restart preserve the job; machine credentials remain available without prompts; invalid credentials stop with attention. Current controller is foreground only. |
 
 The connected gates establish the supervised workflow. Both unattended Docker
@@ -518,5 +527,6 @@ Preparation validation on 4 October checked shell syntax, local documentation
 links, project-settings JSON and the proposed workflow's YAML structure. A
 disposable offline checkout passed `init`, ignore checks, ordered ticket discovery
 and both provider dry-run plans using the documented settings. That validation
-used no Docker, account, host signing or GitHub requests; hosted CI and connected
-delivery remain the joint tests above.
+used no Docker, account, host signing or GitHub requests. Later supervised
+connected trials passed delivery and review/repair; they do not validate a fresh
+account setup or all subsequent features.

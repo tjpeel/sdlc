@@ -86,7 +86,9 @@ native account login for the same user's local job. SDLC rejects CI execution;
 this account route is not a service for other users, shared subscription broker
 or general unattended deployment route. Use API or supported cloud authentication
 for integrations outside the documented native-client account conditions.
-No connected provider test has been authorised or run for this implementation.
+Explicitly authorised supervised private trials have exercised this local route
+with both implementation providers. Those results do not authorise other
+accounts, execution modes or future connected tests.
 
 The selected implementer must have login. Missing opposite-reviewer login allows
 draft PR publication and CI before pausing at `awaiting_reviewer`. Review never

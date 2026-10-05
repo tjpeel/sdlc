@@ -3,7 +3,9 @@
 The installed Go CLI coordinates work from a local Git repository through one
 shared SDLC Docker image for provider workers, checks and publication, with a
 separate official 1Password CLI image for signing-key resolution. macOS and Linux
-are the primary hosts; Windows needs a Linux-container engine. [The CLI guide](cli.md) covers setup and exact commands.
+are the primary hosts; Windows needs a Linux-container engine and does not yet
+support the complete signing/publication route. The [user guide](user-guide.md)
+covers setup and daily use; the [CLI reference](cli.md) lists exact commands.
 
 ## Implemented: one selected ticket
 
@@ -56,8 +58,10 @@ not block draft PR delivery and CI: the run then pauses at `awaiting_reviewer`
 until that opposite provider is authenticated. It never falls back to the
 implementer for independent review. These account-authenticated runs support the
 owner's local single-user CLI job and reject CI execution; see the
-[provider rules](provider-usage.md). No live provider run has yet validated the
-new execution path.
+[provider rules](provider-usage.md). Supervised private trials have passed this
+delivery/review/repair path with both implementation providers. Later pairing
+and dashboard features need separate validation; detached supervision and
+automatic ticket series remain future work.
 
 Before provider execution, SDLC freezes the selected GitHub profile, numeric
 account and repository IDs, canonical repository name, effective project Git
@@ -149,8 +153,9 @@ encryption. The separate resolver has a 35-second internal timeout, managed
 labels and automatic container removal. Native GitHub login needs no App
 installation; Apps remain an optional alternative when administration permits.
 Offline tests cover native cache/logout and disposable signed publication with
-fake GitHub replies. Connected end-to-end delivery remains unvalidated; follow
-the [Docker GitHub test guide](github-docker-test.md).
+fake GitHub replies. Supervised private trials have also passed connected signed
+delivery and review/repair. Use the [Docker GitHub test guide](github-docker-test.md)
+to validate a new account/key setup, including organisation OAuth/SSO policy.
 
 ## Progress and resume
 

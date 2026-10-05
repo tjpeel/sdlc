@@ -298,7 +298,9 @@ token over stdin, has a 35-second internal timeout and is removed after use.
 Neither container receives provider caches, host GitHub configuration, a desktop
 SSH agent or a Docker socket. No GitHub App installation is required for this
 native CLI route. See the [Docker GitHub test guide](github-docker-test.md).
-A connected end-to-end provider, vault and GitHub delivery has not yet been validated.
+Supervised private trials have passed provider execution, vault retrieval,
+signed GitHub draft publication, CI and opposite-provider review/repair. New
+account/key pairing and later dashboard changes need separate validation.
 
 Every reported PR check must pass on the recorded current base/head. Pending
 checks are polled; failures, cancellation and skipping require repair. When no
@@ -341,7 +343,9 @@ Native structured JSONL streams to the terminal and is retained privately under:
 
 Logs, snapshots and native sessions may contain private source, prompts and
 account data. Keep the whole work directory ignored and untracked; do not publish
-terminal recordings. No live provider run has yet validated this execution path.
+terminal recordings. Supervised trials have exercised original-session resume
+with both implementation providers; that does not guarantee recovery from every
+host, client or container failure.
 
 A structured human question pauses at `waiting_for_human`. Supply an answer:
 
