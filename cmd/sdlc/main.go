@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,22 +23,65 @@ import (
 const defaultProvider = "codex"
 
 func main() {
+	if len(os.Args) >= 2 {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		var command func() error
+		switch os.Args[1] {
+		case "shell":
+			command = func() error { return shellCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
+		case "help":
+			command = func() error { return helpCommand(os.Args[2:], os.Stdout) }
+		case "version":
+			if len(os.Args) > 2 {
+				command = func() error { return versionDetailsCommand(ctx, os.Args[2:], os.Stdout) }
+			}
+		case "onboard":
+			command = func() error { return onboardCommand(ctx, os.Args[2:], os.Stdout) }
+		case "projects":
+			command = func() error { return projectCommand(ctx, append([]string{"list"}, os.Args[2:]...), os.Stdout) }
+		case "project":
+			command = func() error { return projectCommand(ctx, os.Args[2:], os.Stdout) }
+		case "inspect":
+			command = func() error { return inspectCommand(ctx, os.Args[2:], os.Stdout) }
+		case "launch":
+			command = func() error { return launchCommand(ctx, os.Args[2:], os.Stdout) }
+		case "terminal":
+			command = func() error { return terminalCommand(ctx, os.Args[2:], os.Stdout) }
+		}
+		if command != nil {
+			if err := command(); err != nil {
+				fmt.Fprintln(os.Stderr, "sdlc:", err)
+				var usage shellUsageError
+				if errors.As(err, &usage) {
+					os.Exit(2)
+				}
+				os.Exit(1)
+			}
+			return
+		}
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
 		fmt.Println(buildinfo.String())
 		return
 	}
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
+		fmt.Println("       sdlc shell [--plain] (interactive slash commands; opt-in)")
+		fmt.Println("       sdlc terminal setup|status [--json] (explicit iTerm2 background-tab setup)")
+		fmt.Println("       sdlc help [COMMAND] [--json] | version --details [--json] | onboard status [--json]")
+		fmt.Println("       sdlc project list|add PATH [--name NAME]|remove NAME [--json] | inspect @REFERENCE/NUMBERED_FILE")
 		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
 		fmt.Println("       sdlc auth login|status|logout --service github [--profile NAME] [status: --verify]")
 		fmt.Println("       sdlc github pair [--profile NAME] [--signing-profile NAME] | github list | github use [--profile NAME] | github status [--verify]")
 		fmt.Println("       sdlc signing setup|status|verify [--profile NAME] | signing configure --file PRIVATE_PROFILE [--profile NAME]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc init (from a project repository)")
-		fmt.Println("       sdlc work --reference REFERENCE (list local tickets in numeric order)")
+		fmt.Println("       sdlc work --reference REFERENCE | --references [--json] (local ticket metadata)")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
-		fmt.Println("       sdlc dashboard [--once | --json] [--page N] [--run RUN_ID] [--logs]")
+		fmt.Println("         Offline plan: --dry-run --json; independent iTerm2 controller: --terminal background [--launch-id UUID] [--json]")
+		fmt.Println("       sdlc dashboard [--once | --json] [--scope project|installation] [--page N] [--run RUN_ID] [--logs]")
 		fmt.Println("       sdlc dashboard forget --run RUN_ID")
 		fmt.Println("       sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY")
 		fmt.Println("       sdlc interactive [--provider codex|claude]")

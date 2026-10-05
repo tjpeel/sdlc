@@ -24,9 +24,15 @@ previous executable intact. It preserves runtime state and unrelated files,
 rejects an unmanaged executable or symlink at the destination, and checks for an
 earlier `sdlc` on PATH. On Windows, close any running `sdlc` before reinstalling.
 
-The installed executable needs no Go runtime. Its version includes `0.1.0-dev`,
+The installed executable needs no Go runtime. Its version includes `0.1.0-beta.1`,
 the Git revision, a dirty-source marker when applicable, and the host OS and
 architecture. Release archives and package-manager installation are future work.
+
+Use `sdlc version --details` for running, installed, selected-source and recorded
+runtime evidence. `sdlc onboard status` describes configuration needed by the
+current project without executing checks or connecting accounts. The opt-in
+`sdlc shell` provides slash commands over these operations; see the
+[interactive shell guide](interactive-shell.md).
 
 ## Initialize a project
 

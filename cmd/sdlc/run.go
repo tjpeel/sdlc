@@ -28,6 +28,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 	"github.com/tjpeel/sdlc/internal/signing"
+	"github.com/tjpeel/sdlc/internal/terminallaunch"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
@@ -53,6 +54,8 @@ type runOptions struct {
 	all, watch, alternate                                                                                                              bool
 	terminal                                                                                                                           bool
 	parallel                                                                                                                           int
+	jsonOutput                                                                                                                         bool
+	terminalMode, launchID                                                                                                             string
 	// Controller-only selections are never accepted as CLI flags.
 	root, runID                           string
 	featureOwned                          bool
@@ -87,6 +90,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.Var(&options.inputs, "input", "exact additional requirements input; repeatable")
 	flags.BoolVar(&options.dockerTests, "docker-tests", false, "enable privileged Docker integration-test daemon")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "print selection without Docker, login checks or execution")
+	flags.BoolVar(&options.jsonOutput, "json", false, "structured offline plan or terminal launch receipt")
+	flags.StringVar(&options.terminalMode, "terminal", "", "background: open an independent run terminal without activation")
+	flags.StringVar(&options.launchID, "launch-id", "", "idempotency key for a background terminal launch")
 	flags.BoolVar(&options.all, "all", false, "schedule every pending ticket in the selected work folder")
 	flags.IntVar(&options.parallel, "parallel", 1, "feature only: maximum concurrent ticket controllers (1-8)")
 	flags.BoolVar(&options.watch, "watch", false, "feature only: watch human merges and reconcile remaining PRs")
@@ -141,11 +147,26 @@ func parseRunOptions(args []string) (runOptions, error) {
 	if err := options.notifications.Validate(); err != nil {
 		return options, err
 	}
+	if options.terminalMode != "" && options.terminalMode != "background" {
+		return options, fmt.Errorf("--terminal must be background")
+	}
+	if options.supplied["terminal"] && options.terminalMode == "" {
+		return options, fmt.Errorf("--terminal cannot be empty")
+	}
+	if options.dryRun && options.terminalMode != "" {
+		return options, fmt.Errorf("--dry-run and --terminal cannot be combined")
+	}
+	if options.jsonOutput && !options.dryRun && options.terminalMode == "" {
+		return options, fmt.Errorf("run --json requires --dry-run or --terminal background")
+	}
+	if options.supplied["launch-id"] && (options.launchID == "" || options.terminalMode == "") {
+		return options, fmt.Errorf("--launch-id requires --terminal background and a nonempty UUID")
+	}
 	if options.resume != "" {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "reference", "ticket", "resume", "answer-file", "timeout", "dry-run", "notify", "sound":
+			case "reference", "ticket", "resume", "answer-file", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -162,11 +183,14 @@ func parseRunOptions(args []string) (runOptions, error) {
 func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	options, err := parseRunOptions(args)
 	if errors.Is(err, flag.ErrHelp) {
-		_, err := fmt.Fprintln(output, runUsage)
+		_, err := fmt.Fprintln(output, runUsage+"\nOffline JSON plan: --dry-run --json\nIndependent iTerm2 controller: --terminal background [--launch-id UUID] [--json]; configure with sdlc terminal setup.")
 		return err
 	}
 	if err != nil {
 		return err
+	}
+	if options.terminalMode != "" {
+		return launchRunCommand(ctx, args, options, output)
 	}
 	if options.all {
 		return runSeriesCommand(ctx, options, output)
@@ -228,6 +252,8 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 				failure := runstatus.PreparationFailure{Version: 1, ID: journal.ID, Root: work.Root, Reference: options.reference, Ticket: ticket, Roles: journal.Plan.Roles, FailedAt: time.Now().UTC(), Reason: resultErr.Error(), FeatureOwned: options.featureOwned}
 				if err := runstatus.New(runtime.Directory).RegisterPreparationFailure(directory, failure, preparationOwner); err != nil {
 					resultErr = errors.Join(resultErr, fmt.Errorf("cannot report preparation failure: %w", err))
+				} else if err := observeLaunch(ctx, terminallaunch.RunIdentity{Reference: options.reference, Directory: directory, RunIDs: []string{failure.ID}}); err != nil {
+					resultErr = errors.Join(resultErr, err)
 				}
 			}
 		}
@@ -306,7 +332,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			for _, path := range launch.Config.InputFiles {
 				journal.Plan.CheckInputs = append(journal.Plan.CheckInputs, workrun.Input{Path: path})
 			}
-			return printRunPlan(output, journal, true)
+			return printSelectedPlan(output, journal, options.jsonOutput)
 		}
 		if inCI() {
 			return fmt.Errorf("account-authenticated ticket runs are supported here only as local single-user CLI jobs; CI requires a separately supported authentication route")
@@ -412,7 +438,10 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		preparationOwner = nil
 	}
 	if options.dryRun {
-		return printRunPlan(output, journal, true)
+		return printSelectedPlan(output, journal, options.jsonOutput)
+	}
+	if err := observeLaunch(ctx, terminallaunch.RunIdentity{Reference: options.reference, Directory: directory, RunIDs: []string{journal.ID}}); err != nil {
+		return err
 	}
 	if inCI() {
 		return fmt.Errorf("account-authenticated ticket runs require a local single-user CLI job")
@@ -632,6 +661,20 @@ func printRunPlan(output io.Writer, journal workrun.Journal, dry bool) error {
 		State string       `json:"state"`
 		Plan  workrun.Plan `json:"plan"`
 	}{journal.ID, journal.State, journal.Plan})
+}
+
+func printSelectedPlan(output io.Writer, journal workrun.Journal, structured bool) error {
+	if !structured {
+		return printRunPlan(output, journal, true)
+	}
+	return json.NewEncoder(output).Encode(struct {
+		Version int          `json:"version"`
+		Mode    string       `json:"mode"`
+		Offline bool         `json:"offline"`
+		RunID   string       `json:"run_id,omitempty"`
+		Plan    workrun.Plan `json:"plan"`
+		Notice  string       `json:"notice"`
+	}{1, "ticket", true, journal.ID, journal.Plan, "Offline plan; authentication and model access have not been checked. Content hashes and source capture are established during execution."})
 }
 
 func branchPart(value string) string {

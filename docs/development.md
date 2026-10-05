@@ -53,6 +53,28 @@ output stay out of this public repository.
 
 ## Current validation
 
+The interactive shell first pass was checked on 5 October 2026 with uncached
+Go tests, vet, CLI builds, race checks for the shell and launch-receipt packages,
+all 217 offline Python tests and the runtime pin check. CLI cross-builds cover
+macOS, Linux and Windows on ARM64 and x86-64; native Linux/Windows execution
+remains unverified.
+
+A disposable macOS/ARM64 pseudo-terminal check passed full-window alternate
+screen entry, raw keyboard input, slash lookahead, resize with a retained draft,
+running beta identity, native project-init handoff, terminal-mode restoration
+on clean exit and no Docker/provider/GitHub command execution. Four screenshots
+in ignored `results/interactive-cli-runtime/` show the actual Go renderer at
+100 × 28 and 70 × 20 cells with fictional offline callbacks. Their browser font
+and ANSI palette illustrate rendering; the native shell inherits the terminal.
+
+The existing Automation grant passed a read-only check using the same
+`osascript` sender as iTerm's runner. The installed iTerm bundle failed macOS
+code-signature verification, so no native tab or job was launched. Focus,
+flicker and independent-controller lifetime remain native acceptance checks;
+the first pass provides a manual command when the adapter is unavailable.
+No connected provider job, account login, Docker rebuild or CLI installation
+was performed for this iteration.
+
 The bootstrap iteration was checked on 3 October 2026:
 
 - Installation and reinstallation on macOS/ARM64, including execution outside

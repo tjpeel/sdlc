@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/dashboard"
@@ -25,6 +28,7 @@ type dashboardOptions struct {
 	interval                time.Duration
 	page                    int
 	notifications           notify.Options
+	scope                   string
 }
 
 func parseDashboardOptions(args []string) (dashboardOptions, error) {
@@ -36,6 +40,7 @@ func parseDashboardOptions(args []string) (dashboardOptions, error) {
 	flags.BoolVar(&options.json, "json", false, "one JSON snapshot")
 	flags.BoolVar(&options.logs, "logs", false, "bounded private output tail")
 	flags.StringVar(&options.run, "run", "", "selected run ID or unique prefix")
+	flags.StringVar(&options.scope, "scope", "installation", "project or installation: filter history before paging")
 	flags.IntVar(&options.page, "page", 1, "history page, ten runs per page")
 	flags.StringVar(&options.notifications.Mode, "notify", "off", "local notifications: off, desktop or bell")
 	flags.BoolVar(&options.notifications.Sound, "sound", false, "desktop notification sound")
@@ -45,6 +50,9 @@ func parseDashboardOptions(args []string) (dashboardOptions, error) {
 	}
 	if flags.NArg() != 0 || (options.watch && (options.once || options.json)) || (options.logs && (options.run == "" || options.json)) {
 		return options, fmt.Errorf("invalid dashboard options; run sdlc dashboard --help")
+	}
+	if options.scope != "project" && options.scope != "installation" {
+		return options, fmt.Errorf("--scope must be project or installation")
 	}
 	if options.run != "" && !regexp.MustCompile(`^[0-9a-f]{6,24}$`).MatchString(options.run) {
 		return options, fmt.Errorf("run ID must be six to twenty-four lowercase hexadecimal characters")
@@ -87,7 +95,7 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 	}
 	options, err := parseDashboardOptions(args)
 	if errors.Is(err, flag.ErrHelp) {
-		_, err = fmt.Fprintln(output, dashboardUsage)
+		_, err = fmt.Fprintln(output, dashboardUsage+"\nScope: --scope project|installation (external CLI defaults to installation; shell defaults to project).")
 		return err
 	}
 	if err != nil {
@@ -98,6 +106,18 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 		return err
 	}
 	registry := runstatus.New(runtime.Directory)
+	var projectRoot string
+	if options.scope == "project" {
+		command := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+		root, err := command.Output()
+		if err != nil {
+			return fmt.Errorf("project history requires a Git checkout; use --scope installation outside a project")
+		}
+		projectRoot, err = filepath.EvalSymlinks(strings.TrimSpace(string(root)))
+		if err != nil {
+			return err
+		}
+	}
 	terminal := dashboardTerminal(output)
 	watch := options.watch || (terminal && !options.once && !options.json)
 	if options.notifications.Mode != "off" && !watch {
@@ -127,6 +147,15 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 		views, err := registry.List(now)
 		if err != nil {
 			return err
+		}
+		if projectRoot != "" {
+			filtered := make([]runstatus.View, 0, len(views))
+			for _, view := range views {
+				if sameProjectRoot(view.Root, projectRoot) {
+					filtered = append(filtered, view)
+				}
+			}
+			views = filtered
 		}
 		views = dashboard.Ordered(views)
 		newWarning := false
@@ -188,6 +217,11 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 			options.page = page
 		}
 	}
+}
+
+func sameProjectRoot(left, right string) bool {
+	canonical, err := filepath.EvalSymlinks(left)
+	return err == nil && canonical == right
 }
 
 // Exclude the full journal: it contains prompts and implementation instructions.

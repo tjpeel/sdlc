@@ -6,23 +6,36 @@ import (
 	"runtime/debug"
 )
 
-var Version = "0.1.0-dev"
+var Version = "0.1.0-beta.1"
 
-func String() string {
-	revision := "unknown"
-	modified := false
+type Identity struct {
+	Version  string `json:"version"`
+	Revision string `json:"revision"`
+	Dirty    bool   `json:"dirty"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+}
+
+func Current() Identity {
+	identity := Identity{Version: Version, Revision: "unknown", OS: runtime.GOOS, Arch: runtime.GOARCH}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
 			switch setting.Key {
 			case "vcs.revision":
-				revision = setting.Value
+				identity.Revision = setting.Value
 			case "vcs.modified":
-				modified = setting.Value == "true"
+				identity.Dirty = setting.Value == "true"
 			}
 		}
 	}
-	if modified {
+	return identity
+}
+
+func String() string {
+	identity := Current()
+	revision := identity.Revision
+	if identity.Dirty {
 		revision += "-dirty"
 	}
-	return fmt.Sprintf("sdlc %s (%s; %s/%s)", Version, revision, runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("sdlc %s (%s; %s/%s)", identity.Version, revision, identity.OS, identity.Arch)
 }

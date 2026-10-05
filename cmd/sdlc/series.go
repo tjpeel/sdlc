@@ -26,6 +26,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
+	"github.com/tjpeel/sdlc/internal/terminallaunch"
 	"github.com/tjpeel/sdlc/internal/workrun"
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
@@ -106,9 +107,13 @@ func (w *seriesWriter) Write(data []byte) (int, error) {
 func sameSeriesConfig(a, b project.Config) bool { return reflect.DeepEqual(a, b) }
 
 func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer) error {
-	current, err := os.Getwd()
-	if err != nil {
-		return err
+	current := options.root
+	var err error
+	if current == "" {
+		current, err = os.Getwd()
+		if err != nil {
+			return err
+		}
 	}
 	work, err := project.InspectWork(ctx, current, options.reference)
 	if err != nil {
@@ -145,8 +150,22 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if state.Version != 0 && (state.Plan.Root != plan.Root || state.Plan.Reference != plan.Reference || state.Plan.DefinitionSHA != plan.DefinitionSHA) {
 		return fmt.Errorf("feature plan changed; restore the saved plan or use a new work reference")
 	}
-	workseries.PrintPlan(output, plan)
+	if !options.jsonOutput {
+		workseries.PrintPlan(output, plan)
+	}
 	if options.dryRun {
+		if options.jsonOutput {
+			return json.NewEncoder(output).Encode(struct {
+				Version  int                          `json:"version"`
+				Mode     string                       `json:"mode"`
+				Offline  bool                         `json:"offline"`
+				Plan     workseries.Plan              `json:"plan"`
+				Parallel int                          `json:"parallel"`
+				Watch    bool                         `json:"watch"`
+				Saved    map[string]workseries.Result `json:"saved,omitempty"`
+				Notice   string                       `json:"notice"`
+			}{1, "feature", true, plan, options.parallel, options.watch, state.Results, "Offline feature plan; ticket content, account access and live PR state are checked during execution."})
+		}
 		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
 		for _, ticket := range plan.Tickets {
 			if previous, ok := state.Results[ticket.File]; ok {
@@ -164,6 +183,9 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	}
 	directory, err = workseries.Directory(work.Root, options.reference, true)
 	if err != nil {
+		return err
+	}
+	if err := observeLaunch(ctx, terminallaunch.RunIdentity{Reference: options.reference, Directory: directory}); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, options.timeout)
