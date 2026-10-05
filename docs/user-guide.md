@@ -1,6 +1,6 @@
 # SDLC user guide
 
-SDLC runs one prepared engineering ticket through implementation, isolated checks, signed draft PR
+SDLC runs prepared engineering tickets through implementation, isolated checks, signed draft PR
 publication, CI and independent review. Start from the repository where you want the work done. The host CLI
 coordinates disposable Docker workers; your original checkout remains intact.
 
@@ -486,8 +486,36 @@ execution is not implemented.
 Two independent calls can use separate captured workspaces and generated branches from the same unchanged
 baseline. Start them in separate terminals and avoid conflicting or dependent changes. Same-provider native
 operations queue on their cache leases; Codex and Claude can overlap. Integration daemons remain separate.
-Host capacity, account limits and external movement of the base still apply. Automatic dependent-ticket
-series, stacked PRs and restacking are not implemented.
+Host capacity, account limits and external movement of the base still apply.
+
+To schedule a whole feature, start from a clean checkout at the published integration revision:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --dry-run
+sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --watch
+```
+
+`--parallel` defaults to `1` and accepts `1` through `8`. Add `--alternate-providers` to alternate
+implementers in planned ticket order; the opposite provider reviews each ticket. Same-provider cache
+leases can still queue. Supply common requirements with the same repeatable `--input` flags.
+
+An optional private `.sdlc/work/YOUR_WORK_REFERENCE/plan.json` maps exact ticket filenames to lower-first
+`priority`, `depends_on` filenames and `touches` path prefixes. Overlapping prefixes serialize work.
+Without it, tickets are independent and use numeric filename order. A child with one dependency can
+start from its parent's signed, tested and reviewed draft PR, targeting the parent branch/head. Multiple
+parents must all merge into the integration branch before their child starts. See the
+[plan format](cli.md#private-feature-plan).
+
+`--watch` keeps the foreground controller observing human merges. Without it, SDLC finishes currently
+unblocked work and exits. Rerun the same feature command to continue its checkpoint. Compatible existing
+runs are adopted rather than duplicated; the plan, models, accounts, runtime, inputs and checks stay frozen.
+After a squash merge or base movement, SDLC restacks only each ticket's commits, checks the owned PR head
+and push lease, and repeats signing, checks, CI and independent review. Conflicts return to the original
+implementation session; product decisions stop for a human answer. SDLC never merges PRs.
+
+A human-attention stop ends feature execution. Resolve it with the individual ticket's recorded resume
+command, then rerun `--all`. The dashboard continues to list individual ticket runs. Feature scheduling and
+reconciliation have offline test coverage; connected feature execution still needs a supervised trial.
 
 ## 10. Watch runs and optional local notifications
 
@@ -618,7 +646,7 @@ and rerun only the needed command. If cleanup failed, inspect retained container
 
 Single-ticket execution, account/key pairing, local notifications and retained history are implemented. Full
 live provider/GitHub/SSO/signing attribution and repair trials still require validation in your authorised
-disposable repository. Detached supervision, automatic dependent-ticket orchestration, broader recovery,
+disposable repository. Detached supervision, broader recovery,
 managed encrypted bootstrap storage and additional signing backends remain planned. For a connected first
 trial, [the onboarding runbook](onboarding.md) provides a disposable .NET baseline; [the CLI
 reference](cli.md) records every option and [the credential guide](github-credentials.md) explains component

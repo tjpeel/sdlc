@@ -6,10 +6,11 @@ image. The workflow starts from the repository where work is requested.
 The CLI supports installation and reinstallation, version reporting, building and
 inspecting the shared runtime, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
-provider sessions, and single-ticket execution through checks, a draft PR, CI and
-independent review, and a live dashboard of local runs. Dedicated 1Password
-signing-key retrieval is implemented. Detached controller supervision and
-stacked-ticket orchestration remain future work.
+provider sessions, and single-ticket or feature execution through checks, draft
+PRs, CI and independent review, with a live dashboard of local runs. Dedicated
+1Password signing-key retrieval is implemented. Feature runs schedule dependencies
+and independent tickets and reconcile owned PRs after human merges. Detached
+controller supervision remains future work.
 
 ## Get started
 
@@ -146,6 +147,26 @@ private trials have passed delivery/review/repair with both implementation
 providers. Later account/key pairing, history/dashboard changes and desktop
 notification delivery still need separate validation.
 
+Run a whole feature from a clean checkout of the published integration branch:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --dry-run
+sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --watch
+```
+
+An optional private `plan.json` declares ticket priorities, dependencies and path
+prefixes that must run serially. Independent tickets can overlap; a ticket with
+one dependency can start from its parent's signed, tested and reviewed draft PR.
+Tickets with multiple dependencies wait until all parents merge into the
+integration branch. `--watch` keeps the foreground controller monitoring human
+merges; without it, SDLC runs currently unblocked work and exits. Repeat the
+command to continue the saved feature. `--alternate-providers` alternates
+implementers in planned ticket order, with the opposite provider reviewing each.
+The dashboard still reports individual ticket runs. See the
+[feature run guide](docs/cli.md#run-a-feature) for plan format and restacking.
+Feature orchestration has offline test coverage; a connected feature trial still
+needs validation in an authorised disposable repository.
+
 Watch registered runs across repositories from another terminal:
 
 ```sh
@@ -252,8 +273,8 @@ and can already offer tighter network controls. SDLC uses the same underlying
 container boundary. Its current value is a shared recorded runtime, consistent
 Codex/Claude launch settings, provider cache separation, shared instructions and
 dependency visibility. Disposable ticket work, independent validation and
-controlled publication are implemented for one selected ticket. Full access
-directly on the host exposes the files and services available to that host user.
+controlled publication are implemented for selected tickets and feature runs.
+Full access directly on the host exposes the files and services available to that host user.
 Running inside SDLC narrows that exposure, while retaining the risks listed above.
 
 ## Documentation

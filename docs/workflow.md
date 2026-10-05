@@ -60,8 +60,8 @@ implementer for independent review. These account-authenticated runs support the
 owner's local single-user CLI job and reject CI execution; see the
 [provider rules](provider-usage.md). Supervised private trials have passed this
 delivery/review/repair path with both implementation providers. Later pairing
-and dashboard features need separate validation; detached supervision and
-automatic ticket series remain future work.
+and dashboard features need separate validation. Detached supervision remains
+future work; complete connected feature trials remain unvalidated.
 
 Before provider execution, SDLC freezes the selected GitHub profile, numeric
 account and repository IDs, canonical repository name, effective project Git
@@ -210,33 +210,52 @@ image, shared instructions and frozen GitHub/signing identity. Implementation re
 native session; independent review always starts fresh. Retain the journal and
 native session files. See [resume commands](cli.md#logs-questions-and-resume).
 
-## Future: stacked-ticket streams
+## Feature scheduling and stacked PRs
 
-The supported command runs one ticket. The agreed stream design remains future
-work: one branch and draft PR per ticket, with each ticket starting from its
-verified predecessor and using that predecessor branch as PR base:
+`sdlc run --reference REFERENCE --all --parallel 2` schedules pending tickets from
+one durable feature checkpoint. Add `--watch` to keep the foreground controller
+observing human merges; otherwise it completes currently unblocked work and
+exits. Repeat the command to continue. `--parallel` defaults to `1` and accepts
+`1` through `8`; same-provider cache locks can still queue. Optional
+`--alternate-providers` alternates implementers in planned ticket order, retaining
+an opposite-provider reviewer for every ticket.
+
+A new feature starts from a clean checkout of the published integration revision.
+Its optional private `plan.json` declares exact filenames, lower-first priority,
+`depends_on` names and relative `touches` prefixes that serialize known overlap.
+Without metadata, numeric filename order is used and tickets are independent.
+See [feature plans and commands](cli.md#run-a-feature) for the schema.
+
+A ticket with one parent starts when that parent has reached signed, tested and
+reviewed `ready`, using its recorded branch/head as source and PR base:
 
 ```text
 main
   ticket-one    PR base: main
     ticket-two  PR base: ticket-one
-      ticket-three  PR base: ticket-two
 ```
 
-A future controller must retain the original implementation owner, verify explicit
-dependencies, wait for every current PR's CI, and review both each incremental
-slice and the complete stack against its original `main` revision. An earlier
-repair invalidates affected descendants' CI and review evidence; restacking must
-preserve ticket boundaries and reconcile changed remote state. Rebase and
-force-push need explicit authority. A finding requiring a product decision stops
-for a human answer. No automatic merge is planned.
+A ticket with multiple parents waits until all parents have merged into the
+integration branch. No controller merges or approves automatically.
 
-The [ticket-stream prompt](prompts/implement-ticket-stream.md) is a design template
-for a harness with prepared repositories and inputs, not the prompt submitted by
-`sdlc run`. Stream orchestration, detached controller supervision/restart recovery
-and an outer-harness `sdlc` skill remain deferred. The SDLC
-repository itself continues development on `main`; ticket branches belong to the
-project requesting work.
+When a parent squash-merges or the integration base moves, the controller
+restacks only the affected ticket's own commits. It verifies the old PR head and
+owned branch and publishes with an exact lease, then repeats signing, isolated
+checks, current CI and fresh opposite-provider review. Conflicts go back to the
+original native implementation session. A product decision stops for a human.
+Unrecognised external changes stop for reconciliation rather than being overwritten.
+
+Compatible existing runs are adopted or resumed without duplicate work. One
+feature checkpoint freezes the plan, models, accounts, runtime, common inputs
+and checks. Human-attention states stop feature execution; resolve the recorded
+individual run with its resume/answer command, then repeat the feature command.
+The dashboard retains individual-run reporting. Detached supervision remains
+future work. Offline tests cover feature scheduling and reconciliation; a
+complete connected feature trial remains to be validated.
+
+The [ticket-stream prompt](prompts/implement-ticket-stream.md) remains a design
+template for a harness with prepared inputs. The SDLC repository itself develops
+on `main`; generated ticket branches belong to the project requesting work.
 
 The [research archive](../research/README.md) preserves earlier investigations
 and prototypes. Their commands do not define current CLI behaviour.

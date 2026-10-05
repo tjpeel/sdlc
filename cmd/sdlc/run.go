@@ -31,7 +31,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -50,6 +50,20 @@ type runOptions struct {
 	dockerTests, dryRun                                                                                                                bool
 	timeout                                                                                                                            time.Duration
 	notifications                                                                                                                      notify.Options
+	all, watch, alternate                                                                                                              bool
+	terminal                                                                                                                           bool
+	parallel                                                                                                                           int
+	// Controller-only selections are never accepted as CLI flags.
+	root, runID                           string
+	snapshot                              *workrun.BranchSnapshot
+	frozenImage                           string
+	frozenIdentity                        *workrun.PublicationIdentity
+	frozenRoles                           *workrun.Roles
+	frozenConfig                          *project.Config
+	frozenInstructions                    *string
+	frozenInputHashes                     map[string]string
+	frozenSigningImage, frozenDaemonImage string
+	supplied                              map[string]bool
 }
 
 func parseRunOptions(args []string) (runOptions, error) {
@@ -72,14 +86,38 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.Var(&options.inputs, "input", "exact additional requirements input; repeatable")
 	flags.BoolVar(&options.dockerTests, "docker-tests", false, "enable privileged Docker integration-test daemon")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "print selection without Docker, login checks or execution")
+	flags.BoolVar(&options.all, "all", false, "schedule every pending ticket in the selected work folder")
+	flags.IntVar(&options.parallel, "parallel", 1, "feature only: maximum concurrent ticket controllers (1-8)")
+	flags.BoolVar(&options.watch, "watch", false, "feature only: watch human merges and reconcile remaining PRs")
+	flags.BoolVar(&options.alternate, "alternate-providers", false, "feature only: alternate implementation providers in ticket order")
 	flags.DurationVar(&options.timeout, "timeout", 2*time.Hour, "maximum duration of this controller invocation")
 	flags.StringVar(&options.notifications.Mode, "notify", "off", "local notifications: off, desktop or bell")
 	flags.BoolVar(&options.notifications.Sound, "sound", false, "desktop notification sound")
 	if err := flags.Parse(args); err != nil {
 		return options, err
 	}
-	if options.reference == "" || options.ticket == "" || flags.NArg() != 0 {
-		return options, fmt.Errorf("run requires --reference REFERENCE and --ticket NUMBERED_FILE")
+	options.supplied = map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.reference == "" || flags.NArg() != 0 || !options.all && options.ticket == "" {
+		return options, fmt.Errorf("run requires --reference REFERENCE and either --ticket NUMBERED_FILE or --all")
+	}
+	if options.all && (options.ticket != "" || options.branch != "" || options.resume != "" || options.answerFile != "") {
+		return options, fmt.Errorf("--all owns ticket selection and branches; resume the feature by repeating its command, or answer a selected run separately")
+	}
+	if options.parallel < 1 || options.parallel > 8 {
+		return options, fmt.Errorf("parallel must be between 1 and 8")
+	}
+	invalidFeatureFlag := false
+	flags.Visit(func(f *flag.Flag) {
+		if !options.all && (f.Name == "parallel" || f.Name == "watch" || f.Name == "alternate-providers") {
+			invalidFeatureFlag = true
+		}
+	})
+	if invalidFeatureFlag {
+		return options, fmt.Errorf("--parallel, --watch and --alternate-providers require --all")
+	}
+	if options.alternate && (options.model != "" || options.reviewModel != "") {
+		return options, fmt.Errorf("alternating providers use their configured model defaults; model overrides require one implementation provider")
 	}
 	if options.provider != "codex" && options.provider != "claude" {
 		return options, fmt.Errorf("provider must be codex or claude")
@@ -129,7 +167,14 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if options.notifications.Mode == "bell" && !dashboardTerminal(output) {
+	if options.all {
+		return runSeriesCommand(ctx, options, output)
+	}
+	return runSelectedCommand(ctx, options, output)
+}
+
+func runSelectedCommand(ctx context.Context, options runOptions, output io.Writer) error {
+	if options.notifications.Mode == "bell" && !options.terminal && !dashboardTerminal(output) {
 		return fmt.Errorf("bell notifications require a terminal; use desktop for unattended runs")
 	}
 	sender, err := notify.New(options.notifications, output)
@@ -139,9 +184,12 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	observe := runNotifications(ctx, output, sender)
 	ctx, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
-	current, err := os.Getwd()
-	if err != nil {
-		return err
+	current := options.root
+	if current == "" {
+		current, err = os.Getwd()
+		if err != nil {
+			return err
+		}
 	}
 	work, err := project.InspectWork(ctx, current, options.reference)
 	if err != nil {
@@ -168,6 +216,13 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	}()
 	var journal workrun.Journal
 	var directory string
+	if options.runID != "" && options.resume == "" {
+		if candidate, inspectErr := workrun.RunDirectory(work.Root, options.reference, ticket, options.runID, false); inspectErr == nil {
+			if _, inspectErr := os.Lstat(filepath.Join(candidate, "journal.json")); inspectErr == nil {
+				options.resume = options.runID
+			}
+		}
+	}
 	if options.resume != "" {
 		directory, err = workrun.RunDirectory(work.Root, options.reference, ticket, options.resume, false)
 		if err != nil {
@@ -181,17 +236,25 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return fmt.Errorf("run journal does not match selected work")
 		}
 	} else {
-		defaults, err := workrun.LoadModels(runtime.Directory)
-		if err != nil {
-			return err
-		}
-		roles, err := workrun.ResolveModels(defaults, options.provider, options.model, options.effort, options.reviewModel, options.reviewEffort)
-		if err != nil {
-			return err
+		var roles workrun.Roles
+		if options.frozenRoles != nil {
+			roles = *options.frozenRoles
+		} else {
+			defaults, err := workrun.LoadModels(runtime.Directory)
+			if err != nil {
+				return err
+			}
+			roles, err = workrun.ResolveModels(defaults, options.provider, options.model, options.effort, options.reviewModel, options.reviewEffort)
+			if err != nil {
+				return err
+			}
 		}
 		launch, err := project.Launch(ctx, current, options.reference, ticket, options.inputs)
 		if err != nil {
 			return err
+		}
+		if options.frozenConfig != nil && !sameSeriesConfig(launch.Config, *options.frozenConfig) {
+			return fmt.Errorf("project checks or check inputs changed during the feature; restore the frozen configuration")
 		}
 		repository := options.repository
 		if repository == "" {
@@ -244,6 +307,10 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		journal.ID = id
+		if options.runID != "" {
+			id = options.runID
+			journal.ID = id
+		}
 		directory, err = workrun.RunDirectory(work.Root, options.reference, ticket, id, true)
 		if err != nil {
 			return err
@@ -253,17 +320,32 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			branch = "work/" + branchPart(options.reference) + "/" + branchPart(strings.TrimSuffix(ticket, ".md")) + "-" + id[:8]
 		}
 		journal.Workspace = filepath.Join(directory, "workspace")
-		plan, err := workrun.Capture(ctx, launch, journal.Workspace, branch, options.base, repository, roles)
+		var plan workrun.Plan
+		if options.snapshot == nil {
+			plan, err = workrun.Capture(ctx, launch, journal.Workspace, branch, options.base, repository, roles)
+		} else {
+			plan, err = workrun.CaptureSnapshot(ctx, launch, *options.snapshot, journal.Workspace, branch, repository, roles)
+		}
 		if err != nil {
 			return err
+		}
+		if options.frozenInputHashes != nil {
+			if err := matchSeriesCapturedInputs(plan, options.frozenInputHashes); err != nil {
+				return err
+			}
 		}
 		plan.GitHubProfile = options.githubProfile
 		plan.SigningProfile = pair.SigningProfile
 		plan.DockerTests = options.dockerTests
 		journal.Plan = plan
-		shared, err := (instructions.Manager{Directory: runtime.Directory}).Show()
-		if err != nil {
-			return err
+		var shared []byte
+		if options.frozenInstructions != nil {
+			shared = []byte(*options.frozenInstructions)
+		} else {
+			shared, err = (instructions.Manager{Directory: runtime.Directory}).Show()
+			if err != nil {
+				return err
+			}
 		}
 		journal.Instructions = string(shared)
 		state, err := runtime.Status(ctx)
@@ -271,12 +353,23 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		journal.ImageID = state.ImageID
-		if err := freezeRuntimeImages(ctx, &journal.Plan, state, runtime, runtimeupdates.ResolveDefaultDaemonImage); err != nil {
+		if options.frozenImage != "" && state.ImageID != options.frozenImage {
+			return fmt.Errorf("runtime changed during the feature; restore the recorded runtime")
+		}
+		if options.frozenSigningImage != "" {
+			journal.Plan.SigningImage, journal.Plan.DaemonImage = options.frozenSigningImage, options.frozenDaemonImage
+			if err := journal.Plan.ValidateSidecarImages(); err != nil {
+				return err
+			}
+		} else if err := freezeRuntimeImages(ctx, &journal.Plan, state, runtime, runtimeupdates.ResolveDefaultDaemonImage); err != nil {
 			return err
 		}
 		identity, err := freezePublicationIdentity(ctx, runtime, work.Root, journal.Plan.Repository, pair)
 		if err != nil {
 			return err
+		}
+		if options.frozenIdentity != nil && *identity != *options.frozenIdentity {
+			return fmt.Errorf("publication account, repository or signing identity changed during the feature")
 		}
 		journal.Plan.PublicationIdentity = identity
 		journal.Plan.Repository = identity.RepositoryName

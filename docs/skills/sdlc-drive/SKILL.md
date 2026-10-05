@@ -1,6 +1,6 @@
 ---
 name: sdlc-drive
-description: Start and monitor authorised local SDLC ticket runs through implementation, checks, signed draft PR publication, CI and independent review. Use for SDLC execution, status and checkpoint recovery; not for directly implementing code or reviewing a PR.
+description: Start and monitor authorised local SDLC ticket or feature runs through implementation, checks, signed draft PR publication, CI and independent review. Use for SDLC execution, status and checkpoint recovery; not for directly implementing code or reviewing a PR.
 ---
 
 # Drive SDLC work
@@ -14,8 +14,8 @@ status, duplicate its review, or reproduce its publication steps.
 
 ## Establish the requested work
 
-1. Identify the project checkout, work reference and exact numbered ticket. Read
-   applicable repository instructions. For a continuation, identify the existing
+1. Identify the project checkout, work reference and exact numbered ticket or
+   requested whole feature. Read applicable repository instructions. For a continuation, identify the existing
    run before launching anything. Never turn a request to inspect status into a
    new implementation run.
 2. Establish the authorised scope from the conversation: connected provider use,
@@ -75,6 +75,49 @@ Keep a small private checkpoint: checkout, reference, ticket, full run ID,
 controller session, selected roles and last meaningful state. Do not retain
 credential values. The run freezes its inputs, image and account/key identity;
 host edits or runtime updates do not change that run.
+
+## Launch and continue a feature
+
+For authorised whole-feature work, use the controller's scheduler:
+
+```sh
+sdlc run --reference REFERENCE --all --parallel 2 --dry-run
+sdlc run --reference REFERENCE --all --parallel 2 --watch
+```
+
+Add approved common `--input` files and check flags to both commands. A new
+feature requires a clean checkout at the published integration revision. Review
+the optional private `plan.json` for exact filename dependencies, lower-first
+priorities and overlapping `touches` prefixes; consult the
+[CLI feature guide](../../cli.md#run-a-feature) for its schema. Do not infer
+serial dependencies from filename order alone.
+
+`--parallel` defaults to `1` and accepts `1` through `8`. With
+`--alternate-providers`, planned ticket order alternates implementers starting
+from `--provider`; each uses the opposite reviewer. Do not combine alternation
+with explicit model overrides. Native cache locks can still queue.
+
+A single-parent child may start from the parent's signed, tested and reviewed
+`ready` draft PR and targets that parent's branch/head. Multiple-parent children
+wait until all parents merge into the integration branch. The controller
+restacks only owned ticket commits after parent squash merges or base movement,
+using recorded PR heads and exact leases, then repeats signing, checks, CI and
+fresh review. Conflicts return to the original implementer session; human
+product decisions remain human decisions. Do not perform a separate rebase or
+force push from the harness.
+
+Keep the foreground feature controller alive when using `--watch`. Without it,
+currently unblocked work completes and the command exits. Repeat the command to
+continue its durable checkpoint: compatible existing runs are adopted or
+resumed without duplication, and plan, models, accounts, runtime, common inputs
+and checks remain frozen. A human-attention stop ends feature execution. Resolve
+the individual recorded run using its resume/answer command, then rerun the
+feature command. Track child run IDs through the individual-run dashboard; do
+not claim the dashboard has a separate feature view.
+
+Feature dry-run stays offline and does not read ticket bodies or credentials or
+make model calls. Offline tests do not establish that a connected feature trial
+has passed.
 
 ## Monitor with little context
 
@@ -147,10 +190,8 @@ The report is private and is not a resumable backup. `dashboard forget` removes
 only the dashboard index entry; it retains the saved work. Do not run it merely
 to make a failure disappear.
 
-The CLI currently executes one ticket per invocation. There is no series or
-alternating-provider flag. For explicitly requested independent concurrent work,
-track each run separately and use unique branches. Jobs have separate workspaces
-and Docker check daemons; a shared native provider cache serialises that
-provider's operations. Do not promise simultaneous access to the same cache.
-Dependent tickets need an explicitly selected predecessor source/base; never
-advance them merely because discovery listed them next.
+For a feature, report each recorded ticket state and PR link. A completed
+non-watch invocation can leave children waiting for dependencies or human
+merges; report those remaining gates. Do not describe the whole feature as
+complete merely because one ticket is `ready`. Keep checkpoints and native
+sessions unless the user authorises cleanup.

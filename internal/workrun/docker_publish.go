@@ -19,17 +19,106 @@ import (
 
 // PublisherRequest contains public frozen settings only; key material uses stdin.
 type PublisherRequest struct {
-	Action       string      `json:"action"`
-	Plan         Plan        `json:"plan"`
-	Previous     Publication `json:"previous"`
-	ExpectedHead string      `json:"expected_head"`
-	ExpectedTree string      `json:"expected_tree"`
+	Action         string      `json:"action"`
+	Plan           Plan        `json:"plan"`
+	Previous       Publication `json:"previous"`
+	ExpectedHead   string      `json:"expected_head"`
+	ExpectedTree   string      `json:"expected_tree"`
+	SnapshotBranch string      `json:"snapshot_branch,omitempty"`
 }
 type PublisherResponse struct {
-	Publication Publication `json:"publication"`
-	Checks      CIResult    `json:"checks"`
-	Error       string      `json:"error,omitempty"`
+	Publication Publication    `json:"publication"`
+	Checks      CIResult       `json:"checks"`
+	Snapshot    BranchSnapshot `json:"snapshot"`
+	RemotePR    RemotePR       `json:"remote_pr"`
+	Error       string         `json:"error,omitempty"`
 }
+
+// Snapshot exports one verified remote branch into caller-private state.
+func (publisher DockerPublisher) Snapshot(ctx context.Context, plan Plan, branch, expectedSHA, directory string) (BranchSnapshot, error) {
+	if _, err := isolatedGit(ctx, directory, "check-ref-format", "--branch", branch); err != nil {
+		return BranchSnapshot{}, fmt.Errorf("invalid snapshot branch")
+	}
+	response, err := publisher.invoke(ctx, directory, PublisherRequest{Action: "snapshot", Plan: plan, ExpectedHead: expectedSHA, SnapshotBranch: branch})
+	if err != nil {
+		return BranchSnapshot{}, err
+	}
+	path := filepath.Join(directory, "publisher", "snapshot.bundle")
+	if err := validateSnapshotBundle(path); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if response.Snapshot.Branch != branch || !objectID.MatchString(response.Snapshot.SHA) || (expectedSHA != "" && response.Snapshot.SHA != expectedSHA) {
+		return BranchSnapshot{}, fmt.Errorf("invalid isolated snapshot result")
+	}
+	return BranchSnapshot{Branch: branch, SHA: response.Snapshot.SHA, Bundle: path}, nil
+}
+
+// Branch observes a remote branch without creating a bundle. Schedulers use
+// it for inexpensive base polling; callers take a Snapshot only before work.
+func (publisher DockerPublisher) Branch(ctx context.Context, plan Plan, branch string) (BranchSnapshot, error) {
+	if _, err := isolatedGit(ctx, os.TempDir(), "check-ref-format", "--branch", branch); err != nil {
+		return BranchSnapshot{}, fmt.Errorf("invalid snapshot branch")
+	}
+	directory, err := os.MkdirTemp("", "sdlc-publisher-branch-")
+	if err != nil {
+		return BranchSnapshot{}, fmt.Errorf("cannot prepare publisher request")
+	}
+	defer os.RemoveAll(directory)
+	directory, err = filepath.EvalSymlinks(directory)
+	if err != nil {
+		return BranchSnapshot{}, fmt.Errorf("cannot resolve publisher request directory")
+	}
+	response, err := publisher.invoke(ctx, directory, PublisherRequest{Action: "branch", Plan: plan, SnapshotBranch: branch})
+	if err != nil {
+		return BranchSnapshot{}, err
+	}
+	if response.Snapshot.Branch != branch || !objectID.MatchString(response.Snapshot.SHA) || response.Snapshot.Bundle != "" {
+		return BranchSnapshot{}, fmt.Errorf("invalid isolated branch result")
+	}
+	return BranchSnapshot{Branch: branch, SHA: response.Snapshot.SHA}, nil
+}
+
+func (publisher DockerPublisher) Observe(ctx context.Context, plan Plan, publication Publication) (RemotePR, error) {
+	if publication.Number < 1 {
+		return RemotePR{}, fmt.Errorf("publication number is required")
+	}
+	directory, err := os.MkdirTemp("", "sdlc-publisher-observe-")
+	if err != nil {
+		return RemotePR{}, fmt.Errorf("cannot prepare publisher request")
+	}
+	defer os.RemoveAll(directory)
+	directory, err = filepath.EvalSymlinks(directory)
+	if err != nil {
+		return RemotePR{}, fmt.Errorf("cannot resolve publisher request directory")
+	}
+	response, err := publisher.invoke(ctx, directory, PublisherRequest{Action: "observe", Plan: plan, Previous: publication})
+	if err != nil {
+		return RemotePR{}, err
+	}
+	remote := response.RemotePR
+	if remote.State != "OPEN" && remote.State != "MERGED" && remote.State != "CLOSED" || remote.Base == "" || !objectID.MatchString(remote.HeadSHA) || (remote.BaseSHA != "" && !objectID.MatchString(remote.BaseSHA)) || (remote.MergeSHA != "" && !objectID.MatchString(remote.MergeSHA)) {
+		return RemotePR{}, fmt.Errorf("invalid isolated observation result")
+	}
+	return remote, nil
+}
+
+func validateSnapshotBundle(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumBundleBytes {
+		return fmt.Errorf("invalid snapshot bundle")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) || opened.Size() != info.Size() {
+		return fmt.Errorf("snapshot bundle changed")
+	}
+	return nil
+}
+
 type PublisherCommandRunner interface {
 	Run(context.Context, io.Reader, io.Writer, ...string) error
 }

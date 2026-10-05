@@ -131,6 +131,41 @@ func TestCaptureKeepsCheckInputsOutsideWorker(t *testing.T) {
 	}
 }
 
+func TestCaptureSnapshotUsesTrustedBundleAndOnlySelectedLocalInputs(t *testing.T) {
+	root, launch := sourceFixture(t)
+	// The snapshot represents the committed source while the selected ticket is
+	// still copied from the original launch root.
+	snapshotDir := realTemp(t)
+	bundle := filepath.Join(snapshotDir, "source.bundle")
+	if _, err := isolatedGit(context.Background(), root, "update-ref", "refs/sdlc/snapshot", launch.Head); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := isolatedGit(context.Background(), root, "bundle", "create", bundle, "refs/sdlc/snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	sourceWrite(t, root, "unselected.txt", "must not enter snapshot staging\n")
+	destination := filepath.Join(realTemp(t), "workspace")
+	plan, err := CaptureSnapshot(context.Background(), launch, BranchSnapshot{Branch: "main", SHA: launch.Head, Bundle: bundle}, destination, "ticket-work", "example/repository", Roles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Root != root || plan.Base != "main" || plan.BaseSHA != launch.Head {
+		t.Fatalf("unexpected snapshot plan: %+v", plan)
+	}
+	if plan.SourceSHA != launch.Head || plan.StartingSHA != launch.Head {
+		t.Fatalf("snapshot capture introduced unrelated baseline changes: %+v", plan)
+	}
+	if _, err := os.Lstat(filepath.Join(destination, "unselected.txt")); !os.IsNotExist(err) {
+		t.Fatal("unselected local source entered worker")
+	}
+	if data, err := os.ReadFile(filepath.Join(destination, "README.md")); err != nil || string(data) != "original\n" {
+		t.Fatalf("snapshot source was not materialized: %v %q", err, data)
+	}
+	if data, err := os.ReadFile(filepath.Join(destination, launch.Ticket)); err != nil || string(data) != "disposable ticket\n" {
+		t.Fatalf("selected ticket missing: %v %q", err, data)
+	}
+}
+
 func TestSafeGitRejectsHostileMetadata(t *testing.T) {
 	root, _ := sourceFixture(t)
 	sourceWrite(t, root, ".git/config", "[core]\n repositoryformatversion = 0\n bare = false\n[include]\n path = /does/not/exist\n")

@@ -89,6 +89,27 @@ func TestGitHubPublicationRejectsInvalidDestinationBeforeCommands(t *testing.T) 
 	}
 }
 
+func TestRestackBoundaryAllowsOnlyRecordedOrCompletedCandidate(t *testing.T) {
+	plan := Plan{Base: "main", BaseSHA: testBase, Restack: &RestackBoundary{Base: "release", BaseSHA: testTree, HeadSHA: testHead, Number: 9}}
+	if !validRestackPR(plan, "release", testTree, testHead, testSigned) {
+		t.Fatal("recorded boundary rejected")
+	}
+	if !validRestackPR(plan, "release", testTree, testSigned, testSigned) {
+		t.Fatal("post-push boundary rejected")
+	}
+	if !validRestackPR(plan, "main", testBase, testSigned, testSigned) {
+		t.Fatal("lost-response completed retarget rejected")
+	}
+	if !validRestackPR(plan, "main", testBase, testHead, testSigned) {
+		t.Fatal("authorized delayed auto-retarget before push rejected")
+	}
+	for _, remote := range []struct{ base, sha, head string }{{"release", testTree, testBase}, {"release", testBase, testHead}, {"main", testTree, testHead}, {"other", testTree, testHead}} {
+		if validRestackPR(plan, remote.base, remote.sha, remote.head, testSigned) {
+			t.Fatalf("external PR change accepted: %+v", remote)
+		}
+	}
+}
+
 // This fake models remote side effects, including a response lost after PR
 // creation. Every command remains offline and unexpected commands fail closed.
 type publicationFake struct {

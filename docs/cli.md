@@ -3,9 +3,10 @@
 The Go CLI provides local installation/reinstallation, build identity, shared
 runtime image build/status checks, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
-provider sessions and single-ticket runs through publication, CI and independent
-review, plus a live dashboard of local runs. GitHub profiles and mandatory SSH signing
-use separate Docker containers; stacked-ticket orchestration remains future work.
+provider sessions and single-ticket or feature runs through publication, CI and
+independent review, plus a live dashboard of local runs. GitHub profiles and mandatory SSH signing
+use separate Docker containers. Feature runs schedule dependencies and reconcile
+owned ticket PRs after human merges.
 
 ## Install or reinstall
 
@@ -125,6 +126,90 @@ project commands. It writes no state and needs no Docker or provider login.
 The listing describes filename order; it does not approve or launch tickets.
 Use `sdlc run` to select a ticket; its implementation skill checks ticket
 eligibility, dependencies and missing requirements when encountered.
+
+## Run a feature
+
+Run every pending numbered ticket under one work reference:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --dry-run
+sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --watch
+```
+
+`--all` replaces `--ticket`. It owns ticket selection and generated branches, so
+it cannot be combined with `--ticket`, `--branch`, `--resume` or `--answer-file`.
+The existing provider, input, base, repository, model, check and notification
+options apply to feature runs. Review project checks and account pairing before
+execution. A new feature requires a clean checkout at the current published
+integration revision (`main` by default, or the selected `--base`).
+
+| Feature flag | Default and purpose |
+| --- | --- |
+| `--all` | Schedule the work folder's pending tickets. |
+| `--parallel` | `1`; maximum concurrent ticket controllers, from `1` to `8`. |
+| `--watch` | Keep the foreground controller observing human merges and scheduling or reconciling remaining work. |
+| `--alternate-providers` | Alternate implementation providers in planned ticket order, starting with `--provider` (default `codex`); each ticket uses the opposite reviewer. Explicit model overrides cannot be combined with this flag. |
+| `--dry-run` | Show the offline schedule without reading ticket bodies, credentials or making model calls. |
+
+Without `--watch`, the controller runs all currently unblocked work and exits;
+repeat the command after merging or resolving a stop. `--watch` requires a live
+host process and does not provide detached supervision. The parallel limit
+bounds ticket controllers: operations sharing a provider's authentication cache
+can still queue. Host stream lines carry ticket labels; each private native event
+file retains its original bytes. The dashboard continues to show individual ticket runs.
+
+### Private feature plan
+
+Numeric filename discovery remains the same as `sdlc work`. Optional scheduling
+metadata lives in the ignored `.sdlc/work/YOUR_WORK_REFERENCE/plan.json`:
+
+```json
+{
+  "version": 1,
+  "tickets": {
+    "01-add-api.md": {"priority": 0, "depends_on": [], "touches": ["src/api"]},
+    "02-add-tests.md": {"priority": 1, "depends_on": ["01-add-api.md"], "touches": ["tests"]}
+  }
+}
+```
+
+Keys and `depends_on` entries are exact discovered filenames. Lower priority
+numbers run first among tickets whose dependencies allow them to start; equal or
+omitted priorities use numeric filename order.
+Omitted dependencies and touches are empty. `touches` contains relative path
+prefixes: overlapping prefixes serialize those tickets. Declare known overlap;
+the controller does not infer it from ticket prose. Missing dependencies,
+cycles, unknown tickets and unsafe paths stop planning. Without a plan, tickets
+are independent and follow numeric filename order.
+
+A ticket with one dependency can start when its parent has a signed, tested and
+independently reviewed draft PR in `ready`. The child's source and PR base use
+that parent's recorded branch/head. A ticket with multiple parents waits until
+all parents merge into the integration branch, then starts from that branch.
+SDLC never merges or approves PRs automatically.
+
+### Continue and reconcile a feature
+
+Each work reference has one durable private feature checkpoint. Repeating the
+feature command continues recorded work and adopts compatible existing ticket
+runs instead of creating duplicates; ambiguous or incompatible runs stop for
+attention. The feature freezes its plan, models, accounts, runtime, common
+inputs and checks. Restore changed inputs or use a new reference; rerunning is
+not a way to replace those choices.
+
+After a parent squash merge or integration-base movement, the controller
+restacks only the ticket's own commits. It checks the recorded PR head and owned
+branch and uses an exact push lease. It re-signs, reruns isolated checks and CI,
+and obtains a fresh opposite-provider review. Conflicts return to the original
+native implementation session; product decisions require a human answer.
+Unexpected remote changes stop reconciliation.
+
+Human attention stops feature execution. Use the recorded individual ticket
+resume command, adding `--answer-file` for a human question, then repeat the
+feature command. Keep feature checkpoints and native sessions private and
+intact. Offline tests cover scheduling and reconciliation; live provider,
+GitHub and signing behaviour for a complete feature still needs a connected
+trial in an authorised disposable repository.
 
 ## Run one ticket
 

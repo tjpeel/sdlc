@@ -62,6 +62,44 @@ type Plan struct {
 	Roles               Roles                `json:"roles"`
 	PRTitle             string               `json:"pr_title,omitempty"`
 	PRBody              string               `json:"pr_body,omitempty"`
+	Restack             *RestackBoundary     `json:"restack,omitempty"`
+}
+
+// RestackBoundary is the exact remote PR boundary which a restack may move.
+// It prevents a resumed controller from retargeting an unrelated PR.
+type RestackBoundary struct {
+	Base    string `json:"base"`
+	BaseSHA string `json:"base_sha"`
+	HeadSHA string `json:"head_sha"`
+	Number  int    `json:"number"`
+}
+
+type BranchSnapshot struct {
+	Branch string `json:"branch"`
+	SHA    string `json:"sha"`
+	Bundle string `json:"bundle"`
+}
+
+type RemotePR struct {
+	State    string `json:"state"`
+	Base     string `json:"base"`
+	BaseSHA  string `json:"base_sha"`
+	HeadSHA  string `json:"head_sha"`
+	MergeSHA string `json:"merge_sha"`
+}
+
+type RebaseResult struct {
+	Conflict bool     `json:"conflict"`
+	Paths    []string `json:"paths"`
+}
+
+// Reconciliation is checkpointed before the workspace is changed. Its source
+// and target revisions form the idempotence key used by DockerRepository.
+type Reconciliation struct {
+	OldSource string         `json:"old_source"`
+	Snapshot  BranchSnapshot `json:"snapshot"`
+	State     string         `json:"state"`
+	Result    RebaseResult   `json:"result"`
 }
 
 // ValidateSidecarImages accepts absent pins for journals written before runtime
@@ -151,29 +189,31 @@ type Publisher interface {
 }
 
 type Journal struct {
-	Version            int           `json:"version"`
-	ID                 string        `json:"id"`
-	Plan               Plan          `json:"plan"`
-	State              string        `json:"state"`
-	Workspace          string        `json:"workspace"`
-	SessionID          string        `json:"session_id"`
-	ReportedModel      string        `json:"reported_model,omitempty"`
-	Publication        Publication   `json:"publication"`
-	ImageID            string        `json:"image_id"`
-	Evidence           CheckEvidence `json:"evidence"`
-	Outcome            Outcome       `json:"outcome"`
-	Rounds             int           `json:"rounds"`
-	Attempt            int           `json:"attempt"`
-	CheckAttempt       int           `json:"check_attempt"`
-	Instructions       string        `json:"instructions"`
-	ResumeState        string        `json:"resume_state,omitempty"`
-	PendingRole        string        `json:"pending_role,omitempty"`
-	Feedback           string        `json:"feedback,omitempty"`
-	MissingChecksSince time.Time     `json:"missing_checks_since,omitempty"`
-	StopReason         string        `json:"stop_reason,omitempty"`
-	CI                 CIResult      `json:"ci"`
-	StartedAt          time.Time     `json:"started_at"`
-	UpdatedAt          time.Time     `json:"updated_at"`
+	Version            int               `json:"version"`
+	ID                 string            `json:"id"`
+	Plan               Plan              `json:"plan"`
+	State              string            `json:"state"`
+	Workspace          string            `json:"workspace"`
+	SessionID          string            `json:"session_id"`
+	ReportedModel      string            `json:"reported_model,omitempty"`
+	Publication        Publication       `json:"publication"`
+	ImageID            string            `json:"image_id"`
+	Evidence           CheckEvidence     `json:"evidence"`
+	Outcome            Outcome           `json:"outcome"`
+	Rounds             int               `json:"rounds"`
+	Attempt            int               `json:"attempt"`
+	CheckAttempt       int               `json:"check_attempt"`
+	Instructions       string            `json:"instructions"`
+	ResumeState        string            `json:"resume_state,omitempty"`
+	PendingRole        string            `json:"pending_role,omitempty"`
+	Feedback           string            `json:"feedback,omitempty"`
+	MissingChecksSince time.Time         `json:"missing_checks_since,omitempty"`
+	StopReason         string            `json:"stop_reason,omitempty"`
+	CI                 CIResult          `json:"ci"`
+	Reconciliation     *Reconciliation   `json:"reconciliation,omitempty"`
+	RestackAudit       []RestackBoundary `json:"restack_audit,omitempty"`
+	StartedAt          time.Time         `json:"started_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 type Revision struct {

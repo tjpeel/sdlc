@@ -110,5 +110,15 @@ func Load(directory string) (Journal, error) {
 	if err := journal.Plan.ValidateSidecarImages(); err != nil {
 		return Journal{}, err
 	}
+	if reconciliation := journal.Reconciliation; reconciliation != nil {
+		if reconciliation.State != "pending" && reconciliation.State != "rebased" && reconciliation.State != "conflict" || !objectID.MatchString(reconciliation.OldSource) || !objectID.MatchString(reconciliation.Snapshot.SHA) || reconciliation.Snapshot.Branch == "" || reconciliation.Snapshot.Bundle == "" || len(reconciliation.Result.Paths) > 256 {
+			return Journal{}, fmt.Errorf("invalid reconciliation checkpoint")
+		}
+		for _, path := range reconciliation.Result.Paths {
+			if path == "" || filepath.IsAbs(path) || filepath.Clean(path) != path || path == ".." || len(path) > 4096 {
+				return Journal{}, fmt.Errorf("invalid reconciliation conflict path")
+			}
+		}
+	}
 	return journal, nil
 }

@@ -46,6 +46,15 @@ func execute(ctx context.Context, request workrun.PublisherRequest, input io.Rea
 	}
 	publisher := workrun.GitHubPublisher{Command: trustedCommand, Frozen: identity, ExpectedHead: request.ExpectedHead, ExpectedTree: request.ExpectedTree, BundlePath: "/source.bundle", SigningKeyPath: "/tmp/signing-key", AllowedSignersPath: "/tmp/allowed-signers"}
 	switch request.Action {
+	case "branch":
+		snapshot, err := publisher.Branch(ctx, request.Plan, request.SnapshotBranch)
+		return workrun.PublisherResponse{Snapshot: snapshot}, err
+	case "snapshot":
+		snapshot, err := publisher.Snapshot(ctx, request.Plan, request.SnapshotBranch, request.ExpectedHead, "/publisher")
+		return workrun.PublisherResponse{Snapshot: snapshot}, err
+	case "observe":
+		remote, err := publisher.Observe(ctx, request.Plan, request.Previous)
+		return workrun.PublisherResponse{RemotePR: remote}, err
 	case "publish":
 		key, err := io.ReadAll(io.LimitReader(input, 65537))
 		if err != nil || len(key) == 0 || len(key) > 65536 {
@@ -91,6 +100,10 @@ func execute(ctx context.Context, request workrun.PublisherRequest, input io.Rea
 	}
 }
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--capabilities" {
+		_, _ = os.Stdout.WriteString(`{"version":2,"actions":["publish","checks","branch","snapshot","observe","restack"]}` + "\n")
+		return
+	}
 	// A detached or killed Docker client must not leave credentials available
 	// indefinitely. PID 1 exiting also terminates its remaining processes.
 	deadline := time.AfterFunc(2*time.Minute, func() { os.Exit(1) })

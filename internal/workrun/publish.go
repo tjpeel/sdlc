@@ -46,6 +46,135 @@ type GitHubPublisher struct {
 	AfterSigning                       func() error
 }
 
+// Snapshot reads one canonical GitHub branch into the publisher's private
+// directory. It never consults a worker checkout or host Git configuration.
+func (publisher GitHubPublisher) Snapshot(ctx context.Context, plan Plan, branch, expectedSHA, directory string) (BranchSnapshot, error) {
+	if publisher.Frozen == nil || !githubRepository.MatchString(plan.Repository) {
+		return BranchSnapshot{}, fmt.Errorf("snapshot requires frozen repository identity")
+	}
+	if err := publisher.Frozen.Validate(); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if err := publisher.verifyIdentity(ctx); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if err := publisher.verifyRepositoryIdentity(ctx, plan); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if _, err := publisher.command(ctx, "gh", "auth", "status", "--hostname", "github.com"); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if _, err := publisher.command(ctx, "git", "check-ref-format", "--branch", branch); err != nil {
+		return BranchSnapshot{}, fmt.Errorf("invalid snapshot branch")
+	}
+	data, err := publisher.command(ctx, "gh", "api", "repos/"+plan.Repository+"/branches/"+url.PathEscape(branch))
+	if err != nil {
+		return BranchSnapshot{}, err
+	}
+	var remote struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if json.Unmarshal(data, &remote) != nil || !objectID.MatchString(remote.Commit.SHA) || expectedSHA != "" && remote.Commit.SHA != expectedSHA {
+		return BranchSnapshot{}, fmt.Errorf("snapshot branch changed or is invalid")
+	}
+	local := filepath.Join(directory, "repository.git")
+	if _, err = publisher.command(ctx, "git", "init", "--bare", local); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if err = realDirectory(local); err != nil {
+		return BranchSnapshot{}, err
+	}
+	canonical := "https://github.com/" + plan.Repository + ".git"
+	if _, err = publisher.git(ctx, local, "fetch", "--no-tags", canonical, "refs/heads/"+branch+":refs/sdlc/snapshot"); err != nil {
+		return BranchSnapshot{}, err
+	}
+	head, err := publisher.git(ctx, local, "rev-parse", "refs/sdlc/snapshot")
+	if err != nil || head != remote.Commit.SHA {
+		return BranchSnapshot{}, fmt.Errorf("snapshot did not retain expected branch revision")
+	}
+	bundle := filepath.Join(directory, "snapshot.bundle")
+	if _, err = publisher.git(ctx, local, "bundle", "create", bundle, "refs/sdlc/snapshot"); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if err = validateSnapshotBundle(bundle); err != nil {
+		return BranchSnapshot{}, err
+	}
+	return BranchSnapshot{Branch: branch, SHA: head}, nil
+}
+
+func (publisher GitHubPublisher) Branch(ctx context.Context, plan Plan, branch string) (BranchSnapshot, error) {
+	if publisher.Frozen == nil || !githubRepository.MatchString(plan.Repository) {
+		return BranchSnapshot{}, fmt.Errorf("branch observation requires frozen repository identity")
+	}
+	if err := publisher.Frozen.Validate(); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if err := publisher.verifyIdentity(ctx); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if err := publisher.verifyRepositoryIdentity(ctx, plan); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if _, err := publisher.command(ctx, "gh", "auth", "status", "--hostname", "github.com"); err != nil {
+		return BranchSnapshot{}, err
+	}
+	if _, err := publisher.command(ctx, "git", "check-ref-format", "--branch", branch); err != nil {
+		return BranchSnapshot{}, fmt.Errorf("invalid snapshot branch")
+	}
+	data, err := publisher.command(ctx, "gh", "api", "repos/"+plan.Repository+"/branches/"+url.PathEscape(branch))
+	if err != nil {
+		return BranchSnapshot{}, err
+	}
+	var remote struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if json.Unmarshal(data, &remote) != nil || !objectID.MatchString(remote.Commit.SHA) {
+		return BranchSnapshot{}, fmt.Errorf("branch revision is invalid")
+	}
+	return BranchSnapshot{Branch: branch, SHA: remote.Commit.SHA}, nil
+}
+
+func (publisher GitHubPublisher) Observe(ctx context.Context, plan Plan, publication Publication) (RemotePR, error) {
+	if publisher.Frozen == nil || publication.Number < 1 || !githubRepository.MatchString(plan.Repository) {
+		return RemotePR{}, fmt.Errorf("observation requires frozen publication identity")
+	}
+	if err := publisher.Frozen.Validate(); err != nil {
+		return RemotePR{}, err
+	}
+	if err := publisher.verifyIdentity(ctx); err != nil {
+		return RemotePR{}, err
+	}
+	if err := publisher.verifyRepositoryIdentity(ctx, plan); err != nil {
+		return RemotePR{}, err
+	}
+	data, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(publication.Number), "--repo", plan.Repository, "--json", "url,state,baseRefName,baseRefOid,headRefName,headRefOid,mergeCommit")
+	if err != nil {
+		return RemotePR{}, err
+	}
+	var pr struct {
+		URL     string `json:"url"`
+		State   string `json:"state"`
+		Base    string `json:"baseRefName"`
+		BaseSHA string `json:"baseRefOid"`
+		Head    string `json:"headRefName"`
+		HeadSHA string `json:"headRefOid"`
+		Merge   struct {
+			SHA string `json:"oid"`
+		} `json:"mergeCommit"`
+	}
+	if json.Unmarshal(data, &pr) != nil || !strings.HasPrefix(pr.URL, "https://github.com/"+plan.Repository+"/pull/") || pr.Head != plan.Branch || (pr.State != "OPEN" && pr.State != "MERGED" && pr.State != "CLOSED") || !objectID.MatchString(pr.HeadSHA) {
+		return RemotePR{}, fmt.Errorf("PR identity changed externally")
+	}
+	if pr.BaseSHA != "" && !objectID.MatchString(pr.BaseSHA) || pr.Merge.SHA != "" && !objectID.MatchString(pr.Merge.SHA) {
+		return RemotePR{}, fmt.Errorf("invalid observed PR boundary")
+	}
+	return RemotePR{State: pr.State, Base: pr.Base, BaseSHA: pr.BaseSHA, HeadSHA: pr.HeadSHA, MergeSHA: pr.Merge.SHA}, nil
+}
+
 func (publisher GitHubPublisher) command(ctx context.Context, name string, args ...string) ([]byte, error) {
 	run := publisher.Command
 	if run == nil {
@@ -80,7 +209,11 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		if err := publisher.verifyIdentity(ctx); err != nil {
 			return Publication{}, err
 		}
-		if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+		if plan.Restack == nil {
+			if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+				return Publication{}, err
+			}
+		} else if err := publisher.verifyRepositoryIdentity(ctx, plan); err != nil {
 			return Publication{}, err
 		}
 	}
@@ -254,24 +387,31 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 			return Publication{}, fmt.Errorf("signing credential cleanup failed before publication")
 		}
 	}
-	prs, err := publisher.command(ctx, "gh", "pr", "list", "--repo", plan.Repository, "--head", plan.Branch, "--state", "all", "--json", "number,url,baseRefName,headRefOid,state")
+	prs, err := publisher.command(ctx, "gh", "pr", "list", "--repo", plan.Repository, "--head", plan.Branch, "--state", "all", "--json", "number,url,baseRefName,baseRefOid,headRefOid,state")
 	if err != nil {
 		return Publication{}, err
 	}
 	var matches []struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		Base   string `json:"baseRefName"`
-		Head   string `json:"headRefOid"`
-		State  string `json:"state"`
+		Number  int    `json:"number"`
+		URL     string `json:"url"`
+		Base    string `json:"baseRefName"`
+		BaseSHA string `json:"baseRefOid"`
+		Head    string `json:"headRefOid"`
+		State   string `json:"state"`
 	}
 	if json.Unmarshal(prs, &matches) != nil || len(matches) > 1 {
 		return Publication{}, fmt.Errorf("cannot reconcile destination PR")
 	}
 	if len(matches) == 1 {
 		pr := matches[0]
-		if pr.State != "OPEN" || pr.Base != plan.Base || (previous.Number != 0 && previous.Number != pr.Number) {
+		if pr.State != "OPEN" || (previous.Number != 0 && previous.Number != pr.Number) {
 			return Publication{}, fmt.Errorf("destination PR was changed or closed externally")
+		}
+		if plan.Restack == nil && pr.Base != plan.Base {
+			return Publication{}, fmt.Errorf("destination PR was changed or closed externally")
+		}
+		if plan.Restack != nil && (pr.Number != plan.Restack.Number || !validRestackPR(plan, pr.Base, pr.BaseSHA, pr.Head, parent)) {
+			return Publication{}, fmt.Errorf("destination PR was changed externally; refusing retarget")
 		}
 		if pr.Head != parent && (previous.HeadSHA == "" || pr.Head != previous.HeadSHA) {
 			return Publication{}, fmt.Errorf("PR head changed externally; refusing to overwrite it")
@@ -292,7 +432,11 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		if err := publisher.verifyIdentity(ctx); err != nil {
 			return Publication{}, err
 		}
-		if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+		if plan.Restack == nil {
+			if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+				return Publication{}, err
+			}
+		} else if err := publisher.verifyRestackBoundary(ctx, plan, parent); err != nil {
 			return Publication{}, err
 		}
 	}
@@ -318,6 +462,9 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		title = plan.Reference + ": " + title
 	}
 	if len(matches) == 0 {
+		if plan.Restack != nil {
+			return Publication{}, fmt.Errorf("restack destination PR is missing")
+		}
 		if publisher.Frozen != nil {
 			if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
 				return Publication{}, err
@@ -328,8 +475,22 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		}
 	} else {
 		if publisher.Frozen != nil {
-			if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+			if plan.Restack == nil {
+				if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+					return Publication{}, err
+				}
+			} else if err := publisher.verifyRestackBoundary(ctx, plan, parent); err != nil {
 				return Publication{}, err
+			}
+		}
+		if plan.Restack != nil {
+			if _, err := publisher.command(ctx, "gh", "pr", "edit", fmt.Sprint(matches[0].Number), "--repo", plan.Repository, "--base", plan.Base); err != nil {
+				return Publication{}, err
+			}
+			if publisher.Frozen != nil {
+				if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+					return Publication{}, err
+				}
 			}
 		}
 		if _, err := publisher.command(ctx, "gh", "pr", "edit", fmt.Sprint(matches[0].Number), "--repo", plan.Repository, "--title", title, "--body-file", bodyPath); err != nil {
@@ -449,6 +610,22 @@ func (identity PublicationIdentity) Validate() error {
 }
 
 func (publisher GitHubPublisher) verifyRemoteBoundary(ctx context.Context, plan Plan) error {
+	if err := publisher.verifyRepositoryIdentity(ctx, plan); err != nil {
+		return err
+	}
+	data, err := publisher.command(ctx, "gh", "api", "repos/"+plan.Repository+"/branches/"+url.PathEscape(plan.Base))
+	var base struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err != nil || json.Unmarshal(data, &base) != nil || base.Commit.SHA != plan.BaseSHA {
+		return fmt.Errorf("remote base changed; refusing publication")
+	}
+	return nil
+}
+
+func (publisher GitHubPublisher) verifyRepositoryIdentity(ctx context.Context, plan Plan) error {
 	data, err := publisher.command(ctx, "gh", "api", "repos/"+plan.Repository)
 	var repository struct {
 		ID   int64  `json:"id"`
@@ -457,7 +634,46 @@ func (publisher GitHubPublisher) verifyRemoteBoundary(ctx context.Context, plan 
 	if err != nil || json.Unmarshal(data, &repository) != nil || repository.ID != publisher.Frozen.RepositoryID || repository.Name != publisher.Frozen.RepositoryName || repository.Name != plan.Repository {
 		return fmt.Errorf("repository identity changed; refusing publication")
 	}
-	data, err = publisher.command(ctx, "gh", "api", "repos/"+plan.Repository+"/branches/"+url.PathEscape(plan.Base))
+	return nil
+}
+
+func (publisher GitHubPublisher) verifyRestackBoundary(ctx context.Context, plan Plan, candidate string) error {
+	boundary := plan.Restack
+	if boundary == nil || boundary.Number < 1 || boundary.Base == "" || !objectID.MatchString(boundary.BaseSHA) || !objectID.MatchString(boundary.HeadSHA) {
+		return fmt.Errorf("restack requires a retained PR boundary")
+	}
+	// A retarget must never use a base that moved after the snapshot used for
+	// the offline rebase. This is checked independently of the old PR base.
+	if err := publisher.verifyTargetBase(ctx, plan); err != nil {
+		return err
+	}
+	data, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(boundary.Number), "--repo", plan.Repository, "--json", "state,baseRefName,baseRefOid,headRefName,headRefOid")
+	var pr struct {
+		State   string `json:"state"`
+		Base    string `json:"baseRefName"`
+		BaseSHA string `json:"baseRefOid"`
+		Head    string `json:"headRefName"`
+		HeadSHA string `json:"headRefOid"`
+	}
+	if err != nil || json.Unmarshal(data, &pr) != nil || pr.State != "OPEN" || pr.Head != plan.Branch || !validRestackPR(plan, pr.Base, pr.BaseSHA, pr.HeadSHA, candidate) {
+		return fmt.Errorf("destination PR was changed externally; refusing retarget")
+	}
+	return nil
+}
+
+func validRestackPR(plan Plan, base, baseSHA, head, candidate string) bool {
+	boundary := plan.Restack
+	if boundary == nil {
+		return false
+	}
+	// The desired-base form permits an authorized parent auto-retarget before
+	// push (the recorded head) and replay after push (the signed candidate).
+	return (base == boundary.Base && baseSHA == boundary.BaseSHA && (head == boundary.HeadSHA || head == candidate)) ||
+		(base == plan.Base && baseSHA == plan.BaseSHA && (head == boundary.HeadSHA || head == candidate))
+}
+
+func (publisher GitHubPublisher) verifyTargetBase(ctx context.Context, plan Plan) error {
+	data, err := publisher.command(ctx, "gh", "api", "repos/"+plan.Repository+"/branches/"+url.PathEscape(plan.Base))
 	var base struct {
 		Commit struct {
 			SHA string `json:"sha"`

@@ -308,6 +308,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			journal.Publication = publication
+			if journal.Plan.Restack != nil {
+				journal.RestackAudit = append(journal.RestackAudit, *journal.Plan.Restack)
+				journal.Plan.Restack = nil
+			}
 			journal.MissingChecksSince = time.Time{}
 			if err := runner.transition(directory, journal, "ci"); err != nil {
 				return err

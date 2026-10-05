@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,9 +67,217 @@ print('Native CLI flags verified without credentials or network')`
 	if revision, err := repository.Inspect(ctx, review); err != nil || revision.Head != plan.StartingSHA {
 		t.Fatalf("reviewer snapshot is unreadable from UID 1000: %+v %v", revision, err)
 	}
+	// Rebase a captured implementation onto an offline bundle. The new base
+	// changes README while the implementation contributes the selected ticket,
+	// so the resulting tree must differ from the old candidate tree.
+	if _, err := SafeGit(ctx, launch.Root, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launch.Root, "README.md"), []byte("upstream change\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, launch.Root, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, launch.Root, "commit", "--no-verify", "-m", "Upstream change"); err != nil {
+		t.Fatal(err)
+	}
+	newBase, err := SafeGit(ctx, launch.Root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBase = strings.TrimSpace(newBase)
+	if _, err := SafeGit(ctx, launch.Root, "update-ref", "refs/sdlc/snapshot", newBase); err != nil {
+		t.Fatal(err)
+	}
+	baseBundle := filepath.Join(filepath.Dir(workspace), "newbase.bundle")
+	if _, err := SafeGit(ctx, launch.Root, "bundle", "create", baseBundle, "refs/sdlc/snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(baseBundle, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldCandidate := plan.StartingSHA
+	// Simulate a controller dying after it durably recorded the rebase marker
+	// but before it could invoke `git rebase`.
+	if _, err := SafeGit(ctx, workspace, "update-ref", "refs/sdlc/rebase/"+launch.Head+"/"+newBase, oldCandidate); err != nil {
+		t.Fatal(err)
+	}
+	result, err := repository.Rebase(ctx, workspace, baseBundle, launch.Head, newBase)
+	if err != nil || result.Conflict {
+		t.Fatalf("offline rebase: %+v %v", result, err)
+	}
+	updated, err := repository.Inspect(ctx, workspace)
+	if err != nil || !updated.Clean || updated.Head == oldCandidate {
+		t.Fatalf("rebase did not create a clean new candidate: %+v %v", updated, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspace, "README.md")); err != nil || string(data) != "upstream change\n" {
+		t.Fatalf("upstream base change lost: %v %q", err, data)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspace, launch.Ticket)); err != nil || string(data) != "disposable ticket\n" {
+		t.Fatalf("ticket change lost: %v %q", err, data)
+	}
+	// A controller crash after the container completed but before Save replays
+	// the marker proof and does not re-run Git rebase.
+	if replay, err := repository.Rebase(ctx, workspace, baseBundle, launch.Head, newBase); err != nil || replay.Conflict {
+		t.Fatalf("offline rebase replay: %+v %v", replay, err)
+	}
+	// A conflicting restack reports only relative paths and leaves the original
+	// workspace for the implementation session to resolve and continue.
+	conflictRoot, conflictLaunch := sourceFixture(t)
+	conflictWorkspace := filepath.Join(realTemp(t), "workspace")
+	conflictPlan, err := Capture(ctx, conflictLaunch, conflictWorkspace, "offline-conflict", "main", "example/project", Roles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conflictWorkspace, "README.md"), []byte("ticket change\n"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, conflictWorkspace, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, conflictWorkspace, "commit", "--no-verify", "-m", "Ticket README change"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conflictRoot, "README.md"), []byte("upstream conflict\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, conflictRoot, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, conflictRoot, "commit", "--no-verify", "-m", "Upstream conflicting change"); err != nil {
+		t.Fatal(err)
+	}
+	conflictBase, err := SafeGit(ctx, conflictRoot, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictBase = strings.TrimSpace(conflictBase)
+	if _, err := SafeGit(ctx, conflictRoot, "update-ref", "refs/sdlc/snapshot", conflictBase); err != nil {
+		t.Fatal(err)
+	}
+	conflictBundle := filepath.Join(filepath.Dir(conflictWorkspace), "conflict.bundle")
+	if _, err := SafeGit(ctx, conflictRoot, "bundle", "create", conflictBundle, "refs/sdlc/snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(conflictBundle, 0600); err != nil {
+		t.Fatal(err)
+	}
+	conflict, err := repository.Rebase(ctx, conflictWorkspace, conflictBundle, conflictLaunch.Head, conflictBase)
+	if err != nil || !conflict.Conflict || len(conflict.Paths) != 1 || conflict.Paths[0] != "README.md" {
+		t.Fatalf("expected bounded conflict: %+v %v", conflict, err)
+	}
+	if replay, err := repository.Rebase(ctx, conflictWorkspace, conflictBundle, conflictLaunch.Head, conflictBase); err != nil || !replay.Conflict || len(replay.Paths) != 1 || replay.Paths[0] != "README.md" {
+		t.Fatalf("unfinished recorded rebase was not safely replayed: %+v %v", replay, err)
+	}
+	if err := os.WriteFile(filepath.Join(conflictWorkspace, "README.md"), []byte("resolved\n"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, conflictWorkspace, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, conflictWorkspace, "-c", "core.editor=true", "rebase", "--continue"); err != nil {
+		t.Fatal(err)
+	}
+	if head, err := SafeGit(ctx, conflictWorkspace, "rev-parse", "HEAD"); err != nil || strings.TrimSpace(head) == conflictPlan.StartingSHA {
+		status, _ := SafeGit(ctx, conflictWorkspace, "status", "--porcelain", "--untracked-files=normal")
+		t.Fatalf("conflict recovery failed: %q %v %q", head, err, status)
+	}
+	// Rebase only the child ticket range after its parent was squash-merged into
+	// main. This is the stack shape used when a parent PR lands independently.
+	squashRoot, squashLaunch := sourceFixture(t)
+	if _, err := SafeGit(ctx, squashRoot, "checkout", "-b", "parent", squashLaunch.Head); err != nil {
+		t.Fatal(err)
+	}
+	sourceWrite(t, squashRoot, "parent.txt", "parent work\n")
+	if _, err := SafeGit(ctx, squashRoot, "add", "parent.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, squashRoot, "commit", "--no-verify", "-m", "Parent work"); err != nil {
+		t.Fatal(err)
+	}
+	oldParent, err := SafeGit(ctx, squashRoot, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldParent = strings.TrimSpace(oldParent)
+	if _, err := SafeGit(ctx, squashRoot, "checkout", "-b", "child", oldParent); err != nil {
+		t.Fatal(err)
+	}
+	sourceWrite(t, squashRoot, "child.txt", "child-only work\n")
+	if _, err := SafeGit(ctx, squashRoot, "add", "child.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, squashRoot, "commit", "--no-verify", "-m", "Child work"); err != nil {
+		t.Fatal(err)
+	}
+	squashWorkspace := filepath.Join(realTemp(t), "workspace")
+	if _, err := isolatedGit(ctx, filepath.Dir(squashWorkspace), "clone", "--no-local", "--no-hardlinks", squashRoot, squashWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := isolatedGit(ctx, squashWorkspace, "checkout", "child"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := isolatedGit(ctx, squashWorkspace, "remote", "remove", "origin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, squashRoot, "checkout", "main"); err != nil {
+		t.Fatal(err)
+	}
+	sourceWrite(t, squashRoot, "parent.txt", "parent work\n")
+	if _, err := SafeGit(ctx, squashRoot, "add", "parent.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, squashRoot, "commit", "--no-verify", "-m", "Squash parent work"); err != nil {
+		t.Fatal(err)
+	}
+	sourceWrite(t, squashRoot, "upstream.txt", "new upstream\n")
+	if _, err := SafeGit(ctx, squashRoot, "add", "upstream.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(ctx, squashRoot, "commit", "--no-verify", "-m", "Independent upstream"); err != nil {
+		t.Fatal(err)
+	}
+	newMain, err := SafeGit(ctx, squashRoot, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newMain = strings.TrimSpace(newMain)
+	if _, err := SafeGit(ctx, squashRoot, "update-ref", "refs/sdlc/snapshot", newMain); err != nil {
+		t.Fatal(err)
+	}
+	squashBundle := filepath.Join(filepath.Dir(squashWorkspace), "squash-main.bundle")
+	if _, err := SafeGit(ctx, squashRoot, "bundle", "create", squashBundle, "refs/sdlc/snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(squashBundle, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := repository.Rebase(ctx, squashWorkspace, squashBundle, oldParent, newMain); err != nil || result.Conflict {
+		t.Fatalf("squash-parent rebase: %+v %v", result, err)
+	}
+	if _, err := isolatedGit(ctx, squashWorkspace, "merge-base", "--is-ancestor", newMain, "HEAD"); err != nil {
+		t.Fatal("new main not ancestor")
+	}
+	if _, err := isolatedGit(ctx, squashWorkspace, "merge-base", "--is-ancestor", oldParent, "HEAD"); err == nil {
+		t.Fatal("old parent still in rebased history")
+	}
+	rangeCommits, err := isolatedGit(ctx, squashWorkspace, "rev-list", newMain+"..HEAD")
+	if err != nil || len(strings.Fields(rangeCommits)) != 1 {
+		t.Fatalf("rebased range includes parent duplication: %q %v", rangeCommits, err)
+	}
+	for _, file := range []struct{ path, want string }{{"parent.txt", "parent work\n"}, {"upstream.txt", "new upstream\n"}, {"child.txt", "child-only work\n"}} {
+		data, err := os.ReadFile(filepath.Join(squashWorkspace, file.path))
+		if err != nil || string(data) != file.want {
+			t.Fatalf("squash rebase lost %s: %v %q", file.path, err, data)
+		}
+	}
+	if result, err := repository.Rebase(ctx, squashWorkspace, squashBundle, oldParent, newMain); err != nil || result.Conflict {
+		t.Fatalf("squash-parent replay: %+v %v", result, err)
+	}
 	check := `import os,pathlib
 assert os.getuid()==1000
-assert pathlib.Path('/workspace/README.md').read_text()=='original\n'
+assert pathlib.Path('/workspace/README.md').read_text()=='upstream change\n'
 assert not pathlib.Path('/workspace/.git').exists()
 assert not pathlib.Path('/provider-auth').exists()
 assert not pathlib.Path('/var/run/docker.sock').exists()
