@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
@@ -185,7 +186,7 @@ func SaveSelection(directory, root, repository string, pair Pair) error {
 	})
 }
 
-// Select makes no network requests and never guesses among organisation accounts.
+// Select makes no network requests and refuses ambiguous account choices.
 func Select(directory, root, repository, explicit string) (Pair, error) {
 	if !validRepository(repository) {
 		return Pair{}, fmt.Errorf("repository must be a GitHub OWNER/REPO")
@@ -225,6 +226,15 @@ func Select(directory, root, repository, explicit string) (Pair, error) {
 	}
 	if len(matching) == 1 {
 		return matching[0], nil
+	}
+	if len(matching) == 0 && len(pairs) == 1 {
+		profiles, err := ListConfigured(directory)
+		if err != nil {
+			return Pair{}, err
+		}
+		if len(profiles) == 1 {
+			return pairs[0], nil
+		}
 	}
 	if len(matching) == 0 {
 		return Pair{}, ErrSelectionRequired
@@ -367,4 +377,141 @@ func lockedWrite(directory, file string, value any, preflight func() error) erro
 		return fmt.Errorf("cannot save account metadata")
 	}
 	return nil
+}
+
+// Repository stores only the checkout hash and a public GitHub repository name.
+type Repository struct {
+	Version      int    `json:"version"`
+	CheckoutHash string `json:"checkout_hash"`
+	Name         string `json:"repository"`
+}
+
+func repositoryFile(root string) (string, string, error) {
+	_, err := selectionFile(root)
+	if err != nil {
+		return "", "", err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(root)))
+	return "repository-identity-" + hash + ".local.json", hash, nil
+}
+
+func LoadRepository(directory, root string) (string, error) {
+	file, hash, err := repositoryFile(root)
+	if err != nil {
+		return "", err
+	}
+	var record Repository
+	if err := read(directory, file, &record); err != nil {
+		return "", err
+	}
+	if record.Version != 1 || record.CheckoutHash != hash || !validRepository(record.Name) {
+		return "", fmt.Errorf("invalid initialized repository identity")
+	}
+	return record.Name, nil
+}
+
+// SaveRepository never replaces an existing identity or deliberately bound selection.
+func SaveRepository(directory, root, repository string) error {
+	file, hash, err := repositoryFile(root)
+	if err != nil {
+		return err
+	}
+	if !validRepository(repository) {
+		return fmt.Errorf("repository must be a GitHub OWNER/REPO")
+	}
+	// Validate both records before deciding to preserve either one.
+	_, selectionErr := LoadSelection(directory, root)
+	if selectionErr != nil && !os.IsNotExist(selectionErr) {
+		return selectionErr
+	}
+	_, previousErr := LoadRepository(directory, root)
+	if previousErr != nil && !os.IsNotExist(previousErr) {
+		return previousErr
+	}
+	if selectionErr == nil || previousErr == nil {
+		return nil
+	}
+	return lockedWrite(directory, file, Repository{1, hash, repository}, func() error {
+		_, err := LoadSelection(directory, root)
+		if err == nil {
+			return fmt.Errorf("repository selection changed during initialization; retry init")
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		_, err = LoadRepository(directory, root)
+		if err == nil {
+			return fmt.Errorf("repository identity changed during initialization; retry init")
+		}
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	})
+}
+
+type ConfiguredProfile struct {
+	Name   string
+	Native bool
+	Pair   *Pair
+}
+
+// ListConfigured reads installation metadata and public pairs, never native caches.
+func ListConfigured(directory string) ([]ConfiguredProfile, error) {
+	pairs, err := List(directory)
+	if err != nil {
+		return nil, err
+	}
+	profiles := map[string]ConfiguredProfile{}
+	for _, pair := range pairs {
+		profiles[pair.GitHubProfile] = ConfiguredProfile{Name: pair.GitHubProfile, Pair: &pair}
+	}
+	root, err := state(directory, false)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	stream, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	entries, err := stream.ReadDir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("cannot list GitHub profiles")
+	}
+	for _, entry := range entries {
+		name := ""
+		if entry.Name() == "github-installation.json" {
+			name = "default"
+		} else if strings.HasPrefix(entry.Name(), "github-installation-profile-") && strings.HasSuffix(entry.Name(), ".json") {
+			name = strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "github-installation-profile-"), ".json")
+			if name == "default" || name == "" || githubauth.ValidateProfile(name) != nil {
+				return nil, fmt.Errorf("invalid native GitHub profile metadata filename")
+			}
+		} else {
+			continue
+		}
+		var record struct {
+			ID string `json:"id"`
+		}
+		if err := read(directory, entry.Name(), &record); err != nil {
+			return nil, err
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(record.ID) {
+			return nil, fmt.Errorf("invalid native GitHub installation metadata")
+		}
+		profile := profiles[name]
+		profile.Name, profile.Native = name, true
+		profiles[name] = profile
+	}
+	result := make([]ConfiguredProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		result = append(result, profile)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
 }

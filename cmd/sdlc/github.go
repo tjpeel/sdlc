@@ -20,14 +20,17 @@ import (
 
 const githubUsage = `Usage:
   sdlc github pair [--profile NAME] [--signing-profile NAME] [--replace]
-  sdlc github use --profile NAME [--repo OWNER/REPO]
+  sdlc github list
+  sdlc github use [--profile NAME] [--repo OWNER/REPO]
   sdlc github status [--profile NAME | --repo OWNER/REPO] [--verify]
 
 pair checks the named native GitHub login and its registered public signing key.
 It saves the account/key pairing outside repositories. The signing profile defaults to the GitHub profile name.
-use saves this checkout's account selection privately on the host, without connecting.
+list shows configured native profiles and public pairings; login validity remains unverified.
+use checks the selected native login, signing key and repository push access before saving this checkout's selection.
+Omit --profile on use to reuse the saved selection or the sole configured profile.
 status is local by default; --verify checks the selected account, registered key and repository push access.
-Omit --profile on status to resolve this checkout's saved selection or unique personal-owner match.
+Omit --profile on status to resolve this checkout's saved selection or unique owner match or sole pairing.
 Neither pairing nor status retrieves a vault secret or writes to GitHub.
 `
 
@@ -42,14 +45,14 @@ func parseGitHubOptions(args []string, output io.Writer) (githubOptions, error) 
 		_, err := io.WriteString(output, githubUsage)
 		return options, err
 	}
-	if args[0] != "pair" && args[0] != "use" && args[0] != "status" {
-		return options, fmt.Errorf("use sdlc github pair, use or status")
+	if args[0] != "pair" && args[0] != "use" && args[0] != "status" && args[0] != "list" {
+		return options, fmt.Errorf("use sdlc github pair, list, use or status")
 	}
 	flags := flag.NewFlagSet("github "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&options.profile, "profile", "", "named native GitHub login")
 	flags.StringVar(&options.signingProfile, "signing-profile", "", "pair only: configured signing profile")
-	flags.StringVar(&options.repository, "repo", "", "repository mode: GitHub OWNER/REPO; defaults to origin")
+	flags.StringVar(&options.repository, "repo", "", "repository mode: GitHub OWNER/REPO; defaults to saved SDLC identity, then origin")
 	flags.BoolVar(&options.replace, "replace", false, "pair only: deliberately change account/key binding")
 	flags.BoolVar(&options.verify, "verify", false, "status only: connected account/key/repository checks")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -60,9 +63,9 @@ func parseGitHubOptions(args []string, output io.Writer) (githubOptions, error) 
 	}
 	invalid := flags.NArg() != 0
 	flags.Visit(func(f *flag.Flag) {
-		invalid = invalid || (f.Name == "signing-profile" || f.Name == "replace") && args[0] != "pair" || f.Name == "verify" && args[0] != "status" || f.Name == "repo" && args[0] == "pair" || (f.Name == "profile" || f.Name == "signing-profile") && f.Value.String() == ""
+		invalid = invalid || args[0] == "list" || (f.Name == "signing-profile" || f.Name == "replace") && args[0] != "pair" || f.Name == "verify" && args[0] != "status" || f.Name == "repo" && args[0] == "pair" || (f.Name == "profile" || f.Name == "signing-profile") && f.Value.String() == ""
 	})
-	if invalid || args[0] == "use" && options.profile == "" || args[0] == "status" && options.profile != "" && options.repository != "" {
+	if invalid || args[0] == "status" && options.profile != "" && options.repository != "" {
 		return options, fmt.Errorf("select the documented options for sdlc github %s; see --help", args[0])
 	}
 	if args[0] == "pair" && options.profile == "" {
@@ -205,7 +208,7 @@ func resumeGitHubPreflight(ctx context.Context, runtime runtimeimage.Manager, jo
 	return checkFrozenGitHub(ctx, journal.Plan, session)
 }
 
-func checkoutRepository(ctx context.Context, repository string) (string, string, error) {
+func checkoutRepository(ctx context.Context, directory, repository string) (string, string, error) {
 	command := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(strings.SplitN(entry, "=", 2)[0], "GIT_") {
@@ -221,7 +224,7 @@ func checkoutRepository(ctx context.Context, repository string) (string, string,
 		return "", "", fmt.Errorf("cannot resolve checkout")
 	}
 	if repository == "" {
-		repository, err = originRepository(ctx, root)
+		repository, err = resolveRepository(ctx, directory, root, repository)
 	}
 	return root, repository, err
 }
@@ -242,6 +245,28 @@ func githubCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if options.action == "list" {
+		profiles, err := githubprofile.ListConfigured(runtime.Directory)
+		if err != nil {
+			return err
+		}
+		for _, profile := range profiles {
+			native := "native cache metadata absent"
+			if profile.Native {
+				native = "native cache configured"
+			}
+			if profile.Pair == nil {
+				fmt.Fprintf(output, "GitHub profile: %s (%s); account/signer: unpaired\n", profile.Name, native)
+			} else {
+				fmt.Fprintf(output, "GitHub profile: %s (%s); account/signer: paired; account: %s (ID %d); signing profile: %s; fingerprint: %s\n", profile.Name, native, profile.Pair.Login, profile.Pair.AccountID, profile.Pair.SigningProfile, profile.Pair.Fingerprint)
+			}
+		}
+		if len(profiles) == 0 {
+			fmt.Fprintln(output, "No configured GitHub profiles.")
+		}
+		fmt.Fprintln(output, "Login validity, repository access and current key registration are unverified.")
+		return nil
+	}
 	manager := githubauth.New(runtime)
 	manager.Profile = options.profile
 	if options.action == "pair" {
@@ -257,12 +282,24 @@ func githubCommand(ctx context.Context, args []string, output io.Writer) error {
 	var pair githubprofile.Pair
 	root, repository := "", ""
 	if options.action == "use" || options.profile == "" {
-		root, repository, err = checkoutRepository(ctx, options.repository)
+		root, repository, err = checkoutRepository(ctx, runtime.Directory, options.repository)
 		if err != nil {
 			return err
 		}
 	}
-	if options.action == "use" || options.profile != "" {
+	if options.action == "use" {
+		pair, err = useGitHub(ctx, runtime, root, repository, options.profile, func(ctx context.Context, name string) (githubIdentitySession, error) {
+			manager.Profile = name
+			return manager.Acquire(ctx)
+		})
+		if err != nil {
+			return err
+		}
+		printPair(output, pair, repository)
+		fmt.Fprintln(output, "Repository access checked and account selection saved privately on the host.")
+		return nil
+	}
+	if options.profile != "" {
 		pair, err = githubprofile.Load(runtime.Directory, options.profile)
 	} else {
 		pair, err = githubprofile.Select(runtime.Directory, root, repository, "")
@@ -277,14 +314,7 @@ func githubCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err := pair.CheckSigning(profile); err != nil {
 		return err
 	}
-	if options.action == "use" {
-		if err := githubprofile.SaveSelection(runtime.Directory, root, repository, pair); err != nil {
-			return err
-		}
-		printPair(output, pair, repository)
-		fmt.Fprintln(output, "Repository account selection saved privately on the host. Run sdlc github status --verify to check access.")
-		return nil
-	}
+
 	printPair(output, pair, repository)
 	if !options.verify {
 		fmt.Fprintln(output, "Local pairing matches configured signing metadata. Login validity, repository access and current key registration are unverified; use --verify. Vault access and GitHub Verified attribution require their own checks.")
@@ -342,4 +372,106 @@ func runSigningProfile(runtime runtimeimage.Manager, plan workrun.Plan) (signing
 		}
 	}
 	return profile, nil
+}
+
+// resolveRepository uses private SDLC identity before inspecting legacy origin metadata.
+func resolveRepository(ctx context.Context, directory, root, explicit string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	selection, err := githubprofile.LoadSelection(directory, root)
+	if err == nil {
+		return selection.Repository, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	repository, err := githubprofile.LoadRepository(directory, root)
+	if err == nil {
+		return repository, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	return originRepository(ctx, root)
+}
+
+func useGitHub(ctx context.Context, runtime runtimeimage.Manager, root, repository, explicit string, acquire func(context.Context, string) (githubIdentitySession, error)) (result githubprofile.Pair, resultErr error) {
+	name := explicit
+	if name == "" {
+		// Select validates saved bindings before considering configured profiles.
+		_, err := githubprofile.LoadSelection(runtime.Directory, root)
+		if err == nil {
+			pair, err := githubprofile.Select(runtime.Directory, root, repository, "")
+			if err != nil {
+				return result, err
+			}
+			name = pair.GitHubProfile
+		} else if !os.IsNotExist(err) {
+			return result, err
+		} else {
+			profiles, err := githubprofile.ListConfigured(runtime.Directory)
+			if err != nil {
+				return result, err
+			}
+			if len(profiles) != 1 {
+				return result, fmt.Errorf("choose a configured GitHub profile with sdlc github use --profile NAME; see sdlc github list")
+			}
+			name = profiles[0].Name
+		}
+	}
+	pair, pairErr := githubprofile.Load(runtime.Directory, name)
+	if pairErr != nil && !os.IsNotExist(pairErr) {
+		return result, pairErr
+	}
+	if pairErr == nil {
+		profile, err := signingProfile(runtime, pair.SigningProfile)
+		if err != nil {
+			return result, err
+		}
+		if err := pair.CheckSigning(profile); err != nil {
+			return result, err
+		}
+	}
+	session, err := acquire(ctx, name)
+	if err != nil {
+		return result, err
+	}
+	// Cleanup must succeed before persisting a checked selection.
+	if pairErr != nil {
+		_, identityErr := session.Identity(ctx)
+		var accessErr error
+		if identityErr == nil {
+			_, accessErr = session.Repository(ctx, repository)
+		}
+		closeErr := session.Close()
+		if err := errors.Join(identityErr, accessErr, closeErr); err != nil {
+			return result, err
+		}
+		return result, fmt.Errorf("GitHub profile %s has repository access but its account/signer is unpaired; configure sdlc signing setup and run sdlc github pair --profile %s --signing-profile NAME, then retry", name, name)
+	}
+	current, currentErr := githubprofile.Load(runtime.Directory, name)
+	if currentErr != nil || current != pair {
+		return result, errors.Join(fmt.Errorf("GitHub pairing changed while acquiring the selected native cache; retry deliberate selection"), session.Close())
+	}
+	profile, signingErr := signingProfile(runtime, pair.SigningProfile)
+	if signingErr == nil {
+		signingErr = pair.CheckSigning(profile)
+	}
+	if signingErr != nil {
+		return result, errors.Join(signingErr, session.Close())
+	}
+	checkErr := checkPair(ctx, pair, session, repository)
+	closeErr := session.Close()
+	if err := errors.Join(checkErr, closeErr); err != nil {
+		return result, err
+	}
+	profile, err = signingProfile(runtime, pair.SigningProfile)
+	if err != nil {
+		return result, err
+	}
+	if err := pair.CheckSigning(profile); err != nil {
+		return result, err
+	}
+	return pair, githubprofile.SaveSelection(runtime.Directory, root, repository, pair)
 }

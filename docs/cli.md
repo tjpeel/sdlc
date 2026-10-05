@@ -86,8 +86,9 @@ custom checks, rather than replacing them with newly detected defaults. It
 rejects unsupported settings versions, invalid paths and unsafe filesystem links.
 No project checks run during initialization. It needs only local Git access;
 it does not fetch source, contact providers, bind an account profile or require
-Docker. `init` takes no arguments. After initialization, use
-`sdlc github use --profile personal` to save repository selection outside the
+Docker. `init` takes no arguments and remembers a unique GitHub origin identity locally,
+including SSH remote metadata. After initialization, use `sdlc github list` to inspect
+configured profiles and `sdlc github use` to check access and save repository selection outside the
 checkout; account setup does not write Git configuration. `sdlc run` captures source and starts ticket execution after GitHub and
 signing preflight. `sdlc interactive` still opens an empty workspace after initialization.
 
@@ -243,8 +244,8 @@ metadata and ambiguous selection fail even during dry-run.
 | `--input` | Repeatable exact path relative to the project; visible to both providers. |
 | `--base` | `main`; must exist locally, be included in source HEAD, and match the GitHub base at publication. |
 | `--branch` | Unique `work/<reference>/<ticket-stem>-<run-prefix>` branch. |
-| `--repo` | GitHub.com `OWNER/REPO`, inferred from a single credential-free GitHub origin URL. Required for SSH aliases or custom hosts that cannot be inferred. |
-| `--github-profile` | Select a registered account/key pair for an unbound repository; omission uses saved repository selection or a unique pair whose login owns the repository. A conflicting saved selection fails. |
+| `--repo` | GitHub.com `OWNER/REPO`; defaults to saved selection, then initialized identity, then legacy origin discovery. Supply it when no identity can be inferred. |
+| `--github-profile` | Select a registered account/key pair for an unbound repository; omission uses saved repository selection or a unique owner pair or sole configured pair. A conflicting saved selection fails. |
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
 | `--docker-tests` | Enable the separate privileged integration-test daemon. |
@@ -257,10 +258,10 @@ Before execution, configure the selected [GitHub and signing profile](#github-lo
 SDLC freezes its account ID, repository ID/canonical name, effective project Git
 name/email, signing public key and runtime image. A changed identity or missing
 push permission or public signing-key registration stops the run. It uses no host GitHub credential fallback.
-Unbound organisation repositories and ambiguous owner pairs require
-`github use --profile NAME` before launch. Saved selection binds the canonical
-checkout root and origin repository; changed remotes or pair metadata require
-a deliberate new `github use` selection.
+Use `github use` before launch; omit `--profile` for a saved selection or sole configured
+profile. Multiple profiles require a choice. Saved selection binds the canonical
+checkout root and GitHub repository independently of later origin changes. Changed pair
+metadata requires a deliberate new `github use --profile NAME` selection.
 
 The implementation login is required before launch. A missing opposite-provider
 login allows implementation, local checks, draft PR publication and CI to finish,
@@ -964,6 +965,7 @@ protection. OS credential-store integration is not implemented. No desktop
 
 ```sh
 sdlc github pair --profile personal --signing-profile personal-key
+sdlc github list
 sdlc github status --profile personal
 sdlc github status --profile personal --verify
 # From the initialized project:
@@ -980,27 +982,31 @@ supported. Use `pair --replace` for a deliberate changed pairing. Existing
 native login and signing configurations remain available; pair each account
 once before new runs.
 
-`use` checks the saved pair offline and records repository selection in private
-host state. It does not check live repository access; launch checks that access.
-Without a saved selection, repository status and fresh runs use only a unique
-pair whose account login equals the repository owner. An unbound organisation
-repository or ambiguous selection requires `use`. An explicit run
-`--github-profile` can select a registered pair for an unbound checkout; a
-conflict with saved selection requires a deliberate `use` change.
+`list` reads native installation metadata and public pair records locally, including
+unpaired profiles. It reports configured profiles without claiming login validity.
+`use` checks the selected native account, public signing-key registration and repository
+push access before saving selection in private host state. Omit `--profile` for a
+saved selection or sole configured profile; multiple profiles require a choice. An
+unpaired native profile can check repository access but must be paired before selection
+can be saved. Failed checks leave any saved selection unchanged.
 
-`status --profile NAME` inspects the global pair. Without `--profile`, it resolves
-the current repository from origin and saved selection or the unique owner pair.
-Repository-mode `status`, `use` and `run` accept `--repo OWNER/REPO` when an SSH
-alias or custom origin host cannot be inferred. Only GitHub.com is supported.
-`status --verify` checks the selected native account, public-key registration and,
-in repository mode, push permission. It does not retrieve a signing secret or
-prove GitHub's Verified attribution.
+`status --profile NAME` inspects the global pair. Without `--profile`, repository
+status and fresh runs use saved selection, a unique owner pair or the sole configured
+pair. A conflicting run `--github-profile` requires a deliberate `use --profile NAME`.
+Repository identity resolves from explicit `--repo`, saved selection, initialized
+identity, then legacy origin discovery. `init` reads SSH origin metadata locally
+without using host SSH authentication. If no identity can be inferred, supply
+`--repo OWNER/REPO` once to `use`; later commands reuse its saved selection. Only
+GitHub.com is supported. `status --verify` checks the selected native account, public-key
+registration and, in repository mode, push permission. It does not retrieve a signing
+secret or prove GitHub's Verified attribution.
 
 Pair records and repository selections live outside checkouts in private SDLC
 state, with mode-`0700` directories and mode-`0600` files. Records contain public
 IDs, login, key and fingerprint, with no vault references, bootstrap paths or
-tokens. Repository selection binds the canonical checkout root and origin
-repository. Changed remotes or pair metadata fail until `use` is repeated.
+tokens. Repository selection binds the canonical checkout root and GitHub
+repository independently of later origin edits/removal. Changed pair metadata
+requires deliberate `use --profile NAME` again.
 Each linked worktree has its own selection, although run capture currently
 requires an ordinary checkout. All accounts share one native runtime image;
 each retains its separate auth cache.

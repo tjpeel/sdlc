@@ -20,6 +20,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/signing"
 	"github.com/tjpeel/sdlc/internal/workrun"
+	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
 type fakePairSession struct {
@@ -75,12 +76,12 @@ func pairingFixture(t *testing.T) (string, signing.Profile) {
 }
 
 func TestGitHubOnboardingFlagsAreScopedAndRejectAmbiguousInputs(t *testing.T) {
-	for _, args := range [][]string{{"pair"}, {"pair", "--profile", "personal", "--signing-profile", "key", "--replace"}, {"use", "--profile", "work", "--repo", "example-org/project"}, {"status"}, {"status", "--profile", "work", "--verify"}, {"status", "--repo", "example/project", "--verify"}} {
+	for _, args := range [][]string{{"pair"}, {"pair", "--profile", "personal", "--signing-profile", "key", "--replace"}, {"use"}, {"list"}, {"use", "--profile", "work", "--repo", "example-org/project"}, {"status"}, {"status", "--profile", "work", "--verify"}, {"status", "--repo", "example/project", "--verify"}} {
 		if _, err := parseGitHubOptions(args, io.Discard); err != nil {
 			t.Fatal(args, err)
 		}
 	}
-	for _, args := range [][]string{{"unknown"}, {"use"}, {"pair", "--profile", ""}, {"pair", "--signing-profile", ""}, {"pair", "--repo", "example/project"}, {"pair", "--verify"}, {"use", "--replace"}, {"status", "--signing-profile", "key"}, {"status", "--profile", "../key"}, {"status", "--profile", "key", "--repo", "example/project"}, {"use", "--profile", "personal", "extra"}} {
+	for _, args := range [][]string{{"unknown"}, {"pair", "--profile", ""}, {"pair", "--signing-profile", ""}, {"pair", "--repo", "example/project"}, {"pair", "--verify"}, {"use", "--replace"}, {"status", "--signing-profile", "key"}, {"status", "--profile", "../key"}, {"status", "--profile", "key", "--repo", "example/project"}, {"use", "--profile", "personal", "extra"}} {
 		if _, err := parseGitHubOptions(args, io.Discard); err == nil {
 			t.Fatal("ambiguous flags accepted", args)
 		}
@@ -214,8 +215,12 @@ func TestMissingPairFailsBeforeCaptureRuntimeOrProviderRequests(t *testing.T) {
 	}
 }
 
-func TestRepositoryUseStatusAndRunResolvePairedSignerOffline(t *testing.T) {
+func TestSavedRepositoryStatusAndRunResolvePairedSignerOffline(t *testing.T) {
 	root := runGitFixture(t)
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	marker := forbidConnectedRunCommands(t, root)
 	directory, profile := pairingFixture(t)
 	t.Setenv("SDLC_STATE_DIR", directory)
@@ -227,10 +232,8 @@ func TestRepositoryUseStatusAndRunResolvePairedSignerOffline(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatal(err, string(output))
 	}
-	if err := githubCommand(context.Background(), []string{"status"}, io.Discard); err == nil {
-		t.Fatal("organisation guessed an account")
-	}
-	if err := githubCommand(context.Background(), []string{"use", "--profile", "personal"}, io.Discard); err != nil {
+
+	if err := githubprofile.SaveSelection(directory, root, "example-org/project", pair); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
@@ -259,11 +262,11 @@ func TestRepositoryUseStatusAndRunResolvePairedSignerOffline(t *testing.T) {
 	if data, err := command.CombinedOutput(); err != nil {
 		t.Fatal(err, string(data))
 	}
-	if err := githubCommand(context.Background(), []string{"status"}, io.Discard); err == nil {
-		t.Fatal("status reused selection after remote changed")
+	if err := githubCommand(context.Background(), []string{"status"}, io.Discard); err != nil {
+		t.Fatal("saved identity lost after remote changed", err)
 	}
-	if err := runCommand(context.Background(), runArgs("--dry-run"), io.Discard); err == nil {
-		t.Fatal("dry run reused selection after remote changed")
+	if err := runCommand(context.Background(), runArgs("--dry-run"), io.Discard); err != nil {
+		t.Fatal("saved identity lost after remote changed", err)
 	}
 }
 
@@ -290,7 +293,11 @@ func TestResumeRechecksPairAfterAcquisitionAndPreservesLegacyBlankDefault(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := filepath.EvalSymlinks(".")
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,5 +367,287 @@ func TestResumeRechecksPairAfterAcquisitionAndPreservesLegacyBlankDefault(t *tes
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("resume used forbidden provider/signing operation")
+	}
+}
+
+func TestGitHubListIncludesNativeUnpairedProfilesOutsideCheckout(t *testing.T) {
+	directory, profile := pairingFixture(t)
+	t.Setenv("SDLC_STATE_DIR", directory)
+	t.Chdir(t.TempDir())
+	for _, name := range []string{"github-installation.json", "github-installation-profile-work.json"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(`{"id":"dddddddddddddddddddddddddddddddd"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
+	if err := githubprofile.Store(directory, pair, false); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := githubCommand(context.Background(), []string{"list"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !(strings.Index(text, "GitHub profile: default") < strings.Index(text, "GitHub profile: personal") && strings.Index(text, "GitHub profile: personal") < strings.Index(text, "GitHub profile: work")) {
+		t.Fatal("profiles not sorted", text)
+	}
+	for _, expected := range []string{"default", "work", "personal", "unpaired", "example-user", "personal-key", "unverified"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing %q: %s", expected, text)
+		}
+	}
+}
+
+func TestInitSSHOriginThenUseStatusAndTicketWithoutRepositoryFlag(t *testing.T) {
+	state, marker, _ := queuedRunFixture(t)
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selections, err := filepath.Glob(filepath.Join(state, "repository-*.local.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range selections {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command("git", "remote", "add", "origin", "ssh://git"+"@"+"github.com/example/project.git")
+	if data, err := command.CombinedOutput(); err != nil {
+		t.Fatal(err, string(data))
+	}
+	if _, err := originRepository(context.Background(), root); err == nil {
+		t.Fatal("legacy embedded-user rejection changed")
+	}
+	before, err := os.ReadFile(filepath.Join(root, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initOutput bytes.Buffer
+	if err := initCommand(context.Background(), nil, &initOutput); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(initOutput.String(), "GitHub repository: example/project") {
+		t.Fatal(initOutput.String())
+	}
+	if got, err := githubprofile.LoadRepository(state, root); err != nil || got != "example/project" {
+		t.Fatal(got, err)
+	}
+	if err := githubCommand(context.Background(), []string{"use"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := githubprofile.LoadSelection(state, root)
+	if err != nil || selected.Repository != "example/project" || selected.Pair.GitHubProfile != "default" {
+		t.Fatal(selected, err)
+	}
+	after, err := os.ReadFile(filepath.Join(root, ".git", "config"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("Git config changed", err)
+	}
+	// Exercise the actual feature settings freeze with the same saved identity.
+	scriptPath := filepath.Join(state, "fake-bin", "docker")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified := strings.Replace(string(script), `    [ "$selected" = yes ]`, `    if [ "$last" = --capabilities ]; then
+      printf '%s\n' '{"version":2,"actions":["branch","snapshot","observe","restack"]}'; exit 0
+    fi
+    [ "$selected" = yes ]`, 1)
+	if modified == string(script) {
+		t.Fatal("feature fixture hook missing")
+	}
+	if err := os.WriteFile(scriptPath, []byte(modified), 0700); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := runtimeimage.New(io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature := workseries.Plan{Root: root, Reference: "TASK-1", Tickets: []workseries.Ticket{{File: "01-selected.md"}}}
+	settings, err := freezeSeriesSettings(context.Background(), runtime, feature, runOptions{provider: "codex"})
+	if err != nil || settings.Repository != "example/project" || settings.GitHubProfile != "default" {
+		t.Fatal("feature lost initialized identity", settings.Repository, err)
+	}
+	for _, remoteAction := range [][]string{{"remote", "set-url", "origin", "ssh://git" + "@" + "github.com/other/project.git"}, {"remote", "remove", "origin"}} {
+		command = exec.Command("git", remoteAction...)
+		if data, err := command.CombinedOutput(); err != nil {
+			t.Fatal(err, string(data))
+		}
+		initOutput.Reset()
+		if err := initCommand(context.Background(), nil, &initOutput); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(initOutput.String(), "GitHub repository: example/project") || strings.Contains(initOutput.String(), "GitHub repository: other/project") {
+			t.Fatal("init misreported preserved identity", initOutput.String())
+		}
+		if err := githubCommand(context.Background(), []string{"status"}, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		if err := runCommand(context.Background(), runArgs("--dry-run"), &output); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), `"repository":"example/project"`) || !strings.Contains(output.String(), `"github_profile":"default"`) {
+			t.Fatal(output.String())
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("forbidden provider/signing operation ran")
+	}
+}
+
+func TestUseAttemptsSoleNativeUnpairedAccessButNeverSaves(t *testing.T) {
+	state, marker, _ := queuedRunFixture(t)
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pattern := range []string{"repository-*.local.json", "github-pair.*.local.json"} {
+		paths, err := filepath.Glob(filepath.Join(state, pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range paths {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := githubprofile.SaveRepository(state, root, "example/project"); err != nil {
+		t.Fatal(err)
+	}
+	err = githubCommand(context.Background(), []string{"use"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unpaired") || !strings.Contains(err.Error(), "github pair") {
+		t.Fatal("missing pairing guidance", err)
+	}
+	calls, err := os.ReadFile(filepath.Join(state, "fake-bin", "metadata-calls"))
+	if err != nil || !strings.Contains(string(calls), "github-identity") {
+		t.Fatal("native access not attempted", err)
+	}
+	if _, err := githubprofile.LoadSelection(state, root); !os.IsNotExist(err) {
+		t.Fatal("unpaired selection saved", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("forbidden operation ran")
+	}
+}
+
+func TestUseFailureAndChangedMetadataPreserveSelection(t *testing.T) {
+	for _, failure := range []string{"access", "cleanup", "pair while acquiring", "signer while acquiring", "signer during check"} {
+		t.Run(failure, func(t *testing.T) {
+			directory, profile := pairingFixture(t)
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
+			if err := githubprofile.Store(directory, pair, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := githubprofile.SaveSelection(directory, root, "old/project", pair); err != nil {
+				t.Fatal(err)
+			}
+			session := &fakePairSession{account: githubauth.Identity{ID: 123, Login: "example-user"}, keys: []string{profile.PublicKey}}
+			changeSigner := func() {
+				changed := profile
+				changed.ID = "replacement"
+				if err := signing.Store(directory, changed, "personal-key"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = useGitHub(context.Background(), runtimeimage.Manager{Directory: directory}, root, "new/project", "personal", func(context.Context, string) (githubIdentitySession, error) {
+				switch failure {
+				case "access":
+					session.repositoryErr = errors.New("denied")
+				case "cleanup":
+					session.closeErr = errors.New("cleanup failed")
+				case "pair while acquiring":
+					changed := pair
+					changed.AccountID++
+					if err := githubprofile.Store(directory, changed, true); err != nil {
+						t.Fatal(err)
+					}
+				case "signer while acquiring":
+					changeSigner()
+				case "signer during check":
+					session.onKeys = changeSigner
+				}
+				return session, nil
+			})
+			if err == nil {
+				t.Fatal("failed check saved selection")
+			}
+			selected, err := githubprofile.LoadSelection(directory, root)
+			if err != nil || selected.Repository != "old/project" || selected.Pair != pair {
+				t.Fatal("prior selection overwritten", err)
+			}
+			if session.closeCalls != 1 {
+				t.Fatal("cache lease not closed")
+			}
+		})
+	}
+}
+
+func TestUseRequiresChoiceAcrossPairedAndUnpairedProfiles(t *testing.T) {
+	directory, profile := pairingFixture(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
+	if err := githubprofile.Store(directory, pair, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "github-installation-profile-work.json"), []byte(`{"id":"dddddddddddddddddddddddddddddddd"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err = useGitHub(context.Background(), runtimeimage.Manager{Directory: directory}, root, "example-org/project", "", func(context.Context, string) (githubIdentitySession, error) {
+		called = true
+		return nil, errors.New("unexpected acquire")
+	})
+	if err == nil || !strings.Contains(err.Error(), "choose") || called {
+		t.Fatal("ambiguous profile acquired", err)
+	}
+}
+
+func TestInitDiscoversOriginWithoutChoosingUpstream(t *testing.T) {
+	for _, origin := range []string{"ssh://git" + "@" + "github.com/example/project.git", "https://example.invalid/example/project.git"} {
+		t.Run(origin, func(t *testing.T) {
+			root := runGitFixture(t)
+			root, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			directory, _ := pairingFixture(t)
+			t.Setenv("SDLC_STATE_DIR", directory)
+			for _, args := range [][]string{{"remote", "add", "origin", origin}, {"remote", "add", "upstream", "https://github.com/other/project.git"}} {
+				command := exec.Command("git", args...)
+				if data, err := command.CombinedOutput(); err != nil {
+					t.Fatal(err, string(data))
+				}
+			}
+			if err := initCommand(context.Background(), nil, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			repository, err := githubprofile.LoadRepository(directory, root)
+			if strings.Contains(origin, "github.com") {
+				if err != nil || repository != "example/project" {
+					t.Fatal("origin identity not discovered", repository, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatal("upstream identity chosen", repository, err)
+			}
+		})
 	}
 }

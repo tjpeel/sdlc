@@ -267,16 +267,19 @@ sdlc github status --verify
 ```
 
 `init` takes no arguments and configures local project files. `github use`
-checks the pair offline and saves selection in private external state, without
+checks the selected native account, signing key and repository push access before
+saving selection in private external state, without
 writing Git configuration. `github status --verify` checks native identity,
 repository push access and public-key registration, without fetching a secret.
-For an SSH alias or custom origin host, add `--repo OWNER/REPO` to `use`,
-repository `status` and `run`; only GitHub.com is supported.
+`init` remembers a unique GitHub origin identity, including SSH remote metadata;
+authentication uses only the selected SDLC cache. If discovery cannot infer the
+identity, add `--repo OWNER/REPO` once to `use`. Only GitHub.com is supported.
 
-Fresh runs use this saved pair. Without selection, only a unique account pair
-whose login equals the repository owner is inferred; an organisation repository
-or ambiguous selection needs `github use`. Changed remotes or pair metadata
-require deliberate reselection. Dry-run warns for a missing pair, while changed,
+Fresh runs use this saved pair, a unique owner pair or the sole configured pair.
+`github list` includes paired and unpaired profiles without checking login validity.
+`github use` can omit `--profile` for a saved selection or sole configured profile;
+multiple profiles require a choice. Saved identity takes precedence over changed
+or removed origins. Changed pair metadata requires deliberate reselection. Dry-run warns for a missing pair, while changed,
 malformed or ambiguous metadata fails.
 
 Set `.sdlc/project.json` to:

@@ -244,12 +244,9 @@ func freezeSeriesSettings(ctx context.Context, runtime runtimeimage.Manager, pla
 	if err := checkSeriesRuntime(ctx, runtime, state.ImageID); err != nil {
 		return settings, err
 	}
-	repository := options.repository
-	if repository == "" {
-		repository, err = originRepository(ctx, plan.Root)
-		if err != nil {
-			return settings, err
-		}
+	repository, err := resolveRepository(ctx, runtime.Directory, plan.Root, options.repository)
+	if err != nil {
+		return settings, err
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`).MatchString(repository) {
 		return settings, fmt.Errorf("feature requires a GitHub OWNER/REPO")

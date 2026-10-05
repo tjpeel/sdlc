@@ -12,6 +12,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/githubauth"
+	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
@@ -29,7 +30,7 @@ func main() {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
 		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
 		fmt.Println("       sdlc auth login|status|logout --service github [--profile NAME] [status: --verify]")
-		fmt.Println("       sdlc github pair [--profile NAME] [--signing-profile NAME] | github use --profile NAME | github status [--verify]")
+		fmt.Println("       sdlc github pair [--profile NAME] [--signing-profile NAME] | github list | github use [--profile NAME] | github status [--verify]")
 		fmt.Println("       sdlc signing setup|status|verify [--profile NAME] | signing configure --file PRIVATE_PROFILE [--profile NAME]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc init (from a project repository)")
@@ -153,8 +154,33 @@ func initCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	runtime, err := runtimeimage.New(output, io.Discard)
+	if err != nil {
+		return err
+	}
+	// Remote identities contain no credentials and are read locally by project initialization.
+	if repository := project.GitHubRepository(result.Remotes); repository != "" {
+		if err := githubprofile.SaveRepository(runtime.Directory, result.Root, repository); err != nil {
+			return err
+		}
+	}
+	repository := ""
+	selection, err := githubprofile.LoadSelection(runtime.Directory, result.Root)
+	if err == nil {
+		repository = selection.Repository
+	} else if !os.IsNotExist(err) {
+		return err
+	} else {
+		repository, err = githubprofile.LoadRepository(runtime.Directory, result.Root)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	var summary bytes.Buffer
 	fmt.Fprintf(&summary, "Project: %q\n", result.Root)
+	if repository != "" {
+		fmt.Fprintf(&summary, "GitHub repository: %s\n", repository)
+	}
 	if result.Detached {
 		fmt.Fprintln(&summary, "Branch: detached HEAD")
 	} else {

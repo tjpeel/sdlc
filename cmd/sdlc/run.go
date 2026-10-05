@@ -76,7 +76,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.provider, "provider", "codex", "implementation provider")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
 	flags.StringVar(&options.branch, "branch", "", "destination branch; defaults to a unique ticket branch")
-	flags.StringVar(&options.repository, "repo", "", "GitHub owner/repo; defaults to origin")
+	flags.StringVar(&options.repository, "repo", "", "GitHub owner/repo; defaults to saved SDLC identity, then origin")
 	flags.StringVar(&options.model, "model", "", "implementation lead model")
 	flags.StringVar(&options.effort, "effort", "", "implementation lead reasoning effort")
 	flags.StringVar(&options.reviewModel, "review-model", "", "opposite-provider review lead model")
@@ -256,12 +256,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if options.frozenConfig != nil && !sameSeriesConfig(launch.Config, *options.frozenConfig) {
 			return fmt.Errorf("project checks or check inputs changed during the feature; restore the frozen configuration")
 		}
-		repository := options.repository
-		if repository == "" {
-			repository, err = originRepository(ctx, work.Root)
-			if err != nil {
-				return err
-			}
+		repository, err := resolveRepository(ctx, runtime.Directory, work.Root, options.repository)
+		if err != nil {
+			return err
 		}
 		if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`).MatchString(repository) {
 			return fmt.Errorf("--repo must name a GitHub OWNER/REPO")

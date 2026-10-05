@@ -68,10 +68,10 @@ account and repository IDs, canonical repository name, effective project Git
 name/email, approved Ed25519 public key and runtime image. `github pair`
 explicitly binds a native account to a signing profile after checking public-key
 registration; names can differ. Fresh runs use saved repository selection or a
-unique pair whose login owns the repository. Unbound organisation repositories
-and ambiguous selections require `github use`; `--github-profile` can select a
+unique owner pair or sole configured pair. `github use` can omit `--profile`
+for a saved selection or sole configured profile; `--github-profile` can select a
 registered pair for an unbound checkout but cannot override a conflicting saved
-selection. Changed remote/pair metadata require deliberate reselection. Pair and
+selection. Saved repository identity wins over origin changes; changed pair metadata requires deliberate reselection. Pair and
 repository records contain public identity metadata in private external state,
 without vault references or tokens. Existing frozen journals retain their legacy
 same-name signing route.

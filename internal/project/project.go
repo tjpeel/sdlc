@@ -578,3 +578,27 @@ func changeTime(info os.FileInfo) (int64, int64, bool) {
 	}
 	return 0, 0, false
 }
+
+// GitHubRepository infers only a single distinct sanitized origin identity.
+// SSH addresses provide metadata here, never authentication material.
+func GitHubRepository(remotes []Remote) string {
+	repository := ""
+	for _, remote := range remotes {
+		if remote.Name != "origin" {
+			continue
+		}
+		parts := strings.Split(remote.Identity, "/")
+		if len(parts) != 3 || !strings.EqualFold(parts[0], "github.com") {
+			return ""
+		}
+		name := parts[1] + "/" + strings.TrimSuffix(parts[2], ".git")
+		if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`).MatchString(name) || strings.HasSuffix(parts[1], "-") || strings.Contains(parts[1], "--") {
+			return ""
+		}
+		if repository != "" && !strings.EqualFold(repository, name) {
+			return ""
+		}
+		repository = name
+	}
+	return repository
+}

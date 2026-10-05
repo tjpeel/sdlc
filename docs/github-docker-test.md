@@ -196,12 +196,13 @@ and push its baseline, configure CI and prepare a real bounded ticket. Review
 `.sdlc/project.json`; disposable Compose inputs belong in `input_files`, not
 provider-visible requirements. Baseline/local base must match GitHub.
 
-`init` takes no arguments. `github use` checks the pair offline and saves
+`init` takes no arguments and remembers a unique GitHub origin identity locally.
+`github use` checks the selected native login, signing key and repository push access, then saves
 selection outside the checkout in private mode-`0700`/`0600` state, without Git
 configuration writes. Records hold public IDs/login/key/fingerprint, with no
 vault reference, bootstrap path or token. Selection binds the canonical checkout
-root and origin repository; each worktree has its own selection. Changed remotes
-or pair metadata require `use` again.
+root and GitHub repository; each worktree has its own selection. Later origin
+edits/removal do not override it. Changed pair metadata requires deliberate `use` again.
 
 ## 7 Select the profile and run one ticket
 
@@ -215,8 +216,8 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-count-items.md \
 ```
 
 A fresh run can omit `--github-profile` to use saved repository selection or a
-unique registered pair whose login equals the repository owner. An unbound
-organisation repository or ambiguous owner pairs require `github use`. Use
+unique owner pair or sole configured pair. `github use` can omit `--profile`
+for a saved selection or sole configured profile. Multiple profiles require a choice. Use
 `github use --profile work` to change this checkout deliberately; a conflicting
 run flag fails. An explicit run profile selects a registered pair when the
 checkout is unbound.
@@ -225,8 +226,8 @@ checkout is unbound.
 unresolved profile with a warning; malformed/changed metadata and ambiguous
 selection fail. The real run checks native account, repository push access and
 public signing-key registration before provider execution. For an SSH alias or
-custom origin host, supply `--repo OWNER/REPO` to `run`, `github use` and
-repository-mode `github status`. Only GitHub.com is supported. Omitted-profile
+custom origin host that initialization cannot infer, supply `--repo OWNER/REPO`
+once to `github use`; later commands reuse the saved selection. Only GitHub.com is supported. Omitted-profile
 `github status` resolves the repository; `--profile NAME` inspects the global pair.
 
 Watch `sdlc dashboard` in another terminal. Expected: streamed implementation,

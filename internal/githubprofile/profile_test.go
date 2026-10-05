@@ -268,3 +268,92 @@ func TestPairCannotContainInvalidAccountKeyOrProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestRepositoryIdentityIsPrivateValidatedAndPreserved(t *testing.T) {
+	directory, root := privateDirectory(t), privateDirectory(t)
+	if err := SaveRepository(directory, root, "example/project"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRepository(directory, root, "other/project"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadRepository(directory, root); err != nil || got != "example/project" {
+		t.Fatal(got, err)
+	}
+	file, _, err := repositoryFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), root) || strings.Contains(string(data), "ssh://") {
+		t.Fatal("identity stores raw checkout or remote")
+	}
+	if err := os.WriteFile(filepath.Join(directory, file), []byte(`{"version":1,"checkout_hash":"wrong","repository":"example/project"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRepository(directory, root, "other/project"); err == nil {
+		t.Fatal("malformed identity overwritten")
+	}
+}
+
+func TestSolePairFallbackCountsUnpairedNativeProfiles(t *testing.T) {
+	directory, root := privateDirectory(t), privateDirectory(t)
+	pair := testPair(t, "personal", "example-user", 1)
+	if err := Store(directory, pair, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Select(directory, root, "example-org/project", ""); err != nil || got != pair {
+		t.Fatal("sole pair unavailable", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "github-installation-profile-work.json"), []byte(`{"id":"dddddddddddddddddddddddddddddddd"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Select(directory, root, "example-org/project", ""); !errors.Is(err, ErrSelectionRequired) {
+		t.Fatal("ignored unpaired native alternative", err)
+	}
+}
+
+func TestConfiguredProfilesFailClosedOnUnsafeNativeMetadata(t *testing.T) {
+	for _, kind := range []string{"invalid ID", "unknown field", "public file", "symlink", "hardlink", "invalid name"} {
+		t.Run(kind, func(t *testing.T) {
+			directory := privateDirectory(t)
+			file := filepath.Join(directory, "github-installation-profile-work.json")
+			if kind == "invalid name" {
+				file = filepath.Join(directory, "github-installation-profile-UPPER.json")
+			}
+			data := `{"id":"dddddddddddddddddddddddddddddddd"}`
+			if kind == "invalid ID" {
+				data = `{"id":"invalid"}`
+			}
+			if kind == "unknown field" {
+				data = `{"id":"dddddddddddddddddddddddddddddddd","token":"fake"}`
+			}
+			if err := os.WriteFile(file, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "public file":
+				if err := os.Chmod(file, 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Rename(file, file+".original"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(file+".original", file); err != nil {
+					t.Fatal(err)
+				}
+			case "hardlink":
+				if err := os.Link(file, file+".alias"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ListConfigured(directory); err == nil {
+				t.Fatal("unsafe native metadata listed")
+			}
+		})
+	}
+}

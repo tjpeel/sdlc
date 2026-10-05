@@ -349,16 +349,19 @@ no Docker/account login, runs no checks and makes no account selection. Private 
 untracked; tracked/staged private paths cause failure. Adding an ignore rule does not remove earlier private
 content from Git history.
 
-`github use` checks the saved pair offline and saves this checkout's selection outside Git, without writing
+`github list` shows all configured native profiles and paired/unpaired account/signing metadata locally;
+login validity remains unverified. `github use` checks the selected native account, signing key and repository
+push access before saving this checkout's selection outside Git, without writing
 account settings into `.git` or project files. Repository-mode `github status --verify` checks selected
 account identity, repository push permission and public-key registration. Pair/selection records hold public
 IDs/login/key/fingerprint, without vault locators or tokens.
 
-Fresh runs use saved selection, or a unique pair whose login equals the repository owner. Organisation
-repositories and ambiguous owner pairs require explicit `github use`. A run's `--github-profile` can choose a
-registered pair for an unbound checkout but cannot override conflicting saved selection. Changed origin or
-pair metadata require deliberate reselection. Only GitHub.com is supported. For an SSH alias/custom origin
-host, supply `--repo OWNER/REPO` to `github use`, repository-mode `github status` and new `run` commands.
+Fresh runs use saved selection, a unique owner pair or the sole configured pair. `github use` can omit
+`--profile` for a saved selection or sole configured profile; multiple profiles require an explicit choice. A run's `--github-profile` can choose a
+registered pair for an unbound checkout but cannot override conflicting saved selection. `init` remembers a unique GitHub origin identity locally, including SSH remote metadata, without
+using host SSH credentials. Saved identity/selection takes precedence over later origin edits or removal.
+Changed pair metadata requires deliberate reselection. Only GitHub.com is supported. Supply `--repo OWNER/REPO`
+once to `github use` when no identity can be inferred; subsequent commands reuse the saved selection.
 
 ### Review checks without replacing the project's own configuration
 

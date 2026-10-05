@@ -19,7 +19,7 @@ validated. Official references were checked on 4 October 2026.
 | Operation | Current behaviour |
 | --- | --- |
 | Initial clone/fetch | Prepare the checkout on the host using existing approved access. SDLC captures a local checkout; authenticated URL cloning is not implemented. |
-| Account selection | Native `auth ... --service github --profile NAME` provisions login. `github pair --profile NAME --signing-profile KEY_NAME` checks the account and public signing-key registration. `github use --profile NAME` saves repository selection; fresh runs use that selection or a unique pair whose login owns the repository. |
+| Account selection | Native `auth ... --service github --profile NAME` provisions login. `github pair --profile NAME --signing-profile KEY_NAME` checks the account and public signing-key registration. `github list` lists paired and unpaired configured profiles locally. `github use [--profile NAME]` checks native account/key/repository access before saving selection; omission uses saved selection or the sole configured profile. Fresh runs use saved selection, a unique owner pair or sole configured pair. |
 | Worker source | A captured local bundle creates a disposable checkout with no origin. Worker commits have a generic unsigned identity. |
 | Publication identity | The controller freezes effective project `user.name`/`user.email`, numeric GitHub account/repository IDs, canonical repository name, credential volume, signing profile/public key/fingerprint and runtime image before provider work. |
 | Signing | A separate official `op` container retrieves one dedicated Ed25519 key. The Docker publisher recreates linear commits, requires SSH signatures, verifies the approved key and preserves the exact tested tree. |
@@ -41,10 +41,11 @@ do not establish vault access or GitHub Verified attribution.
 Pairs and repository selections stay in private external SDLC state, with
 mode-`0700` directories and mode-`0600` files. They contain public identity
 metadata, without vault references, bootstrap paths or tokens. Selection binds
-the canonical checkout root and origin repository; changed remotes or pair
-metadata require `github use` again. Each worktree has its own selection.
-Unbound organisation repositories or ambiguous owner pairs require explicit
-selection. `run --github-profile NAME` selects a registered pair only when it
+the canonical checkout root and GitHub repository. `init` remembers a unique
+GitHub origin identity, including SSH metadata, without using host SSH authentication.
+Saved identity/selection wins over later origin edits/removal; changed pair metadata
+requires deliberate `github use --profile NAME` again. Each worktree has its own selection.
+Multiple configured profiles require a choice for `github use`. `run --github-profile NAME` selects a registered pair only when it
 does not conflict with a saved selection. Existing frozen run journals retain
 the legacy same-name signer route.
 

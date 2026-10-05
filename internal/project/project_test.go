@@ -354,3 +354,25 @@ func TestExcludeConcurrentEditPreserved(t *testing.T) {
 		t.Fatal("concurrent exclude rule lost")
 	}
 }
+
+func TestGitHubRepositoryUsesOnlyUniqueSanitizedRemoteIdentity(t *testing.T) {
+	for _, test := range []struct {
+		remotes []Remote
+		want    string
+	}{
+		{[]Remote{{"origin", remoteIdentity("ssh://git" + "@" + "github.com/example/project.git")}}, "example/project"},
+		{[]Remote{{"origin", remoteIdentity("git" + "@" + "github.com:example/project.git")}}, "example/project"},
+		{[]Remote{{"origin", "github.com/example/project.git"}, {"origin", "github.com/EXAMPLE/project.git"}}, "EXAMPLE/project"},
+		{[]Remote{{"origin", "github.com/example/project.git"}, {"origin", "github.com/other/project.git"}}, ""},
+		{[]Remote{{"origin", "github-alias/example/project.git"}}, ""},
+		{[]Remote{{"origin", "github.com/example/project.git/extra"}}, ""},
+		{[]Remote{{"origin", "github.com/example/project%20name.git"}}, ""},
+		{[]Remote{{"origin", "github.com/example/project.git"}, {"upstream", "github.com/other/project.git"}}, "example/project"},
+		{[]Remote{{"origin", "example.invalid/example/project.git"}, {"upstream", "github.com/other/project.git"}}, ""},
+		{nil, ""},
+	} {
+		if got := GitHubRepository(test.remotes); got != test.want {
+			t.Fatalf("got %q, want %q", got, test.want)
+		}
+	}
+}
