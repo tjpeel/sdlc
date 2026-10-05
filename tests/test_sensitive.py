@@ -15,6 +15,7 @@ spec = importlib.util.spec_from_file_location('sensitive_check', SCRIPT)
 check = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = check
 spec.loader.exec_module(check)
+BOT_TRAILER = 'Signed-off-by: dependabot[bot] <support' + '@github.com>'
 
 
 class PatternChecks(unittest.TestCase):
@@ -103,6 +104,37 @@ class PatternChecks(unittest.TestCase):
                                    {('example.txt', hashlib.sha256(other_rule).hexdigest(), 'vault reference')}):
                 self.assertTrue(check.scan_history_blob('example.txt', other_rule, 'revision'))
 
+    def test_public_bot_footer_is_only_allowed_in_commit_history_messages(self):
+        message = ('Update dependency\n\n' + BOT_TRAILER + '\n'
+                   'Co-authored-by: Example <author@example.invalid>\n').encode()
+        self.assertFalse(check.scan_history_message(message, 'revision'))
+        self.assertTrue(check.scan('notes.md', message))
+        self.assertTrue(check.scan_history_blob('notes.md', message, 'revision'))
+
+    def test_bot_trailer_exception_is_exact_and_requires_footer(self):
+        for message in (
+                BOT_TRAILER + '\n\nMore prose follows.',
+                'Prose immediately precedes.\n' + BOT_TRAILER,
+                'Update\n\n' + BOT_TRAILER.replace('dependabot[bot]', 'Another Person'),
+                'Update\n\n' + BOT_TRAILER.replace('Signed-off-by', 'Co-authored-by'),
+                'Update\n\n' + BOT_TRAILER.replace('support', 'private-person'),
+                'Update\n\n' + BOT_TRAILER.replace('@', '%40'),
+                'Update\n\n' + BOT_TRAILER + ' extra content'):
+            with self.subTest(message=message):
+                findings = check.scan_history_message(message.encode(), 'revision')
+                self.assertIn('non-example email address', {f.category for f in findings})
+
+    def test_public_bot_footer_does_not_hide_other_sensitive_categories(self):
+        for content, category in (
+                ('person@' + 'private-company.invalid', 'non-example email address'),
+                ('gh' + 'p_' + 'a' * 36, 'credential token'),
+                ('op' + '://private-vault/private-item/token', 'vault reference'),
+                ('/' + 'Users/sample-person/private', 'personal filesystem path')):
+            with self.subTest(category=category):
+                message = ('Update\n\n' + content + '\n\n' + BOT_TRAILER + '\n').encode()
+                findings = check.scan_history_message(message, 'revision')
+                self.assertEqual({f.category for f in findings}, {category})
+
 
 class GitChecks(unittest.TestCase):
     def setUp(self):
@@ -160,6 +192,19 @@ class GitChecks(unittest.TestCase):
         self.git('rm', 'old.txt')
         self.git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'Remove fixture')
         self.assertEqual(self.run_check().returncode, 0)
+        self.assertEqual(self.run_check('--history').returncode, 1)
+
+    def test_public_bot_metadata_does_not_exempt_file_contents(self):
+        self.write('source.txt', 'placeholder')
+        self.git('add', 'source.txt')
+        self.git('-c', 'commit.gpgsign=false', 'commit', '-qm',
+                 'Update dependency\n\n' + BOT_TRAILER)
+        self.assertEqual(self.run_check('--history').returncode, 0)
+        self.write('notes.md', 'Update dependency\n\n' + BOT_TRAILER)
+        self.git('add', 'notes.md')
+        self.assertEqual(self.run_check().returncode, 1)
+        self.assertEqual(self.run_check('--worktree').returncode, 1)
+        self.git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'Add fixture')
         self.assertEqual(self.run_check('--history').returncode, 1)
 
     def test_symlink_target_is_checked_without_following_it(self):

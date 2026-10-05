@@ -49,6 +49,9 @@ PRIVATE_DIRS = {'.secrets', '.ssh', '.aws', '.codex', '.t3', '.claude', '.state'
 REVIEWED_HISTORY = {
     ('docs/options.md', 'd780b44563e52fecf680d7b6ff509ed0a3e54369fcf24b04b8251a79c8ad84a1', 'vault reference'),
 }
+# Public GitHub-generated attribution, restricted to commit-message trailers.
+PUBLIC_BOT_TRAILER = 'Signed-off-by: dependabot[bot] <support' + '@github.com>'
+TRAILER_LINE = re.compile(r'[A-Za-z0-9-]+:\s+.+')
 
 
 def git(*args, cwd=None):
@@ -135,7 +138,7 @@ def history_findings(root):
     seen = set()
     for revision in git('rev-list', '--all', cwd=root).decode().splitlines():
         message = git('show', '-s', '--format=%B', revision, cwd=root)
-        yield from scan('(commit message)', message, revision[:12])
+        yield from scan_history_message(message, revision[:12])
         for entry in git('ls-tree', '-r', '-z', revision, cwd=root).split(b'\0'):
             if not entry:
                 continue
@@ -148,6 +151,28 @@ def history_findings(root):
             if identity not in seen:
                 seen.add(identity)
                 yield from scan_history_blob(path, git('cat-file', 'blob', oid, cwd=root), revision[:12])
+
+
+def scan_history_message(data, revision):
+    findings = scan('(commit message)', data, revision)
+    try:
+        lines = data.decode('utf-8').splitlines()
+    except UnicodeError:
+        return findings
+    end = len(lines)
+    while end and not lines[end - 1].strip():
+        end -= 1
+    start = end
+    while start and TRAILER_LINE.fullmatch(lines[start - 1]):
+        start -= 1
+    # Require a final trailer paragraph, not an attribution embedded in prose.
+    if start == end or (start and lines[start - 1].strip()):
+        return findings
+    public_lines = {number + 1 for number in range(start, end)
+                    if lines[number] == PUBLIC_BOT_TRAILER}
+    return [finding for finding in findings
+            if not (finding.category == 'non-example email address'
+                    and finding.line in public_lines)]
 
 
 def scan_history_blob(path, data, revision):

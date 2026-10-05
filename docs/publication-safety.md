@@ -48,6 +48,11 @@ reachable commits, including deleted files and unpublished ancestors. Git author
 and committer identities are public commit metadata and are outside this content
 check. Review your Git identity separately before creating commits.
 
+History scanning also recognises the exact public Dependabot signing attribution
+in a final commit-trailer paragraph. Only that line's email finding is exempt;
+other emails and sensitive patterns remain checked. This exception never applies
+to file contents, the index or the working tree.
+
 The history check has one exact-content baseline for reviewed, illustrative vault
 examples already published in an old `docs/options.md` version. It applies only
 to that complete file's SHA-256 and finding category. It cannot exempt changed
