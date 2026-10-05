@@ -1,6 +1,7 @@
 """Offline headless client tests with disposable caches and mocked processes."""
 
 import importlib.util
+import errno
 import io
 import json
 import os
@@ -255,6 +256,131 @@ class HeadlessTests(unittest.TestCase):
             self.run_client(provider, effect=replace)
             expected = b'{"synthetic_refresh":true}' if provider == "codex" else b"fake-refreshed-native-cache"
             self.assertEqual((self.cache / native.FILES[provider]).read_bytes(), expected)
+
+    def test_claude_refresh_only_renames_within_auth_filesystem(self):
+        original_replace = os.replace
+        renames = []
+        def cross_mount_replace(source, target):
+            renames.append((Path(source), Path(target)))
+            if Path(source).parent != Path(target).parent:
+                raise OSError(errno.EXDEV, "synthetic cross-filesystem rename")
+            return original_replace(source, target)
+        def refresh(path):
+            path.unlink()
+            path.write_bytes(b"fake-refreshed-opaque-native-cache")
+            path.chmod(0o600)
+        with patch.object(os, "replace", side_effect=cross_mount_replace):
+            self.run_client("claude", effect=refresh)
+        self.assertTrue(all(source.parent == target.parent for source, target in renames))
+        self.assertTrue(any(target.parent == self.cache for _, target in renames))
+        self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
+                         b"fake-refreshed-opaque-native-cache")
+        self.assertEqual(stat.S_IMODE((self.cache / native.FILES["claude"]).stat().st_mode), 0o600)
+
+    def test_claude_failed_refresh_persistence_retains_generation_for_retry(self):
+        def refresh(path):
+            path.unlink()
+            path.write_bytes(b"fake-refreshed-opaque-native-cache")
+            path.chmod(0o600)
+        original_replace = os.replace
+        def failed_transfer(source, target):
+            if Path(target).parent == self.cache:
+                raise OSError("synthetic storage failure")
+            return original_replace(source, target)
+        with patch.object(os, "replace", side_effect=failed_transfer), \
+                self.assertRaises(OSError):
+            self.run_client("claude", effect=refresh)
+        path = self.session / "claude" / native.FILES["claude"]
+        self.assertFalse(path.is_symlink())
+        self.assertEqual(path.read_bytes(), b"fake-refreshed-opaque-native-cache")
+        self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(), b"fake-native-cache")
+        self.assertEqual(list(self.cache.glob(".native-refresh-*")), [])
+        # Recovery stores the retained generation before the next native call.
+        self.run_client("claude", ID)
+        self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
+                         b"fake-refreshed-opaque-native-cache")
+
+    def test_claude_retained_refresh_cannot_overwrite_a_later_login(self):
+        original_replace = os.replace
+        def failed_transfer(source, target):
+            if Path(target).parent == self.cache:
+                raise OSError("synthetic storage failure")
+            return original_replace(source, target)
+        def refresh(path):
+            path.unlink()
+            path.write_bytes(b"fake-retained-native-refresh")
+            path.chmod(0o600)
+        with patch.object(os, "replace", side_effect=failed_transfer), self.assertRaises(OSError):
+            self.run_client("claude", effect=refresh)
+        target = self.cache / native.FILES["claude"]
+        target.write_bytes(b"fake-newer-native-login")
+        path = self.session / "claude" / native.FILES["claude"]
+        with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
+            headless.headless("claude", "example-model", "high", ID, False, self.cache)
+        client.assert_not_called()
+        self.assertEqual(path.read_bytes(), b"fake-retained-native-refresh")
+        self.assertEqual(target.read_bytes(), b"fake-newer-native-login")
+
+    def test_claude_refresh_rejects_unsafe_and_oversized_sources(self):
+        config = self.session / "claude"
+        config.mkdir(mode=0o700)
+        path = config / native.FILES["claude"]
+        for mode, contents in ((0o644, b"fake-native-cache"),
+                               (0o600, b""), (0o600, b"x" * (native.LIMIT + 1))):
+            with self.subTest(mode=mode, size=len(contents)):
+                path.write_bytes(contents)
+                path.chmod(mode)
+                with self.assertRaises(ValueError):
+                    headless.persist_claude_refresh(path, self.cache)
+                self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(), b"fake-native-cache")
+                self.assertTrue(path.exists())
+                path.unlink()
+        path.symlink_to(self.cache / native.FILES["claude"])
+        with self.assertRaises(ValueError):
+            headless.persist_claude_refresh(path, self.cache)
+        path.unlink()
+        path.write_bytes(b"fake-native-cache")
+        path.chmod(0o600)
+        other = config / "extra-link"
+        os.link(path, other)
+        with self.assertRaises(ValueError):
+            headless.persist_claude_refresh(path, self.cache)
+
+    def test_claude_changed_refresh_does_not_replace_saved_cache(self):
+        config = self.session / "claude"
+        config.mkdir(mode=0o700)
+        path = config / native.FILES["claude"]
+        path.write_bytes(b"fake-native-refresh")
+        path.chmod(0o600)
+        original_sync = os.fsync
+        def change_source(descriptor):
+            path.write_bytes(b"fake-changed-native-refresh")
+            return original_sync(descriptor)
+        with patch.object(os, "fsync", side_effect=change_source), self.assertRaises(ValueError):
+            headless.persist_claude_refresh(path, self.cache)
+        self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(), b"fake-native-cache")
+        self.assertEqual(list(self.cache.glob(".native-refresh-*")), [])
+
+    def test_claude_newer_generation_after_persistence_is_not_deleted(self):
+        original_replace = os.replace
+        path = self.session / "claude" / native.FILES["claude"]
+        def refresh(current):
+            current.unlink()
+            current.write_bytes(b"fake-native-first-generation")
+            current.chmod(0o600)
+        def later_generation(source, target):
+            result = original_replace(source, target)
+            if Path(target).parent == self.cache:
+                path.write_bytes(b"fake-native-second-generation")
+            return result
+        with patch.object(os, "replace", side_effect=later_generation), self.assertRaises(ValueError):
+            self.run_client("claude", effect=refresh)
+        self.assertEqual(path.read_bytes(), b"fake-native-second-generation")
+        self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
+                         b"fake-native-first-generation")
+        self.run_client("claude", ID)
+        self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
+                         b"fake-native-second-generation")
 
     def test_cached_customizations_stop_before_native_client(self):
         for name in ("config.toml", "settings.json", "hooks.json", "plugins",

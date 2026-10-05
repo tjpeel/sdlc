@@ -50,8 +50,14 @@ native permission mode, defaulting to `bypassPermissions` inside the isolated
 container. See [Claude permission modes](https://code.claude.com/docs/en/permission-modes).
 Ticket runs submit the account owner's selected work through native `claude -p`;
 SDLC does not override managed restrictions.
-SDLC does not copy, parse or export Claude tokens. Signing in again for
-every container is unnecessary; re-authenticate when the provider requires it.
+SDLC does not extract token fields or use them for custom provider requests.
+When the native client atomically refreshes its cache, SDLC preserves that opaque
+file in the same user's private login volume, without decoding its contents.
+Persistence works across Docker mounts; a failed transfer retains the private
+session copy for recovery. Recovery refuses to overwrite a cache changed by a
+later login or session; it preserves both generations for inspection. Signing in
+again for every container is unnecessary;
+re-authenticate when the provider requires it.
 
 Account login and cache persistence do not approve every unattended use. Before
 running a ticket, review the account type and execution mode against
