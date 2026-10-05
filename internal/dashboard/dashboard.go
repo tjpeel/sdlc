@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/tjpeel/sdlc/internal/runstatus"
+	"github.com/tjpeel/sdlc/internal/runusage"
 )
 
 // SafeText prevents repository names, questions and logs from controlling a terminal.
@@ -199,6 +200,11 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 				return err
 			}
 		}
+		if v.Metrics != nil && v.Metrics.Attempts > 0 {
+			if _, err := fmt.Fprintln(output, "     "+metricsSummary(*v.Metrics)); err != nil {
+				return err
+			}
+		}
 		if reason := Reason(v); reason != "" {
 			if _, err := fmt.Fprintf(output, "     %s\n", clip(reason, 112)); err != nil {
 				return err
@@ -267,10 +273,56 @@ func usageSummary(usage runstatus.Usage) string {
 	return context
 }
 
+func metricsSummary(s runusage.Summary) string {
+	return fmt.Sprintf("Recorded usage: %d attempts, %d incomplete, %d missing | provider elapsed %s (includes setup and queue)", s.Attempts, s.Incomplete, s.Missing, time.Duration(s.ElapsedMS)*time.Millisecond)
+}
+
+// WriteUsageSignals labels provider capacity as a last observation rather than
+// current account allowance. No provider polling happens while rendering.
+func WriteUsageSignals(output io.Writer, group runusage.Group) {
+	if group.ProxyStats != nil {
+		stats := group.ProxyStats
+		fmt.Fprintf(output, "    Headroom estimates: requests %s, input %s, output %s, saved %s; observed %d, missing %d attempts.\n", tokenCount(stats.Requests), tokenCount(stats.InputTokens), tokenCount(stats.OutputTokens), tokenCount(stats.SavedTokens), stats.ObservedAttempts, stats.MissingAttempts)
+	}
+	if len(group.RateLimits) == 0 {
+		fmt.Fprintln(output, "    Subscription capacity: unknown (no native quota event recorded).")
+		return
+	}
+	windows := make([]string, 0, len(group.RateLimits))
+	for window := range group.RateLimits {
+		windows = append(windows, window)
+	}
+	sort.Strings(windows)
+	for _, window := range windows {
+		signal := group.RateLimits[window]
+		utilization, reset := "unknown", "unknown"
+		if signal.Utilization != nil {
+			utilization = fmt.Sprintf("%.1f%%", *signal.Utilization*100)
+		}
+		if signal.ResetsAt != nil {
+			reset = time.Unix(*signal.ResetsAt, 0).UTC().Format(time.RFC3339)
+		}
+		fmt.Fprintf(output, "    Last native quota: %s %s; utilization %s; reset %s; observed %s.\n", SafeText(window), SafeText(signal.Status), utilization, reset, signal.ObservedAt.UTC().Format(time.RFC3339))
+	}
+}
+
 func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error {
 	var text strings.Builder
 	fmt.Fprintf(&text, "Run: %s\nRepository: %s\nTicket: %s / %s\nStage: %s | controller: %s | elapsed: %s\nRole: %s | model: %s / %s / %s\nLast output: %s ago | heartbeat: %s ago\n", v.ID, v.Root, v.Reference, filepath.Base(v.Ticket), v.State, controller(v), elapsed(v, now), v.Role, v.Provider, v.Model, v.Effort, age(now, v.LastActivityAt), age(now, v.HeartbeatAt))
 	fmt.Fprintln(&text, usageSummary(v.Activity.Usage))
+	if v.MetricsError != "" {
+		fmt.Fprintln(&text, "Recorded usage: "+v.MetricsError)
+	}
+	if v.Metrics != nil {
+		fmt.Fprintln(&text, metricsSummary(*v.Metrics))
+		for _, group := range v.Metrics.Groups {
+			fmt.Fprintf(&text, "  %s %s (%s, %s): input %s, cache read %s, output %s | measured %d/%d attempts | elapsed %s\n",
+				group.Provider, group.Model, group.Role, group.OptimizerMode,
+				tokenCount(group.Tokens.InputTokens), tokenCount(group.Tokens.CachedInputTokens), tokenCount(group.Tokens.OutputTokens),
+				group.MeasuredAttempts, group.Attempts, time.Duration(group.ElapsedMS)*time.Millisecond)
+			WriteUsageSignals(&text, group)
+		}
+	}
 	if reason := Reason(v); reason != "" {
 		fmt.Fprintf(&text, "Attention: %s\n", reason)
 	}
@@ -290,6 +342,9 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 			}
 		}
 		fmt.Fprintf(&text, "Local checks: %s | sessions: %d | repair rounds: %d\n", checks, j.Attempt, j.Rounds)
+		if j.Timings.Recorded() != nil {
+			fmt.Fprintf(&text, "Observed controller time: %s | check worker time: %s | CI polling wait: %s\n", time.Duration(j.Timings.ControllerMS)*time.Millisecond, time.Duration(j.Timings.ChecksMS)*time.Millisecond, time.Duration(j.Timings.CIWaitMS)*time.Millisecond)
+		}
 	}
 	if v.State == "waiting_for_human" {
 		for _, question := range v.Questions {

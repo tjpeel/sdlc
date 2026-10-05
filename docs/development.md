@@ -53,6 +53,24 @@ output stay out of this public repository.
 
 ## Current validation
 
+The metrics and Headroom iteration was checked on 6 October 2026 with uncached Go
+tests, vet, builds, targeted race checks, all 217 offline Python tests and the
+runtime pin check. CLI builds passed for macOS, Linux and Windows on ARM64 and
+x86-64. Read-only usage fixtures check unchanged private state, missing coverage
+and omission of session identifiers; runner fixtures check durable start/final
+records across resume, failure and cancellation. An independent integration
+review found no lifecycle or resume defects.
+
+The separate Headroom 0.39.1 image passed network-disabled fake-upstream probes for
+Responses HTTP/SSE and WebSockets, Anthropic HTTP/SSE, structured schema, native
+OAuth capability-header forwarding and 429 responses. Passthrough preserved tool
+logs; conservative optimization compressed timestamped logs and its decoder
+reconstructed the exact original. A separate pinned Codex 0.160.0 probe verified
+its native WebSocket inference URL and disposable saved-account headers. These
+probes use no host mounts or real credentials. They do not establish connected
+subscription access, completed engineering work or savings on real tickets.
+See the [Headroom guide](headroom.md) for explicit local probe commands.
+
 The interactive shell first pass was checked on 5 October 2026 with uncached
 Go tests, vet, CLI builds, race checks for the shell and launch-receipt packages,
 all 217 offline Python tests and the runtime pin check. CLI cross-builds cover

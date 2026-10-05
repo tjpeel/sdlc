@@ -19,6 +19,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/notify"
 	"github.com/tjpeel/sdlc/internal/project"
@@ -46,6 +47,8 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	headroomMode                                                                                                                       string
+	frozenHeadroom                                                                                                                     *headroom.Config
 	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, resume, answerFile, githubProfile string
 	inputs                                                                                                                             selectedInputs
 	dockerTests, dryRun                                                                                                                bool
@@ -78,6 +81,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.ticket, "ticket", "", "exact numbered ticket filename")
 	flags.StringVar(&options.githubProfile, "github-profile", "", "registered GitHub account/key pair; defaults to repository selection")
 	flags.StringVar(&options.provider, "provider", "codex", "implementation provider")
+	flags.StringVar(&options.headroomMode, "headroom", "off", "provider route: off, passthrough or optimize (opt-in local Headroom)")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
 	flags.StringVar(&options.branch, "branch", "", "destination branch; defaults to a unique ticket branch")
 	flags.StringVar(&options.repository, "repo", "", "GitHub owner/repo; defaults to saved SDLC identity, then origin")
@@ -128,6 +132,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	if options.provider != "codex" && options.provider != "claude" {
 		return options, fmt.Errorf("provider must be codex or claude")
+	}
+	if _, err := headroom.Selection(options.headroomMode); err != nil {
+		return options, err
 	}
 	explicitEmptyProfile := false
 	flags.Visit(func(f *flag.Flag) {
@@ -323,6 +330,13 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			}
 		}
 		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		journal.Plan.Headroom, err = headroom.Selection(options.headroomMode)
+		if err != nil {
+			return err
+		}
+		if options.frozenHeadroom != nil {
+			journal.Plan.Headroom = *options.frozenHeadroom
+		}
 		if options.dryRun {
 			// Selection is known before capture; content hashes are not. Keep
 			// the offline plan useful without reading requirement bodies.
@@ -406,6 +420,14 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 		journal.ImageID = state.ImageID
+		if options.frozenHeadroom == nil {
+			journal.Plan.Headroom, err = headroom.Resolve(ctx, runtime.Docker, options.headroomMode)
+			if err != nil {
+				return err
+			}
+		} else if err := journal.Plan.Headroom.Validate(); err != nil {
+			return err
+		}
 		if options.frozenImage != "" && state.ImageID != options.frozenImage {
 			return fmt.Errorf("runtime changed during the feature; restore the recorded runtime")
 		}
@@ -448,6 +470,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	}
 	if journal.Plan.PublicationIdentity == nil {
 		return fmt.Errorf("this legacy run has no frozen Docker publication identity; start a new run")
+	}
+	if err := journal.Plan.Headroom.Validate(); err != nil {
+		return err
 	}
 	if runtimeLease == nil {
 		runtimeLease, err = leaseRuntimeRun(ctx, runtime.Directory, output)

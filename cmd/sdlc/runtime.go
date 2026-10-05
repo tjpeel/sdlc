@@ -12,11 +12,30 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
+	"github.com/tjpeel/sdlc/internal/headroom"
+	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 )
 
 func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.Writer) error {
+	if len(args) > 0 && args[0] == "headroom" {
+		if len(args) != 2 || (args[1] != "build" && args[1] != "status") {
+			return fmt.Errorf("usage: sdlc runtime headroom build|status")
+		}
+		var config headroom.Config
+		var err error
+		if args[1] == "build" {
+			config, err = headroom.Build(ctx, providerauth.LocalDocker{})
+		} else {
+			config, err = headroom.Resolve(ctx, providerauth.LocalDocker{}, "passthrough")
+		}
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(output, "Headroom %s: %s\nImage ID: %s\nPolicy: %s\n", headroom.Version, headroom.Image, config.ImageID, config.PolicyVersion)
+		return err
+	}
 	if len(args) == 0 || (args[0] != "build" && args[0] != "status" && args[0] != "update") {
 		return fmt.Errorf("unknown runtime command; run sdlc --help")
 	}

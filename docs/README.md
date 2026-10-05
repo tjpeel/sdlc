@@ -20,6 +20,8 @@
 - [Development](development.md): repository layout, checks and commit process.
 - [Publication safety](publication-safety.md): protect this public repository.
 - [Provider usage](provider-usage.md): supported authentication and service rules.
+- [Usage metrics](usage-metrics.md): durable native counters, observed quota signals and comparisons across runs.
+- [Headroom](headroom.md): opt-in local proxy, pinned image, native authentication routes and offline validation.
 
 Earlier investigations and prototype instructions are in the
 [research archive](../research/README.md).

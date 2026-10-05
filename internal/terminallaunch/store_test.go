@@ -376,3 +376,19 @@ func TestITermMissingCapability(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestHeadroomValueSurvivesPrivateLaunchTransport(t *testing.T) {
+	store, request := fixture(t)
+	// Transport preserves values literally; CLI validation belongs to the helper.
+	request.Args = append(request.Args, "--headroom", "--json")
+	if _, err := store.Launch(context.Background(), request, backendFunc(func(context.Context, string) error { return nil })); err != nil {
+		t.Fatal(err)
+	}
+	consumed, err := store.Consume(request.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(consumed.Args, "|") != strings.Join(request.Args, "|") {
+		t.Fatalf("Headroom value changed: %v", consumed.Args)
+	}
+}

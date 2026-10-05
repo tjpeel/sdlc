@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
@@ -41,6 +42,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	Headroom            headroom.Config      `json:"headroom,omitempty"`
 	GitHubProfile       string               `json:"github_profile,omitempty"`
 	SigningProfile      string               `json:"signing_profile,omitempty"`
 	PublicationIdentity *PublicationIdentity `json:"publication_identity,omitempty"`
@@ -105,6 +107,9 @@ type Reconciliation struct {
 // ValidateSidecarImages accepts absent pins for journals written before runtime
 // sidecars were selected per installation. Callers retain the historical defaults.
 func (plan Plan) ValidateSidecarImages() error {
+	if err := plan.Headroom.Validate(); err != nil {
+		return err
+	}
 	if plan.SigningImage != "" {
 		if err := runtimepins.ValidateSigningImage(plan.SigningImage); err != nil {
 			return err
@@ -146,12 +151,14 @@ type Session struct {
 	Schema       string
 	ResumeID     string
 	Instructions string
+	Headroom     headroom.Config
 }
 
 type SessionResult struct {
 	Outcome       Outcome
 	SessionID     string
 	ReportedModel string
+	HeadroomStats *headroom.Stats
 }
 
 type Provider interface {
@@ -189,6 +196,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	Timings            Timings           `json:"timings"`
 	Version            int               `json:"version"`
 	ID                 string            `json:"id"`
 	Plan               Plan              `json:"plan"`
@@ -214,6 +222,22 @@ type Journal struct {
 	RestackAudit       []RestackBoundary `json:"restack_audit,omitempty"`
 	StartedAt          time.Time         `json:"started_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
+}
+
+// Timings are observed controller intervals. They exclude time between
+// controller invocations; they are not active model-compute durations.
+type Timings struct {
+	Version      int   `json:"version"`
+	ControllerMS int64 `json:"controller_ms"`
+	ChecksMS     int64 `json:"checks_ms"`
+	CIWaitMS     int64 `json:"ci_wait_ms"`
+}
+
+func (t Timings) Recorded() *Timings {
+	if t.Version != 1 {
+		return nil
+	}
+	return &t
 }
 
 type Revision struct {

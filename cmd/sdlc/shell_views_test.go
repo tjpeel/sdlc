@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tjpeel/sdlc/internal/buildinfo"
 )
 
 func TestOnboardStatusDoesNotInitializeProject(t *testing.T) {
@@ -72,7 +74,7 @@ func TestVersionDetailsNeverExecutesPATHCandidate(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Running.Version != "0.1.0-beta.1" || result.Installed.Version != "unknown" || result.BuiltArtifact != "not recorded" || result.Source.Path != "" {
+	if result.Running.Version != buildinfo.Version || result.Installed.Version != "unknown" || result.BuiltArtifact != "not recorded" || result.Source.Path != "" {
 		t.Fatalf("%+v", result)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

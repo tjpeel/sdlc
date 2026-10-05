@@ -45,7 +45,7 @@ func launchStore(state string) (*terminallaunch.Store, error) {
 
 // Adapter options are removed without interpreting values as flags. This keeps
 // repeatable inputs, literal punctuation and explicitly supplied frozen options.
-var runValueFlags = map[string]bool{"reference": true, "ticket": true, "provider": true, "github-profile": true, "input": true, "base": true, "branch": true, "repo": true, "model": true, "effort": true, "review-model": true, "review-effort": true, "resume": true, "answer-file": true, "timeout": true, "notify": true, "parallel": true}
+var runValueFlags = map[string]bool{"reference": true, "ticket": true, "provider": true, "github-profile": true, "input": true, "base": true, "branch": true, "repo": true, "model": true, "effort": true, "review-model": true, "review-effort": true, "resume": true, "answer-file": true, "timeout": true, "notify": true, "parallel": true, "headroom": true}
 
 func controllerArgs(args []string) []string {
 	return withoutRunFlags(args, "json", "terminal", "launch-id")

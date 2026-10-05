@@ -7,6 +7,19 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.2 - 2026-10-06
+
+### Added
+
+- Private usage records for every provider attempt, retained across role changes, repairs and controller resumes. Native cumulative counters are reconciled without counting earlier work twice; absent or incomplete telemetry stays unknown.
+- Read-only `sdlc usage` with project/installation scope, period selection, exact run selection and JSON output. Dashboard and run reports include durable totals, coverage and observed controller, check-worker and CI-polling time.
+- Opt-in `--headroom passthrough|optimize` for ticket and feature runs, with a separately built Headroom 0.39.1 image. Runs freeze its image identity and compression policy; resumes retain those settings.
+- Provider-native quota observations where emitted, and separate Headroom estimates for measuring the proxy variant.
+
+### Fixed
+
+- Include model roles, checks, input selections and Headroom mode in feature previews and their approval hash. Terminal launches use the saved preview settings and reject changed selections.
+
 ## 0.1.0-beta.1 - 2026-10-05
 
 ### Added

@@ -24,7 +24,7 @@ previous executable intact. It preserves runtime state and unrelated files,
 rejects an unmanaged executable or symlink at the destination, and checks for an
 earlier `sdlc` on PATH. On Windows, close any running `sdlc` before reinstalling.
 
-The installed executable needs no Go runtime. Its version includes `0.1.0-beta.1`,
+The installed executable needs no Go runtime. Its version includes `0.1.0-beta.2`,
 the Git revision, a dirty-source marker when applicable, and the host OS and
 architecture. Release archives and package-manager installation are future work.
 
@@ -338,7 +338,7 @@ start fresh each round. Native compaction retains the implementation session.
 
 Native usage events are retained in private `events-*.jsonl` files and streamed
 to the host. They are not a normalized context gauge. The pinned
-[Codex JSON event processor](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/exec/src/event_processor_with_jsonl_output.rs)
+[Codex JSON event processor](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/exec/src/event_processor_with_jsonl_output.rs)
 reports aggregate usage without current context occupancy or its window size;
 do not sum those counters across resumes or turn them into a context percentage.
 Claude may report per-request assistant usage: its latest main-session input
@@ -549,7 +549,15 @@ counters can describe the latest reported request context. The dashboard shows a
 percentage only when that client actually reports a positive context window for
 the matching model. Missing metrics stay unknown. It ignores subagent messages,
 replaces repeated counters and resets measurements at a new session attempt; it
-never sums aggregate usage across resumes. The pinned clients may omit fields.
+never sums those live aggregate snapshots across resumes. Separate
+[durable metrics](usage-metrics.md) retain attempt coverage and reconcile cumulative
+native totals. Read them with `sdlc usage --since 7d --json`; dashboard details and
+JSON also expose them. The pinned clients may omit fields.
+
+Ticket and feature runs can select `--headroom passthrough` or `--headroom optimize`
+after `sdlc runtime headroom build`. The [Headroom guide](headroom.md) explains its
+separate image, native forwarding route, frozen resume settings and comparison
+criteria. Direct execution is the default.
 
 Closing the dashboard leaves controllers working. `sdlc run` remains a foreground
 process; its original terminal must stay open. Headless means no provider terminal

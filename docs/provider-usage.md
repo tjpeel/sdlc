@@ -2,7 +2,7 @@
 
 SDLC must respect provider terms, supported authentication routes and usage
 limits. Review the current official rules when changing provider integration;
-this document records the boundary reviewed on 3 October 2026. No implementation
+this document records the boundary reviewed on 6 October 2026. No implementation
 can guarantee that a provider will never restrict an account.
 
 ## Codex
@@ -111,3 +111,37 @@ destinations are not restricted. Private JSONL, diagnostics and native session
 storage may retain sensitive material. Stop on policy refusals, access denials,
 usage exhaustion and unsupported account routes; resume only after resolving the
 cause without identity switching or limit evasion.
+
+## Opt-in local proxy
+
+Ticket and feature runs can explicitly select the [Headroom variant](headroom.md).
+The official client still owns login, refresh, account selection and model requests.
+Only inference forwarding changes; login and status remain direct. SDLC does not
+read token fields, construct authenticated provider requests itself or provide a
+shared subscription gateway. The local proxy sees the native request headers and
+bodies in memory, so selecting it extends the trusted execution boundary.
+
+Codex uses the built-in `openai_base_url` setting and matching `OPENAI_BASE_URL`
+for `/v1` inference. It retains the built-in provider's native account authentication.
+The [authentication guide](https://learn.chatgpt.com/docs/auth) documents account
+authentication with a forwarding proxy; the
+[configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+documents the inference URL setting. `chatgpt_base_url` belongs to the login route
+and is not changed. The pinned client's
+[provider implementation](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/model-provider-info/src/lib.rs#L421)
+applies an explicit inference URL before choosing its account/API default.
+
+Claude uses `ANTHROPIC_BASE_URL` alone. The
+[subscriptions and gateways guide](https://code.claude.com/docs/en/llm-gateway#subscriptions-and-gateways)
+documents retention of saved subscription authentication when only the base URL
+changes. SDLC supplies no gateway credential, API key or credential helper.
+Headroom forwards the native OAuth capability headers and does not substitute
+authentication. Gateway instructions do not grant permission for other account
+types, shared access or execution outside the native client's documented conditions.
+
+The proxy is private to one provider invocation, has no host port or credential
+mount and retains no request logs. Its local aggregate estimates are collected
+after the worker stops. SDLC disables Headroom beacon/update calls, semantic cache,
+CCR retrieval, model routing and learned compression for this variant. Connected
+quality and subscription trials require separate authorisation; offline validation
+alone does not establish real account access or savings on engineering work.

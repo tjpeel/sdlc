@@ -180,6 +180,9 @@ func TestRunnerLifecycleAndNativeSession(t *testing.T) {
 	if err != nil || loaded.State != "ready" || loaded.SessionID != testNative {
 		t.Fatalf("checkpoint: %+v %v", loaded, err)
 	}
+	if loaded.Timings.Recorded() == nil {
+		t.Fatal("controller timings were not saved at completion")
+	}
 }
 func TestRunnerImplementerAuthenticationStopsBeforeExecution(t *testing.T) {
 	for _, tc := range []struct {

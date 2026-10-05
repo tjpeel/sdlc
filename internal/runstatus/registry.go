@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runusage"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
@@ -41,6 +42,8 @@ type entry struct {
 // View keeps controller liveness independent of the journal's workflow stage.
 // Journal is available for detail views but is never copied into the registry.
 type View struct {
+	Metrics                                           *runusage.Summary
+	MetricsError                                      string
 	ID, Root, Reference, Ticket, Directory, State     string
 	Role, Provider, Model, Effort                     string
 	StartedAt, UpdatedAt, HeartbeatAt, LastActivityAt time.Time
@@ -155,6 +158,12 @@ func (r *Registry) List(now time.Time) ([]View, error) {
 				v.Error = "journal identity does not match registry"
 			} else {
 				v = project(j, e.Directory)
+				metrics, err := runusage.LoadSummary(e.Directory, j.ID, j.Attempt)
+				if err != nil {
+					v.MetricsError = "recorded usage is unavailable: " + err.Error()
+				} else {
+					v.Metrics = &metrics
+				}
 				var a Snapshot
 				if err := readJSON(filepath.Join(e.Directory, "activity.json"), &a); err != nil {
 					if !os.IsNotExist(err) {

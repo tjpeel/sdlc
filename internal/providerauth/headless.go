@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/headroom"
 )
 
 //go:embed headless.py
@@ -25,6 +27,8 @@ type HeadlessRequest struct {
 	Provider, Model, Effort, Workspace, SessionDirectory, PromptFile, SchemaFile, ResumeID string
 	ImageID, InstructionsFile                                                              string
 	ReadOnly                                                                               bool
+	Headroom                                                                               headroom.Config
+	OnHeadroomStats                                                                        func(headroom.Stats)
 }
 
 // DockerStreamer extends Docker without requiring terminal-only adapters to stream.
@@ -54,6 +58,9 @@ var headlessValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func validateHeadless(request HeadlessRequest) error {
+	if err := request.Headroom.Validate(); err != nil {
+		return err
+	}
 	if !validProvider(request.Provider) || !headlessValue.MatchString(request.Model) || !headlessValue.MatchString(request.Effort) {
 		return fmt.Errorf("headless work requires a provider, model and effort")
 	}
@@ -122,7 +129,11 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 			args[i+1] = "512"
 		}
 	}
-	args = append(args, "--init", "--interactive", "--network", "bridge", "--workdir", "/workspace",
+	network := "bridge"
+	if request.Headroom.Enabled() {
+		network = "container:" + name + "-headroom"
+	}
+	args = append(args, "--init", "--interactive", "--network", network, "--workdir", "/workspace",
 		"--mount", headlessBind(request.Workspace, "/workspace", request.ReadOnly),
 		"--mount", headlessBind(request.SessionDirectory, "/session", false),
 		"--mount", headlessBind(request.PromptFile, "/prompt.txt", true),
@@ -137,6 +148,9 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 		if info, err := os.Lstat(filepath.Join(request.Workspace, directory)); err == nil && info.IsDir() {
 			args = append(args, "--tmpfs", "/workspace/"+directory+":rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=1000,gid=1000")
 		}
+	}
+	if request.Headroom.Enabled() {
+		args = append(args, "--env", "SDLC_HEADROOM=1")
 	}
 	encoded, _ := json.Marshal(helper)
 	script := "import types\n_auth={'__name__':'sdlc_auth'}\nexec(" + string(encoded) + ", _auth)\nnative=types.SimpleNamespace(**_auth)\n" + headlessHelper
@@ -194,6 +208,23 @@ func (manager Manager) Headless(ctx context.Context, request HeadlessRequest, st
 		return fmt.Errorf("cannot name headless container")
 	}
 	name := "sdlc-headless-" + token
+	proxy, err := headroom.Start(ctx, manager.Docker, request.Headroom, name+"-headroom")
+	if err != nil {
+		return err
+	}
+	if proxy != nil {
+		defer func() {
+			metricsCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			stats := proxy.Stats(metricsCtx)
+			cancel()
+			if request.OnHeadroomStats != nil {
+				request.OnHeadroomStats(stats)
+			}
+			if cleanupErr := proxy.Close(); cleanupErr != nil {
+				err = cleanupErr
+			}
+		}()
+	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -218,4 +249,11 @@ func (manager Manager) Headless(ctx context.Context, request HeadlessRequest, st
 		return fmt.Errorf("native %s headless session failed; inspect the private run log before retrying", request.Provider)
 	}
 	return nil
+}
+
+// Input builds fixed auxiliary recipes without including a host filesystem context.
+func (LocalDocker) Input(ctx context.Context, input io.Reader, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "docker", args...)
+	command.Stdin = input
+	return command.Output()
 }

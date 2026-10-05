@@ -28,6 +28,8 @@ func main() {
 		defer cancel()
 		var command func() error
 		switch os.Args[1] {
+		case "usage":
+			command = func() error { return usageCommand(ctx, os.Args[2:], os.Stdout) }
 		case "shell":
 			command = func() error { return shellCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
 		case "help":
@@ -80,6 +82,9 @@ func main() {
 		fmt.Println("       sdlc work --reference REFERENCE | --references [--json] (local ticket metadata)")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
+		fmt.Println("         Optional provider route: --headroom off|passthrough|optimize (default: off)")
+		fmt.Println("       sdlc usage [--since 7d] [--scope project|installation] [--run RUN_ID] [--json]")
+		fmt.Println("       sdlc runtime headroom build|status (separate pinned proxy image)")
 		fmt.Println("         Offline plan: --dry-run --json; independent iTerm2 controller: --terminal background [--launch-id UUID] [--json]")
 		fmt.Println("       sdlc dashboard [--once | --json] [--scope project|installation] [--page N] [--run RUN_ID] [--logs]")
 		fmt.Println("       sdlc dashboard forget --run RUN_ID")

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 )
 
@@ -49,7 +50,8 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 		Provider: session.Model.Provider, Model: session.Model.Name, Effort: session.Model.Effort,
 		Workspace: session.Workspace, SessionDirectory: session.Directory, PromptFile: prompt, SchemaFile: schema,
 		ResumeID: session.ResumeID, ReadOnly: session.Role == "review",
-		ImageID: provider.ImageID, InstructionsFile: shared,
+		ImageID: provider.ImageID, InstructionsFile: shared, Headroom: session.Headroom,
+		OnHeadroomStats: func(stats headroom.Stats) { events.result.HeadroomStats = &stats },
 	}, events, stderr)
 	if session.ResumeID != "" {
 		reportedID := events.result.SessionID

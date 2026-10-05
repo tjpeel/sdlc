@@ -21,6 +21,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/instructions"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runstatus"
@@ -34,6 +35,7 @@ import (
 // Settings are private controller state. They contain metadata and hashes, never
 // credential contents, and are frozen once for all of a feature's ticket runs.
 type seriesSettings struct {
+	Headroom                  headroom.Config
 	Version                   int
 	Provider                  string
 	Alternate                 bool
@@ -150,21 +152,50 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if state.Version != 0 && (state.Plan.Root != plan.Root || state.Plan.Reference != plan.Reference || state.Plan.DefinitionSHA != plan.DefinitionSHA) {
 		return fmt.Errorf("feature plan changed; restore the saved plan or use a new work reference")
 	}
+	var selections seriesSettings
+	if len(state.Settings) != 0 {
+		selections, err = loadSeriesSettings(state.Settings)
+		if err == nil {
+			err = checkSeriesOptions(options, selections)
+		}
+		if err == nil {
+			err = (&seriesDriver{plan: plan, settings: selections}).validateSettings()
+		}
+	} else {
+		// Constructing the manager only selects a local settings directory.
+		// Preview reads model defaults and project configuration, never Docker.
+		manager, managerErr := runtimeimage.New(io.Discard, io.Discard)
+		if managerErr != nil {
+			return managerErr
+		}
+		selections, err = selectSeriesSettings(ctx, manager.Directory, plan, options)
+	}
+	if err != nil {
+		return err
+	}
 	if !options.jsonOutput {
 		workseries.PrintPlan(output, plan)
 	}
 	if options.dryRun {
 		if options.jsonOutput {
 			return json.NewEncoder(output).Encode(struct {
-				Version  int                          `json:"version"`
-				Mode     string                       `json:"mode"`
-				Offline  bool                         `json:"offline"`
-				Plan     workseries.Plan              `json:"plan"`
-				Parallel int                          `json:"parallel"`
-				Watch    bool                         `json:"watch"`
-				Saved    map[string]workseries.Result `json:"saved,omitempty"`
-				Notice   string                       `json:"notice"`
-			}{1, "feature", true, plan, options.parallel, options.watch, state.Results, "Offline feature plan; ticket content, account access and live PR state are checked during execution."})
+				Version       int                          `json:"version"`
+				Mode          string                       `json:"mode"`
+				Offline       bool                         `json:"offline"`
+				Plan          workseries.Plan              `json:"plan"`
+				Parallel      int                          `json:"parallel"`
+				Watch         bool                         `json:"watch"`
+				Roles         map[string]workrun.Roles     `json:"roles"`
+				Checks        [][]string                   `json:"checks"`
+				CheckInputs   []string                     `json:"check_inputs"`
+				Inputs        []string                     `json:"inputs"`
+				DockerTests   bool                         `json:"docker_tests"`
+				Headroom      headroom.Config              `json:"headroom"`
+				HeadroomImage string                       `json:"headroom_image,omitempty"`
+				InputHashes   map[string]string            `json:"input_hashes,omitempty"`
+				Saved         map[string]workseries.Result `json:"saved,omitempty"`
+				Notice        string                       `json:"notice"`
+			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; ticket content, account access and live PR state are checked during execution."})
 		}
 		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
 		for _, ticket := range plan.Tickets {
@@ -172,6 +203,11 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 				fmt.Fprintf(output, "Saved ticket %s: %s\n", ticket.File, previous.State)
 			}
 		}
+		for _, ticket := range plan.Tickets {
+			roles := selections.Roles[ticket.File]
+			fmt.Fprintf(output, "%s: implementation %s/%s (%s); review %s/%s (%s).\n", ticket.File, roles.Implementation.Provider, roles.Implementation.Name, roles.Implementation.Effort, roles.Review.Provider, roles.Review.Name, roles.Review.Effort)
+		}
+		fmt.Fprintf(output, "Headroom: %s; checks: %v; check inputs: %v; additional inputs: %v.\n", seriesHeadroomMode(selections.Headroom), selections.Config.Checks, selections.Config.InputFiles, selections.Inputs)
 		fmt.Fprintln(output, "Offline feature plan only; ticket content, account access and live PR state are checked during execution.")
 		return nil
 	}
@@ -208,7 +244,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			return fmt.Errorf("feature checkpoint changed while acquiring ownership")
 		}
 		if len(checkpoint.Settings) == 0 {
-			settings, err := freezeSeriesSettings(ctx, runtime, plan, options)
+			settings, err := freezeSelectedSeriesSettings(ctx, runtime, plan, options, selections)
 			if err != nil {
 				return err
 			}
@@ -258,8 +294,67 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	return err
 }
 
+func seriesHeadroomMode(config headroom.Config) string {
+	if !config.Enabled() {
+		return "off"
+	}
+	return config.Mode
+}
+
+func seriesHeadroomImage(config headroom.Config) string {
+	if config.Enabled() {
+		return headroom.Image
+	}
+	return ""
+}
+
+func selectSeriesSettings(ctx context.Context, directory string, plan workseries.Plan, options runOptions) (seriesSettings, error) {
+	settings := seriesSettings{Provider: options.provider, Alternate: options.alternate, Inputs: options.inputs, DockerTests: options.dockerTests, Roles: map[string]workrun.Roles{}}
+	mode := options.headroomMode
+	if mode == "" {
+		mode = "off"
+	}
+	var err error
+	settings.Headroom, err = headroom.Selection(mode)
+	if err != nil {
+		return settings, err
+	}
+	launch, err := project.Launch(ctx, plan.Root, plan.Reference, plan.Tickets[0].File, options.inputs)
+	if err != nil {
+		return settings, err
+	}
+	settings.Config = launch.Config
+	models, err := workrun.LoadModels(directory)
+	if err != nil {
+		return settings, err
+	}
+	for i, ticket := range plan.Tickets {
+		provider := options.provider
+		if options.alternate && i%2 == 1 {
+			if provider == "codex" {
+				provider = "claude"
+			} else {
+				provider = "codex"
+			}
+		}
+		roles, err := workrun.ResolveModels(models, provider, options.model, options.effort, options.reviewModel, options.reviewEffort)
+		if err != nil {
+			return settings, err
+		}
+		settings.Roles[ticket.File] = roles
+	}
+	return settings, nil
+}
+
 func freezeSeriesSettings(ctx context.Context, runtime runtimeimage.Manager, plan workseries.Plan, options runOptions) (seriesSettings, error) {
-	var settings seriesSettings
+	settings, err := selectSeriesSettings(ctx, runtime.Directory, plan, options)
+	if err != nil {
+		return settings, err
+	}
+	return freezeSelectedSeriesSettings(ctx, runtime, plan, options, settings)
+}
+
+func freezeSelectedSeriesSettings(ctx context.Context, runtime runtimeimage.Manager, plan workseries.Plan, options runOptions, settings seriesSettings) (seriesSettings, error) {
 	state, err := runtime.Status(ctx)
 	if err != nil {
 		return settings, err
@@ -282,15 +377,14 @@ func freezeSeriesSettings(ctx context.Context, runtime runtimeimage.Manager, pla
 	if err != nil {
 		return settings, err
 	}
-	launch, err := project.Launch(ctx, plan.Root, plan.Reference, plan.Tickets[0].File, options.inputs)
+	settings.Version, settings.Repository = 1, identity.RepositoryName
+	settings.GitHubProfile, settings.SigningProfile = pair.GitHubProfile, pair.SigningProfile
+	settings.ImageID, settings.Identity = state.ImageID, identity
+	settings.InputHashes = map[string]string{}
+	settings.Headroom, err = headroom.Resolve(ctx, runtime.Docker, seriesHeadroomMode(settings.Headroom))
 	if err != nil {
 		return settings, err
 	}
-	models, err := workrun.LoadModels(runtime.Directory)
-	if err != nil {
-		return settings, err
-	}
-	settings = seriesSettings{Version: 1, Provider: options.provider, Alternate: options.alternate, Repository: identity.RepositoryName, GitHubProfile: pair.GitHubProfile, SigningProfile: pair.SigningProfile, ImageID: state.ImageID, Identity: identity, Roles: map[string]workrun.Roles{}, Inputs: options.inputs, Config: launch.Config, DockerTests: options.dockerTests, InputHashes: map[string]string{}}
 	shared, err := (instructions.Manager{Directory: runtime.Directory}).Show()
 	if err != nil {
 		return seriesSettings{}, err
@@ -301,23 +395,8 @@ func freezeSeriesSettings(ctx context.Context, runtime runtimeimage.Manager, pla
 		return seriesSettings{}, err
 	}
 	settings.SigningImage, settings.DaemonImage = sidecars.SigningImage, sidecars.DaemonImage
-	for i, ticket := range plan.Tickets {
-		provider := options.provider
-		if options.alternate && i%2 == 1 {
-			if provider == "codex" {
-				provider = "claude"
-			} else {
-				provider = "codex"
-			}
-		}
-		roles, err := workrun.ResolveModels(models, provider, options.model, options.effort, options.reviewModel, options.reviewEffort)
-		if err != nil {
-			return seriesSettings{}, err
-		}
-		settings.Roles[ticket.File] = roles
-	}
 	paths := append([]string{project.ConfigPath}, options.inputs...)
-	paths = append(paths, launch.Config.InputFiles...)
+	paths = append(paths, settings.Config.InputFiles...)
 	for _, ticket := range plan.Tickets {
 		paths = append(paths, ".sdlc/work/"+plan.Reference+"/tickets/"+ticket.File)
 	}
@@ -371,6 +450,9 @@ func loadSeriesSettings(data []byte) (seriesSettings, error) {
 	if settings.SigningImage == "" || (settings.DockerTests && settings.DaemonImage == "") || (workrun.Plan{SigningImage: settings.SigningImage, DaemonImage: settings.DaemonImage}).ValidateSidecarImages() != nil {
 		return settings, fmt.Errorf("invalid private feature sidecar images")
 	}
+	if err := settings.Headroom.Validate(); err != nil {
+		return settings, fmt.Errorf("invalid private feature Headroom settings: %w", err)
+	}
 	return settings, nil
 }
 
@@ -378,7 +460,8 @@ func checkSeriesOptions(options runOptions, settings seriesSettings) error {
 	values := map[string]bool{
 		"provider": options.provider == settings.Provider, "alternate-providers": options.alternate == settings.Alternate,
 		"repo": strings.EqualFold(options.repository, settings.Repository), "github-profile": options.githubProfile == settings.GitHubProfile,
-		"input": reflect.DeepEqual([]string(options.inputs), settings.Inputs), "docker-tests": options.dockerTests == settings.DockerTests,
+		"headroom": options.headroomMode == seriesHeadroomMode(settings.Headroom),
+		"input":    reflect.DeepEqual([]string(options.inputs), settings.Inputs), "docker-tests": options.dockerTests == settings.DockerTests,
 	}
 	for flag, matches := range values {
 		if options.supplied[flag] && !matches {
@@ -584,7 +667,7 @@ func (d *seriesDriver) loadRun(ticket string, result workseries.Result) (string,
 		return "", journal, err
 	}
 	roles, exists := d.settings.Roles[ticket]
-	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.DockerTests != d.settings.DockerTests {
+	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
 		return "", journal, fmt.Errorf("saved ticket run differs from frozen feature settings")
 	}
 	for _, input := range append(append([]workrun.Input{}, journal.Plan.Inputs...), journal.Plan.CheckInputs...) {
@@ -646,6 +729,7 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	options.provider = roles.Implementation.Provider
 	options.frozenRoles, options.frozenConfig = &roles, &d.settings.Config
 	options.frozenImage, options.frozenIdentity = d.settings.ImageID, d.settings.Identity
+	options.headroomMode, options.frozenHeadroom = seriesHeadroomMode(d.settings.Headroom), &d.settings.Headroom
 	options.frozenInstructions = &d.settings.Instructions
 	options.frozenInputHashes = d.settings.InputHashes
 	options.frozenSigningImage, options.frozenDaemonImage = d.settings.SigningImage, d.settings.DaemonImage

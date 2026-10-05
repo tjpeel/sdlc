@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runusage"
 )
 
 var ErrStopped = errors.New("run needs attention")
@@ -127,6 +128,14 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		runner.Output = io.Discard
 	}
 	runner.Output = observedOutput{runner.Output, runner.OnOutput}
+	controllerStarted := time.Now()
+	journal.Timings.Version = 1
+	defer func() {
+		journal.Timings.ControllerMS += time.Since(controllerStarted).Milliseconds()
+		if err := runner.save(directory, journal); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 	if journal.State == "waiting_for_human" {
 		if answer == "" {
 			return runner.stop(directory, journal, "waiting_for_human", "answer the recorded questions with --answer-file before resuming")
@@ -249,7 +258,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				if err != nil {
 					return err
 				}
+				checkStarted := time.Now()
 				checkErr := runner.Checker.Check(ctx, journal.Workspace, journal.Plan.Checks, io.MultiWriter(log, runner.Output))
+				journal.Timings.ChecksMS += time.Since(checkStarted).Milliseconds()
 				closeErr := log.Close()
 				journal.Evidence = CheckEvidence{Head: revision.Head, Tree: revision.Tree, Passed: checkErr == nil, Commands: journal.Plan.Checks, Log: filepath.Base(path)}
 				if closeErr != nil {
@@ -350,13 +361,16 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			switch checks.Status {
 			case "pending", "missing":
+				waitStarted := time.Now()
 				timer := time.NewTimer(wait)
 				select {
 				case <-ctx.Done():
 					timer.Stop()
+					journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 					return runner.stop(directory, journal, "blocked", "CI wait cancelled; published PR retained")
 				case <-timer.C:
 				}
+				journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 				continue
 			case "failed":
 				journal.Rounds++
@@ -470,7 +484,7 @@ func verifyInputs(root string, inputs []Input) error {
 	return nil
 }
 
-func (runner Runner) session(ctx context.Context, directory string, journal *Journal, role, workspace, resume string) (SessionResult, error) {
+func (runner Runner) session(ctx context.Context, directory string, journal *Journal, role, workspace, resume string) (result SessionResult, resultErr error) {
 	journal.Attempt++
 	if err := runner.save(directory, journal); err != nil {
 		return SessionResult{}, err
@@ -493,8 +507,43 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		nativeDirectory = filepath.Join(directory, fmt.Sprintf("native-review-%d", journal.Attempt))
 	}
 	prompt := runner.prompt(*journal, role)
+	metricRole := role
+	if role == "implementation" && resume != "" {
+		metricRole = "repair"
+	}
+	attempt := runusage.Attempt{Version: 1, RunID: journal.ID, Attempt: journal.Attempt,
+		Role: metricRole, Provider: model.Provider, Model: model.Name, Effort: model.Effort,
+		ImageID: journal.ImageID, StartedAt: time.Now().UTC(), Outcome: "running",
+		Resumed: resume != "", OptimizerMode: journal.Plan.Headroom.Mode}
+	if attempt.OptimizerMode == "" {
+		attempt.OptimizerMode = "off"
+	}
+	if err := runusage.SaveAttempt(directory, attempt); err != nil {
+		return result, err
+	}
+	observer := runusage.NewObserver(model.Provider, model.Name)
+	defer func() {
+		observer.Finish()
+		attempt.Usage = observer.Snapshot()
+		attempt.ClientVersion = attempt.Usage.ClientVersion
+		attempt.SessionID = observer.SessionID()
+		attempt.HeadroomStats = result.HeadroomStats
+		attempt.EndedAt = time.Now().UTC()
+		attempt.Outcome = "completed"
+		if resultErr != nil {
+			attempt.Outcome = "failed"
+		}
+		if ctx.Err() != nil {
+			attempt.Outcome = "aborted"
+		}
+		if err := runusage.SaveAttempt(directory, attempt); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("cannot retain provider usage: %w", err))
+		}
+	}()
 	nativeOutput := observedOutput{io.MultiWriter(events, runner.Output), runner.OnNativeOutput}
-	return runner.Provider.Execute(ctx, Session{model, role, workspace, nativeDirectory, prompt, outcomeSchema, resume, runner.Instructions}, nativeOutput, diagnostic)
+	return runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
+		Directory: nativeDirectory, Prompt: prompt, Schema: outcomeSchema, ResumeID: resume,
+		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom}, io.MultiWriter(nativeOutput, observer), diagnostic)
 }
 
 func (runner Runner) prompt(journal Journal, role string) string {

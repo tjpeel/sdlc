@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/runusage"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
@@ -14,6 +15,9 @@ import (
 // Explicit projection avoids copying authentication metadata, prompts, session
 // identifiers, raw logs, private input bytes or the captured source workspace.
 type Report struct {
+	Timings       *workrun.Timings    `json:"timings,omitempty"`
+	Metrics       *runusage.Summary   `json:"metrics,omitempty"`
+	MetricsError  string              `json:"metrics_error,omitempty"`
 	Version       int                 `json:"version"`
 	ExportedAt    time.Time           `json:"exported_at"`
 	ID            string              `json:"id"`
@@ -70,6 +74,8 @@ func reportSnapshot(v View) (Report, error) {
 		questions = j.Outcome.Questions
 	}
 	return Report{
+		Timings: j.Timings.Recorded(),
+		Metrics: v.Metrics, MetricsError: v.MetricsError,
 		Version: 1, ExportedAt: time.Now().UTC(), ID: j.ID, State: j.State,
 		StartedAt: j.StartedAt, UpdatedAt: j.UpdatedAt,
 		Repository: j.Plan.Repository, Reference: j.Plan.Reference, Ticket: j.Plan.Ticket,

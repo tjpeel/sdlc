@@ -360,7 +360,7 @@ func validateRequest(r Request) error {
 	// Literal values (notably repeated --input values) may themselves look like
 	// flags. Keep the existing CLI's argument boundary instead of reinterpreting
 	// such values as terminal adapter options.
-	valueFlags := map[string]bool{"reference": true, "ticket": true, "provider": true, "github-profile": true, "input": true, "base": true, "branch": true, "repo": true, "model": true, "effort": true, "review-model": true, "review-effort": true, "resume": true, "answer-file": true, "timeout": true, "notify": true, "parallel": true}
+	valueFlags := map[string]bool{"reference": true, "ticket": true, "provider": true, "github-profile": true, "input": true, "base": true, "branch": true, "repo": true, "model": true, "effort": true, "review-model": true, "review-effort": true, "resume": true, "answer-file": true, "timeout": true, "notify": true, "parallel": true, "headroom": true}
 	for i := 1; i < len(r.Args); i++ {
 		arg := r.Args[i]
 		if !strings.HasPrefix(arg, "-") {

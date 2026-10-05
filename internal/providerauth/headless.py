@@ -218,6 +218,20 @@ def native_command(provider, model, effort, resume, readonly):
     return command
 
 
+def apply_headroom_route(provider, command, env):
+    # SDLC supplies this marker only after starting its private sidecar. Never
+    # copy a URL or authentication override from the host environment.
+    if os.environ.get("SDLC_HEADROOM") != "1":
+        return
+    if provider == "codex":
+        command += ["-c", 'openai_base_url="http://127.0.0.1:8787/v1"']
+        env["OPENAI_BASE_URL"] = "http://127.0.0.1:8787/v1"
+    elif provider == "claude":
+        env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:8787"
+    else:
+        raise ValueError("unsupported Headroom provider")
+
+
 def process(command, env):
     child = None
     terminating = False
@@ -314,6 +328,7 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
                         "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
                         "ENABLE_CLAUDEAI_MCP_SERVERS": "false"})
         command = native_command(provider, model, effort, resume, readonly)
+        apply_headroom_route(provider, command, env)
         auth_link(config, provider, directory)
         try:
             return process(command, env)

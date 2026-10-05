@@ -11,8 +11,11 @@ executing connected provider work, and verify current official documentation for
 the proposed account type and execution mode.
 
 - Use unmodified official clients and their documented authentication flows.
-- Do not extract or replay subscription OAuth tokens through custom API clients,
-  SDKs or proxies, share account credentials, or bypass provider restrictions.
+- Do not extract or replay subscription OAuth tokens through custom API clients
+  or SDKs, share account credentials, or bypass provider restrictions. An explicitly
+  selected local proxy may forward the official client's requests through a
+  documented native base-URL setting; follow `docs/provider-usage.md` and never
+  collect credentials from the cache or inject replacement authentication.
 - Do not rotate accounts, change identities or repeatedly restart jobs to evade
   rate limits, usage limits, access denials or account suspensions.
 - Stop and report an unclear or unsupported authentication/execution route before

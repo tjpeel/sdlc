@@ -18,6 +18,8 @@ import (
 	"github.com/tjpeel/sdlc/internal/notify"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runusage"
+	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--page N] [--run RUN_ID] [--logs] [--interval 2s]\n  [--notify off|desktop|bell] [--sound]\nHistory: sdlc dashboard forget --run RUN_ID\nExport: sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY\nShows at most ten runs per page: questions, problems, queued/running work, then completed work.\nA terminal refreshes live by default; redirected output produces one snapshot.\nIn a live terminal: n Enter = next page, p Enter = previous page, q Enter = close.\n--run accepts a full ID or a unique prefix of at least six characters.\n--logs adds a bounded private output tail to a selected run.\nforget removes a stopped run from the dashboard and retains all saved work.\nNotifications are optional and report fixed messages without private work details.\nClosing the dashboard leaves run controllers working."
@@ -232,38 +234,45 @@ func writeDashboardJSON(output io.Writer, views []runstatus.View, now time.Time)
 
 func writeDashboardJSONPage(output io.Writer, views []runstatus.View, now time.Time, page dashboard.Pagination) error {
 	type row struct {
-		ID              string          `json:"id"`
-		Root            string          `json:"root"`
-		Reference       string          `json:"reference"`
-		Ticket          string          `json:"ticket"`
-		Directory       string          `json:"directory"`
-		State           string          `json:"state"`
-		Role            string          `json:"role"`
-		Provider        string          `json:"provider"`
-		Model           string          `json:"model"`
-		Effort          string          `json:"effort"`
-		Live            bool            `json:"live"`
-		Stale           bool            `json:"stale"`
-		Stopped         bool            `json:"stopped"`
-		Available       bool            `json:"available"`
-		NeedsAttention  bool            `json:"needs_attention"`
-		StartedAt       time.Time       `json:"started_at"`
-		UpdatedAt       time.Time       `json:"updated_at"`
-		HeartbeatAt     time.Time       `json:"heartbeat_at"`
-		LastActivityAt  time.Time       `json:"last_activity_at"`
-		StopReason      string          `json:"stop_reason,omitempty"`
-		Error           string          `json:"error,omitempty"`
-		ActivityError   string          `json:"activity_error,omitempty"`
-		CI              string          `json:"ci_status,omitempty"`
-		PR              string          `json:"pr_url,omitempty"`
-		Usage           runstatus.Usage `json:"usage"`
-		WaitingProvider string          `json:"waiting_provider,omitempty"`
-		WaitReason      string          `json:"wait_reason,omitempty"`
-		WaitingSince    time.Time       `json:"waiting_since"`
+		ID              string            `json:"id"`
+		Root            string            `json:"root"`
+		Reference       string            `json:"reference"`
+		Ticket          string            `json:"ticket"`
+		Directory       string            `json:"directory"`
+		State           string            `json:"state"`
+		Role            string            `json:"role"`
+		Provider        string            `json:"provider"`
+		Model           string            `json:"model"`
+		Effort          string            `json:"effort"`
+		Live            bool              `json:"live"`
+		Stale           bool              `json:"stale"`
+		Stopped         bool              `json:"stopped"`
+		Available       bool              `json:"available"`
+		NeedsAttention  bool              `json:"needs_attention"`
+		StartedAt       time.Time         `json:"started_at"`
+		UpdatedAt       time.Time         `json:"updated_at"`
+		HeartbeatAt     time.Time         `json:"heartbeat_at"`
+		LastActivityAt  time.Time         `json:"last_activity_at"`
+		StopReason      string            `json:"stop_reason,omitempty"`
+		Error           string            `json:"error,omitempty"`
+		ActivityError   string            `json:"activity_error,omitempty"`
+		CI              string            `json:"ci_status,omitempty"`
+		PR              string            `json:"pr_url,omitempty"`
+		Usage           runstatus.Usage   `json:"usage"`
+		WaitingProvider string            `json:"waiting_provider,omitempty"`
+		WaitReason      string            `json:"wait_reason,omitempty"`
+		WaitingSince    time.Time         `json:"waiting_since"`
+		Metrics         *runusage.Summary `json:"metrics,omitempty"`
+		MetricsError    string            `json:"metrics_error,omitempty"`
+		Timings         *workrun.Timings  `json:"timings,omitempty"`
 	}
 	rows := make([]row, 0, len(views))
 	for _, v := range views {
-		rows = append(rows, row{v.ID, v.Root, v.Reference, v.Ticket, v.Directory, v.State, v.Role, v.Provider, v.Model, v.Effort, v.Live, v.Stale, v.Stopped, v.Available, v.NeedsAttention, v.StartedAt, v.UpdatedAt, v.HeartbeatAt, v.LastActivityAt, v.StopReason, v.Error, v.ActivityError, v.CI.Status, v.PR.URL, v.Activity.Usage, v.Activity.WaitingProvider, v.Activity.WaitReason, v.Activity.WaitingSince})
+		var timings *workrun.Timings
+		if v.Journal != nil {
+			timings = v.Journal.Timings.Recorded()
+		}
+		rows = append(rows, row{v.ID, v.Root, v.Reference, v.Ticket, v.Directory, v.State, v.Role, v.Provider, v.Model, v.Effort, v.Live, v.Stale, v.Stopped, v.Available, v.NeedsAttention, v.StartedAt, v.UpdatedAt, v.HeartbeatAt, v.LastActivityAt, v.StopReason, v.Error, v.ActivityError, v.CI.Status, v.PR.URL, v.Activity.Usage, v.Activity.WaitingProvider, v.Activity.WaitReason, v.Activity.WaitingSince, v.Metrics, v.MetricsError, timings})
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int       `json:"version"`
