@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/install"
 )
@@ -30,9 +31,24 @@ func updateSourceFixture(t *testing.T) string {
 	return canonical
 }
 
+func nativeUpdateDestination(t *testing.T, bin string) {
+	t.Helper()
+	// Give each legacy-install scenario its own native command. An actual
+	// Homebrew installation on the host must not select that update route.
+	executable, _ := bundledSourceFixture(t)
+	data, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "sdlc"), data, 0700); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUpdateDryRunUsesLegacySavedSourceWithoutBuildingOrWriting(t *testing.T) {
 	root := updateSourceFixture(t)
 	bin := t.TempDir()
+	nativeUpdateDestination(t, bin)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stateDir := os.Getenv("SDLC_STATE_DIR")
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
@@ -75,6 +91,7 @@ func strconvJSON(value any) string {
 func TestUpdateRejectsDirtyPullAndConflictingPolicies(t *testing.T) {
 	root := updateSourceFixture(t)
 	bin := t.TempDir()
+	nativeUpdateDestination(t, bin)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	err := updateCommand(context.Background(), []string{"--source", root, "--bin-dir", bin, "--dry-run", "--pull"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "clean source checkout") {
@@ -180,10 +197,18 @@ func TestHomebrewUpdatePreviewUsesSavedCheckoutAndNeverCallsBrew(t *testing.T) {
 	if err := updateCommand(context.Background(), []string{"--dry-run", "--bin-dir", bin}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "Homebrew owns") {
 		t.Fatalf("Homebrew destination override accepted: %v", err)
 	}
+	// Metadata changes without content edits are common after a clone or backup.
+	// Homebrew packages HEAD and must accept an otherwise unchanged checkout.
+	if err := os.Chtimes(filepath.Join(root, "go.mod"), time.Now(), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateCommand(context.Background(), []string{"--dry-run", "--pull"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("unchanged source rejected after metadata changed: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/tjpeel/sdlc\n\ngo 1.26.0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := updateCommand(context.Background(), []string{"--dry-run"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "committed source") {
+	if err := updateCommand(context.Background(), []string{"--dry-run"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "uncommitted content") {
 		t.Fatalf("uncommitted Homebrew source accepted: %v", err)
 	}
 }

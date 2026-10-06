@@ -133,13 +133,9 @@ func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnl
 		}
 		root = receipt.Source
 	}
-	root, err := install.ValidateSource(root)
+	root, err := install.ValidateCommittedSource(ctx, root)
 	if err != nil {
 		return err
-	}
-	sourceIdentity, err := project.InspectIdentity(ctx, root)
-	if err != nil || sourceIdentity.Dirty || sourceIdentity.Root != root {
-		return fmt.Errorf("Homebrew packages committed source; commit or set aside source changes before updating")
 	}
 	installer := filepath.Join(root, "scripts", "install_homebrew.py")
 	if info, err := os.Lstat(installer); err != nil || !info.Mode().IsRegular() {
@@ -157,8 +153,9 @@ func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnl
 		}
 	}
 	if pull {
-		if err := requireCleanUpdateSource(ctx, root); err != nil {
-			return err
+		identity, err := project.InspectIdentity(ctx, root)
+		if err != nil || identity.Branch == "" || identity.Branch == "HEAD" {
+			return fmt.Errorf("--pull requires a clean source checkout on a branch")
 		}
 		if dryRun {
 			_, err := fmt.Fprintln(output, "Would fast-forward the clean checkout with git pull --ff-only. No remote was contacted; the preview describes current local source.")

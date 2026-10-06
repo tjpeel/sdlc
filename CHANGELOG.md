@@ -15,6 +15,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 - Homebrew-aware `sdlc update` and `/update` refresh the snapshot and formula before upgrading, including after signing or amending a commit. Homebrew owns CLI replacement; the source installer rejects package-owned destinations.
 - Bundled runtime source discovery and verified package identity in version details. Archive builds retain their source revision; runtime commands continue after cleanup removes an older keg.
 
+### Fixed
+
+- Verify committed Homebrew source by its contents, so unchanged files with different timestamps do not block an update. Preview avoids Git content filters and filesystem-monitor helpers.
+
 ## 0.1.0-beta.4 - 2026-10-06
 
 ### Added
