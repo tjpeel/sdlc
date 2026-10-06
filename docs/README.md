@@ -9,7 +9,7 @@
 - [Earlier 1Password access and signing test](1password-test.md): historical disposable-vault/signing trials and GitHub App experiments; use signing setup for final provisioning.
 - [Unattended Docker delivery](proposals/unattended-docker-delivery.md): original design proposal; Docker publication/signing are implemented, while detached supervision remains future work.
 - [Remote VM execution](proposals/remote-vm-execution.md): Tailscale connection, shared bootstrap, session and port isolation, host dashboard visibility and a staged implementation plan.
-- [Private messaging feedback loop](proposals/private-feedback-loop.md): VPN-only question inbox, self-hosted chat comparison, answer dispatch and recovery plan.
+- [Private messaging feedback loop](proposals/private-feedback-loop.md): Paseo integration trial, VPN-only inbox fallback, self-hosted chat comparison and answer recovery plan.
 - [CLI](cli.md): install, build the shared image, log in, configure instructions, open interactive sessions and run one ticket through draft PR delivery and review.
 - [Interactive shell](interactive-shell.md): the opt-in first pass, slash commands, project scope, offline plan review and version evidence.
 - [Interactive CLI proposal](proposals/interactive-cli.md): persistent slash commands, local ticket completion, guided help and onboarding, implementation stages and a visual prototype.

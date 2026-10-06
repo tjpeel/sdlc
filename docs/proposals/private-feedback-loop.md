@@ -2,10 +2,12 @@
 
 Status: investigation and proposed implementation, reviewed on 6 October 2026.
 
-Build a small private SDLC question inbox, reachable from a phone or laptop over
-a VPN. An agent records its questions, SDLC pauses, the owner submits an answer,
-and a local service resumes the recorded run. Keep the existing journals and
-controller responsible for execution.
+Trial Paseo as the existing phone and laptop interface before building a separate
+SDLC inbox. Its local daemon, self-hosted web UI and direct VPN connections fit
+the requested private feedback loop. An SDLC plugin is still needed: an agent
+records its questions, SDLC pauses, the owner submits an answer, and a local
+service resumes the recorded run. Keep the existing journals and controller
+responsible for execution.
 
 If a general chat application is preferred, use self-hosted Zulip with an SDLC
 bot. Discord does not provide a supported self-hosted messaging server. Running
@@ -15,7 +17,8 @@ its bot locally still sends questions and answers through Discord's service.
 
 | Option | Hosting | Fit for this feedback loop |
 | --- | --- | --- |
-| SDLC question inbox | Small local web service, accessed over a VPN | Recommended first implementation. Shows pending questions, accepts an explicit answer and reports execution status without a separate chat stack. |
+| Paseo with an SDLC plugin | Local daemon, native clients and self-hosted web UI, with direct VPN access | Recommended first trial. Existing remote agent interface and plugin screens; SDLC question handling needs an adapter. |
+| SDLC question inbox | Small local web service, accessed over a VPN | Fallback if Paseo integration is unsuitable. Shows pending questions, accepts an explicit answer and reports execution status without a separate chat stack. |
 | Zulip | Self-hosted chat with browser, desktop and mobile clients | Recommended if chat is preferred. A private channel and a topic per run keep conversations together. A bot sends questions and receives replies. |
 | Mattermost | Self-hosted chat with REST and WebSocket APIs | Workable when a Slack-style interface is preferred. Needs an SDLC adapter and a separate application/database deployment. |
 | Matrix with Element | Self-hosted homeserver and clients, with encrypted rooms available | Prefer when encrypted chat is itself a requirement. An encrypted-room bot needs encryption support, device verification and durable key storage. |
@@ -75,17 +78,17 @@ that question could change before the command starts.
 ## Proposed service and access
 
 Run one trusted feedback service beside the installed CLI. It observes registered
-runs, stores question records and answers in private local state, and serves a
-responsive browser inbox. Each card shows the project label, work reference,
-pending role, exact questions and current status. An explicit **Submit answer
-and continue** action sends the answer. Retain the conversation after execution
-restarts.
+runs and stores question records and answers in private local state. Expose it
+through a Paseo plugin first, with a standalone browser inbox as the fallback.
+Each card shows the project label, work reference, pending role, exact questions
+and current status. An explicit **Submit answer and continue** action sends the
+answer. Retain the conversation after execution restarts.
 
 ```mermaid
 flowchart LR
     Agent[Agent] -->|Questions and pause| Journal[Private run journal]
     Journal --> Service[Local feedback service]
-    Service --> Inbox[Question inbox]
+    Service --> Inbox[Paseo plugin or question inbox]
     Owner[Phone or laptop] <-->|VPN and HTTPS| Inbox
     Inbox -->|Submitted answer| Service
     Service -->|Validated dispatch| Controller[SDLC controller]
@@ -96,7 +99,8 @@ The service keeps listening after the original `sdlc run` exits at a question,
 independently of an open dashboard or shell. A later chat adapter can use the
 same question records and dispatch operation.
 
-Bind the web service to loopback and expose it through owner-only VPN HTTPS.
+For a standalone inbox, bind the web service to loopback and expose it through
+owner-only VPN HTTPS.
 [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) can proxy
 a local port to devices in the tailnet. Keep Funnel disabled for this service
 because it permits public access. Tailscale uses an external control plane;
@@ -140,6 +144,49 @@ account changes. Missing source/specification files still need the existing
 `sdlc inputs` recovery flow. Provider access failures and usage exhaustion remain
 stops under the [provider usage rules](../provider-usage.md).
 
+## Paseo integration
+
+Paseo runs a local daemon with desktop and mobile clients. Its bundled web UI can
+be served by that daemon, without using the hosted web app. Direct Tailscale or
+other VPN access can leave Paseo's relay disabled. Set a daemon password and
+restrict network access to the owner. For browser access, prefer VPN HTTPS to
+the loopback daemon; native clients also support a direct VPN-address connection.
+See [connectivity](https://paseo.sh/docs/connectivity),
+[self-hosted web UI](https://paseo.sh/docs/web-ui) and
+[security](https://paseo.sh/docs/security).
+
+The latest published release checked was
+[v0.10.3](https://github.com/getpaseo/paseo/releases/tag/v0.10.3), published on
+2 October 2026. Its [plugin contract](https://github.com/getpaseo/paseo/blob/v0.10.3/public-docs/plugins/reference.md)
+supports phone/browser UI surfaces, workspace panels and schema-validated backend
+RPC handlers. Server plugins run as trusted, unsandboxed code on the daemon host.
+Pin the daemon, clients and plugin API to a compatible release during the trial;
+development-branch documentation can describe newer interfaces.
+
+Proposed adapter:
+
+1. An SDLC questions screen lists pending journal questions through a narrow
+   local feedback API. It does not create a native Paseo agent for each run.
+2. The owner submits an answer with the opaque question identity and a unique
+   submission ID. A backend RPC calls the common validated SDLC dispatch operation.
+3. The screen follows SDLC's recorded state and shows receipt, execution status
+   and any subsequent questions after reconnecting.
+
+Paseo normally owns the agent sessions it creates. SDLC's existing jobs use their
+own controller, structured outcomes and private provider sessions. Paseo's
+native permission/question events do not automatically represent those jobs.
+A plugin surface avoids transferring execution, checks, review or publication
+to another orchestrator. The adapter does not need copied provider credentials
+or a new provider login.
+
+This is a proposed integration, not demonstrated compatibility. The first trial
+must prove that the selected mobile and web clients load the plugin, that a
+saved SDLC question can be answered once, and that reconnecting restores its
+actual status. Background phone notification delivery for plugin-owned questions
+also needs verification; an in-app questions screen does not establish push
+support. Fall back to the standalone inbox if the client or plugin contract
+cannot support the required flow.
+
 ## Zulip integration
 
 Host the official Zulip stack separately from the SDLC runtime, with persistent
@@ -179,8 +226,9 @@ execution to another machine.
 
 ## Implementation sequence
 
-1. Build the common question/answer dispatch operation and private inbox. Prove
-   an agent pause, owner reply and one resumed controller using offline fixtures.
+1. Build the common question/answer dispatch operation and trial a Paseo questions
+   plugin. Prove an agent pause, owner reply and one resumed controller using
+   offline fixtures. Use the standalone inbox if the Paseo trial fails its gates.
 2. Add service lifecycle and recovery. Own resumed controllers independently of
    browser connections, supervise the service through the operating system, and
    reconcile submissions after a crash or reboot. General detached SDLC
