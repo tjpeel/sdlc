@@ -13,8 +13,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -647,6 +650,153 @@ func TestInitDiscoversOriginWithoutChoosingUpstream(t *testing.T) {
 				}
 			} else if !os.IsNotExist(err) {
 				t.Fatal("upstream identity chosen", repository, err)
+			}
+		})
+	}
+}
+
+type pairingWaitOutput struct {
+	mu      sync.Mutex
+	text    bytes.Buffer
+	waiting chan struct{}
+}
+
+func (w *pairingWaitOutput) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.text.Write(data)
+	if strings.Contains(string(data), "GitHub pairing is waiting") {
+		select {
+		case w.waiting <- struct{}{}:
+		default:
+		}
+	}
+	return n, err
+}
+func (w *pairingWaitOutput) String() string { w.mu.Lock(); defer w.mu.Unlock(); return w.text.String() }
+
+func TestGitHubPairReportsActualLockWaitBeforeCancellation(t *testing.T) {
+	for _, scenario := range []struct{ name, path, message string }{{"profile", "github-auth-profile-personal.lock", "another GitHub operation to release the selected account cache"}, {"runtime", "runtime-build.lock", "runtime build to finish"}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			directory, _ := pairingFixture(t)
+			t.Setenv("SDLC_STATE_DIR", directory)
+			lock, err := filelock.Acquire(filepath.Join(directory, scenario.path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lock.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			output := &pairingWaitOutput{waiting: make(chan struct{}, 1)}
+			done := make(chan error, 1)
+			go func() {
+				done <- githubCommand(ctx, []string{"pair", "--profile", "personal", "--signing-profile", "personal-key"}, output)
+			}()
+			select {
+			case <-output.waiting:
+			case err := <-done:
+				t.Fatal("pairing returned before observable wait", err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("pairing stayed silent while waiting")
+			}
+			if !strings.Contains(output.String(), scenario.message) {
+				t.Fatal(output.String())
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("pairing ignored cancellation")
+			}
+			if _, err := githubprofile.Load(directory, "personal"); !os.IsNotExist(err) {
+				t.Fatal("canceled pairing saved account state", err)
+			}
+			if strings.Contains(output.String(), "access acquired") {
+				t.Fatal("blocked pairing claimed ownership")
+			}
+		})
+	}
+}
+func TestGitHubPairBoundsOverallWaitAndPreservesCallerDeadline(t *testing.T) {
+	directory, _ := pairingFixture(t)
+	options := githubOptions{profile: "personal", signingProfile: "personal-key"}
+	_, err := pairGitHub(context.Background(), directory, options, func(ctx context.Context) (githubIdentitySession, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > 5*time.Minute {
+			t.Fatal("pair acquisition was not bounded")
+		}
+		return nil, context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	_, err = pairGitHub(ctx, directory, options, func(inner context.Context) (githubIdentitySession, error) {
+		actual, _ := inner.Deadline()
+		if !actual.Equal(deadline) {
+			t.Fatal("pairing extended caller deadline")
+		}
+		<-inner.Done()
+		return nil, inner.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "GitHub pairing timed out before completion") {
+		t.Fatal("deadline lacked useful pairing message", err)
+	}
+	if _, err := githubprofile.Load(directory, "personal"); !os.IsNotExist(err) {
+		t.Fatal("timed-out pairing saved account state", err)
+	}
+}
+func TestGitHubPairCancellationAfterKeyCheckCannotSavePair(t *testing.T) {
+	directory, profile := pairingFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	session := &fakePairSession{account: githubauth.Identity{ID: 123, Login: "example-user"}, keys: []string{profile.PublicKey}, onKeys: cancel}
+	_, err := pairGitHub(ctx, directory, githubOptions{profile: "personal", signingProfile: "personal-key"}, func(context.Context) (githubIdentitySession, error) { return session, nil })
+	if !errors.Is(err, context.Canceled) || session.closeCalls != 1 {
+		t.Fatal("pairing did not cancel/close after account checks", err)
+	}
+	if _, err := githubprofile.Load(directory, "personal"); !os.IsNotExist(err) {
+		t.Fatal("canceled key check saved pairing", err)
+	}
+}
+
+func TestGitHubPairPreservesExpiredContextThroughSanitizedAcquireError(t *testing.T) {
+	for _, scenario := range []struct {
+		name    string
+		timeout bool
+		want    error
+	}{{"deadline", true, context.DeadlineExceeded}, {"cancellation", false, context.Canceled}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			directory, _ := pairingFixture(t)
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if scenario.timeout {
+				ctx, cancel = context.WithTimeout(context.Background(), 20*time.Millisecond)
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+			}
+			defer cancel()
+			sanitized := errors.New("shared local runtime is unavailable or changed; run sdlc runtime status and rebuild if needed")
+			_, err := pairGitHub(ctx, directory, githubOptions{profile: "personal", signingProfile: "personal-key"}, func(inner context.Context) (githubIdentitySession, error) {
+				if !scenario.timeout {
+					cancel()
+				}
+				<-inner.Done()
+				return nil, sanitized
+			})
+			if !errors.Is(err, scenario.want) || !errors.Is(err, sanitized) {
+				t.Fatal("acquisition hid context cancellation or underlying cause", err)
+			}
+			if scenario.timeout && !strings.Contains(err.Error(), "GitHub pairing timed out before completion") {
+				t.Fatal("sanitized timeout lacked useful guidance", err)
+			}
+			if _, err := githubprofile.Load(directory, "personal"); !os.IsNotExist(err) {
+				t.Fatal("expired pairing saved account state", err)
 			}
 		})
 	}

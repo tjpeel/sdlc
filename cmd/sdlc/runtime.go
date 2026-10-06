@@ -59,7 +59,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	} else {
 		flags.BoolVar(&offline, "offline", false, "verify the local image and list its inventory without checking upstream updates")
 		flags.BoolVar(&all, "all", false, "include bundled npm dependencies and individual Debian updates")
-		flags.StringVar(&githubProfile, "github-profile", "default", "show local paired signing readiness for this GitHub profile")
+		flags.StringVar(&githubProfile, "github-profile", "", "show local paired signing readiness for this profile (uses the project account when omitted)")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -81,12 +81,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	}
 	if args[0] == "status" {
 		// Pairing/signing readiness does not mask runtime/dependency errors.
-		pair, pairErr := githubprofile.Load(manager.Directory, githubProfile)
-		if pairErr != nil {
-			fmt.Fprintln(output, "GitHub pairing needs attention: run sdlc github pair --profile "+githubProfile+".")
-		} else if err := pairedSigningStatus(manager, pair, output); err != nil {
-			fmt.Fprintf(output, "Signing setup needs attention: %v\n", err)
-		}
+		runtimeGitHubStatus(ctx, manager, githubProfile, output)
 		return runtimeStatus(ctx, manager, runtimeupdates.New(), offline, all, output)
 	}
 	source, err = runtimeSource(source, "")
@@ -110,6 +105,35 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		return err
 	}
 	return printRuntime(output, state)
+}
+
+func runtimeGitHubStatus(ctx context.Context, manager runtimeimage.Manager, explicit string, output io.Writer) {
+	var pair githubprofile.Pair
+	var err error
+	if explicit != "" {
+		pair, err = githubprofile.Load(manager.Directory, explicit)
+	} else {
+		root, repository, checkoutErr := checkoutRepository(ctx, manager.Directory, "")
+		if root == "" {
+			fmt.Fprintln(output, "GitHub pairing not checked: run from a project checkout, or use --github-profile NAME (see sdlc github list).")
+			return
+		}
+		err = checkoutErr
+		if err == nil {
+			pair, err = githubprofile.Select(manager.Directory, root, repository, "")
+		}
+	}
+	if err != nil {
+		if explicit != "" && os.IsNotExist(err) {
+			fmt.Fprintf(output, "GitHub profile %s is unpaired. Choose a configured signing profile, then use sdlc github pair --profile %s --signing-profile KEY_PROFILE.\n", explicit, explicit)
+		} else {
+			fmt.Fprintf(output, "GitHub pairing/selection needs attention: %v\nInspect: sdlc github status; list accounts with sdlc github list.\n", err)
+		}
+		return
+	}
+	if err := pairedSigningStatus(manager, pair, output); err != nil {
+		fmt.Fprintf(output, "Signing setup needs attention: %v\n", err)
+	}
 }
 
 func pairedSigningStatus(runtime runtimeimage.Manager, pair githubprofile.Pair, output io.Writer) error {

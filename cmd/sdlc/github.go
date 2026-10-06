@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
@@ -104,7 +105,19 @@ func registeredSigningKey(ctx context.Context, session githubIdentitySession, ac
 	return fmt.Errorf("configured public key is not registered as a signing key on the selected GitHub account; register it in that account's SSH signing keys, then retry")
 }
 
+const githubPairTimeout = 5 * time.Minute
+
 func pairGitHub(ctx context.Context, directory string, options githubOptions, acquire func(context.Context) (githubIdentitySession, error)) (result githubprofile.Pair, resultErr error) {
+	ctx, cancel := context.WithTimeout(ctx, githubPairTimeout)
+	defer cancel()
+	defer func() {
+		if resultErr != nil && ctx.Err() != nil && !errors.Is(resultErr, ctx.Err()) {
+			resultErr = errors.Join(resultErr, ctx.Err())
+		}
+		if errors.Is(resultErr, context.DeadlineExceeded) {
+			resultErr = fmt.Errorf("GitHub pairing timed out before completion; if another GitHub operation or runtime build is active, let it finish before retrying: %w", resultErr)
+		}
+	}()
 	path, err := signing.ProfilePath(directory, options.signingProfile)
 	if err != nil {
 		return result, err
@@ -136,6 +149,9 @@ func pairGitHub(ctx context.Context, directory string, options githubOptions, ac
 		return result, err
 	}
 	if err := result.CheckSigning(current); err != nil {
+		return result, err
+	}
+	if err := ctx.Err(); err != nil {
 		return result, err
 	}
 	return result, githubprofile.Store(directory, result, options.replace)
@@ -270,6 +286,17 @@ func githubCommand(ctx context.Context, args []string, output io.Writer) error {
 	manager := githubauth.New(runtime)
 	manager.Profile = options.profile
 	if options.action == "pair" {
+		manager.OnWait = func(_, reason string) {
+			if reason == "runtime_busy" {
+				fmt.Fprintln(output, "GitHub pairing is waiting for the runtime build to finish.")
+				return
+			}
+			fmt.Fprintln(output, "GitHub pairing is waiting for another GitHub operation to release the selected account cache.")
+		}
+		manager.OnAcquired = func(_ string) {
+			fmt.Fprintln(output, "GitHub pairing access acquired; checking the selected login and public signing-key registration.")
+		}
+
 		fmt.Fprintln(output, "Checking the selected native GitHub login and public signing-key registration...")
 		pair, err := pairGitHub(ctx, runtime.Directory, options, func(ctx context.Context) (githubIdentitySession, error) { return manager.Acquire(ctx) })
 		if err != nil {

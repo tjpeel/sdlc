@@ -362,10 +362,12 @@ Pairing checks the native account and that its configured public key is register
 fetches no 1Password secret and makes no GitHub writes. Names may differ; `--signing-profile` defaults to the
 account profile name when omitted. `github status --profile personal` inspects the global pair; `--verify`
 rechecks native account/key registration without proving vault access.
+Pairing reports waits for the account cache or runtime build. Its checks have a
+five-minute deadline and respect Ctrl-C; a canceled check does not save a pairing.
 
-After pairing, `sdlc runtime status --offline --github-profile personal` includes
-that profile's local signing readiness. Without this flag runtime status checks
-the `default` profile, which may still be unconfigured.
+In a project checkout, `sdlc runtime status --offline` checks its selected GitHub
+account and paired signing profile. Use `--github-profile personal` to inspect a
+particular account, or when running outside a project checkout.
 
 Each GitHub account has a separate private plaintext Docker cache, with its own lease, on the same shared
 image. Host `GH_TOKEN`, host `gh` configuration and SSH agents cannot override it. Use another named profile

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
 )
@@ -72,6 +73,58 @@ func TestRuntimeArgumentsAndHelpNeverCreateState(t *testing.T) {
 	}
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {
 		t.Fatal("invalid arguments or help created state", err)
+	}
+}
+
+func TestRuntimeStatusChecksSelectedProjectPair(t *testing.T) {
+	root := runGitFixture(t)
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := forbidConnectedRunCommands(t, root)
+	directory, profile := pairingFixture(t)
+	t.Setenv("SDLC_STATE_DIR", directory)
+	pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
+	if err := githubprofile.Store(directory, pair, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := githubprofile.SaveSelection(directory, root, "example-org/project", pair); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profile.BootstrapFile, []byte("fake-service-bootstrap\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.Mkdir(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+	var output bytes.Buffer
+	err = runtimeCommand(context.Background(), []string{"status", "--offline"}, &output, &bytes.Buffer{})
+	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(output.String(), "GitHub profile: personal\n") || !strings.Contains(output.String(), "Signing profile: personal-key\n") || strings.Contains(output.String(), "needs attention") || strings.Contains(output.String(), "--profile default") {
+		t.Fatalf("runtime status lost selected pairing or masked missing runtime: %s; %v", output.String(), err)
+	}
+	output.Reset()
+	err = runtimeCommand(context.Background(), []string{"status", "--offline", "--github-profile", "other"}, &output, &bytes.Buffer{})
+	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(output.String(), "GitHub profile other is unpaired") || strings.Contains(output.String(), "GitHub profile: personal") {
+		t.Fatalf("explicit status profile did not override summary: %s; %v", output.String(), err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("pairing readiness started a connected command")
+	}
+}
+
+func TestRuntimeStatusDoesNotInventDefaultPairOutsideCheckout(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("SDLC_STATE_DIR", filepath.Join(t.TempDir(), "absent-state"))
+	var output bytes.Buffer
+	err := runtimeCommand(context.Background(), []string{"status", "--offline"}, &output, &bytes.Buffer{})
+	if !errors.Is(err, os.ErrNotExist) || !strings.Contains(output.String(), "GitHub pairing not checked") || !strings.Contains(output.String(), "--github-profile NAME") || strings.Contains(output.String(), "--profile default") || strings.Contains(output.String(), "needs attention") {
+		t.Fatalf("outside-checkout readiness invented a profile or masked runtime error: %s; %v", output.String(), err)
+	}
+	if _, err := os.Stat(os.Getenv("SDLC_STATE_DIR")); !os.IsNotExist(err) {
+		t.Fatal("readiness created installation state")
 	}
 }
 

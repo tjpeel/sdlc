@@ -912,7 +912,7 @@ sdlc runtime status --offline --github-profile personal
 | --- | --- |
 | `--offline` | Validate the local runtime and show its inventory without upstream update requests. |
 | `--all` | List bundled npm dependencies and individual Debian updates instead of summarizing them. |
-| `--github-profile NAME` | Follow the account's registered pair to its signing profile for an offline summary; unpaired accounts report attention. Omission selects `default` for this runtime summary. |
+| `--github-profile NAME` | Inspect this account's registered pair and signing readiness. Omission uses the current checkout's account selection; outside a checkout, choose a profile explicitly. Unpaired or invalid selections report their actual issue. |
 
 Status verifies that the selected Docker engine and shared image match the
 recorded build, then checks public upstream metadata for updates. Each image
