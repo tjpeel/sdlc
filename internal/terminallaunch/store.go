@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -152,6 +153,73 @@ func (s *Store) Launch(ctx context.Context, request Request, backend Backend) (R
 		return receipt, errors.Join(err, updateErr)
 	}
 	return s.Status(request.ID)
+}
+
+// SelectStatus accepts a full launch ID or a unique prefix for public read commands.
+// Execution and receipt updates continue to require canonical full IDs.
+func (s *Store) SelectStatus(selector string) (Receipt, error) {
+	if idPattern.MatchString(selector) {
+		return s.Status(selector)
+	}
+	if len(selector) < 3 || len(selector) > 36 {
+		return Receipt{}, fmt.Errorf("launch ID must be a lowercase UUID v4 or unique prefix of at least three characters")
+	}
+	for i, char := range selector {
+		hyphen := i == 8 || i == 13 || i == 18 || i == 23
+		if hyphen && char != '-' || !hyphen && !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			return Receipt{}, fmt.Errorf("invalid launch ID prefix")
+		}
+	}
+	if err := cleanDirectory(s.Directory); err != nil {
+		return Receipt{}, err
+	}
+	info, err := os.Lstat(s.Directory)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if !owned(info) || info.Mode().Perm() != 0700 {
+		return Receipt{}, fmt.Errorf("launch store must be private and owned")
+	}
+	directory, err := os.Open(s.Directory)
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer directory.Close()
+	opened, err := directory.Stat()
+	if err != nil {
+		return Receipt{}, err
+	}
+	if !os.SameFile(info, opened) {
+		return Receipt{}, fmt.Errorf("launch store changed while selecting")
+	}
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
+		return Receipt{}, err
+	}
+	var matches []Receipt
+	for _, entry := range entries {
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if entry.Name() != id+".json" || !idPattern.MatchString(id) || !strings.HasPrefix(id, selector) {
+			continue
+		}
+		receipt, err := s.Status(id)
+		if err != nil {
+			return Receipt{}, err
+		}
+		matches = append(matches, receipt)
+	}
+	if len(matches) == 0 {
+		return Receipt{}, fmt.Errorf("no launch matches %q", selector)
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, receipt := range matches {
+			ids = append(ids, receipt.ID)
+		}
+		sort.Strings(ids)
+		return Receipt{}, fmt.Errorf("launch prefix %q is ambiguous; candidates: %s; use a longer prefix", selector, strings.Join(ids, ", "))
+	}
+	return matches[0], nil
 }
 
 func (s *Store) Status(id string) (Receipt, error) {

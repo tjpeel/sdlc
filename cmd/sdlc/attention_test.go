@@ -160,7 +160,7 @@ func TestAttentionResolutionRejectsUnsafeOrUnsupportedRuns(t *testing.T) {
 				}
 				id = "abcdef"
 			case "bad id":
-				id = "abc"
+				id = "ab"
 			}
 			if test == "ready" || test == "no question" || test == "unknown stage" || test == "wrong directory" {
 				if err := workrun.Save(directory, &j); err != nil {
@@ -186,7 +186,7 @@ func TestAttentionResolutionRejectsUnsafeOrUnsupportedRuns(t *testing.T) {
 func TestResumeCommandAndPreviewBindCheckpointAndAnswer(t *testing.T) {
 	j, _ := attentionFixture(t)
 	ctx := context.Background()
-	if err := resumeCommand(ctx, []string{"--run", j.ID, "--dry-run"}, io.Discard); err == nil || !strings.Contains(err.Error(), "sdlc answer") {
+	if err := resumeCommand(ctx, []string{"--run", j.ID[:3], "--dry-run"}, io.Discard); err == nil || !strings.Contains(err.Error(), "sdlc answer") {
 		t.Fatalf("waiting resume: %v", err)
 	}
 	action, err := resolveRunAction(ctx, j.ID, true)
@@ -222,8 +222,17 @@ func TestResumeCommandAndPreviewBindCheckpointAndAnswer(t *testing.T) {
 		t.Fatalf("stale preview accepted: %v", err)
 	}
 	t.Chdir(t.TempDir())
-	if err := resumeCommand(ctx, []string{"--run", j.ID, "--dry-run"}, io.Discard); err != nil {
+	if err := resumeCommand(ctx, []string{"--run", j.ID[:3], "--dry-run"}, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+	// Forgotten checkpoints still resolve in the selected ticket's private directory.
+	if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Forget(j.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{j.ID[:3], j.ID[:4], j.ID[:5]} {
+		if err := runCommand(ctx, append(runArgs("--resume", prefix, "--dry-run"), "--run-root", j.Plan.Root), io.Discard); err != nil {
+			t.Fatalf("retained resume %q: %v", prefix, err)
+		}
 	}
 	// Legacy explicit answer files fail before connected preflight when no question exists.
 	if err := runCommand(ctx, append(runArgs("--resume", j.ID, "--answer-file", path), "--run-root", j.Plan.Root), io.Discard); err == nil || !strings.Contains(err.Error(), "no pending human question") {

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -99,24 +98,22 @@ func Ordered(views []runstatus.View) []runstatus.View {
 	return ordered
 }
 
-// Select accepts a full ID or an unambiguous prefix of at least six characters.
+// Select accepts a full ID or an unambiguous prefix of at least three characters.
 func Select(views []runstatus.View, id string) (runstatus.View, error) {
-	if !regexp.MustCompile(`^[0-9a-f]{6,24}$`).MatchString(id) {
-		return runstatus.View{}, fmt.Errorf("run ID must be six to twenty-four lowercase hexadecimal characters")
+	ids := make([]string, 0, len(views))
+	for _, view := range views {
+		ids = append(ids, view.ID)
 	}
-	var found []runstatus.View
-	for _, v := range views {
-		if strings.HasPrefix(v.ID, id) {
-			found = append(found, v)
+	selected, err := workrun.SelectRunID(ids, id)
+	if err != nil {
+		return runstatus.View{}, err
+	}
+	for _, view := range views {
+		if view.ID == selected {
+			return view, nil
 		}
 	}
-	if len(found) == 0 {
-		return runstatus.View{}, fmt.Errorf("no registered run matches %q", id)
-	}
-	if len(found) != 1 {
-		return runstatus.View{}, fmt.Errorf("run prefix %q is ambiguous; use a longer ID", id)
-	}
-	return found[0], nil
+	return runstatus.View{}, fmt.Errorf("selected run unavailable")
 }
 
 func List(output io.Writer, views []runstatus.View, now time.Time) error {

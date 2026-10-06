@@ -116,6 +116,10 @@ browsing; it does not change where the next job will run. The external
 `sdlc dashboard --scope project --json` for a project snapshot.
 
 Inspect a run with `/dashboard --run RUN_ID` or `/inspect @run:RUN_ID`.
+Run selectors accept a full ID or a unique lowercase hexadecimal prefix of at
+least three characters. The same rule applies to answer, resume, inputs, usage
+and progress. Ambiguous prefixes list the matching full IDs; use more characters
+to select one. Commands retain the full ID after selection.
 Use `/progress --run RUN_ID` or `/dashboard --run RUN_ID --logs` to follow its
 output. `/dashboard forget --run
 RUN_ID` retains saved work and refuses active controllers under the existing
@@ -152,6 +156,10 @@ Explicit progress selection uses the shell's current history scope. Resumed
 work follows its recorded project, even when another project is selected.
 `/progress --run RUN_ID --json` displays one CLI batch as a snapshot.
 
+`/progress --launch-id ID` and `/launch status --id ID` accept a full launch UUID
+or a unique prefix of at least three characters. Progress cursors bind to the
+resolved full ID; internal launch execution requires the full UUID.
+
 ## Answer a stopped run
 
 The dashboard reads saved questions directly from the run checkpoint and shows
@@ -167,8 +175,8 @@ preserved. Dashboard, progress and the answer editor show this file-repair route
 for eligible unpublished implementation questions. In the answer editor, Escape
 returns to commands before attaching a file.
 
-Use `/answer RUN_ID` to open the answer editor. A unique ID prefix of at least
-six characters is sufficient. After `/dashboard --run RUN_ID`, `/answer` uses
+Use `/answer RUN_ID` to open the answer editor. After
+`/dashboard --run RUN_ID`, `/answer` uses
 that selected run. The editor shows its project, ticket and questions. Type free
 text; Enter inserts a newline, Ctrl+S submits the answer and requests a resumed
 controller in an independent terminal, and Escape or Ctrl+C discards the editor.

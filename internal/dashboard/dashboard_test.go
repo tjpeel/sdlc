@@ -123,13 +123,13 @@ func TestQueuedLiveRunShowsItsWaitWithoutClaimingFailure(t *testing.T) {
 
 func TestSelectRequiresUnambiguousPrefixOrExactID(t *testing.T) {
 	views := []runstatus.View{{ID: "abcdef000000000000000001"}, {ID: "abcdef111111111111111111"}, {ID: "123456000000000000000002"}}
-	for _, id := range []string{"abcdef0", views[0].ID, "123456"} {
+	for _, id := range []string{"abcdef0", views[0].ID, "123", "1234", "12345", "123456"} {
 		got, err := Select(views, id)
 		if err != nil || !strings.HasPrefix(got.ID, id) {
 			t.Fatalf("Select(%q): %+v, %v", id, got, err)
 		}
 	}
-	for _, id := range []string{"", "1", "12345", "abcdef", "999999"} {
+	for _, id := range []string{"", "1", "12", "ABC", "abcdef", "999999"} {
 		if _, err := Select(views, id); err == nil {
 			t.Fatalf("unsafe/ambiguous/missing selector %q accepted", id)
 		}

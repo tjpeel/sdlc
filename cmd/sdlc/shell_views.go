@@ -687,7 +687,13 @@ func inspectCommand(ctx context.Context, args []string, out io.Writer) error {
 		if strings.HasPrefix(selector, "@ref:") {
 			*reference = strings.TrimPrefix(selector, "@ref:")
 		} else if strings.HasPrefix(selector, "@run:") {
-			return fmt.Errorf("use sdlc dashboard --run ID to inspect a run in this pass")
+			args := []string{"--run", strings.TrimPrefix(selector, "@run:")}
+			if *asJSON {
+				args = append(args, "--json")
+			} else {
+				args = append(args, "--once")
+			}
+			return dashboardCommand(ctx, args, out)
 		} else {
 			var found bool
 			*reference, *ticket, found = strings.Cut(strings.TrimPrefix(selector, "@"), "/")

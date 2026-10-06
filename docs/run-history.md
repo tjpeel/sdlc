@@ -10,6 +10,13 @@ Within a priority group, newer updates come first. Use `--page N`, or `n` / `p`
 followed by Enter in a watching terminal, to page history. The page can change
 when new runs arrive or their priority changes.
 
+Run selectors accept a full ID or a unique lowercase hexadecimal prefix of at
+least three characters. This applies to dashboard details, removal and export,
+answers, resume, inputs, usage and progress, and `/inspect @run:ID`. Ambiguous
+prefixes list the matching full IDs; use more characters to select one. Commands
+retain the full ID after selection and keep their existing project or
+installation scope. Explicit `usage --run` selection ignores the age filter.
+
 ## Keep a portable checkpoint report
 
 Export before removing a dashboard registration:
@@ -46,8 +53,7 @@ sharing. A report cannot resume a run.
 sdlc dashboard forget --run RECORDED_RUN_ID
 ```
 
-`remove` is an alias for `forget`. The command accepts a full ID or an unambiguous
-prefix of at least six characters. It removes only that run's JSON registration
+`remove` is an alias for `forget`. It removes only that run's JSON registration
 from the installation's private registry. It retains both registry and controller
 lock files, and every run artifact. It prints where the saved work remains.
 
@@ -57,8 +63,12 @@ ownership and links before removing the registration. Missing directories or
 unsafe registry metadata must be repaired first. Removal and export fail closed
 on Windows until equivalent ownership checks are implemented.
 
-The dashboard stops listing the run; resuming it registers it again. Export a
-report first if you want it accessible independently of that registration.
+The dashboard stops listing the run; resuming it registers it again. The legacy
+`sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID` command
+resolves prefixes within that ticket's retained checkpoint directory, including
+runs forgotten from the dashboard.
+
+Export a report first if you want it accessible independently of that registration.
 There is no automatic expiry, disk purge or credential deletion in this command.
 
 ## What stays on disk

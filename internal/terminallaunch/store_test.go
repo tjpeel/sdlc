@@ -392,3 +392,50 @@ func TestHeadroomValueSurvivesPrivateLaunchTransport(t *testing.T) {
 		t.Fatalf("Headroom value changed: %v", consumed.Args)
 	}
 }
+
+func TestSelectStatusResolvesPrefixesWithoutWeakeningExecutionIdentity(t *testing.T) {
+	store, request := fixture(t)
+	request.ID = "abc10000-0000-4000-8000-000000000001"
+	if _, err := store.Launch(context.Background(), request, backendFunc(func(context.Context, string) error { return nil })); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(store.Directory, request.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, selector := range []string{"abc", "abc1", "abc10", request.ID} {
+		receipt, err := store.SelectStatus(selector)
+		if err != nil || receipt.ID != request.ID {
+			t.Fatalf("selector %q: %+v %v", selector, receipt, err)
+		}
+	}
+	if _, err := store.Status("abc"); err == nil {
+		t.Fatal("exact status accepted prefix")
+	}
+	if _, err := store.Consume("abc"); err == nil {
+		t.Fatal("execution accepted prefix")
+	}
+	other := request
+	other.ID = "abc20000-0000-4000-8000-000000000002"
+	if _, err := store.Launch(context.Background(), other, backendFunc(func(context.Context, string) error { return nil })); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SelectStatus("abc"); err == nil || !strings.Contains(err.Error(), request.ID) || !strings.Contains(err.Error(), other.ID) {
+		t.Fatalf("ambiguous launch: %v", err)
+	}
+	for _, selector := range []string{"", "ab", "ABC", "abc/", "fff", "abc100000"} {
+		if _, err := store.SelectStatus(selector); err == nil {
+			t.Fatalf("invalid or missing selector %q accepted", selector)
+		}
+	}
+	after, err := os.ReadFile(filepath.Join(store.Directory, request.ID+".json"))
+	if err != nil || string(after) != string(before) {
+		t.Fatal("selection changed launch receipt")
+	}
+	if err := os.WriteFile(filepath.Join(store.Directory, other.ID+".json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SelectStatus("abc"); err == nil {
+		t.Fatal("corrupt matching receipt ignored")
+	}
+}

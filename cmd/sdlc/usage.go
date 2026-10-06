@@ -55,7 +55,7 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 	flags.SetOutput(output)
 	since := flags.String("since", "7d", "include full records for runs updated within this duration")
 	scope := flags.String("scope", "installation", "project or installation")
-	run := flags.String("run", "", "select one exact registered run regardless of age")
+	run := flags.String("run", "", "select one registered run by ID or unique prefix, regardless of age")
 	structured := flags.Bool("json", false, "numeric JSON summary, without transcripts or account identifiers")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -89,6 +89,23 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 	views, err := runstatus.New(manager.Directory).List(now)
 	if err != nil {
 		return err
+	}
+	if root != "" {
+		filtered := views[:0]
+		for _, view := range views {
+			if sameProjectRoot(view.Root, root) {
+				filtered = append(filtered, view)
+			}
+		}
+		views = filtered
+	}
+	if *run != "" {
+		selected, err := dashboard.Select(views, *run)
+		if err != nil {
+			return err
+		}
+		views = []runstatus.View{selected}
+		*run = selected.ID
 	}
 	rows := []usageRow{}
 	for _, view := range views {

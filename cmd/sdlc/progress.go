@@ -35,8 +35,8 @@ func parseProgressOptions(args []string) (progressOptions, error) {
 	o := progressOptions{}
 	f := flag.NewFlagSet("progress", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
-	f.StringVar(&o.run, "run", "", "run identity or unique prefix")
-	f.StringVar(&o.launch, "launch-id", "", "terminal launch receipt")
+	f.StringVar(&o.run, "run", "", "run identity or unique prefix of at least three characters")
+	f.StringVar(&o.launch, "launch-id", "", "terminal launch receipt UUID or unique prefix of at least three characters")
 	f.StringVar(&o.scope, "scope", "installation", "project or installation")
 	f.StringVar(&o.cursor, "cursor", "", "opaque incremental cursor")
 	f.BoolVar(&o.once, "once", false, "one batch")
@@ -183,6 +183,26 @@ func progressSnapshot(ctx context.Context, stateDir, root string, o progressOpti
 			}
 		}
 		views = selected
+	}
+	if o.launch != "" {
+		store, err := launchStore(stateDir)
+		if err != nil {
+			return batch, err
+		}
+		receipt, err := store.SelectStatus(o.launch)
+		if err != nil {
+			return batch, err
+		}
+		if root != "" && !sameProjectRoot(receipt.Root, root) {
+			return batch, fmt.Errorf("launch belongs to another project; use --scope installation")
+		}
+		o.launch = receipt.ID
+	} else if o.run != "" {
+		selected, err := dashboard.Select(views, o.run)
+		if err != nil {
+			return batch, err
+		}
+		o.run = selected.ID
 	}
 	selector := progressDigest([]string{stateDir, root, o.scope, o.run, o.launch})
 	c, err := decodeProgressCursor(o.cursor, selector)

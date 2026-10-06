@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -22,7 +21,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--page N] [--run RUN_ID] [--logs] [--interval 2s]\n  [--notify off|desktop|bell] [--sound]\nHistory: sdlc dashboard forget --run RUN_ID\nExport: sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY\nShows at most ten runs per page: questions, problems, queued/running work, then completed work.\nA terminal refreshes live by default; redirected output produces one snapshot.\nIn a live terminal: n Enter = next page, p Enter = previous page, q Enter = close.\n--run accepts a full ID or a unique prefix of at least six characters.\n--logs adds a bounded private output tail to a selected run.\nforget removes a stopped run from the dashboard and retains all saved work.\nNotifications are optional and report fixed messages without private work details.\nClosing the dashboard leaves run controllers working."
+const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--page N] [--run RUN_ID] [--logs] [--interval 2s]\n  [--notify off|desktop|bell] [--sound]\nHistory: sdlc dashboard forget --run RUN_ID\nExport: sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY\nShows at most ten runs per page: questions, problems, queued/running work, then completed work.\nA terminal refreshes live by default; redirected output produces one snapshot.\nIn a live terminal: n Enter = next page, p Enter = previous page, q Enter = close.\n--run accepts a full ID or a unique prefix of at least three characters.\n--logs adds a bounded private output tail to a selected run.\nforget removes a stopped run from the dashboard and retains all saved work.\nNotifications are optional and report fixed messages without private work details.\nClosing the dashboard leaves run controllers working."
 
 type dashboardOptions struct {
 	once, watch, json, logs bool
@@ -58,8 +57,10 @@ func parseDashboardOptions(args []string) (dashboardOptions, error) {
 	if options.scope != "project" && options.scope != "installation" {
 		return options, fmt.Errorf("--scope must be project or installation")
 	}
-	if options.run != "" && !regexp.MustCompile(`^[0-9a-f]{6,24}$`).MatchString(options.run) {
-		return options, fmt.Errorf("run ID must be six to twenty-four lowercase hexadecimal characters")
+	if options.run != "" {
+		if err := workrun.ValidateRunSelector(options.run); err != nil {
+			return options, err
+		}
 	}
 	if options.interval < 250*time.Millisecond || options.interval > time.Minute {
 		return options, fmt.Errorf("refresh interval must be between 250ms and 1m")

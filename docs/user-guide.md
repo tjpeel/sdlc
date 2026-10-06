@@ -594,7 +594,7 @@ sdlc dashboard --json
 The live terminal refreshes every two seconds and shows ten runs per page across repositories.
 Questions/problems come first, then missing reviewer login, queued/running work, and completed work. Within
 groups, newer updates come first. Type `n` then Enter for next page, `p` then Enter for previous, or `q` then
-Enter to close. Prefixes must be unique and at least six hexadecimal characters. Redirected output defaults to
+Enter to close. Prefixes must be unique and at least three hexadecimal characters. Redirected output defaults to
 one snapshot; `--watch` appends snapshots. `--interval` accepts `250ms` through `1m`.
 
 Details include questions, findings, check evidence, PR state and the resume command. `--logs` adds a bounded
@@ -624,7 +624,7 @@ can duplicate notifications.
 Use `sdlc attention` to find questions, problems and work ready for human review.
 The run list shows recorded questions and the next command. Inspect one run with
 `sdlc dashboard --run RUN_ID --once`; IDs may be full or a unique prefix of at least
-six characters.
+three characters.
 
 For `waiting_for_human`, answer directly:
 

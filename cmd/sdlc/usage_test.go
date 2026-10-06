@@ -57,7 +57,7 @@ func TestUsageReportsDurableMetricsReadOnly(t *testing.T) {
 }
 
 func TestUsageMissingMetricsAndSelection(t *testing.T) {
-	root, marker, journals := dashboardFixture(t)
+	root, marker, _ := dashboardFixture(t)
 	before := dashboardTree(t, root)
 	var output bytes.Buffer
 	if err := usageCommand(context.Background(), []string{"--json"}, &output); err != nil {
@@ -77,7 +77,7 @@ func TestUsageMissingMetricsAndSelection(t *testing.T) {
 			t.Fatalf("old run was reported as measured: %+v", row)
 		}
 	}
-	for _, args := range [][]string{{"--since", "0d"}, {"--since", "366d"}, {"--scope", "account"}, {"--run", journals[0].ID[:6]}, {"extra"}} {
+	for _, args := range [][]string{{"--since", "0d"}, {"--since", "366d"}, {"--scope", "account"}, {"--run", "12"}, {"extra"}} {
 		if err := usageCommand(context.Background(), args, &bytes.Buffer{}); err == nil {
 			t.Fatalf("unsupported selection accepted: %v", args)
 		}

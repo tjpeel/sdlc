@@ -47,7 +47,7 @@ func TestShellResponseUsesRecordedProjectAndBindsAnswerToQuestion(t *testing.T) 
 	j, marker := attentionFixture(t)
 	t.Chdir(t.TempDir())
 	a := &shellAdapter{plans: map[string]string{}}
-	selected, err := a.resolveRun(context.Background(), "different-project", j.ID[:6])
+	selected, err := a.resolveRun(context.Background(), "different-project", j.ID[:3])
 	if err != nil || selected.Root != j.Plan.Root || selected.ID != j.ID || len(selected.Questions) != 2 {
 		t.Fatalf("selected: %+v %v", selected, err)
 	}
@@ -79,5 +79,16 @@ func TestShellResponseUsesRecordedProjectAndBindsAnswerToQuestion(t *testing.T) 
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("answer preparation contacted a provider")
+	}
+}
+
+func TestInspectRunSelectorUsesDashboardDetail(t *testing.T) {
+	j, _ := attentionFixture(t)
+	var output bytes.Buffer
+	if err := inspectCommand(context.Background(), []string{"@run:" + j.ID[:3], "--json"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), j.ID) || !strings.Contains(output.String(), "waiting_for_human") {
+		t.Fatalf("run detail: %s", output.String())
 	}
 }

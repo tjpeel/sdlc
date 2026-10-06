@@ -547,6 +547,9 @@ sdlc auth login --provider claude
 sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md --resume RECORDED_RUN_ID
 ```
 
+`run --resume` resolves a prefix within the selected reference and ticket's
+retained checkpoint directory, including runs forgotten from the dashboard.
+
 Resume retains the recorded GitHub profile, account/repository IDs and signing
 identity; it does not switch accounts or signing configurations. Existing frozen
 journals retain their legacy same-name signing route.
@@ -630,6 +633,13 @@ cannot guarantee that a provider stops before returning its handoff.
 
 ## Watch local runs
 
+Run selectors accept a full ID or a unique lowercase hexadecimal prefix of at
+least three characters. This applies to dashboard, answer, resume, inputs, usage
+and progress commands. Ambiguous prefixes list the matching full IDs; use more
+characters to select one. Commands retain the full ID after selection and keep
+their existing project or installation scope. Explicit `usage --run` selection
+ignores the age filter.
+
 ```sh
 sdlc dashboard
 sdlc dashboard --once
@@ -651,6 +661,11 @@ until the controller stops; redirected output takes one recent snapshot unless
 `--launch-id` waits for a dispatched terminal and follows its registered ticket
 runs, including resumed controllers. `--scope project` restricts selection to
 the current checkout; the default is installation-wide.
+
+For launch receipts, `launch status --id` and `progress --launch-id` accept a
+full UUID or a unique prefix of at least three characters. Progress cursors bind
+to the resolved full ID. Internal launch execution and receipt updates require
+the full UUID.
 
 JSON output consists of batches with `events`, `cursor` and `done`. Pass the
 opaque cursor back through `--cursor` to read only new output. `--follow --json`
@@ -682,9 +697,8 @@ In a terminal, the view refreshes every two seconds. Redirected output defaults 
 one snapshot. Use `--watch` to append snapshots to redirected output, `--once` for
 one terminal snapshot, or `--json` for one structured snapshot. In a live terminal,
 type `n` then Enter for the next page, `p` then Enter for the previous page, or `q`
-then Enter to close. Set `--interval` between `250ms` and `1m`. `--run` accepts a full run ID or a unique hexadecimal
-prefix of at least six characters. Details include questions, findings, check
-evidence, PR links and the existing resume command. Optional `--logs` reads a
+then Enter to close. Set `--interval` between `250ms` and `1m`. Details include
+questions, findings, check evidence, PR links and the existing resume command. Optional `--logs` reads a
 bounded tail from that selected run's private output; it requires `--run` and
 cannot combine with JSON. Terminal control characters in displayed content are
 removed. JSON contains status and usage projections, without journal prompts,

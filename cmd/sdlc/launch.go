@@ -113,6 +113,18 @@ func launchRunCommand(ctx context.Context, args []string, options runOptions, ou
 	if err != nil {
 		return err
 	}
+	if options.resume != "" {
+		var selected struct {
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal(plan, &selected); err != nil {
+			return err
+		}
+		if len(selected.RunID) != 24 {
+			return fmt.Errorf("offline resume plan lacks a canonical run ID")
+		}
+		args = append(withoutRunFlags(args, "resume"), "--resume", selected.RunID)
+	}
 	return launchPreparedRun(ctx, root, controllerArgs(args), planHash(plan), options.launchID, options.jsonOutput, output, terminallaunch.ITerm2{})
 }
 
@@ -155,7 +167,7 @@ func launchPreparedRun(ctx context.Context, root string, args []string, previewH
 
 func launchCommand(ctx context.Context, args []string, output io.Writer) error {
 	if len(args) == 0 || (args[0] != "status" && args[0] != "execute") {
-		return fmt.Errorf("usage: sdlc launch status --id UUID [--json]; internal handoff: launch execute --id UUID [--state-dir PRIVATE_DIRECTORY]")
+		return fmt.Errorf("usage: sdlc launch status --id UUID_OR_UNIQUE_PREFIX [--json]; prefixes require at least three characters; internal handoff: launch execute --id UUID [--state-dir PRIVATE_DIRECTORY]")
 	}
 	flags := flag.NewFlagSet("launch "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -173,7 +185,7 @@ func launchCommand(ctx context.Context, args []string, output io.Writer) error {
 		return err
 	}
 	if args[0] == "status" {
-		receipt, err := store.Status(*id)
+		receipt, err := store.SelectStatus(*id)
 		if err != nil {
 			return err
 		}

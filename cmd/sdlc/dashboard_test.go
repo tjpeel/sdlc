@@ -134,12 +134,12 @@ func TestDashboardHelpAndOptionsDoNotInitializeRuntime(t *testing.T) {
 	if _, err := parseDashboardOptions([]string{"--help"}); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("help parse: %v", err)
 	}
-	for _, args := range [][]string{{"extra"}, {"--watch", "--once"}, {"--watch", "--json"}, {"--logs"}, {"--logs", "--run", "123456", "--json"}, {"--run", "12345"}, {"--run", "ABCDEF"}, {"--interval", "1ms"}, {"--interval", "2m"}, {"--unknown"}, {"--dry-run"}} {
+	for _, args := range [][]string{{"extra"}, {"--watch", "--once"}, {"--watch", "--json"}, {"--logs"}, {"--logs", "--run", "123456", "--json"}, {"--run", "12"}, {"--run", "ABCDEF"}, {"--interval", "1ms"}, {"--interval", "2m"}, {"--unknown"}, {"--dry-run"}} {
 		if err := dashboardCommand(context.Background(), args, &bytes.Buffer{}); err == nil {
 			t.Fatalf("invalid options accepted: %v", args)
 		}
 	}
-	for _, args := range [][]string{{}, {"--once"}, {"--json"}, {"--watch", "--interval", "250ms"}, {"--run", "123456", "--logs"}} {
+	for _, args := range [][]string{{}, {"--once"}, {"--json"}, {"--watch", "--interval", "250ms"}, {"--run", "123", "--logs"}, {"--run", "1234"}, {"--run", "12345"}} {
 		if _, err := parseDashboardOptions(args); err != nil {
 			t.Fatalf("valid options rejected: %v: %v", args, err)
 		}

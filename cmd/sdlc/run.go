@@ -92,7 +92,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.reviewEffort, "review-effort", "", "review lead reasoning effort")
 	flags.StringVar(&options.root, "run-root", "", "internal recorded root for resume")
 	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
-	flags.StringVar(&options.resume, "resume", "", "recorded run ID")
+	flags.StringVar(&options.resume, "resume", "", "recorded run ID or unique prefix of at least three characters")
 	flags.StringVar(&options.answerFile, "answer-file", "", "human answer to recorded questions")
 	flags.Var(&options.inputs, "input", "exact additional requirements input; repeatable")
 	flags.BoolVar(&options.dockerTests, "docker-tests", false, "enable privileged Docker integration-test daemon")
@@ -286,10 +286,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 	}
 	if options.resume != "" {
-		directory, err = workrun.RunDirectory(work.Root, options.reference, ticket, options.resume, false)
+		directory, err = workrun.ResolveRunDirectory(work.Root, options.reference, ticket, options.resume)
 		if err != nil {
 			return err
 		}
+		options.resume = filepath.Base(directory)
 		journal, err = workrun.Load(directory)
 		if err != nil {
 			return err

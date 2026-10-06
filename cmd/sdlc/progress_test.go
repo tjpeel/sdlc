@@ -149,7 +149,7 @@ func TestProgressLaunchWaitsForClaimAndTracksAllRuns(t *testing.T) {
 	if _, err := store.Launch(context.Background(), request, progressBackend{}); err != nil {
 		t.Fatal(err)
 	}
-	o := progressOptions{launch: id, scope: "installation"}
+	o := progressOptions{launch: id[:3], scope: "installation"}
 	first, err := progressSnapshot(context.Background(), os.Getenv("SDLC_STATE_DIR"), "", o)
 	if err != nil || first.Done || len(first.Events) != 1 || !strings.Contains(first.Events[0].Text, "dispatched") {
 		t.Fatalf("launch batch %+v %v", first, err)
@@ -164,6 +164,7 @@ func TestProgressLaunchWaitsForClaimAndTracksAllRuns(t *testing.T) {
 		}
 	}
 	o.cursor = first.Cursor
+	o.launch = id // The same receipt keeps its cursor when selected by the full ID.
 	second, err := progressSnapshot(context.Background(), os.Getenv("SDLC_STATE_DIR"), "", o)
 	if err != nil || second.Done {
 		t.Fatalf("%+v %v", second, err)
