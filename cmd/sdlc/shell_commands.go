@@ -14,6 +14,7 @@ import (
 func shellCommands() []shell.Command {
 	command := func(name, group, summary, usage string, native bool, flags string) shell.Command {
 		entry := shell.Command{Name: name, Group: group, Summary: summary, Usage: usage, Native: native}
+		entry.Interactive = name == "interactive" || name == "auth login" || name == "signing setup"
 		for _, name := range strings.Fields(flags) {
 			entry.Flags = append(entry.Flags, shell.Flag{Name: "--" + name, Summary: "See command help for values and constraints"})
 		}
@@ -28,6 +29,8 @@ func shellCommands() []shell.Command {
 		command("scope", "Context", "Choose project or all-project dashboard history", "/scope project|all", false, ""),
 		command("reference", "Context", "Select a local work reference without reading ticket bodies", "/reference [NAME]", false, ""),
 		command("work", "Work", "List local references or ordered ticket metadata", "/work --reference REF | --references", false, "reference references json"),
+		command("references", "Work", "List local work references without reading ticket bodies", "/references [--json]", false, "json"),
+		command("tickets", "Work", "List ordered ticket filenames for a local reference", "/tickets REFERENCE [--json]", false, "json"),
 		command("inspect", "Work", "Read one explicitly selected safe local ticket or run", "/inspect @REF/NUMBERED_FILE | @ref:REF | @run:ID", false, "reference ticket json"),
 		command("run", "Work", "Review the existing run plan, then start an independent terminal", "/run --reference REF --ticket FILE | --all [--parallel 2]", false, "reference ticket all parallel watch alternate-providers provider github-profile input base branch repo model effort review-model review-effort resume answer-file docker-tests dry-run timeout notify sound json terminal launch-id headroom"),
 		command("answer", "Work", "Read pending questions, type an answer and resume the recorded run; CLI: sdlc answer --run ID", "/answer [RUN_ID]", false, ""),

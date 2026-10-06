@@ -181,6 +181,18 @@ problem and rerun initialization; existing settings and exclude rules are retain
 
 ## Inspect a ticket stream
 
+List local references, then the ticket filenames for a chosen reference:
+
+```sh
+sdlc references
+sdlc tickets "Example stream"
+```
+
+Both commands accept `--json`. They use the same metadata-only discovery and
+filesystem checks as `sdlc work --references` and `sdlc work --reference`.
+For a reference beginning with `-`, use `sdlc tickets -- -draft`; place any
+`--json` option before the `--` delimiter.
+
 Run from the project repository or a directory inside it:
 
 ```sh

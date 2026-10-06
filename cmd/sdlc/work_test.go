@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +36,28 @@ func TestWorkRejectsArgumentsWithoutCreatingState(t *testing.T) {
 	}
 }
 
+func TestBrowseWorkArgumentErrorsAndHelp(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		command func(context.Context, []string, io.Writer) error
+		invalid [][]string
+	}{
+		{"references", referencesCommand, [][]string{{"unexpected"}, {"--reference", "Example"}, {"--json=invalid"}}},
+		{"tickets", ticketsCommand, [][]string{nil, {""}, {"Example", "extra"}, {"--unknown"}}},
+	} {
+		for _, args := range test.invalid {
+			var output bytes.Buffer
+			if err := test.command(context.Background(), args, &output); err == nil || !strings.Contains(err.Error(), "Usage: sdlc "+test.name) || output.Len() != 0 {
+				t.Fatalf("%s %v: output %q, error %v", test.name, args, output.String(), err)
+			}
+		}
+		var help bytes.Buffer
+		if err := test.command(context.Background(), []string{"--help"}, &help); err != nil || !strings.Contains(help.String(), "Usage: sdlc "+test.name) {
+			t.Fatalf("%s help: %q, %v", test.name, help.String(), err)
+		}
+	}
+}
+
 func TestWorkListsTicketsWithoutReadingBodiesOrRunningChecks(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -50,6 +74,13 @@ func TestWorkListsTicketsWithoutReadingBodiesOrRunningChecks(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(work, name), []byte("Not a structured ticket. Dependencies and specification are absent.\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	draft := filepath.Join(root, ".sdlc/work/-draft/tickets")
+	if err := os.MkdirAll(draft, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(draft, "01-example.md"), []byte("Disposable offline example"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".git", "info", "exclude"), []byte("/.sdlc/work/\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -74,6 +105,33 @@ func TestWorkListsTicketsWithoutReadingBodiesOrRunningChecks(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %s", want, got)
 		}
+	}
+	for _, args := range [][]string{{"Example stream"}, {"--json", "Example stream"}, {"Example stream", "--json"}} {
+		var listing bytes.Buffer
+		if err := ticketsCommand(context.Background(), args, &listing); err != nil {
+			t.Fatal(err)
+		}
+		if len(args) == 1 {
+			if listing.String() != got {
+				t.Fatal("tickets changed the work listing")
+			}
+		} else {
+			var result struct {
+				Reference string   `json:"reference"`
+				Tickets   []string `json:"tickets"`
+			}
+			if err := json.Unmarshal(listing.Bytes(), &result); err != nil || result.Reference != "Example stream" || len(result.Tickets) != 3 || !strings.HasSuffix(result.Tickets[0], "/02-api.md") {
+				t.Fatalf("tickets JSON: %s, %v", listing.String(), err)
+			}
+		}
+	}
+	var references bytes.Buffer
+	if err := referencesCommand(context.Background(), nil, &references); err != nil || !strings.Contains(references.String(), `"Example stream": 3 tickets`) {
+		t.Fatalf("references: %q, %v", references.String(), err)
+	}
+	var literal bytes.Buffer
+	if err := ticketsCommand(context.Background(), []string{"--json", "--", "-draft"}, &literal); err != nil || !strings.Contains(literal.String(), `"reference":"-draft"`) || !strings.Contains(literal.String(), "/01-example.md") {
+		t.Fatalf("literal reference: %q, %v", literal.String(), err)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatal("work accessed installation state")

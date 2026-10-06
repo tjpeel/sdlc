@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,7 +32,10 @@ type progressResult struct {
 	batch      runprogress.Batch
 	err        error
 }
-type completed struct{ err error }
+type completed struct {
+	err   error
+	label string
+}
 
 // Model owns view state only. Resize and background messages do not replace the draft.
 type Model struct {
@@ -58,6 +62,8 @@ type Model struct {
 	monitorArgs                                 []string
 	review                                      []string
 	selectionView                               string
+	commandEcho                                 string
+	readEcho                                    string
 }
 
 func NewModel(ctx context.Context, c Config) *Model {
@@ -164,6 +170,7 @@ func (m *Model) insert() {
 	m.draftGeneration++
 }
 func (m *Model) read(args []string, kind string) tea.Cmd {
+	m.readEcho = commandLabel(&exec.Cmd{Args: append([]string{"sdlc"}, args...)})
 	m.busy = true
 	m.busyKind = kind
 	m.generation++
@@ -292,6 +299,7 @@ func (m *Model) submit() tea.Cmd {
 	}
 	m.stopMonitoring()
 	m.progressView = false
+	m.readEcho = ""
 	m.action = nil
 	m.draft = nil
 	m.cursor = 0
@@ -430,6 +438,9 @@ func (m *Model) submit() tea.Cmd {
 		m.body = "Native command adapter unavailable"
 		return nil
 	}
+	if !command.Interactive || hasHelp(args) {
+		return m.capture(args)
+	}
 	commandToRun, err := m.config.Execute(m.ctx, m.root, args)
 	if err != nil {
 		m.lastError = true
@@ -441,7 +452,7 @@ func (m *Model) submit() tea.Cmd {
 		m.body = "Native command adapter returned no process"
 		return nil
 	}
-	return tea.ExecProcess(commandToRun, func(err error) tea.Msg { return completed{err} })
+	return tea.ExecProcess(commandToRun, func(err error) tea.Msg { return completed{err: err, label: commandLabel(commandToRun)} })
 }
 func hasOptionValue(args []string, name string) bool { _, ok := optionValue(args, name); return ok }
 func hasTicketLocator(args []string) bool {
@@ -550,6 +561,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.Button {
+		case tea.MouseButtonLeft:
+			if msg.Action == tea.MouseActionPress && msg.Y >= 0 && msg.Y < m.outputHeight() {
+				return m, m.enterSelection()
+			}
 		case tea.MouseButtonWheelUp:
 			m.scrollBy(-3)
 		case tea.MouseButtonWheelDown:
@@ -677,12 +692,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case captureResult:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		oldLines, _ := m.scrollViewport()
+		m.body = m.commandEcho + "\n" + msg.text
+		if m.scroll > 0 {
+			newLines, _ := m.scrollViewport()
+			m.scroll += len(newLines) - len(oldLines)
+		}
+		m.clampScroll()
+		if !msg.done {
+			return m, msg.stream.wait(msg.generation)
+		}
+		m.busy, m.busyKind, m.lastError = false, "", msg.err != nil || msg.cancelled
+		m.body += "\n" + commandStatus(msg.err, msg.cancelled)
+		if m.scroll > 0 {
+			m.scroll++
+		}
+		m.clampScroll()
+		if m.config.Prompt != nil {
+			m.branch, m.dirty = m.config.Prompt(m.ctx, m.root)
+		}
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+		return m, nil
 	case completed:
 		m.lastError = msg.err != nil
 		if msg.err != nil {
 			m.body = "Native command failed: " + safe(msg.err.Error())
 		} else {
 			m.body = "Native command finished."
+		}
+		if msg.label != "" {
+			m.body = msg.label + "\n" + m.body
 		}
 		if m.config.Prompt != nil {
 			m.branch, m.dirty = m.config.Prompt(m.ctx, m.root)
@@ -699,16 +745,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.String() == "f2" {
-			lines := strings.Split(m.View(), "\n")
-			lines[len(lines)-1] = ansi.Truncate("F2/Esc resume · Drag to select · Use terminal copy", max(1, m.width), "")
-			m.selectionView = strings.Join(lines, "\n")
-			return m, tea.DisableMouse
+			return m, m.enterSelection()
 		}
 		if m.action != nil {
 			return m.answerKey(msg)
 		}
 		switch msg.String() {
 		case "ctrl+c":
+			if m.busy && m.busyKind == "command" {
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, nil
+			}
 			if m.busy && (m.busyKind == "launch" || m.busyKind == "run-action") {
 				m.draft = nil
 				m.cursor = 0
@@ -836,7 +885,7 @@ func (m *Model) scrollViewport() ([]string, int) {
 		return lines, min(len(lines), max(0, min(height/2, height-3)))
 	}
 	lines := strings.Split(ansi.Hardwrap(m.body, width, true), "\n")
-	return lines, max(0, height-m.completionHeight()-2)
+	return lines, max(0, height-m.completionHeight()-2-m.echoHeight())
 }
 
 func (m *Model) clampScroll() {
@@ -874,7 +923,7 @@ func (m *Model) View() string {
 		return m.actionView()
 	}
 	width, height := max(1, m.width), max(1, m.height)
-	footer := "Wheel/PgUp/PgDn scroll · / commands · Tab/Enter complete · Enter dispatch"
+	footer := "Wheel/PgUp/PgDn scroll · Click then drag to select · Esc resumes · / commands"
 	if m.progressView {
 		state := "Following"
 		if m.scroll > 0 {
@@ -934,6 +983,9 @@ func (m *Model) View() string {
 		}
 		bottom = append(bottom, ansi.Truncate(inlineSafe(line), width, ""))
 	}
+	if m.readEcho != "" {
+		bottom = append(bottom, ansi.Truncate(m.readEcho, width, ""))
+	}
 	bottom = append(bottom, prompt, ansi.Truncate("F2 select · "+footer, width, ""))
 	if len(bottom) > height {
 		bottom = bottom[len(bottom)-height:]
@@ -949,6 +1001,26 @@ func (m *Model) View() string {
 		visible = append(visible, "")
 	}
 	return strings.Join(append(visible, bottom...), "\n")
+}
+
+func (m *Model) echoHeight() int {
+	if m.readEcho != "" {
+		return 1
+	}
+	return 0
+}
+func (m *Model) outputHeight() int {
+	if m.action != nil {
+		_, available := m.scrollViewport()
+		return min(m.height-1, available+1)
+	}
+	return max(0, m.height-m.completionHeight()-2-m.echoHeight())
+}
+func (m *Model) enterSelection() tea.Cmd {
+	lines := strings.Split(m.View(), "\n")
+	lines[len(lines)-1] = ansi.Truncate("F2/Esc resume · Drag to select · Use terminal copy", max(1, m.width), "")
+	m.selectionView = strings.Join(lines, "\n")
+	return tea.DisableMouse
 }
 
 func (m *Model) leaveSelection() tea.Cmd {

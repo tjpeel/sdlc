@@ -42,6 +42,27 @@ printf '\342\200\213'
 	}
 }
 
+func TestShellReadBrowseCommandsPreservesExplicitReference(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "fake-sdlc")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &shellAdapter{executable: executable}
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"references", "--json"}, "references\n--json\n"},
+		{[]string{"tickets", "Example stream", "--json"}, "tickets\nExample stream\n--json\n"},
+	} {
+		got, err := adapter.read(context.Background(), root, test.args)
+		if err != nil || got != test.want {
+			t.Fatalf("browse dispatch %v: %q, %v", test.args, got, err)
+		}
+	}
+}
+
 func TestShellNormalisesLocatorsWithoutReinterpretingValues(t *testing.T) {
 	tests := []struct {
 		args, want []string
@@ -160,6 +181,17 @@ func TestDashboardProjectScopeUsesCurrentCheckout(t *testing.T) {
 
 func TestShellCompletionDoesNotReadTicketBodies(t *testing.T) {
 	root := runGitFixture(t)
+	if err := os.MkdirAll(filepath.Join(root, ".sdlc/work/Example stream/tickets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".sdlc/work/-draft/tickets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"Example stream", "-draft"} {
+		if err := os.WriteFile(filepath.Join(root, ".sdlc/work", ref, "tickets/01-example.md"), []byte("Disposable offline example"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(root, ".sdlc/work/TASK-1/tickets/01-selected.md"), []byte("\x00\xff private example"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +202,22 @@ func TestShellCompletionDoesNotReadTicketBodies(t *testing.T) {
 	}
 	if strings.Contains(suggestions[0].Description, "private example") {
 		t.Fatal("body in completion")
+	}
+	for _, draft := range []string{"/tickets TASK", "/tickets --json TASK", "/reference TASK"} {
+		suggestions, err := shellCompletion(context.Background(), root, draft)
+		if err != nil || len(suggestions) != 1 || suggestions[0].Label != "TASK-1" || !strings.HasSuffix(suggestions[0].Insert, `"TASK-1"`) {
+			t.Fatalf("reference completion for %q: %+v, %v", draft, suggestions, err)
+		}
+	}
+	suggestions, err = shellCompletion(context.Background(), root, "/tickets Example")
+	if err != nil || len(suggestions) != 1 || suggestions[0].Insert != `/tickets "Example stream"` {
+		t.Fatalf("quoted reference completion: %+v, %v", suggestions, err)
+	}
+	for _, draft := range []string{"/tickets -d", "/tickets -- -d"} {
+		suggestions, err = shellCompletion(context.Background(), root, draft)
+		if err != nil || len(suggestions) != 1 || suggestions[0].Insert != `/tickets -- "-draft"` {
+			t.Fatalf("literal reference completion for %q: %+v, %v", draft, suggestions, err)
+		}
 	}
 	if after := dashboardTree(t, root); !reflect.DeepEqual(before, after) {
 		t.Fatal("completion wrote checkout")

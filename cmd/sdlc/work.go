@@ -9,11 +9,61 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/tjpeel/sdlc/internal/project"
 )
 
 const workUsage = "Usage: sdlc work --reference REFERENCE [--json] | work --references [--json]\nRun from a project repository to list local references and tickets without reading their bodies."
+
+func referencesCommand(ctx context.Context, args []string, output io.Writer) error {
+	return browseWorkCommand(ctx, "references", args, output)
+}
+
+func ticketsCommand(ctx context.Context, args []string, output io.Writer) error {
+	return browseWorkCommand(ctx, "tickets", args, output)
+}
+
+func browseWorkCommand(ctx context.Context, name string, args []string, output io.Writer) error {
+	usage := "Usage: sdlc " + name
+	if name == "tickets" {
+		usage += " REFERENCE"
+	}
+	usage += " [--json]"
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	structured := flags.Bool("json", false, "structured metadata")
+	// Accept --json on either side of the reference, without splitting its name.
+	var options, positional []string
+	literal := false
+	for _, arg := range args {
+		if !literal && arg == "--" {
+			literal = true
+		} else if !literal && strings.HasPrefix(arg, "-") {
+			options = append(options, arg)
+		} else {
+			positional = append(positional, arg)
+		}
+	}
+	if err := flags.Parse(options); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			_, err = fmt.Fprintln(output, usage)
+			return err
+		}
+		return fmt.Errorf("invalid %s arguments; %s", name, usage)
+	}
+	if flags.NArg() != 0 || (name == "references" && len(positional) != 0) || (name == "tickets" && (len(positional) != 1 || positional[0] == "")) {
+		return fmt.Errorf("%s", usage)
+	}
+	workArgs := []string{"--references"}
+	if name == "tickets" {
+		workArgs = []string{"--reference", positional[0]}
+	}
+	if *structured {
+		workArgs = append(workArgs, "--json")
+	}
+	return workCommand(ctx, workArgs, output)
+}
 
 func workCommand(ctx context.Context, args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("work", flag.ContinueOnError)

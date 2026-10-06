@@ -136,7 +136,7 @@ func TestOnboardStartsAtHeadingAndScrollsWithoutLosingDraft(t *testing.T) {
 				t.Fatalf("onboard did not open at heading: %q", view)
 			}
 			m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
-			for i := 0; i < 30; i++ {
+			for i := 0; i < 100; i++ {
 				if wheel {
 					m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
 				} else {
@@ -403,7 +403,7 @@ func TestMonitorPollKeepsSelectedRunAndFlags(t *testing.T) {
 		lines := strings.Split(ansi.Strip(m.View()), "\n")
 		return lines[len(lines)-1]
 	}
-	wantFooter := "F2 select · Wheel/PgUp/PgDn scroll · / commands · Tab/Enter complete · Enter dispatch"
+	wantFooter := "F2 select · Wheel/PgUp/PgDn scroll · Click then drag to select · Esc resumes · / commands"
 	if footer() != wantFooter {
 		t.Fatalf("dashboard footer before refresh: %q", footer())
 	}

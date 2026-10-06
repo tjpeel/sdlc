@@ -56,6 +56,10 @@ func main() {
 			command = func() error { return projectCommand(ctx, os.Args[2:], os.Stdout) }
 		case "inspect":
 			command = func() error { return inspectCommand(ctx, os.Args[2:], os.Stdout) }
+		case "references":
+			command = func() error { return referencesCommand(ctx, os.Args[2:], os.Stdout) }
+		case "tickets":
+			command = func() error { return ticketsCommand(ctx, os.Args[2:], os.Stdout) }
 		case "launch":
 			command = func() error { return launchCommand(ctx, os.Args[2:], os.Stdout) }
 		case "terminal":
@@ -91,6 +95,7 @@ func main() {
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
 		fmt.Println("       sdlc init (from a project repository)")
 		fmt.Println("       sdlc work --reference REFERENCE | --references [--json] (local ticket metadata)")
+		fmt.Println("       sdlc references [--json] | tickets REFERENCE [--json] (local ticket metadata)")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
 		fmt.Println("         Optional provider route: --headroom off|passthrough|optimize (default: off)")

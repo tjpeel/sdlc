@@ -251,7 +251,7 @@ func TestPlainNativeCommandRetainsOutputDescriptors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer output.Close()
-	err = RunPlain(context.Background(), Config{Input: strings.NewReader("/native\n/exit\n"), Output: output, Commands: []Command{{Name: "native", Native: true}}, Execute: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+	err = RunPlain(context.Background(), Config{Input: strings.NewReader("/native\n/exit\n"), Output: output, Commands: []Command{{Name: "native", Native: true, Interactive: true}}, Execute: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
 		child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPlainNativeOutputDescriptorHelper$")
 		child.Env = append(os.Environ(), "SDLC_TEST_NATIVE_OUTPUT="+output.Name())
 		return child, nil

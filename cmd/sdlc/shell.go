@@ -452,7 +452,8 @@ func (b *boundedBuffer) Write(data []byte) (int, error) {
 func shellCompletion(ctx context.Context, root, draft string) ([]shell.Suggestion, error) {
 	position := strings.LastIndex(draft, "@")
 	refCommand := strings.HasPrefix(draft, "/reference ")
-	if position < 0 && !refCommand {
+	ticketsCommand := strings.HasPrefix(draft, "/tickets ")
+	if position < 0 && !refCommand && !ticketsCommand {
 		return nil, nil
 	}
 	result, err := project.References(ctx, root)
@@ -460,8 +461,20 @@ func shellCompletion(ctx context.Context, root, draft string) ([]shell.Suggestio
 		return nil, err
 	}
 	prefix, needle := draft[:position+1], draft[position+1:]
-	if refCommand {
-		prefix, needle = "/reference ", strings.TrimPrefix(draft, "/reference ")
+	if refCommand || ticketsCommand {
+		prefix = "/reference "
+		if ticketsCommand {
+			prefix = "/tickets "
+		}
+		needle = strings.TrimPrefix(draft, prefix)
+		if ticketsCommand && strings.HasPrefix(needle, "--json ") {
+			prefix += "--json "
+			needle = strings.TrimPrefix(needle, "--json ")
+		}
+		if ticketsCommand && strings.HasPrefix(needle, "-- ") {
+			prefix += "-- "
+			needle = strings.TrimPrefix(needle, "-- ")
+		}
 	}
 	needle = strings.Trim(needle, "\"'")
 	var suggestions []shell.Suggestion
@@ -469,9 +482,13 @@ func shellCompletion(ctx context.Context, root, draft string) ([]shell.Suggestio
 		if ref.Error != "" {
 			continue
 		}
-		if refCommand {
+		if refCommand || ticketsCommand {
 			if strings.HasPrefix(ref.Name, needle) {
-				suggestions = append(suggestions, shell.Suggestion{Label: ref.Name, Insert: prefix + strconv.Quote(ref.Name), Description: fmt.Sprintf("%d local tickets", len(ref.Tickets))})
+				insertPrefix := prefix
+				if ticketsCommand && strings.HasPrefix(ref.Name, "-") && !strings.HasSuffix(prefix, "-- ") {
+					insertPrefix += "-- "
+				}
+				suggestions = append(suggestions, shell.Suggestion{Label: ref.Name, Insert: insertPrefix + strconv.Quote(ref.Name), Description: fmt.Sprintf("%d local tickets", len(ref.Tickets))})
 			}
 			continue
 		}

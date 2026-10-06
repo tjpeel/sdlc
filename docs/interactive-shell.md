@@ -39,15 +39,15 @@ beginning of the matching command catalogue.
 On Mac keyboards, Fn+↑ and Fn+↓ send Page Up and Page Down; plain arrow keys
 continue to edit the command or move through suggestions.
 
-To copy text from the rich view, press F2 (Fn+F2 if your Mac uses F2 for
-brightness), drag to select, then use your terminal's copy shortcut:
-Cmd+C on macOS or Ctrl+Shift+C in many Linux
-terminals. F2 freezes the visible frame and releases mouse capture so the
-terminal can select text. Page or scroll to the text you need before pressing
-F2. Jobs and monitoring continue collecting updates while the frame is frozen.
-Press F2 or Escape to resume the latest view with your draft intact. Ctrl+C
-also resumes without cancelling work. Resizing the terminal resumes the view
-automatically. Selection and copying are handled by the terminal.
+To copy text, left-click the displayed output, then drag to select and use your
+terminal's copy shortcut: Cmd+C on macOS or Ctrl+Shift+C in many Linux terminals.
+The first click enters selection mode, freezes the visible frame and releases
+mouse capture. Escape returns to shell scrolling; your command or answer draft
+is retained. Jobs and monitoring continue collecting updates while the frame is
+frozen. Page or scroll to the text you need before entering selection mode.
+F2 remains a keyboard shortcut (Fn+F2 if your Mac uses F2 for brightness); F2 or
+Ctrl+C can also resume controls without cancelling work. Resizing the terminal
+resumes the view. Selection and copying are handled by the terminal.
 
 Quotes and backslashes group literal arguments. Shell substitutions, pipes
 and environment expansion are not evaluated.
@@ -60,6 +60,8 @@ Useful commands:
 | `/onboard` | Show the current project's setup steps, their purpose and repair commands. |
 | `/version` | Separate running CLI, PATH installation, SDLC source and recorded runtime evidence. |
 | `/reference` | List local work references without reading tickets. |
+| `/references [--json]` | List local work references without changing the selected reference. |
+| `/tickets "Example stream" [--json]` | List ordered ticket filenames for the named reference without reading bodies. |
 | `/reference "Example stream"` | Select a reference for subsequent work/run commands. |
 | `/work` | List exact ticket filenames for the selected reference. |
 | `/inspect "@Example stream/01-first.md"` | Explicitly read a bounded local ticket. |
@@ -80,9 +82,16 @@ Suggestions use reference names and filenames; they do not load ticket bodies.
 An explicit `--reference` must agree with the locator. Existing selection,
 ignored/untracked work, numeric ordering and filesystem validation still apply.
 
-Account login, signing actions, runtime operations and native provider sessions
-hand the terminal to the existing command. Its prompts and provider slash
-commands belong to that command until it exits; SDLC then redraws.
+Ordinary CLI commands run inside the shell, with their command, stdout, stderr
+and completion result retained in the output view. Longer commands stream their
+output as they work. Ctrl+C interrupts the current command and keeps the shell
+open. Captured output is held in memory and bounded; older output may be omitted
+when the limit is reached.
+
+Provider sessions, account login and signing setup hand the terminal to the
+existing interactive command. Its prompts and provider slash commands belong
+to that command until it exits; SDLC then redraws. Other signing actions,
+runtime operations and status checks keep their results in the shell.
 
 ## Projects and history
 

@@ -191,14 +191,24 @@ func RunPlain(ctx context.Context, c Config) error {
 				if e == nil && process == nil {
 					e = fmt.Errorf("native adapter returned no process")
 				}
-				if e == nil {
-					process.Stdin = c.Input
-					process.Stdout = nativeOutput
-					process.Stderr = nativeOutput
-					e = process.Run()
-				}
 				if e != nil {
 					fmt.Fprintln(c.Output, "Native command failed:", safe(e.Error()))
+					continue
+				}
+				if e == nil {
+					fmt.Fprintln(c.Output, commandLabel(process))
+					if entry.Interactive && !hasHelp(args) {
+						process.Stdin = c.Input
+						process.Stdout = nativeOutput
+						process.Stderr = nativeOutput
+						e = process.Run()
+					} else {
+						liveOutput := newPlainCaptureWriter(c.Output)
+						prepareCapture(process, liveOutput)
+						e = process.Run()
+						fmt.Fprintln(c.Output)
+					}
+					fmt.Fprintln(c.Output, commandStatus(e, ctx.Err() != nil))
 				}
 				continue
 			}
@@ -227,6 +237,9 @@ func RunPlain(ctx context.Context, c Config) error {
 		if m.action != nil && !m.answerMode {
 			fmt.Fprintln(c.Output, m.actionContext())
 			fmt.Fprintln(c.Output, "/start resumes; /cancel cancels.")
+		}
+		if m.readEcho != "" {
+			fmt.Fprintln(c.Output, m.readEcho)
 		}
 		fmt.Fprintln(c.Output, strings.ReplaceAll(m.body, "Ctrl+S starts; Esc cancels.", "/start confirms; /cancel cancels."))
 		if m.progressView {

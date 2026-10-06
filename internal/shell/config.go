@@ -19,12 +19,13 @@ type Flag struct {
 	Summary string `json:"summary"`
 }
 type Command struct {
-	Name    string `json:"name"`
-	Group   string `json:"group"`
-	Summary string `json:"summary"`
-	Usage   string `json:"usage"`
-	Flags   []Flag `json:"flags,omitempty"`
-	Native  bool   `json:"native"`
+	Name        string `json:"name"`
+	Group       string `json:"group"`
+	Summary     string `json:"summary"`
+	Usage       string `json:"usage"`
+	Flags       []Flag `json:"flags,omitempty"`
+	Native      bool   `json:"native"`
+	Interactive bool   `json:"interactive,omitempty"`
 }
 type Suggestion struct{ Label, Insert, Description string }
 
