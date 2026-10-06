@@ -90,6 +90,10 @@ explicitly. This checks endpoint selection and native headers; the separate prox
 transport probe checks the forwarding protocols. It does not simulate a completed
 engineering job or prove real subscription access.
 
-No real provider account has been exercised for this variant; connected native
-subscription behaviour, engineering outcomes and useful savings remain trial
-criteria. Start with metrics and passthrough before selecting optimization.
+Supervised private trials have exercised native account forwarding with both
+official clients, resumed implementation, isolated checks, signed draft
+publication, CI and independent review. These results establish the tested local
+workflow, not typical savings or permission for other accounts and execution
+modes. Connected trials still require explicit authorisation. Use equivalent
+tickets and retain repair history and metric coverage; passthrough comparisons
+are needed to isolate forwarding overhead from optimization and model variation.

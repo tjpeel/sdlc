@@ -25,6 +25,10 @@ optimizer mode, timestamps, outcome and optional native usage. Implementation,
 repair and independent review remain distinct. A running record is saved before
 native execution and replaced atomically after completion, failure or cancellation.
 A process crash can leave it pending; reporting does not invent its final usage.
+Requested models and the worker image describe configuration; native version and
+reported-model confirmation remain unknown when the client does not emit them.
+The `repair` role also includes ordinary resumed implementation after checks.
+Use the journal's repair rounds to count failed checks, CI or review findings.
 
 Summaries group attempts by provider, requested model, role and optimizer mode.
 They expose token categories, measured/unknown attempt coverage, elapsed time,
@@ -74,9 +78,13 @@ is frozen for the run and its repairs/review.
 Compare native input/cache/output counts, attempt duration, check outcomes,
 repair rounds, independent-review findings and completion. Headroom's request,
 input/output and saved-token counters have their own `headroom_proxy_aggregate`
-source. They are tokenizer estimates and cover traffic passing through that
-invocation's proxy. Keep them separate from native counters and subscription
-capacity. A lower estimate with worse checks or more repairs is not a useful saving.
+source and cover traffic passing through that invocation's proxy. Input can use
+provider-reported counts or a local fallback; saved tokens are local compression
+estimates, and output uses upstream response counts. The proxy can include native
+child traffic beyond the root thread's emitted usage. Its headline savings ratio
+therefore does not establish the percentage reduction in native client tokens.
+Keep proxy counters separate from native counters and subscription capacity.
+A lower estimate with worse checks or more repairs is not a useful saving.
 
 ## Storage and privacy
 
