@@ -23,8 +23,9 @@ current runtime supports amd64 and arm64 Linux containers.
 
 On the host, you need:
 
-- Git and Go 1.25 or later to install from source. The installed executable does
-  not need Go to run, but reinstalling from source does.
+- Git, plus either Homebrew and Python 3 or Go 1.25 or later for direct source
+  installation. Homebrew installs Go as a build dependency. The installed CLI
+  does not need Go to run.
 - A local Docker engine with Linux containers and its Docker CLI. Integration
   checks using `--docker-tests` also require permission to start a privileged
   disposable Docker-in-Docker daemon.
@@ -67,8 +68,28 @@ Go. Choose the installer matching your host architecture.
 
 ## 2. Install or reinstall the host CLI
 
-Clone the SDLC source into a local directory. Select an existing writable installation directory that is
-already on your shell's PATH:
+Clone the SDLC source into a local directory. For Homebrew installation, put
+Homebrew's bin directory first on PATH, start Docker, and run from a clean,
+committed checkout:
+
+```sh
+cd /PATH/TO/SDLC_SOURCE
+python3 scripts/install_homebrew.py
+sdlc --version
+sdlc version --details
+brew list --versions local/sdlc/sdlc
+sdlc runtime status --offline
+```
+
+This creates a local `local/sdlc` tap and installs a checksum-pinned archive of
+the checkout's current commit, then prepares the runtime. The tap and archive
+remain on the host. Commit local changes before updating; unsigned local
+commits are sufficient for installation. Add `--cli-only` to migrate an existing
+CLI while preserving its runtime. Keep accounts and work on the same state
+directory and Docker engine.
+
+For direct source installation, select an existing writable directory already
+on PATH:
 
 ```sh
 cd /PATH/TO/SDLC_SOURCE
@@ -80,7 +101,9 @@ sdlc --help
 Add your chosen bin directory to PATH before running the installer if necessary. It refuses a destination
 outside PATH or an earlier conflicting `sdlc` command. Clear cross-compilation `GOOS`/`GOARCH` overrides: this
 installer builds for the current host. On Windows, close running SDLC processes before replacing the
-executable. Release archives and package-manager installation are not implemented.
+executable. The direct installer refuses Homebrew-owned destinations; use the
+Homebrew flow to update those installations. Downloadable release archives are
+not implemented.
 
 The installer builds the host command and shared runtime together. It runs the newly built candidate to
 prepare the runtime using source pins, then replaces the executable. Failed builds or runtime preparation
@@ -97,15 +120,20 @@ sdlc update --dependencies
 sdlc update --cli-only
 ```
 
-`update` installs current local source and its runtime pins. `--pull` first fast-forwards a clean checkout;
-omit it when installing local changes. `--dependencies` resolves newer public dependencies instead of
+`update` installs current local source and its runtime pins. With Homebrew, it
+refreshes the archive and formula from the current commit before upgrading the
+CLI. `--pull` first fast-forwards a clean checkout; omit it for committed local
+changes. `--dependencies` resolves newer public dependencies instead of
 resetting to source pins. `--cli-only` installs the executable and keeps the runtime, including paused work.
 The two pin policies are alternatives. The dry-run stays offline and changes nothing. A dry-run with
 `--pull` describes current local source; remote changes are checked only during execution.
 
-Source and destination are recorded privately. Use `--source /PATH/TO/SDLC_SOURCE` after moving the clone,
-or `--bin-dir /PATH/TO/YOUR_BIN_DIRECTORY` after changing PATH. `/update` offers the same options in the
-shell; reopen an existing shell to run the new build.
+Source and destination are recorded privately. Use `--source /PATH/TO/SDLC_SOURCE`
+after moving the clone. Direct source installations also accept `--bin-dir`
+after changing PATH; Homebrew controls its own destination. `/update` uses the
+same flow. Reopen existing shells to run the new build. A direct `brew upgrade`
+uses the last prepared archive and leaves Docker unchanged; use `sdlc update`
+to deliver a new source commit and its runtime together.
 
 Private installation state normally uses the OS user configuration directory followed by `sdlc`:
 `~/Library/Application Support/sdlc` on macOS or `~/.config/sdlc` on Linux, respecting XDG configuration.

@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/tjpeel/sdlc/internal/runprogress"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 )
@@ -31,6 +33,7 @@ type RunAction struct {
 }
 
 type Config struct {
+	Progress              func(context.Context, string, []string, string) (runprogress.Batch, error)
 	ResolveRun            func(context.Context, string, string) (RunAction, error)
 	RespondRun            func(context.Context, RunAction, string) (string, error)
 	ResumeRun             func(context.Context, RunAction) (string, error)

@@ -19,6 +19,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/project"
+	"github.com/tjpeel/sdlc/internal/runprogress"
 	"github.com/tjpeel/sdlc/internal/shell"
 	"github.com/tjpeel/sdlc/internal/terminallaunch"
 )
@@ -64,7 +65,7 @@ func shellCommand(ctx context.Context, args []string, input, output *os.File) er
 	branch, dirty := promptIdentity(ctx, root)
 	adapter := &shellAdapter{executable: executable, plans: map[string]string{}}
 	config := shell.Config{Root: root, Version: buildinfo.Version, Branch: branch, Dirty: dirty, Commands: shellCommands(), Input: input, Output: output,
-		Read: adapter.read, Execute: adapter.execute, Launch: adapter.launch, Complete: shellCompletion, Prompt: promptIdentity,
+		Read: adapter.read, Execute: adapter.execute, Launch: adapter.launch, Progress: adapter.progress, Complete: shellCompletion, Prompt: promptIdentity,
 		ResolveRun: adapter.resolveRun, RespondRun: adapter.respondRun, ResumeRun: adapter.resumeRun,
 		SelectProject: func(ctx context.Context, current, name string) (string, error) {
 			projects, err := projectList(ctx)
@@ -91,6 +92,103 @@ type shellAdapter struct {
 	plans      map[string]string
 	launchID   string
 	launchRoot string
+}
+
+// The CLI owns log access, cursors, producer attribution and run liveness.
+func (a *shellAdapter) progress(ctx context.Context, root string, selectors []string, cursor string) (runprogress.Batch, error) {
+	args := []string{"progress", "--once", "--json"}
+	hasSelection := false
+	if len(selectors) > 0 {
+		validated := append([]string(nil), selectors[1:]...)
+		for i := range validated {
+			if validated[i] == "--scope=all" {
+				validated[i] = "--scope=installation"
+			}
+			if validated[i] == "all" && i > 0 && validated[i-1] == "--scope" {
+				validated[i] = "installation"
+			}
+		}
+		if selectors[0] == "dashboard" {
+			if _, err := parseDashboardOptions(validated); err != nil {
+				return runprogress.Batch{}, err
+			}
+		} else {
+			o, err := parseProgressOptions(validated)
+			if err != nil {
+				return runprogress.Batch{}, err
+			}
+			if cursor == "" {
+				cursor = o.cursor
+			}
+		}
+	}
+	for i := 1; i < len(selectors); i++ {
+		name, value, assigned := strings.Cut(strings.TrimPrefix(selectors[i], "--"), "=")
+		if name != "run" && name != "launch-id" && name != "scope" {
+			continue
+		}
+		if !assigned {
+			if i+1 >= len(selectors) {
+				return runprogress.Batch{}, fmt.Errorf("--%s requires a value", name)
+			}
+			i++
+			value = selectors[i]
+		}
+		if name == "scope" && value == "all" {
+			value = "installation"
+		}
+		if name == "run" || name == "launch-id" {
+			hasSelection = true
+		}
+		args = append(args, "--"+name, value)
+	}
+	if !hasSelection {
+		a.mu.Lock()
+		id, launchRoot := a.launchID, a.launchRoot
+		a.mu.Unlock()
+		if id == "" {
+			return runprogress.Batch{}, fmt.Errorf("choose /progress --run RUN_ID")
+		}
+		// Answer/resume can select a run from another project. Follow its new
+		// controller receipt while keeping the shell's project selection intact.
+		root = launchRoot
+		args = append(args, "--launch-id", id)
+	}
+	if cursor != "" {
+		args = append(args, "--cursor", cursor)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, a.executable, args...)
+	command.Dir = root
+	var output progressBuffer
+	var diagnostics boundedBuffer
+	command.Stdout, command.Stderr = &output, &diagnostics
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(dashboard.SafeText(diagnostics.String()))
+		if message == "" {
+			message = err.Error()
+		}
+		return runprogress.Batch{}, errors.New(message)
+	}
+	var batch runprogress.Batch
+	decoder := json.NewDecoder(strings.NewReader(output.String()))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&batch) != nil || decoder.Decode(new(any)) != io.EOF {
+		return batch, fmt.Errorf("invalid CLI progress batch")
+	}
+	return batch, nil
+}
+
+// Progress batches cap event bytes separately from their multi-run cursor.
+// Report overflow rather than returning truncated structured output.
+type progressBuffer struct{ bytes.Buffer }
+
+func (b *progressBuffer) Write(data []byte) (int, error) {
+	if b.Len()+len(data) > 1024*1024 {
+		return 0, fmt.Errorf("CLI progress batch exceeds 1 MiB")
+	}
+	return b.Buffer.Write(data)
 }
 
 func normaliseShellArgs(args []string) ([]string, error) {
@@ -199,6 +297,21 @@ func (a *shellAdapter) read(ctx context.Context, root string, args []string) (st
 		var output boundedBuffer
 		err := versionDetailsCommand(ctx, args[1:], &output)
 		return dashboard.SafeText(output.String()), err
+	}
+	if args[0] == "progress" {
+		// JSON shell views are snapshots; continuous output uses Progress.
+		args = withoutRunFlags(args, "follow")
+		for i := range args {
+			if args[i] == "--scope=all" {
+				args[i] = "--scope=installation"
+			}
+			if args[i] == "all" && i > 0 && args[i-1] == "--scope" {
+				args[i] = "installation"
+			}
+		}
+		if !containsArg(args, "--once") {
+			args = append(args, "--once")
+		}
 	}
 	if args[0] == "onboard" && len(args) == 1 {
 		args = append(args, "status")

@@ -578,8 +578,34 @@ sdlc dashboard --json
 sdlc dashboard --page 2
 sdlc dashboard --notify desktop --sound
 sdlc dashboard --run RECORDED_RUN_ID --logs
+sdlc progress --run RECORDED_RUN_ID
+sdlc progress --run RECORDED_RUN_ID --follow
+sdlc progress --launch-id RECORDED_LAUNCH_ID --follow
+sdlc progress --run RECORDED_RUN_ID --once --json
 sdlc dashboard forget --run RECORDED_RUN_ID
 ```
+
+`progress` appends labelled SDLC steps, check output and native agent output as
+it arrives. Labels include the run, provider and role. In a terminal it follows
+until the controller stops; redirected output takes one recent snapshot unless
+`--follow` is supplied. Ctrl+C closes the view and leaves the controller running.
+`--launch-id` waits for a dispatched terminal and follows its registered ticket
+runs, including resumed controllers. `--scope project` restricts selection to
+the current checkout; the default is installation-wide.
+
+JSON output consists of batches with `events`, `cursor` and `done`. Pass the
+opaque cursor back through `--cursor` to read only new output. `--follow --json`
+emits newline-delimited batches; `--once --json` returns one batch. The CLI
+bounds aggregate batches across feature runs and retains unread records for the
+next request. The initial tail is bounded to recent output. Provider events and
+full check logs remain private and unchanged. Older runs use their existing
+native/check logs with the same producer labels. Pending questions include the
+answer command. A completed feed means its controller has stopped; check the
+reported run state for ready, failed or waiting for human input.
+
+The shell consumes these same CLI batches after Start or resume, and through
+`/progress --run ID`. `/dashboard --run ID --logs` selects the feed in the shell;
+the external dashboard retains its bounded diagnostic snapshot.
 
 The dashboard reads the installation's private run registry across repositories.
 Viewing needs neither Docker nor provider login and does not resume or stop a

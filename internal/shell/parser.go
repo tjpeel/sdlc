@@ -69,7 +69,7 @@ func Parse(line string) ([]string, error) {
 	return args, nil
 }
 
-var valueFlags = map[string]bool{"reference": true, "ticket": true, "parallel": true, "provider": true, "github-profile": true, "input": true, "base": true, "branch": true, "repo": true, "model": true, "effort": true, "review-model": true, "review-effort": true, "resume": true, "answer-file": true, "timeout": true, "notify": true, "terminal": true, "launch-id": true, "scope": true, "page": true, "interval": true, "profile": true, "file": true, "source": true}
+var valueFlags = map[string]bool{"run": true, "reference": true, "ticket": true, "parallel": true, "provider": true, "github-profile": true, "input": true, "base": true, "branch": true, "repo": true, "model": true, "effort": true, "review-model": true, "review-effort": true, "resume": true, "answer-file": true, "timeout": true, "notify": true, "terminal": true, "launch-id": true, "scope": true, "page": true, "interval": true, "profile": true, "file": true, "source": true}
 
 func hasOption(args []string, name string) bool {
 	// Known run value flags consume the following literal, even when it starts --.

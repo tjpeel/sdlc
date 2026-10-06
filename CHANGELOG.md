@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.6 - 2026-10-06
+
+### Added
+
+- `sdlc progress --run ID` tails incremental private output; `--launch-id` follows all tickets from a terminal launch. JSON batches include a cursor for clients. Labels distinguish SDLC steps, checks, and agent provider and role.
+- Rich and plain shells follow progress after starting or resuming work. `/progress --run ID` and `/dashboard --run ID --logs` use the CLI feed. Page Up preserves a paused viewport; End returns to the tail. Questions include the answer command.
+- Readable native messages and tool output alongside existing raw diagnostic logs. Bounded batches retain unread records, and progress display failures retain provider session checkpoints.
+
 ## 0.1.0-beta.5 - 2026-10-06
 
 ### Added

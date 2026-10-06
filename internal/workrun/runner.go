@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runprogress"
 	"github.com/tjpeel/sdlc/internal/runusage"
 )
 
@@ -25,6 +26,9 @@ type Runner struct {
 	Publisher         Publisher
 	Repository        Repository
 	Output            io.Writer
+	ProgressOutput    io.Writer
+	rawOutput         io.Writer
+	progress          *runprogress.Recorder
 	Instructions      string
 	MaxRounds         int
 	PollInterval      time.Duration
@@ -69,7 +73,12 @@ func (runner Runner) save(directory string, journal *Journal) error {
 		return err
 	}
 	if runner.OnState != nil {
-		return runner.OnState(*journal)
+		if err := runner.OnState(*journal); err != nil {
+			return err
+		}
+	}
+	if runner.progress != nil {
+		return runner.progress.Err()
 	}
 	return nil
 }
@@ -128,6 +137,19 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		runner.Output = io.Discard
 	}
 	runner.Output = observedOutput{runner.Output, runner.OnOutput}
+	runner.rawOutput = runner.Output
+	recorder, err := runprogress.Open(directory, runner.ProgressOutput)
+	if err != nil {
+		return fmt.Errorf("cannot open run progress: %w", err)
+	}
+	runner.progress = recorder
+	controllerOutput := runprogress.NewStream(recorder, runprogress.Event{RunID: journal.ID, Source: "sdlc"}, false)
+	runner.Output = io.MultiWriter(runner.rawOutput, controllerOutput)
+	defer func() { runErr = errors.Join(runErr, controllerOutput.Finish(), recorder.Close()) }()
+	if err := recorder.Record(runprogress.Event{RunID: journal.ID, Source: "sdlc", Stage: journal.State, Text: "Run " + journal.ID + ": " + journal.State}); err != nil {
+		return err
+	}
+
 	controllerStarted := time.Now()
 	journal.Timings.Version = 1
 	defer func() {
@@ -259,7 +281,13 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					return err
 				}
 				checkStarted := time.Now()
-				checkErr := runner.Checker.Check(ctx, journal.Workspace, journal.Plan.Checks, io.MultiWriter(log, runner.Output))
+				checkOutput := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "checks", Stage: journal.State, Attempt: journal.CheckAttempt}, false)
+				checkErr := runner.Checker.Check(ctx, journal.Workspace, journal.Plan.Checks, io.MultiWriter(log, runner.rawOutput, checkOutput))
+				progressErr := checkOutput.Finish()
+				if progressErr != nil {
+					log.Close()
+					return errors.Join(checkErr, progressErr)
+				}
 				journal.Timings.ChecksMS += time.Since(checkStarted).Milliseconds()
 				closeErr := log.Close()
 				journal.Evidence = CheckEvidence{Head: revision.Head, Tree: revision.Tree, Passed: checkErr == nil, Commands: journal.Plan.Checks, Log: filepath.Base(path)}
@@ -485,6 +513,22 @@ func verifyInputs(root string, inputs []Input) error {
 }
 
 func (runner Runner) session(ctx context.Context, directory string, journal *Journal, role, workspace, resume string) (result SessionResult, resultErr error) {
+	// Standalone session callers retain the same raw output and progress boundaries.
+	if runner.rawOutput == nil {
+		runner.rawOutput = runner.Output
+		if runner.rawOutput == nil {
+			runner.rawOutput = io.Discard
+		}
+	}
+	if runner.progress == nil {
+		recorder, err := runprogress.Open(directory, runner.ProgressOutput)
+		if err != nil {
+			return result, err
+		}
+		runner.progress = recorder
+		defer func() { resultErr = errors.Join(resultErr, recorder.Close()) }()
+	}
+
 	journal.Attempt++
 	if err := runner.save(directory, journal); err != nil {
 		return SessionResult{}, err
@@ -540,10 +584,13 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 			resultErr = errors.Join(resultErr, fmt.Errorf("cannot retain provider usage: %w", err))
 		}
 	}()
-	nativeOutput := observedOutput{io.MultiWriter(events, runner.Output), runner.OnNativeOutput}
+	progressOutput := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "agent", Provider: model.Provider, Role: metricRole, Stage: journal.State, Attempt: journal.Attempt}, true)
+	diagnosticProgress := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "agent", Provider: model.Provider, Role: metricRole, Stage: journal.State, Attempt: journal.Attempt, Text: "Diagnostic: "}, false)
+	defer func() { resultErr = errors.Join(resultErr, progressOutput.Finish(), diagnosticProgress.Finish()) }()
+	nativeOutput := observedOutput{io.MultiWriter(events, runner.rawOutput), runner.OnNativeOutput}
 	return runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
 		Directory: nativeDirectory, Prompt: prompt, Schema: outcomeSchema, ResumeID: resume,
-		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom}, io.MultiWriter(nativeOutput, observer), diagnostic)
+		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom}, io.MultiWriter(nativeOutput, observer, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
 }
 
 func (runner Runner) prompt(journal Journal, role string) string {

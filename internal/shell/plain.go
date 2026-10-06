@@ -7,11 +7,15 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
+
+	"github.com/tjpeel/sdlc/internal/runprogress"
 )
 
 // RunPlain offers line-oriented command review when the rich terminal is unavailable.
-// It does not poll between lines or consume input ahead of a native TTY handoff.
+// Progress polls between lines without consuming input ahead of a native TTY handoff.
 func RunPlain(ctx context.Context, c Config) error {
 	if c.Input == nil {
 		c.Input = os.Stdin
@@ -19,13 +23,90 @@ func RunPlain(ctx context.Context, c Config) error {
 	if c.Output == nil {
 		c.Output = os.Stdout
 	}
+	nativeOutput := c.Output
+	c.Output = &plainWriter{writer: c.Output}
 	m := NewModel(ctx, c)
+	var stop func()
+	stopMonitor := func() {
+		if stop != nil {
+			stop()
+			stop = nil
+		}
+	}
+	defer stopMonitor()
+	startMonitor := func() {
+		if !m.progressView || !m.monitor || c.Progress == nil {
+			return
+		}
+		monitorCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		root, cursor := m.root, m.progressCursor
+		args := append([]string(nil), m.progressArgs...)
+		finished, failed := false, false
+		seen := make(map[string]bool)
+		for id := range m.progressRuns {
+			seen[id] = true
+		}
+		go func() {
+			defer close(done)
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-monitorCtx.Done():
+					return
+				case <-ticker.C:
+				}
+				batch, err := c.Progress(monitorCtx, root, args, cursor)
+				if monitorCtx.Err() != nil {
+					return
+				}
+				if err != nil {
+					failed = true
+					fmt.Fprintln(c.Output, "Progress error:", safe(err.Error()))
+					return
+				}
+				for _, event := range batch.Events {
+					if event.RunID != "" {
+						seen[event.RunID] = true
+					}
+					fmt.Fprint(c.Output, safe(runprogress.Format(event)))
+				}
+				cursor = batch.Cursor
+				if batch.Done {
+					finished = true
+					fmt.Fprintln(c.Output, "Controller stopped; tail caught up. /answer RUN_ID or /resume RUN_ID remains available.")
+					return
+				}
+			}
+		}()
+		stop = func() {
+			cancel()
+			<-done
+			m.progressCursor = cursor
+			if finished {
+				m.progressDone = true
+				m.monitor = false
+			}
+			if failed {
+				m.monitor = false
+			}
+			m.progressRuns = seen
+			m.selectedRun = ""
+			if len(seen) == 1 {
+				for id := range seen {
+					m.selectedRun = id
+				}
+			}
+		}
+	}
 	fmt.Fprintln(c.Output, "SDLC", safe(c.Version), "(plain shell; /help for commands)")
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if m.action != nil && m.answerMode {
+			stopMonitor()
 			fmt.Fprintln(c.Output, m.actionContext())
 			fmt.Fprintln(c.Output, "Enter the answer; . submits and resumes, /cancel discards. Use .. for a literal dot and //cancel for a literal /cancel.")
 			submitted, e := readPlainAnswer(c.Input, m)
@@ -44,12 +125,16 @@ func RunPlain(ctx context.Context, c Config) error {
 					_, _ = m.Update(next())
 				}
 			}
-			m.monitor = false
+			if !m.progressView {
+				m.monitor = false
+			}
 			fmt.Fprintln(c.Output, m.body)
+			startMonitor()
 			continue
 		}
 		fmt.Fprintf(c.Output, "➜ %s > ", safe(m.root))
 		line, err := readLine(c.Input)
+		stopMonitor()
 		if errors.Is(err, io.EOF) && line == "" {
 			return nil
 		}
@@ -59,12 +144,18 @@ func RunPlain(ctx context.Context, c Config) error {
 		args, parseErr := Parse(line)
 		if parseErr != nil {
 			fmt.Fprintln(c.Output, parseErr)
+			startMonitor()
 			continue
 		}
 		if args[0] == "exit" && len(args) == 1 {
 			return nil
 		}
 		if args[0] == "cancel" && len(args) == 1 {
+			if m.progressView && m.action == nil {
+				m.stopMonitoring()
+				fmt.Fprintln(c.Output, "Progress view stopped; jobs keep running.")
+				continue
+			}
 			m.review = nil
 			if m.action != nil {
 				m.discardAction()
@@ -85,9 +176,10 @@ func RunPlain(ctx context.Context, c Config) error {
 			command = func() any { return cmd() }
 		} else {
 			entry, known := m.command(args)
-			local := args[0] == "help" || args[0] == "clear" || args[0] == "scope" || args[0] == "reference" || args[0] == "run" || args[0] == "answer" || args[0] == "attention" || args[0] == "resume" || (args[0] == "project" && len(args) > 1 && args[1] == "select")
+			local := args[0] == "help" || args[0] == "clear" || args[0] == "scope" || args[0] == "reference" || args[0] == "run" || args[0] == "answer" || args[0] == "attention" || args[0] == "progress" || args[0] == "resume" || (args[0] == "project" && len(args) > 1 && args[1] == "select")
 			if !local && !known {
 				fmt.Fprintln(c.Output, "Unknown command. Use /help.")
+				startMonitor()
 				continue
 			}
 			if !local && entry.Native {
@@ -101,8 +193,8 @@ func RunPlain(ctx context.Context, c Config) error {
 				}
 				if e == nil {
 					process.Stdin = c.Input
-					process.Stdout = c.Output
-					process.Stderr = c.Output
+					process.Stdout = nativeOutput
+					process.Stderr = nativeOutput
 					e = process.Run()
 				}
 				if e != nil {
@@ -125,15 +217,39 @@ func RunPlain(ctx context.Context, c Config) error {
 				if (value.kind == "launch" || value.kind == "run-action") && next != nil {
 					_, _ = m.Update(next())
 				}
+			} else if value, ok := msg.(progressResult); ok {
+				_, _ = m.Update(value)
 			}
 		}
-		m.monitor = false
+		if !m.progressView {
+			m.monitor = false
+		}
 		if m.action != nil && !m.answerMode {
 			fmt.Fprintln(c.Output, m.actionContext())
 			fmt.Fprintln(c.Output, "/start resumes; /cancel cancels.")
 		}
 		fmt.Fprintln(c.Output, strings.ReplaceAll(m.body, "Ctrl+S starts; Esc cancels.", "/start confirms; /cancel cancels."))
+		if m.progressView {
+			if m.progressDone {
+				fmt.Fprintln(c.Output, "Controller stopped; tail caught up. /answer RUN_ID or /resume RUN_ID remains available.")
+			} else if m.monitor {
+				fmt.Fprintln(c.Output, "Following progress. Enter a command to leave this view; jobs keep running.")
+			}
+		}
+		startMonitor()
 	}
+}
+
+// Serialize progress output with prompts; the input reader remains single-owner.
+type plainWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *plainWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
 }
 func readLine(r io.Reader) (string, error) { return readBoundedLine(r, 16384) }
 func readBoundedLine(r io.Reader, limit int) (string, error) {

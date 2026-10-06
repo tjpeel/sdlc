@@ -38,6 +38,8 @@ func main() {
 			command = func() error { return resumeCommand(ctx, os.Args[2:], os.Stdout) }
 		case "usage":
 			command = func() error { return usageCommand(ctx, os.Args[2:], os.Stdout) }
+		case "progress":
+			command = func() error { return progressCommand(ctx, os.Args[2:], os.Stdout) }
 		case "shell":
 			command = func() error { return shellCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
 		case "help":
@@ -93,6 +95,7 @@ func main() {
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
 		fmt.Println("         Optional provider route: --headroom off|passthrough|optimize (default: off)")
 		fmt.Println("       sdlc usage [--since 7d] [--scope project|installation] [--run RUN_ID] [--json]")
+		fmt.Println("       sdlc progress --run RUN_ID | --launch-id UUID [--once | --follow] [--json]")
 		fmt.Println("       sdlc runtime headroom build|status (separate pinned proxy image)")
 		fmt.Println("         Offline plan: --dry-run --json; independent iTerm2 controller: --terminal background [--launch-id UUID] [--json]")
 		fmt.Println("       sdlc dashboard [--once | --json] [--scope project|installation] [--page N] [--run RUN_ID] [--logs]")

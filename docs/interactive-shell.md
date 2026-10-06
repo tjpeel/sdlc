@@ -36,6 +36,7 @@ Useful commands:
 | `/work` | List exact ticket filenames for the selected reference. |
 | `/inspect "@Example stream/01-first.md"` | Explicitly read a bounded local ticket. |
 | `/dashboard` | Follow project-scoped registered jobs and recorded activity. |
+| `/progress --run RUN_ID` | Tail labelled SDLC steps, checks, and provider agent output. |
 | `/attention` | Follow pending questions, problems and work ready for human review. |
 | `/answer RUN_ID` | Read the questions, type a reply, then Ctrl+S to answer and resume. |
 | `/resume RUN_ID` | Inspect a stopped run, then Ctrl+S to resume its saved stage. |
@@ -76,11 +77,41 @@ browsing; it does not change where the next job will run. The external
 `sdlc dashboard` retains its installation-wide default. Use
 `sdlc dashboard --scope project --json` for a project snapshot.
 
-Inspect a run with `/dashboard --run RUN_ID --logs` or `/inspect @run:RUN_ID`.
-This first pass shows existing journal evidence and bounded recorded output.
-It does not parse complete provider conversations. `/dashboard forget --run
+Inspect a run with `/dashboard --run RUN_ID` or `/inspect @run:RUN_ID`.
+Use `/progress --run RUN_ID` or `/dashboard --run RUN_ID --logs` to follow its
+output. `/dashboard forget --run
 RUN_ID` retains saved work and refuses active controllers under the existing
 rules. Reviewed bulk history clearing remains a later iteration.
+
+## Follow job output
+
+After Start or an answer/resume submission, the shell follows the new launch
+receipt and then its registered runs. Each new output record appends to the
+view. Labels identify the run and producer: `[RUN_ID sdlc]`, `[RUN_ID checks]`,
+`[RUN_ID agent:codex implementation]`, or `[RUN_ID agent:claude review]`.
+Native messages, commands, tool results and diagnostics are rendered as text;
+the original provider events remain in private run logs.
+
+The rich view follows the newest output. Page Up pauses scrolling while the
+feed continues; Page Down or End returns to the tail. New output preserves a
+typed command. Escape stops following, and `/exit` closes the shell. The
+controller continues in its independent terminal. A stopped controller's
+questions and answer/resume commands appear in the feed. `/answer` can use the
+sole run being followed; a feature with several runs requires `/answer RUN_ID`.
+
+Plain mode prints increments while waiting for a command. `/cancel` stops the
+view. Terminal echo can share a line with arriving output; typed input remains
+intact. Native interactive commands retain the terminal's input and output.
+
+The initial view starts with a recent bounded tail, then reads new records
+without repeating them. The rich shell retains up to 1,000 lines or 256 KiB of
+scrollback. Long messages are clipped; use private raw logs for complete
+diagnostics. These display limits do not truncate raw logs or change usage
+measurements. `/usage --run RUN_ID` shows the recorded metrics.
+
+Explicit progress selection uses the shell's current history scope. Resumed
+work follows its recorded project, even when another project is selected.
+`/progress --run RUN_ID --json` displays one CLI batch as a snapshot.
 
 ## Answer a stopped run
 

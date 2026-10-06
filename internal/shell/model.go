@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/tjpeel/sdlc/internal/runprogress"
 )
 
 type result struct {
@@ -24,27 +25,38 @@ type result struct {
 	err                error
 }
 type poll struct{}
+type progressPoll struct{ generation uint64 }
+type progressResult struct {
+	generation uint64
+	batch      runprogress.Batch
+	err        error
+}
 type completed struct{ err error }
 
 // Model owns view state only. Resize and background messages do not replace the draft.
 type Model struct {
-	action                                   *RunAction
-	answerMode                               bool
-	busyKind, launchNotice                   string
-	lastError                                bool
-	config                                   Config
-	ctx                                      context.Context
-	cancel                                   context.CancelFunc
-	root, branch, reference, scope, body     string
-	dirty                                    bool
-	draft                                    []rune
-	cursor, width, height, scroll, selection int
-	suggestions                              []Suggestion
-	dismissed, busy, monitor                 bool
-	generation                               uint64
-	draftGeneration                          uint64
-	monitorArgs                              []string
-	review                                   []string
+	progressView, progressDone, progressPending bool
+	progressCursor                              string
+	progressArgs                                []string
+	selectedRun                                 string
+	progressRuns                                map[string]bool
+	action                                      *RunAction
+	answerMode                                  bool
+	busyKind, launchNotice                      string
+	lastError                                   bool
+	config                                      Config
+	ctx                                         context.Context
+	cancel                                      context.CancelFunc
+	root, branch, reference, scope, body        string
+	dirty                                       bool
+	draft                                       []rune
+	cursor, width, height, scroll, selection    int
+	suggestions                                 []Suggestion
+	dismissed, busy, monitor                    bool
+	generation                                  uint64
+	draftGeneration                             uint64
+	monitorArgs                                 []string
+	review                                      []string
 }
 
 func NewModel(ctx context.Context, c Config) *Model {
@@ -187,6 +199,82 @@ func (m *Model) dashboard() tea.Cmd {
 	}
 	return m.read(args, "dashboard")
 }
+
+// progress captures all callback inputs so background polling never reads view state.
+func (m *Model) progress() tea.Cmd {
+	if m.progressPending || !m.monitor {
+		return nil
+	}
+	m.progressPending = true
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancel = cancel
+	g, root, cursor := m.generation, m.root, m.progressCursor
+	args := append([]string(nil), m.progressArgs...)
+	callback := m.config.Progress
+	return func() tea.Msg {
+		if callback == nil {
+			return progressResult{generation: g, err: fmt.Errorf("progress adapter unavailable")}
+		}
+		batch, err := callback(ctx, root, args, cursor)
+		return progressResult{generation: g, batch: batch, err: err}
+	}
+}
+func (m *Model) followProgress() tea.Cmd {
+	args := append([]string(nil), m.monitorArgs...)
+	if !hasOptionValue(args, "scope") {
+		args = append(args, "--scope", m.scope)
+	}
+	return m.beginProgress(args)
+}
+func (m *Model) beginProgress(args []string) tea.Cmd {
+	m.progressArgs = append([]string(nil), args...)
+	m.progressRuns = make(map[string]bool)
+	m.selectedRun = ""
+	m.progressView, m.progressDone, m.progressPending = true, false, false
+	m.progressCursor = ""
+	return m.progress()
+}
+func (m *Model) followLaunch() tea.Cmd {
+	if m.config.Progress != nil {
+		return m.beginProgress(nil)
+	}
+	return m.dashboard()
+}
+func (m *Model) stopMonitoring() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.generation++
+	m.monitor = false
+	m.progressPending = false
+}
+func (m *Model) appendProgress(text string) {
+	if text == "" {
+		return
+	}
+	before := len(strings.Split(ansi.Hardwrap(m.body, max(1, m.width), true), "\n"))
+	if m.body != "" {
+		m.body += "\n"
+	}
+	m.body += strings.TrimRight(safe(text), "\n")
+	after := len(strings.Split(ansi.Hardwrap(m.body, max(1, m.width), true), "\n"))
+	if m.scroll > 0 {
+		m.scroll += after - before
+	}
+	lines := strings.Split(m.body, "\n")
+	if len(lines) > 1000 {
+		lines = lines[len(lines)-1000:]
+	}
+	for len(lines) > 1 && len(strings.Join(lines, "\n")) > 256*1024 {
+		lines = lines[1:]
+	}
+	m.body = strings.Join(lines, "\n")
+	if len(m.body) > 256*1024 {
+		m.body = string([]rune(m.body)[max(0, len([]rune(m.body))-65536):])
+	}
+	m.scroll = min(m.scroll, max(0, len(strings.Split(ansi.Hardwrap(m.body, max(1, m.width), true), "\n"))-1))
+}
 func (m *Model) submit() tea.Cmd {
 	if len(m.suggestions) > 0 {
 		m.insert()
@@ -201,6 +289,8 @@ func (m *Model) submit() tea.Cmd {
 		m.body = err.Error()
 		return nil
 	}
+	m.stopMonitoring()
+	m.progressView = false
 	m.action = nil
 	m.draft = nil
 	m.cursor = 0
@@ -289,12 +379,38 @@ func (m *Model) submit() tea.Cmd {
 		m.monitor = true
 		m.monitorArgs = append([]string(nil), args...)
 		return m.dashboard()
+	case "progress":
+		if hasOption(args, "json") {
+			if !hasOptionValue(args, "scope") {
+				args = append(args, "--scope", m.scope)
+			}
+			return m.read(args, "read")
+		}
+		m.monitor = !hasOption(args, "once")
+		m.monitorArgs = append([]string(nil), args...)
+		m.body = ""
+		// Fetch once even when continuous following was explicitly disabled.
+		once := !m.monitor
+		m.monitor = true
+		cmd := m.followProgress()
+		if once {
+			m.monitor = false
+		}
+		return cmd
 	case "dashboard":
 		if c, ok := m.command(args); ok && c.Native {
 			break
 		}
 		m.monitor = true
 		m.monitorArgs = append([]string(nil), args...)
+		if m.config.Progress != nil && hasOptionValue(args, "run") && hasOption(args, "logs") && !hasOption(args, "json") {
+			m.body = ""
+			cmd := m.followProgress()
+			if hasOption(args, "once") {
+				m.monitor = false
+			}
+			return cmd
+		}
 		return m.dashboard()
 	}
 	command, known := m.command(args)
@@ -372,6 +488,52 @@ func (m *Model) start() tea.Cmd {
 }
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case progressResult:
+		if msg.generation != m.generation || !m.progressView {
+			return m, nil
+		}
+		m.progressPending = false
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+		if msg.err != nil {
+			m.appendProgress("Progress error: " + msg.err.Error())
+			m.lastError = true
+			m.monitor = false
+			return m, nil
+		}
+		for _, event := range msg.batch.Events {
+			if event.RunID != "" {
+				if m.progressRuns == nil {
+					m.progressRuns = make(map[string]bool)
+				}
+				m.progressRuns[event.RunID] = true
+			}
+			m.appendProgress(runprogress.Format(event))
+		}
+		if len(m.progressRuns) == 1 {
+			for id := range m.progressRuns {
+				m.selectedRun = id
+			}
+		} else {
+			m.selectedRun = ""
+		}
+		m.progressCursor = msg.batch.Cursor
+		m.progressDone = msg.batch.Done
+		if msg.batch.Done {
+			m.monitor = false
+		}
+		if m.monitor {
+			g := m.generation
+			return m, tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return progressPoll{g} })
+		}
+		return m, nil
+	case progressPoll:
+		if msg.generation == m.generation && m.progressView && m.monitor {
+			return m, m.progress()
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = max(1, msg.Width)
 		m.height = max(1, msg.Height)
@@ -405,7 +567,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = 0
 				m.monitor = true
 				m.monitorArgs = []string{"dashboard", "--run", msg.action.ID, "--scope", "all"}
-				return m, m.dashboard()
+				return m, m.followLaunch()
 			}
 			if msg.kind == "launch" {
 				m.launchNotice = m.body
@@ -413,7 +575,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.review = nil
 					m.monitor = true
 					m.monitorArgs = nil
-					return m, m.dashboard()
+					return m, m.followLaunch()
 				}
 				m.review = msg.args
 			}
@@ -456,7 +618,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.monitor = true
 			id := msg.action.ID
 			m.monitorArgs = []string{"dashboard", "--run", id, "--scope", "all"}
-			return m, m.dashboard()
+			return m, m.followLaunch()
 		case "plan":
 			if !hasOption(msg.args, "dry-run") {
 				m.review = msg.args
@@ -472,7 +634,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.body += "\n\nBackground terminal request submitted. Keep its controller terminal open."
 			m.monitor = true
 			m.monitorArgs = nil
-			return m, m.dashboard()
+			return m, m.followLaunch()
 		case "dashboard":
 			if m.monitor {
 				return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return poll{} })
@@ -480,7 +642,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case poll:
-		if m.monitor && !m.busy {
+		if m.monitor && !m.busy && !m.progressView {
 			return m, m.dashboard()
 		}
 		return m, nil
@@ -509,23 +671,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.body = "Waiting for terminal launch acknowledgment. Ctrl+C clears the draft without cancelling a dispatched launch."
 				return m, nil
 			}
-			if len(m.draft) > 0 || m.busy || len(m.review) > 0 {
+			if len(m.draft) > 0 || m.busy || len(m.review) > 0 || m.monitor {
+				m.stopMonitoring()
 				m.draft = nil
 				m.cursor = 0
 				m.suggestions = nil
 				m.review = nil
 				m.dismissed = true
-				if m.cancel != nil {
-					m.cancel()
-				}
 				m.busy = false
-				m.generation++
 				return m, nil
 			}
 			return m, tea.Quit
 		case "ctrl+s":
 			return m, m.start()
 		case "esc":
+			if m.progressView {
+				m.stopMonitoring()
+			}
 			m.review = nil
 			m.suggestions = nil
 			m.dismissed = true
@@ -563,6 +725,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			return m, nil
 		case "end", "ctrl+e":
+			if msg.String() == "end" && m.progressView {
+				m.scroll = 0
+			}
 			m.cursor = len(m.draft)
 			return m, nil
 		case "backspace", "ctrl+h":
@@ -615,6 +780,19 @@ func (m *Model) View() string {
 	}
 	width, height := max(1, m.width), max(1, m.height)
 	footer := "/ commands · Tab complete · Enter inserts then dispatches · PgUp/PgDn scroll"
+	if m.progressView {
+		state := "Following"
+		if m.scroll > 0 {
+			state = "Paused scrolling"
+		}
+		if m.progressDone {
+			state = "Tail caught up"
+		}
+		if !m.monitor && !m.progressDone {
+			state = "Following stopped"
+		}
+		footer = state + " · PgUp pause · End tail · /answer ID · /resume ID · Esc stop view"
+	}
 	if m.busy {
 		footer = "Working… Ctrl+C cancels this UI query, never a run"
 	}
@@ -743,6 +921,9 @@ func (m *Model) resolveAction(args []string) tea.Cmd {
 		id = args[1]
 	} else if len(args) == 1 {
 		id, _ = optionValue(m.monitorArgs, "run")
+		if id == "" {
+			id = m.selectedRun
+		}
 	} else {
 		m.lastError = true
 		m.body = "Usage: /" + args[0] + " RUN_ID"

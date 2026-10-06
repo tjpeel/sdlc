@@ -215,10 +215,16 @@ Watch registered runs across repositories from another terminal:
 ```sh
 sdlc dashboard
 sdlc dashboard --run RECORDED_RUN_ID --logs
+sdlc progress --run RECORDED_RUN_ID
 sdlc dashboard --json
 sdlc dashboard --page 2
 sdlc dashboard --notify desktop --sound
 ```
+
+`sdlc progress --run ID` tails labelled SDLC steps, checks, and provider agent
+output. The shell follows this CLI feed after starting or resuming a job;
+`/progress --run ID` attaches to existing work. Page Up pauses scrolling and End
+returns to the newest output. Closing the view leaves the controller running.
 
 The dashboard shows heartbeat status, current stage and model, questions, check
 results and PR links. It puts attention items first and reads private run state

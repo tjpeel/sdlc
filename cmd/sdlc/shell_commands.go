@@ -63,6 +63,7 @@ func shellCommands() []shell.Command {
 		command("instructions show", "Setup", "Show shared instructions locally", "/instructions show", false, ""),
 		command("instructions set", "Setup", "Use the existing explicit instruction update", "/instructions set --file FILE", true, "file"),
 		command("instructions reset", "Setup", "Restore shared instruction defaults", "/instructions reset", true, ""),
+		command("progress", "Observe", "Tail SDLC steps, checks and provider agent output", "/progress --run ID [--once]", false, "run launch-id scope once follow json cursor interval"),
 		command("clear", "View", "Clear this view while preserving jobs and history", "/clear", false, ""),
 		command("exit", "View", "Close the shell while independent job terminals continue", "/exit", false, ""),
 	}
