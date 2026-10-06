@@ -13,10 +13,10 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN_NAMES = ('CODEX_VERSION', 'GH_VERSION', 'SKILLS_REVISION', 'AGENTS_REVISION')
+PIN_NAMES = ('CODEX_VERSION', 'CLAUDE_VERSION', 'GH_VERSION', 'SKILLS_REVISION', 'AGENTS_REVISION')
 VERSION_PATTERN = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
 SHA_PATTERN = r'[0-9a-f]{40}'
-NPM_URL = 'https://registry.npmjs.org/@openai/codex/latest'
+NPM_PACKAGES = {'CODEX_VERSION': '@openai/codex', 'CLAUDE_VERSION': '@anthropic-ai/claude-code'}
 MAX_RESPONSE_BYTES = 1024 * 1024
 
 
@@ -70,25 +70,30 @@ def github_json(endpoint):
     return parse_json(response.stdout, f'GitHub {endpoint}')
 
 
-def npm_json():
+def npm_json(package):
+    if package not in NPM_PACKAGES.values():
+        raise UpdateError('Unsupported runtime npm package.')
+    url = f'https://registry.npmjs.org/{package}/latest'
     request = urllib.request.Request(
-        NPM_URL, headers={'Accept': 'application/json', 'User-Agent': 'sdlc-runtime-pin-updater'},
+        url, headers={'Accept': 'application/json', 'User-Agent': 'sdlc-runtime-pin-updater'},
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except (OSError, urllib.error.URLError) as error:
-        raise UpdateError('Unable to fetch the Codex npm release.') from error
+        raise UpdateError(f'Unable to fetch the {package} npm release.') from error
     if len(raw) > MAX_RESPONSE_BYTES:
-        raise UpdateError('Codex npm response is too large.')
-    return parse_json(raw, 'the Codex npm registry')
+        raise UpdateError('Runtime npm response is too large.')
+    return parse_json(raw, f'the {package} npm registry')
 
 
 def fetch_candidates():
-    npm = npm_json()
-    if npm.get('name') != '@openai/codex':
-        raise UpdateError('Unexpected package in the Codex npm response.')
-    codex = validate_pin('CODEX_VERSION', npm.get('version'))
+    candidates = {}
+    for name, package in NPM_PACKAGES.items():
+        npm = npm_json(package)
+        if npm.get('name') != package:
+            raise UpdateError('Unexpected package in the runtime npm response.')
+        candidates[name] = validate_pin(name, npm.get('version'))
 
     release = github_json('repos/cli/cli/releases/latest')
     tag = release.get('tag_name')
@@ -97,7 +102,7 @@ def fetch_candidates():
         raise UpdateError('GitHub CLI response must describe a stable release.')
     gh = validate_pin('GH_VERSION', tag[1:])
 
-    candidates = {'CODEX_VERSION': codex, 'GH_VERSION': gh}
+    candidates['GH_VERSION'] = gh
     for name, repo in (('SKILLS_REVISION', 'skills'), ('AGENTS_REVISION', 'agents')):
         payload = github_json(f'repos/tjpeel/{repo}/commits/main')
         candidates[name] = validate_pin(name, payload.get('sha'))
@@ -137,7 +142,7 @@ def update_pins(path, fetcher=None):
     original, contents, pins = load_dockerfile(path)
     candidates = (fetcher or fetch_candidates)()
     if not isinstance(candidates, dict) or set(candidates) != set(PIN_NAMES):
-        raise UpdateError('Expected all four runtime pin candidates.')
+        raise UpdateError('Expected every managed runtime pin candidate.')
     # Validate every candidate before choosing replacements or writing the file.
     for name in PIN_NAMES:
         validate_pin(name, candidates[name])

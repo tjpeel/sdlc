@@ -82,9 +82,30 @@ outside PATH or an earlier conflicting `sdlc` command. Clear cross-compilation `
 installer builds for the current host. On Windows, close running SDLC processes before replacing the
 executable. Release archives and package-manager installation are not implemented.
 
-After updating the source, repeat the install command. It builds the replacement before switching executables,
-leaves the old executable intact on build failure, and preserves runtime records, login volumes and private
-settings. Keep the same installation state directory and Docker engine to reuse saved logins.
+The installer builds the host command and shared runtime together. It runs the newly built candidate to
+prepare the runtime using source pins, then replaces the executable. Failed builds or runtime preparation
+keep the old CLI; an error after runtime selection reports that partial result. Login volumes and private
+settings remain in their existing storage. Keep the same state directory and Docker engine to reuse logins.
+
+Subsequent updates work from any directory:
+
+```sh
+sdlc update --dry-run
+sdlc update
+sdlc update --pull
+sdlc update --dependencies
+sdlc update --cli-only
+```
+
+`update` installs current local source and its runtime pins. `--pull` first fast-forwards a clean checkout;
+omit it when installing local changes. `--dependencies` resolves newer public dependencies instead of
+resetting to source pins. `--cli-only` installs the executable and keeps the runtime, including paused work.
+The two pin policies are alternatives. The dry-run stays offline and changes nothing. A dry-run with
+`--pull` describes current local source; remote changes are checked only during execution.
+
+Source and destination are recorded privately. Use `--source /PATH/TO/SDLC_SOURCE` after moving the clone,
+or `--bin-dir /PATH/TO/YOUR_BIN_DIRECTORY` after changing PATH. `/update` offers the same options in the
+shell; reopen an existing shell to run the new build.
 
 Private installation state normally uses the OS user configuration directory followed by `sdlc`:
 `~/Library/Application Support/sdlc` on macOS or `~/.config/sdlc` on Linux, respecting XDG configuration.
@@ -92,12 +113,11 @@ Private installation state normally uses the OS user configuration directory fol
 mode-`0700` directories and mode-`0600` metadata files, without symlink paths or extra access grants. Do not
 copy actual account state into the source tree or Docker context.
 
-## 3. Build and inspect the shared image
+## 3. Inspect and rebuild the shared image
 
 From the source checkout:
 
 ```sh
-sdlc runtime build --source .
 sdlc runtime status --offline
 sdlc runtime status
 sdlc runtime status --all
@@ -106,6 +126,13 @@ sdlc runtime status --all
 The image is tagged `sdlc:local`. SDLC records its immutable image ID and Docker engine identity; a moved tag
 alone cannot substitute another image for a run. The first build downloads public dependencies. Its bounded
 build context excludes host credentials, local account profiles, private work and Git metadata.
+
+The one-shot installer has already built this image. Rebuild it separately with `sdlc runtime build`;
+that command retains selected local dependency pins. Add `--source-pins` to use the checkout's defaults.
+Runtime replacement checks known saved projects for resumable runs and incomplete feature series. Finish
+that work before replacing its recorded runtime, or install just the CLI with `sdlc update --cli-only`.
+Registered, catalogued, current and source project roots are checked; forgotten external roots cannot
+be discovered. Keep projects registered while they contain unfinished work.
 
 Offline status checks the recorded local runtime and inventory. Ordinary status also checks public upstream
 update metadata; it does not update anything or prove provider, GitHub or vault access. `--all` includes

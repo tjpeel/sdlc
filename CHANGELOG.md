@@ -7,6 +7,19 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.4 - 2026-10-06
+
+### Added
+
+- One-command installation builds the CLI and runtime together using the newly built candidate. `sdlc update` and `/update` reuse saved installation locations; `--pull` fast-forwards clean source, `--cli-only` preserves the runtime and `--dependencies` refreshes public dependencies.
+- Private installation receipts record source, destination and executable identity. Version details find the saved source from other projects and verify installed identity against its recorded hash.
+- `runtime build --source-pins` applies the checkout's pins, including pipeline changes previously masked by private overrides. Default one-command updates use this mode; ordinary runtime rebuilds retain installed pins.
+
+### Fixed
+
+- Block runtime replacement when known saved runs or incomplete features need its image. Errors identify the work and offer CLI-only installation.
+- Include Claude Code releases in scheduled runtime pin updates.
+
 ## 0.1.0-beta.3 - 2026-10-06
 
 ### Added

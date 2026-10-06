@@ -46,8 +46,12 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	var githubProfile string
 	var dryRun bool
 	var all bool
+	var sourcePins bool
 	if args[0] == "build" || args[0] == "update" {
 		flags.StringVar(&source, "source", "", "SDLC clone (uses saved source when omitted)")
+		if args[0] == "build" {
+			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
+		}
 		if args[0] == "update" {
 			flags.BoolVar(&dryRun, "dry-run", false, "check public releases and preview the update without pulling images or rebuilding")
 		}
@@ -87,7 +91,12 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if args[0] == "update" {
 		return runtimeUpdate(ctx, manager, runtimeupdates.New(), source, dryRun, output)
 	}
-	state, err := manager.Build(ctx, source)
+	policy := "retain private dependency pins for the same source"
+	if sourcePins {
+		policy = "use source Dockerfile pins; discard private overrides after a successful build"
+	}
+	fmt.Fprintln(output, "Dependency policy: "+policy)
+	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SourcePins: sourcePins, ValidatePrevious: runtimeSavedWorkGuard(manager.Directory, source)})
 	if err != nil {
 		return err
 	}
@@ -223,6 +232,7 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 	}
 	candidate, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{
 		Pins: &plan.Pins, Refresh: true, ExpectedImageID: state.ImageID,
+		ValidatePrevious: runtimeSavedWorkGuardFromEnvironment(source),
 		ValidateCandidate: func(ctx context.Context, candidate runtimeimage.State) error {
 			if err := validateRuntimePacks(candidate, plan.ExpectedRuntimes); err != nil {
 				return err

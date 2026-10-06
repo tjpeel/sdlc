@@ -37,6 +37,10 @@ type State struct {
 }
 
 type BuildOptions struct {
+	// SourcePins ignores private dependency overrides and uses the source Dockerfile.
+	SourcePins bool
+	// ValidatePrevious runs under the writer lock before Docker operations.
+	ValidatePrevious  func(context.Context, State) error
 	Pins              *runtimepins.Pins
 	Refresh           bool
 	ExpectedImageID   string
@@ -205,6 +209,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if options.ExpectedImageID != "" && !imageID.MatchString(options.ExpectedImageID) {
 		return State{}, errors.New("expected runtime image identity is invalid")
 	}
+	if options.SourcePins && options.Pins != nil {
+		return State{}, errors.New("source pins cannot be combined with explicit dependency pins")
+	}
 	if options.Pins != nil {
 		if err := options.Pins.Validate(); err != nil {
 			return State{}, err
@@ -219,6 +226,14 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	}
 	defer lock.Close()
 	previous, previousErr := manager.read()
+	if options.ValidatePrevious != nil && previousErr != nil && !errors.Is(previousErr, os.ErrNotExist) {
+		return State{}, fmt.Errorf("cannot verify recorded runtime before replacing it: %w", previousErr)
+	}
+	if previousErr == nil && options.ValidatePrevious != nil {
+		if err := options.ValidatePrevious(ctx, previous); err != nil {
+			return State{}, err
+		}
+	}
 	if source == "" {
 		if previousErr != nil {
 			return State{}, previousErr
@@ -234,7 +249,7 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 		return State{}, err
 	}
 	pins := options.Pins
-	if pins == nil && previousErr == nil && previous.Source == root {
+	if pins == nil && !options.SourcePins && previousErr == nil && previous.Source == root {
 		pins = previous.DependencyPins
 	}
 	pins = copyPins(pins)
@@ -270,6 +285,13 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 			return State{}, fmt.Errorf("recorded shared image cannot be inspected; resolve its Docker state before rebuilding: %w", inspectErr)
 		}
 		oldID = ""
+	}
+	// A lost runtime.json must not hide saved work frozen to an existing tag.
+	// This is the inspected image identity, not reconstructed recorded state.
+	if errors.Is(previousErr, os.ErrNotExist) && oldID != "" && options.ValidatePrevious != nil {
+		if err := options.ValidatePrevious(ctx, State{ImageID: oldID, Engine: engine, Source: root}); err != nil {
+			return State{}, err
+		}
 	}
 	if options.ExpectedImageID != "" && (previousErr != nil || previous.Engine != engine || previous.ImageID != options.ExpectedImageID || oldID != options.ExpectedImageID) {
 		return State{}, errors.New("runtime changed since the update plan; check updates again")

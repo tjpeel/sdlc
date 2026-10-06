@@ -73,7 +73,7 @@ jobs:
           folder = Path(os.environ['RUNNER_TEMP'])
           changes = (folder / 'runtime-updates.txt').read_text()
           (folder / 'runtime-pr.md').write_text(
-              'Update the pinned Codex and GitHub CLI releases and skills/agents source commits.\n\n'
+              'Update the pinned Codex, Claude Code and GitHub CLI releases and skills/agents source commits.\n\n'
               '```text\n' + changes + '```\n\n'
               'Validation passed: offline tests and the public-source sensitive-information check. '
               'Docker image builds and container smoke checks run locally, outside CI.\n'

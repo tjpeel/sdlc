@@ -17,12 +17,14 @@ spec.loader.exec_module(updater)
 
 PINS = {
     'CODEX_VERSION': '0.159.2',
+    'CLAUDE_VERSION': '2.1.1',
     'GH_VERSION': '2.81.0',
     'SKILLS_REVISION': 'a' * 40,
     'AGENTS_REVISION': 'b' * 40,
 }
 CANDIDATES = {
     'CODEX_VERSION': '0.160.0',
+    'CLAUDE_VERSION': '2.1.2',
     'GH_VERSION': '2.82.0',
     'SKILLS_REVISION': 'c' * 40,
     'AGENTS_REVISION': 'd' * 40,
@@ -48,7 +50,7 @@ class DependencyUpdateChecks(unittest.TestCase):
     def update(self, candidates=None):
         return updater.update_pins(self.path, lambda: candidates if candidates is not None else CANDIDATES)
 
-    def test_all_four_pins_update_and_other_contents_and_mode_survive(self):
+    def test_managed_pins_update_and_other_contents_and_mode_survive(self):
         os.chmod(self.path, 0o640)
         changes = self.update()
         self.assertEqual(self.path.read_text(), dockerfile(CANDIDATES))
@@ -73,9 +75,9 @@ class DependencyUpdateChecks(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), self.original)
 
     def test_numeric_comparison_prevents_downgrades(self):
-        pins = dict(PINS, CODEX_VERSION='0.9.0', GH_VERSION='10.0.0')
+        pins = dict(PINS, CODEX_VERSION='0.9.0', GH_VERSION='10.0.0', CLAUDE_VERSION='2.99.0')
         self.path.write_text(dockerfile(pins))
-        candidates = dict(pins, CODEX_VERSION='0.10.0', GH_VERSION='2.99.0')
+        candidates = dict(pins, CODEX_VERSION='0.10.0', GH_VERSION='2.99.0', CLAUDE_VERSION='2.1.2')
         self.assertEqual(self.update(candidates), [('CODEX_VERSION', '0.9.0', '0.10.0')])
         self.assertEqual(self.path.read_text(), dockerfile(dict(pins, CODEX_VERSION='0.10.0')))
 
@@ -183,10 +185,12 @@ class UpstreamMetadataChecks(unittest.TestCase):
         ]
 
     def test_upstream_values_and_github_endpoints(self):
-        npm = {'name': '@openai/codex', 'version': CANDIDATES['CODEX_VERSION']}
-        with (mock.patch.object(updater, 'npm_json', return_value=npm),
+        npm = [{'name': '@openai/codex', 'version': CANDIDATES['CODEX_VERSION']},
+               {'name': '@anthropic-ai/claude-code', 'version': CANDIDATES['CLAUDE_VERSION']}]
+        with (mock.patch.object(updater, 'npm_json', side_effect=npm) as registry,
               mock.patch.object(updater, 'github_json', side_effect=self.github_responses()) as github):
             self.assertEqual(updater.fetch_candidates(), CANDIDATES)
+        self.assertEqual(registry.call_args_list, [mock.call('@openai/codex'), mock.call('@anthropic-ai/claude-code')])
         self.assertEqual(github.call_args_list, [mock.call('repos/cli/cli/releases/latest'),
                                                mock.call('repos/tjpeel/skills/commits/main'),
                                                mock.call('repos/tjpeel/agents/commits/main')])
@@ -195,6 +199,15 @@ class UpstreamMetadataChecks(unittest.TestCase):
         for payload in ({}, {'name': 'other', 'version': '1.2.3'},
                         {'name': '@openai/codex', 'version': '1.2.3-beta'}):
             with (self.subTest(payload=payload), mock.patch.object(updater, 'npm_json', return_value=payload),
+                  self.assertRaises(updater.UpdateError)):
+                updater.fetch_candidates()
+
+    def test_invalid_claude_release_does_not_produce_partial_candidates(self):
+        for payload in ({'name': '@openai/codex', 'version': '2.1.2'},
+                        {'name': '@anthropic-ai/claude-code', 'version': '2.1.2-beta'}):
+            with (self.subTest(payload=payload),
+                  mock.patch.object(updater, 'npm_json', side_effect=[
+                      {'name': '@openai/codex', 'version': '0.160.0'}, payload]),
                   self.assertRaises(updater.UpdateError)):
                 updater.fetch_candidates()
 
@@ -212,7 +225,9 @@ class UpstreamMetadataChecks(unittest.TestCase):
                     updater.parse_json('null', 'example source')
                 continue
             with (self.subTest(payload=payload),
-                  mock.patch.object(updater, 'npm_json', return_value={'name': '@openai/codex', 'version': '0.160.0'}),
+                  mock.patch.object(updater, 'npm_json', side_effect=[
+                      {'name': '@openai/codex', 'version': '0.160.0'},
+                      {'name': '@anthropic-ai/claude-code', 'version': '2.1.2'}]),
                   mock.patch.object(updater, 'github_json', side_effect=responses),
                   self.assertRaises(updater.UpdateError)):
                 updater.fetch_candidates()
@@ -237,8 +252,8 @@ class UpstreamMetadataChecks(unittest.TestCase):
         response.__enter__.return_value.read.return_value = json.dumps(
             {'name': '@openai/codex', 'version': '0.160.0'}).encode('utf-8')
         with mock.patch.object(updater.urllib.request, 'urlopen', return_value=response) as urlopen:
-            self.assertEqual(updater.npm_json()['version'], '0.160.0')
-        self.assertEqual(urlopen.call_args.args[0].full_url, updater.NPM_URL)
+            self.assertEqual(updater.npm_json('@openai/codex')['version'], '0.160.0')
+        self.assertEqual(urlopen.call_args.args[0].full_url, 'https://registry.npmjs.org/@openai/codex/latest')
         response.__enter__.return_value.read.assert_called_once_with(updater.MAX_RESPONSE_BYTES + 1)
 
     def test_malformed_json_and_non_object_json_are_rejected(self):

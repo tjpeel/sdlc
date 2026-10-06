@@ -24,7 +24,7 @@ previous executable intact. It preserves runtime state and unrelated files,
 rejects an unmanaged executable or symlink at the destination, and checks for an
 earlier `sdlc` on PATH. On Windows, close any running `sdlc` before reinstalling.
 
-The installed executable needs no Go runtime. Its version includes `0.1.0-beta.2`,
+The installed executable needs no Go runtime. Its version includes the beta release,
 the Git revision, a dirty-source marker when applicable, and the host OS and
 architecture. Release archives and package-manager installation are future work.
 
@@ -632,6 +632,71 @@ same API or database ports inside their own daemons. Commands within one invocat
 share its daemon and can still collide. Shared external services, host resources,
 provider usage limits and Git merge conflicts remain shared concerns.
 
+## Install and update the CLI and runtime
+
+The source installer prepares the CLI and runtime together:
+
+```sh
+go run ./cmd/sdlc-install --bin-dir /PATH/TO/YOUR_BIN_DIRECTORY
+```
+
+It validates a native CLI candidate, runs that candidate to build the runtime with
+the checkout's pins, then atomically replaces the managed executable on PATH.
+Build or runtime preparation failure keeps the old host executable. Runtime and
+host installation are separate filesystem/Docker operations; if replacement fails
+after runtime selection, the error reports the partial outcome. `--cli-only`
+skips runtime preparation; `--dependencies` selects newer public dependencies.
+
+Subsequent updates can run from any directory:
+
+```sh
+sdlc update --dry-run
+sdlc update
+sdlc update --pull
+sdlc update --dependencies
+sdlc update --cli-only
+```
+
+`update` runs the selected checkout's installer, using its current code to build
+both components. The private installation receipt remembers canonical source and
+destination paths and records the installed executable's identity and SHA-256.
+Older installations fall back to the source in `runtime.json`. `--source` and
+`--bin-dir` select replacements when those locations move. An arbitrary PATH
+executable is never run to discover its version or install location.
+
+`--pull` requires a clean checkout on a branch and uses `git pull --ff-only`.
+Without it, current local changes are built. The dry-run validates local source
+and destination, makes no builds or writes, and contacts no remote. A `--pull`
+preview describes current local source and prints the pending fast-forward step.
+
+The default uses source pins and clears previously selected private dependency
+overrides after a successful runtime build. `--dependencies` instead selects the
+newer exact public versions supported by `runtime update`. `--cli-only` updates
+the host command while retaining the runtime. These options also work with
+`/update` in the shell. Reopen existing shells after installation.
+
+Resumable runs and incomplete feature series in known project roots block runtime
+replacement under the build lock. Ready standalone tickets and fully merged
+features permit it. The error identifies the saved work and offers `--cli-only`.
+Checks cover registered, catalogued, current and source roots, including forgotten
+runs in those roots. An external root removed from every locator cannot be found;
+keep projects registered while they contain unfinished work.
+
+### Where version pins live
+
+| Selection | Stored in | How it changes |
+| --- | --- | --- |
+| SDLC application version | `internal/buildinfo/version.go` and changelog | A delivered application iteration increments the beta; install builds that source version. |
+| Repository runtime baseline | `runtime/Dockerfile`, plus managed image defaults | CI updates Codex, Claude Code, GitHub CLI and catalogue pins weekly or manually; other source pins are maintained explicitly or by their configured dependency automation. |
+| Local selected runtime | Private `runtime.json`, immutable image ID and inventory | `runtime update` or `update --dependencies` saves exact private selections. Default `update` or `runtime build --source-pins` returns to the source baseline. |
+| Saved run and feature settings | Private checkpoints | Frozen for their work; installation does not migrate them. |
+
+Local updates intentionally leave tracked pipeline pins untouched. They do not
+create source edits, commits or pull requests. CI pin changes reach a machine
+after updating its source and rebuilding the runtime; reinstalling only the CLI
+does not change provider versions. `runtime build` retains private pins for an
+ordinary rebuild; `--source-pins` explicitly applies the checkout's defaults.
+
 ## Build the shared runtime
 
 The host needs the Docker CLI and a local Docker engine running Linux containers.
@@ -665,8 +730,8 @@ sdlc runtime build
 ```
 
 Use `--source /PATH/TO/SDLC_CLONE` if the clone moves. Builds are local; CI neither
-builds nor publishes the Docker image. Updating the CLI executable and rebuilding
-the image are separate operations.
+builds nor publishes the Docker image. The one-shot installer/update performs
+both operations; `--cli-only` performs only executable replacement.
 
 If an existing installation uses `sdlc-codex-spike:local`, check that
 `sdlc runtime status` succeeds with the old CLI, then reinstall the CLI and rename
@@ -797,8 +862,10 @@ The source clone is used to construct the existing allowlisted private build
 context. Selected pins alter only that context's Dockerfile. Successful selection
 records the pins and exact build recipe in private `runtime.json`; the tracked
 source checkout is not edited or committed by this command. Subsequent builds
-from the same saved source retain these pins. An explicit different source uses
-its own defaults. Use `--source /PATH/TO/SDLC_CLONE` if the clone moves.
+from the same saved source retain these pins, even if source defaults changed.
+Use `runtime build --source-pins` or default `sdlc update` to apply the checkout's
+pins. An explicit different source uses its own defaults. Use
+`--source /PATH/TO/SDLC_CLONE` if the clone moves.
 
 Missing managed metadata, divergent catalogue history, a failed build, mismatched
 installed tool/runtime versions or incomplete/stale Debian candidates stop

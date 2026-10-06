@@ -28,6 +28,8 @@ func main() {
 		defer cancel()
 		var command func() error
 		switch os.Args[1] {
+		case "update":
+			command = func() error { return updateCommand(ctx, os.Args[2:], os.Stdout, os.Stderr) }
 		case "attention":
 			command = func() error { return dashboardCommand(ctx, append([]string{"--attention"}, os.Args[2:]...), os.Stdout) }
 		case "answer":
@@ -76,6 +78,7 @@ func main() {
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
 		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
 		fmt.Println("       sdlc shell [--plain] (interactive slash commands; opt-in)")
+		fmt.Println("       sdlc update [--pull] [--source SDLC_DIRECTORY] [--cli-only | --dependencies] [--dry-run]")
 		fmt.Println("       sdlc terminal setup|status [--json] (explicit iTerm2 background-tab setup)")
 		fmt.Println("       sdlc help [COMMAND] [--json] | version --details [--json] | onboard status [--json]")
 		fmt.Println("       sdlc project list|add PATH [--name NAME]|remove NAME [--json] | inspect @REFERENCE/NUMBERED_FILE")

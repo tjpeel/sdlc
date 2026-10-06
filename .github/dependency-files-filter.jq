@@ -6,7 +6,7 @@ length > 0 and all(.[];
     and (.patch | type) == "string"
     and ([.patch | split("\n")[] | select(test("^[+-]"))]
       | length > 0 and all(.[]; test(
-        "^[+-]ARG ((CODEX_VERSION|GH_VERSION)=(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)|(SKILLS_REVISION|AGENTS_REVISION)=[0-9a-f]{40})$"
+        "^[+-]ARG ((CODEX_VERSION|CLAUDE_VERSION|GH_VERSION)=(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)|(SKILLS_REVISION|AGENTS_REVISION)=[0-9a-f]{40})$"
       )))
   elif $author == "dependabot[bot]" then
     .filename == "runtime/Dockerfile"

@@ -18,6 +18,7 @@ func fixture(t *testing.T) (string, string) {
 	source := t.TempDir()
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SDLC_STATE_DIR", t.TempDir())
 	t.Setenv("GOOS", "")
 	t.Setenv("GOARCH", "")
 	if err := os.MkdirAll(filepath.Join(source, "cmd", "sdlc"), 0755); err != nil {
@@ -54,7 +55,7 @@ func TestLocalInstallerReplacesManagedBuildAndPreservesOtherFiles(t *testing.T) 
 	}
 	for _, version := range []string{"first-build", "second-build"} {
 		writeCommand(t, source, "\""+version+"\"")
-		installer := exec.Command("go", "run", "./cmd/sdlc-install", "--source", source, "--bin-dir", bin)
+		installer := exec.Command("go", "run", "./cmd/sdlc-install", "--source", source, "--bin-dir", bin, "--cli-only")
 		installer.Dir = root
 		if output, err := installer.CombinedOutput(); err != nil {
 			t.Fatalf("local installer: %v\n%s", err, output)

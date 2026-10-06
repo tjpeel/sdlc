@@ -44,7 +44,6 @@ containers, select an existing directory on your PATH:
 ```sh
 go run ./cmd/sdlc-install --bin-dir /PATH/TO/YOUR_BIN_DIRECTORY
 sdlc --version
-sdlc runtime build --source .
 sdlc runtime status
 sdlc auth login
 sdlc auth login --provider claude
@@ -60,10 +59,31 @@ For a Mac where Homebrew's `/opt/homebrew/bin` is on PATH, install with:
 go run ./cmd/sdlc-install --bin-dir /opt/homebrew/bin
 ```
 
-Repeat the install command to reinstall. After the first build,
-`sdlc runtime build` uses the saved clone location and can run from another
-directory. Docker image builds and container checks run locally; CI validates
-source only.
+The installer builds the CLI and runtime in one command. It prepares the runtime
+with the new CLI before replacing the installed executable. Use `--cli-only` to
+install the host command while keeping the current runtime.
+
+After installation, update from any directory or use `/update` in the shell:
+
+```sh
+sdlc update --dry-run
+sdlc update
+sdlc update --pull
+```
+
+The first command previews the local steps without building, fetching or writing.
+`update` installs the current checkout; `--pull` first fast-forwards a clean
+checkout from its configured upstream. Dirty source can be installed by omitting
+`--pull`. The source and bin directory are remembered in private installation
+state. Default updates use the checkout's runtime pins, replacing any previous
+local overrides. Use `sdlc update --dependencies` to select newer public
+dependencies instead, or `--cli-only` to preserve the runtime. Reopen existing
+shells after installation. Docker builds remain local; CI validates source.
+
+Resumable saved runs and incomplete features in known projects block runtime
+replacement and identify the work to finish. `sdlc update --cli-only` remains
+available while that work is paused. Keep external projects registered so updates
+can find their saved work.
 
 `sdlc runtime status` checks the installed runtime dependencies for updates,
 including the skills and agents catalogues. Use `sdlc runtime status --offline`
@@ -82,10 +102,11 @@ sdlc runtime update --dry-run
 sdlc runtime update
 ```
 
-Update resolves exact public releases, refreshes the installed packages and
+Runtime update resolves exact public releases, refreshes the installed packages and
 rebuilds `sdlc:local`. It selects the candidate after tool, inventory and package
 checks pass. Selected pins stay in private installation state; source pins and
-login storage are preserved. See [runtime updates](docs/cli.md#update-the-runtime)
+login storage are preserved. Ordinary `runtime build` retains these local pins;
+`runtime build --source-pins` explicitly returns to the checkout's pins. See [runtime updates](docs/cli.md#update-the-runtime)
 for release tracks and dependencies controlled by their parent packages.
 
 Login opens a browser flow through the terminal. Credentials stay in separate

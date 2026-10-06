@@ -40,6 +40,7 @@ Useful commands:
 | `/answer RUN_ID` | Read the questions, type a reply, then Ctrl+S to answer and resume. |
 | `/resume RUN_ID` | Inspect a stopped run, then Ctrl+S to resume its saved stage. |
 | `/usage` | Read recorded provider tokens, Headroom estimates and completion outcomes. |
+| `/update` | Install the saved source's CLI and runtime; `--cli-only` keeps the runtime. |
 | `/scope all` | Browse installation-wide history from multiple projects. |
 | `/scope project` | Return to the selected project's history. |
 | `/clear` | Clear the displayed view. |

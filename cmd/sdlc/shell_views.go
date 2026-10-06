@@ -22,6 +22,7 @@ import (
 	identity "github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/install"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/terminallaunch"
@@ -325,6 +326,29 @@ func versionDetailsCommand(ctx context.Context, args []string, out io.Writer) er
 		}
 	}
 	selected := *source
+	if dir, err := shellStateDirectory(); err == nil {
+		if receipt, err := install.ReadReceipt(dir); err == nil {
+			if selected == "" {
+				selected = receipt.Source
+			}
+			if matches, err := receipt.MatchesExecutable(v.Installed.Path); err == nil && matches {
+				v.Installed.Version = receipt.Version
+				v.Installed.Revision = receipt.Revision
+				v.Installed.Dirty = receipt.Dirty
+				if fields := strings.Fields(receipt.Version); len(fields) >= 2 && fields[0] == "sdlc" {
+					v.Installed.Version = fields[1]
+				}
+				v.BuiltArtifact = "verified installation receipt"
+			}
+		} else if errors.Is(err, os.ErrNotExist) && selected == "" {
+			if data, err := viewReadFile(filepath.Join(dir, "runtime.json"), 1<<20, true); err == nil {
+				var state runtimeimage.State
+				if json.Unmarshal(data, &state) == nil && state.Version == 1 && filepath.IsAbs(state.Source) {
+					selected = state.Source
+				}
+			}
+		}
+	}
 	if selected == "" {
 		selected, _ = os.Getwd()
 	}

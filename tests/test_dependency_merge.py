@@ -70,13 +70,15 @@ class DependencyMergePolicy(unittest.TestCase):
 
     def test_runtime_pin_changes_are_allowed(self):
         patch = ('@@ -3,2 +3,2 @@\n-ARG CODEX_VERSION=0.159.2\n'
-                 '+ARG CODEX_VERSION=0.159.3\n-ARG SKILLS_REVISION=' + 'a' * 40
+                 '+ARG CODEX_VERSION=0.159.3\n-ARG CLAUDE_VERSION=2.1.1\n'
+                 '+ARG CLAUDE_VERSION=2.1.2\n-ARG SKILLS_REVISION=' + 'a' * 40
                  + '\n+ARG SKILLS_REVISION=' + 'b' * 40)
         self.assertTrue(self.files_allowed([
             {'filename': 'runtime/Dockerfile', 'status': 'modified', 'patch': patch}]))
 
     def test_other_runtime_changes_fail_closed(self):
         for patch in (None, '', '+RUN arbitrary-command', '+ARG CODEX_VERSION=latest',
+                      '+ARG CLAUDE_VERSION=latest', '+ARG CLAUDE_VERSION=2.1.2-beta',
                       '+ARG AGENTS_REVISION=main', '+ARG CODEX_VERSION=0.159.3;echo injected'):
             with self.subTest(patch=patch):
                 self.assertFalse(self.files_allowed([
