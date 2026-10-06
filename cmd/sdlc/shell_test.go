@@ -14,6 +14,34 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
+func TestShellReadOnboardPreservesFormattedOutput(t *testing.T) {
+	root := t.TempDir()
+	capture := filepath.Join(root, "capture")
+	t.Setenv("SDLC_ONBOARD_CAPTURE", capture)
+	executable := filepath.Join(root, "fake-sdlc")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$SDLC_ONBOARD_CAPTURE"
+printf 'Project onboarding: example\n\n1. project\n\tStatus: unchecked\n\tNext: review\007\015\033'
+printf '\342\200\213'
+`
+	if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &shellAdapter{executable: executable}
+	got, err := adapter.read(context.Background(), root, []string{"onboard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Project onboarding: example\n\n1. project\n\tStatus: unchecked\n\tNext: review"
+	if got != want {
+		t.Fatalf("formatted onboarding output: got %q, want %q", got, want)
+	}
+	args, err := os.ReadFile(capture)
+	if err != nil || string(args) != "onboard\nstatus\n" {
+		t.Fatalf("onboard dispatch: %q, %v", args, err)
+	}
+}
+
 func TestShellNormalisesLocatorsWithoutReinterpretingValues(t *testing.T) {
 	tests := []struct {
 		args, want []string

@@ -48,6 +48,52 @@ func TestLongHelpStartsAtBeginning(t *testing.T) {
 	}
 }
 
+func TestOnboardStartsAtHeadingAndScrollsWithoutLosingDraft(t *testing.T) {
+	for _, wheel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wheel=%v", wheel), func(t *testing.T) {
+			reads := 0
+			m := NewModel(context.Background(), Config{Root: "/example/project", Commands: []Command{{Name: "onboard"}}, Read: func(_ context.Context, _ string, args []string) (string, error) {
+				reads++
+				if !reflect.DeepEqual(args, []string{"onboard"}) {
+					t.Fatalf("onboard args: %v", args)
+				}
+				var text strings.Builder
+				text.WriteString("Project onboarding: example\n")
+				for i := 1; i <= 8; i++ {
+					fmt.Fprintf(&text, "\n%d. step\n  Status: unchecked\n  Purpose: review local setup\n  Next: step %d\n", i, i)
+				}
+				return text.String(), nil
+			}})
+			m.Update(tea.WindowSizeMsg{Width: 50, Height: 10})
+			cmd := enter(m, "/onboard")
+			if cmd == nil {
+				t.Fatal("onboard did not start a read")
+			}
+			m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("draft")})
+			m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+			draft, cursor := string(m.draft), m.cursor
+			_, next := m.Update(cmd())
+			if next != nil || reads != 1 || m.monitor {
+				t.Fatal("onboard started another read or monitor")
+			}
+			if view := ansi.Strip(m.View()); !strings.HasPrefix(view, "Project onboarding: example\n") || !strings.Contains(view, "1. step") {
+				t.Fatalf("onboard did not open at heading: %q", view)
+			}
+			m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+			for i := 0; i < 30; i++ {
+				if wheel {
+					m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+				} else {
+					m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+				}
+			}
+			if !strings.Contains(ansi.Strip(m.View()), "Next: step 8") || string(m.draft) != draft || m.cursor != cursor || reads != 1 {
+				t.Fatalf("onboard scrolling lost final step or draft: %q", m.View())
+			}
+		})
+	}
+}
+
 func TestHelpScrollControlsStayWithinOutput(t *testing.T) {
 	for _, wheel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("wheel=%v", wheel), func(t *testing.T) {

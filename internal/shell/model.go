@@ -604,6 +604,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.kind != "dashboard" {
 			m.scroll = 0
 		}
+		if msg.kind == "read" && len(msg.args) > 0 && msg.args[0] == "onboard" {
+			lines, available := m.scrollViewport()
+			m.scroll = max(0, len(lines)-available)
+		}
 		switch msg.kind {
 		case "resolve-answer", "resolve-resume":
 			if msg.kind == "resolve-answer" && msg.action.State != "waiting_for_human" {

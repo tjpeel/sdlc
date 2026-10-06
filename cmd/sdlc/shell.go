@@ -296,7 +296,7 @@ func (a *shellAdapter) read(ctx context.Context, root string, args []string) (st
 		// replaces the executable on PATH. Other commands use the CLI normally.
 		var output boundedBuffer
 		err := versionDetailsCommand(ctx, args[1:], &output)
-		return dashboard.SafeText(output.String()), err
+		return shell.SafeOutput(output.String()), err
 	}
 	if args[0] == "progress" {
 		// JSON shell views are snapshots; continuous output uses Progress.
@@ -349,7 +349,7 @@ func (a *shellAdapter) read(ctx context.Context, root string, args []string) (st
 	var output, diagnostics boundedBuffer
 	command.Stdout, command.Stderr = &output, &diagnostics
 	err = command.Run()
-	text := dashboard.SafeText(output.String())
+	text := shell.SafeOutput(output.String())
 	if err != nil {
 		message := strings.TrimSpace(dashboard.SafeText(diagnostics.String()))
 		if message == "" {
@@ -369,7 +369,7 @@ func (a *shellAdapter) read(ctx context.Context, root string, args []string) (st
 					for _, runID := range receipt.RunIDs {
 						var detail bytes.Buffer
 						if err := dashboardCommand(ctx, []string{"--once", "--run", runID, "--logs"}, &detail); err == nil {
-							text += "\n" + dashboard.SafeText(detail.String())
+							text += "\n" + shell.SafeOutput(detail.String())
 						}
 					}
 				}
@@ -422,7 +422,7 @@ func (a *shellAdapter) launch(ctx context.Context, root string, args []string) (
 	a.mu.Unlock()
 	var output bytes.Buffer
 	err = launchPreparedRun(ctx, root, controllerArgs(args[1:]), previous, id, true, &output, terminallaunch.ITerm2{})
-	return dashboard.SafeText(output.String()), err
+	return shell.SafeOutput(output.String()), err
 }
 
 func containsArg(args []string, value string) bool {

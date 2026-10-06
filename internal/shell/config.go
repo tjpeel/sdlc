@@ -27,6 +27,11 @@ type Command struct {
 	Native  bool   `json:"native"`
 }
 type Suggestion struct{ Label, Insert, Description string }
+
+// SafeOutput removes terminal control and format characters from formatted output,
+// preserving newlines and tabs. Use single-line sanitization for inline values.
+func SafeOutput(text string) string { return safe(text) }
+
 type RunAction struct {
 	ID, Root, Reference, Ticket, State, Checkpoint string
 	Questions                                      []string

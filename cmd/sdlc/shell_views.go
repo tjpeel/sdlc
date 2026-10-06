@@ -515,8 +515,8 @@ func onboardCommand(ctx context.Context, args []string, out io.Writer) error {
 		return json.NewEncoder(out).Encode(result)
 	}
 	fmt.Fprintf(out, "Project onboarding: %s\n", dashboard.SafeText(root))
-	for _, step := range steps {
-		fmt.Fprintf(out, "%s: %s\n  %s\n  %s\n", step.Name, step.State, step.Purpose, step.Instruction)
+	for i, step := range steps {
+		fmt.Fprintf(out, "\n%d. %s\n  Status: %s\n  Purpose: %s\n  Next: %s\n", i+1, step.Name, step.State, step.Purpose, step.Instruction)
 	}
 	return nil
 }

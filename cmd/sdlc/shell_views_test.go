@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,26 @@ func TestOnboardStatusDoesNotInitializeProject(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "unchecked") || !strings.Contains(out.String(), "terminal setup") {
 		t.Fatal(out.String())
+	}
+	var status struct {
+		Root  string           `json:"root"`
+		Steps []onboardingStep `json:"steps"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := onboardCommand(context.Background(), []string{"status"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "Project onboarding: ") {
+		t.Fatal(out.String())
+	}
+	for i, step := range status.Steps {
+		want := fmt.Sprintf("\n%d. %s\n  Status: %s\n  Purpose: %s\n  Next: %s\n", i+1, step.Name, step.State, step.Purpose, step.Instruction)
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing onboarding step %d: %q", i+1, out.String())
+		}
 	}
 	assertDashboardReadOnly(t, root, marker, before)
 }
