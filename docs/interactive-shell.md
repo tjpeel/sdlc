@@ -25,6 +25,17 @@ scroll the output while the command line stays visible. `/help` opens at the
 beginning of the matching command catalogue.
 On Mac keyboards, Fn+↑ and Fn+↓ send Page Up and Page Down; plain arrow keys
 continue to edit the command or move through suggestions.
+
+To copy text from the rich view, press F2 (Fn+F2 if your Mac uses F2 for
+brightness), drag to select, then use your terminal's copy shortcut:
+Cmd+C on macOS or Ctrl+Shift+C in many Linux
+terminals. F2 freezes the visible frame and releases mouse capture so the
+terminal can select text. Page or scroll to the text you need before pressing
+F2. Jobs and monitoring continue collecting updates while the frame is frozen.
+Press F2 or Escape to resume the latest view with your draft intact. Ctrl+C
+also resumes without cancelling work. Resizing the terminal resumes the view
+automatically. Selection and copying are handled by the terminal.
+
 Quotes and backslashes group literal arguments. Shell substitutions, pipes
 and environment expansion are not evaluated.
 

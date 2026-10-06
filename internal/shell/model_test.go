@@ -347,7 +347,7 @@ func TestMonitorPollKeepsSelectedRunAndFlags(t *testing.T) {
 		lines := strings.Split(ansi.Strip(m.View()), "\n")
 		return lines[len(lines)-1]
 	}
-	wantFooter := "Wheel/PgUp/PgDn scroll · / commands · Tab/Enter complete · Enter dispatch"
+	wantFooter := "F2 select · Wheel/PgUp/PgDn scroll · / commands · Tab/Enter complete · Enter dispatch"
 	if footer() != wantFooter {
 		t.Fatalf("dashboard footer before refresh: %q", footer())
 	}

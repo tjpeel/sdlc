@@ -57,6 +57,7 @@ type Model struct {
 	draftGeneration                             uint64
 	monitorArgs                                 []string
 	review                                      []string
+	selectionView                               string
 }
 
 func NewModel(ctx context.Context, c Config) *Model {
@@ -540,8 +541,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = max(1, msg.Width)
 		m.height = max(1, msg.Height)
 		m.clampScroll()
+		if m.selectionView != "" {
+			return m, m.leaveSelection()
+		}
 		return m, nil
 	case tea.MouseMsg:
+		if m.selectionView != "" {
+			return m, nil
+		}
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
 			m.scrollBy(-3)
@@ -673,8 +680,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.config.Prompt != nil {
 			m.branch, m.dirty = m.config.Prompt(m.ctx, m.root)
 		}
-		return m, nil
+		return m, m.mouseMode()
+	case tea.ResumeMsg:
+		return m, m.mouseMode()
 	case tea.KeyMsg:
+		if m.selectionView != "" {
+			switch msg.String() {
+			case "f2", "esc", "ctrl+c":
+				return m, m.leaveSelection()
+			}
+			return m, nil
+		}
+		if msg.String() == "f2" {
+			lines := strings.Split(m.View(), "\n")
+			lines[len(lines)-1] = ansi.Truncate("F2/Esc resume · Drag to select · Use terminal copy", max(1, m.width), "")
+			m.selectionView = strings.Join(lines, "\n")
+			return m, tea.DisableMouse
+		}
 		if m.action != nil {
 			return m.answerKey(msg)
 		}
@@ -838,6 +860,9 @@ func (m *Model) scrollPageSize() int {
 }
 
 func (m *Model) View() string {
+	if m.selectionView != "" {
+		return m.selectionView
+	}
 	if m.action != nil {
 		return m.actionView()
 	}
@@ -902,7 +927,7 @@ func (m *Model) View() string {
 		}
 		bottom = append(bottom, ansi.Truncate(inlineSafe(line), width, ""))
 	}
-	bottom = append(bottom, prompt, ansi.Truncate(footer, width, ""))
+	bottom = append(bottom, prompt, ansi.Truncate("F2 select · "+footer, width, ""))
 	if len(bottom) > height {
 		bottom = bottom[len(bottom)-height:]
 	}
@@ -917,6 +942,18 @@ func (m *Model) View() string {
 		visible = append(visible, "")
 	}
 	return strings.Join(append(visible, bottom...), "\n")
+}
+
+func (m *Model) leaveSelection() tea.Cmd {
+	m.selectionView = ""
+	return tea.EnableMouseCellMotion
+}
+
+func (m *Model) mouseMode() tea.Cmd {
+	if m.selectionView != "" {
+		return tea.DisableMouse
+	}
+	return tea.EnableMouseCellMotion
 }
 
 func optionPosition(args []string, position int) bool {
@@ -1175,6 +1212,6 @@ func (m *Model) actionView() string {
 	if m.busy {
 		instruction = "Submitting run action…"
 	}
-	lines = append(lines, ansi.Truncate(instruction, width, ""))
+	lines = append(lines, ansi.Truncate("F2 select · "+instruction, width, ""))
 	return strings.Join(lines, "\n")
 }
