@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.5 - 2026-10-06
+
+### Added
+
+- Local Homebrew installation through `python3 scripts/install_homebrew.py`, using a checksum-pinned committed snapshot and a host-only `local/sdlc` tap. The one-command flow prepares the runtime; `--cli-only` migrates a receipt-verified native CLI while retaining Docker state and backing up the executable.
+- Homebrew-aware `sdlc update` and `/update` refresh the snapshot and formula before upgrading, including after signing or amending a commit. Homebrew owns CLI replacement; the source installer rejects package-owned destinations.
+- Bundled runtime source discovery and verified package identity in version details. Archive builds retain their source revision; runtime commands continue after cleanup removes an older keg.
+
 ## 0.1.0-beta.4 - 2026-10-06
 
 ### Added

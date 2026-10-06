@@ -22,6 +22,7 @@ import (
 	identity "github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/homebrew"
 	"github.com/tjpeel/sdlc/internal/install"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -326,12 +327,40 @@ func versionDetailsCommand(ctx context.Context, args []string, out io.Writer) er
 		}
 	}
 	selected := *source
+	var packagedSource *homebrew.Package
+	if executable, err := os.Executable(); err == nil {
+		packagedSource, err = homebrew.Detect(executable)
+		if err != nil {
+			return err
+		}
+	}
+	if v.Installed.Path != "" {
+		pkg, err := homebrew.Detect(v.Installed.Path)
+		if err != nil {
+			return err
+		}
+		if pkg != nil {
+			v.Installed.Version = pkg.Version
+			v.Installed.Revision = pkg.Revision
+			v.Installed.Dirty = false
+			v.BuiltArtifact = "verified Homebrew package manifest"
+			if packagedSource == nil {
+				packagedSource = pkg
+			}
+		}
+	}
+	if selected == "" && packagedSource != nil {
+		selected = packagedSource.Source
+		v.Source.Path = packagedSource.Source
+		v.Source.Version = packagedSource.Version
+		v.Source.Revision = packagedSource.Revision
+	}
 	if dir, err := shellStateDirectory(); err == nil {
 		if receipt, err := install.ReadReceipt(dir); err == nil {
 			if selected == "" {
 				selected = receipt.Source
 			}
-			if matches, err := receipt.MatchesExecutable(v.Installed.Path); err == nil && matches {
+			if matches, err := receipt.MatchesExecutable(v.Installed.Path); err == nil && matches && packagedSource == nil {
 				v.Installed.Version = receipt.Version
 				v.Installed.Revision = receipt.Revision
 				v.Installed.Dirty = receipt.Dirty
@@ -352,7 +381,9 @@ func versionDetailsCommand(ctx context.Context, args []string, out io.Writer) er
 	if selected == "" {
 		selected, _ = os.Getwd()
 	}
-	if root, err := checkoutRoot(ctx, selected); err == nil {
+	if *source == "" && packagedSource != nil {
+		// Source identity comes from the verified archive manifest; no Git checkout is required.
+	} else if root, err := checkoutRoot(ctx, selected); err == nil {
 		module, err := viewReadFile(filepath.Join(root, "go.mod"), 64*1024, false)
 		if err == nil && strings.Contains("\n"+string(module), "\nmodule github.com/tjpeel/sdlc\n") {
 			v.Source.Path = root

@@ -17,7 +17,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.2`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.5`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Ticket and feature runs retain [usage metrics](docs/usage-metrics.md) across
 attempts and resumes. Read them with `sdlc usage --since 7d --json`.
@@ -53,11 +53,19 @@ sdlc interactive
 ```
 
 `/PATH/TO/YOUR_BIN_DIRECTORY` means a directory your shell searches for commands.
-For a Mac where Homebrew's `/opt/homebrew/bin` is on PATH, install with:
+On macOS or Linux with Homebrew, use the local tap from a clean, committed clone:
 
 ```sh
-go run ./cmd/sdlc-install --bin-dir /opt/homebrew/bin
+python3 scripts/install_homebrew.py
 ```
+
+This installs `local/sdlc/sdlc` through Homebrew and prepares its runtime in one
+command. Homebrew builds the CLI with its Go dependency and keeps the public
+runtime sources in the Cellar. Python 3 and Git are required for the bootstrap.
+Use `--cli-only` to migrate an existing receipt-verified native installation while
+keeping its runtime. The previous executable is backed up in private state.
+See [Homebrew installation](docs/cli.md#local-homebrew-installation) for updates
+and recovery.
 
 The installer builds the CLI and runtime in one command. It prepares the runtime
 with the new CLI before replacing the installed executable. Use `--cli-only` to
@@ -73,8 +81,10 @@ sdlc update --pull
 
 The first command previews the local steps without building, fetching or writing.
 `update` installs the current checkout; `--pull` first fast-forwards a clean
-checkout from its configured upstream. Dirty source can be installed by omitting
-`--pull`. The source and bin directory are remembered in private installation
+checkout from its configured upstream. Homebrew updates refresh the committed
+snapshot, formula and checksum before upgrading; commit source changes first.
+Native source installation also accepts dirty source without `--pull`.
+The source and installation method are remembered in private installation
 state. Default updates use the checkout's runtime pins, replacing any previous
 local overrides. Use `sdlc update --dependencies` to select newer public
 dependencies instead, or `--cli-only` to preserve the runtime. Reopen existing

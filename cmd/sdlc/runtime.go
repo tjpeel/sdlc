@@ -13,6 +13,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/headroom"
+	"github.com/tjpeel/sdlc/internal/homebrew"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
@@ -48,7 +49,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	var all bool
 	var sourcePins bool
 	if args[0] == "build" || args[0] == "update" {
-		flags.StringVar(&source, "source", "", "SDLC clone (uses saved source when omitted)")
+		flags.StringVar(&source, "source", "", "SDLC source (uses bundled Homebrew source or saved source when omitted)")
 		if args[0] == "build" {
 			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
 		}
@@ -88,6 +89,10 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		}
 		return runtimeStatus(ctx, manager, runtimeupdates.New(), offline, all, output)
 	}
+	source, err = runtimeSource(source, "")
+	if err != nil {
+		return err
+	}
 	if args[0] == "update" {
 		return runtimeUpdate(ctx, manager, runtimeupdates.New(), source, dryRun, output)
 	}
@@ -96,7 +101,11 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		policy = "use source Dockerfile pins; discard private overrides after a successful build"
 	}
 	fmt.Fprintln(output, "Dependency policy: "+policy)
-	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SourcePins: sourcePins, ValidatePrevious: runtimeSavedWorkGuard(manager.Directory, source)})
+	revision, err := runtimeSourceRevision(source, "")
+	if err != nil {
+		return err
+	}
+	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SourcePins: sourcePins, SourceRevision: revision, ValidatePrevious: runtimeSavedWorkGuard(manager.Directory, source)})
 	if err != nil {
 		return err
 	}
@@ -197,6 +206,10 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 	if state.Inventory == nil {
 		return fmt.Errorf("dependency inventory unavailable; rebuild with sdlc runtime build before updating")
 	}
+	source, err = runtimeSource(source, "")
+	if err != nil {
+		return err
+	}
 	if source == "" {
 		source = state.Source
 	} else {
@@ -230,8 +243,13 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 	if _, err := fmt.Fprintln(output, "Rebuilding a fresh runtime with the selected versions. Login volumes and signing profiles stay in their existing storage."); err != nil {
 		return err
 	}
+	revision, err := runtimeSourceRevision(source, "")
+	if err != nil {
+		return err
+	}
 	candidate, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{
-		Pins: &plan.Pins, Refresh: true, ExpectedImageID: state.ImageID,
+		SourceRevision: revision,
+		Pins:           &plan.Pins, Refresh: true, ExpectedImageID: state.ImageID,
 		ValidatePrevious: runtimeSavedWorkGuardFromEnvironment(source),
 		ValidateCandidate: func(ctx context.Context, candidate runtimeimage.State) error {
 			if err := validateRuntimePacks(candidate, plan.ExpectedRuntimes); err != nil {
@@ -311,4 +329,55 @@ func readRuntimeRecipe(source string) ([]byte, error) {
 		return nil, fmt.Errorf("cannot read bounded runtime recipe")
 	}
 	return data, nil
+}
+
+// The running keg owns its bundled source. A saved runtime may refer to an older
+// keg which Homebrew has already removed; an explicit source always takes priority.
+func runtimeSource(source, executable string) (string, error) {
+	if source != "" {
+		return source, nil
+	}
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("cannot identify running executable: %w", err)
+		}
+	}
+	pkg, err := homebrew.Detect(executable)
+	if err != nil {
+		return "", err
+	}
+	if pkg != nil {
+		return pkg.Source, nil
+	}
+	return "", nil
+}
+
+// Archive provenance is accepted only from the running verified package and only
+// when the selected source resolves to that package's own bundle.
+func runtimeSourceRevision(source, executable string) (string, error) {
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("cannot identify running executable: %w", err)
+		}
+	}
+	pkg, err := homebrew.Detect(executable)
+	if err != nil || pkg == nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return "", err
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return "", err
+	}
+	if canonical == pkg.Source {
+		return pkg.Revision, nil
+	}
+	return "", nil
 }

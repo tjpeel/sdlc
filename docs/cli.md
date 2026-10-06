@@ -26,13 +26,75 @@ earlier `sdlc` on PATH. On Windows, close any running `sdlc` before reinstalling
 
 The installed executable needs no Go runtime. Its version includes the beta release,
 the Git revision, a dirty-source marker when applicable, and the host OS and
-architecture. Release archives and package-manager installation are future work.
+architecture. Local Homebrew installation is supported below; public release
+archives and a published tap remain future work.
 
 Use `sdlc version --details` for running, installed, selected-source and recorded
 runtime evidence. `sdlc onboard status` describes configuration needed by the
 current project without executing checks or connecting accounts. The opt-in
 `sdlc shell` provides slash commands over these operations; see the
 [interactive shell guide](interactive-shell.md).
+
+### Local Homebrew installation
+
+On macOS or Linux, Homebrew can own the CLI through a local tap. No GitHub tap
+repository or public release is needed. Install Homebrew, Python 3 and Git, put
+Homebrew's `bin` directory first on PATH, then run from a clean, committed clone:
+
+```sh
+python3 scripts/install_homebrew.py --dry-run
+python3 scripts/install_homebrew.py
+```
+
+The command creates `local/sdlc`, packages `HEAD` with `git archive`, records its
+checksum in the formula, and runs `brew install local/sdlc/sdlc`. Homebrew installs
+Go as a build dependency, the native CLI into its Cellar, and public source under
+the keg's `libexec/source`. The new CLI then prepares Docker with the snapshot's
+pins. No account login occurs during installation. `--cli-only` keeps the runtime;
+`--dependencies` refreshes public runtime dependencies.
+
+An existing native CLI can be migrated only when its private installation receipt
+matches the executable. The new package is built and checked before replacing the
+old command with Homebrew's link. The previous binary is retained under private
+state in `homebrew/backups`. A failed build or link leaves the native command in
+place. A matching keg left by a failed link is reused on retry; a different keg
+requires `brew uninstall local/sdlc/sdlc` before rerunning the installer.
+
+The local formula and archives remain on this host. Generated formula paths stay
+outside this repository. Archives and the source checkout locator live in private
+SDLC state; preserve it while using the tap. Homebrew owns the CLI and bundled
+sources; account volumes, instructions, run history and the selected Docker image
+remain in their existing locations. `brew uninstall local/sdlc/sdlc` removes the
+package without deleting that SDLC state.
+
+After committing new source, update from any directory:
+
+```sh
+sdlc update --dry-run
+sdlc update
+sdlc update --cli-only
+```
+
+`sdlc update` refreshes the local snapshot and formula, runs
+`brew upgrade local/sdlc/sdlc`, then prepares the runtime with the installed bundle.
+`--source` changes the saved checkout; `--pull` first fast-forwards a clean checkout.
+`--bin-dir` is unavailable because Homebrew controls the destination. The shell's
+`/update` uses the same flow. Reopen existing SDLC shells after upgrading.
+
+Homebrew compares the application version and formula revision. SDLC advances
+the formula revision when the snapshot changes, including an amended or signed
+commit with the same application version. Editing a checkout alone does not
+refresh the formula. Direct `brew upgrade local/sdlc/sdlc` installs the last
+prepared snapshot and keeps Docker unchanged; `brew reinstall local/sdlc/sdlc`
+rebuilds that snapshot. Use `sdlc update` for the full checkout-to-runtime flow.
+
+CLI upgrade and runtime selection are separate operations. A runtime failure
+leaves the upgraded CLI installed and reports the partial result; fix the reported
+problem and retry `sdlc update`. Saved work continues to block runtime replacement.
+`--cli-only` remains available while work is paused. Runtime build/update commands
+discover the running package's current bundle, so Homebrew cleanup of older kegs
+does not leave them dependent on a removed source path. `version --details` checks
+the package checksum and reports its source revision outside a Git checkout.
 
 ## Initialize a project
 
@@ -657,8 +719,8 @@ sdlc update --dependencies
 sdlc update --cli-only
 ```
 
-`update` runs the selected checkout's installer, using its current code to build
-both components. The private installation receipt remembers canonical source and
+For native installations, `update` runs the selected checkout's installer, using
+its current code to build both components. The private installation receipt remembers canonical source and
 destination paths and records the installed executable's identity and SHA-256.
 Older installations fall back to the source in `runtime.json`. `--source` and
 `--bin-dir` select replacements when those locations move. An arbitrary PATH
@@ -668,6 +730,8 @@ executable is never run to discover its version or install location.
 Without it, current local changes are built. The dry-run validates local source
 and destination, makes no builds or writes, and contacts no remote. A `--pull`
 preview describes current local source and prints the pending fast-forward step.
+Homebrew packages committed snapshots; its installation and update flow is
+described [above](#local-homebrew-installation).
 
 The default uses source pins and clears previously selected private dependency
 overrides after a successful runtime build. `--dependencies` instead selects the

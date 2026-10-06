@@ -258,6 +258,14 @@ func BuildWithOptions(ctx context.Context, source, binDir string, options Option
 }
 
 func validateDestination(destination string) error {
+	// Homebrew owns files inside its kegs as well as the symlink on PATH.
+	// Source installation must not alter an installed package in place.
+	keg := filepath.Dir(filepath.Dir(destination))
+	if filepath.Base(filepath.Dir(destination)) == "bin" && filepath.Base(filepath.Dir(keg)) == "sdlc" {
+		if _, err := os.Lstat(filepath.Join(keg, "INSTALL_RECEIPT.json")); err == nil {
+			return fmt.Errorf("Homebrew owns this executable; use sdlc update or brew upgrade local/sdlc/sdlc")
+		}
+	}
 	if info, err := os.Lstat(destination); err == nil {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("refusing to replace a non-regular sdlc executable")

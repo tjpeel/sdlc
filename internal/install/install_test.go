@@ -30,6 +30,27 @@ func fixture(t *testing.T) (string, string) {
 	return source, bin
 }
 
+func TestSourceInstallerCannotAlterAHomebrewKeg(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "Cellar", "sdlc", "0.1.0-test", "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(bin, "sdlc")
+	if err := os.WriteFile(destination, []byte("package-owned command"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(bin), "INSTALL_RECEIPT.json"), []byte(`{"source":{"tap":"local/sdlc"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDestination(destination); err == nil || !strings.Contains(err.Error(), "Homebrew owns") {
+		t.Fatalf("source installer accepted package-owned destination: %v", err)
+	}
+	if data, err := os.ReadFile(destination); err != nil || string(data) != "package-owned command" {
+		t.Fatal("package-owned executable changed")
+	}
+}
+
 func writeCommand(t *testing.T, source, value string) {
 	t.Helper()
 	code := "package main\nimport \"fmt\"\nfunc main() { fmt.Println(" + value + ") }\n"

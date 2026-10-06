@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/tjpeel/sdlc/internal/homebrew"
 	"github.com/tjpeel/sdlc/internal/install"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -40,6 +41,18 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 	manager, err := runtimeimage.New(output, diagnostics)
 	if err != nil {
 		return err
+	}
+	if path, err := exec.LookPath("sdlc"); err == nil {
+		pkg, err := homebrew.Detect(path)
+		if err != nil {
+			return err
+		}
+		if pkg != nil {
+			if *binDir != "" {
+				return fmt.Errorf("Homebrew owns the installed CLI destination; omit --bin-dir")
+			}
+			return updateHomebrew(ctx, manager.Directory, *source, *cliOnly, *dependencies, *dryRun, *pull, output, diagnostics)
+		}
 	}
 	root, err := updateSource(ctx, manager.Directory, *source)
 	if err != nil {
@@ -99,6 +112,84 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 	command.Stdout, command.Stderr = output, diagnostics
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("local update did not complete; see the installer result above: %w", err)
+	}
+	return nil
+}
+
+func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnly, dependencies, dryRun, pull bool, output, diagnostics io.Writer) error {
+	root := explicitSource
+	if root == "" {
+		data, err := viewReadFile(filepath.Join(stateDir, "homebrew.json"), 16384, true)
+		if err != nil {
+			return fmt.Errorf("Homebrew source checkout is unavailable; use --source SDLC_DIRECTORY to refresh the local tap, or brew upgrade %s: %w", homebrew.Formula, err)
+		}
+		var receipt struct {
+			SchemaVersion int    `json:"schema_version"`
+			Formula       string `json:"formula"`
+			Source        string `json:"source"`
+		}
+		if err := json.Unmarshal(data, &receipt); err != nil || receipt.SchemaVersion != 1 || receipt.Formula != homebrew.Formula || !filepath.IsAbs(receipt.Source) {
+			return fmt.Errorf("invalid Homebrew source receipt; specify --source SDLC_DIRECTORY")
+		}
+		root = receipt.Source
+	}
+	root, err := install.ValidateSource(root)
+	if err != nil {
+		return err
+	}
+	sourceIdentity, err := project.InspectIdentity(ctx, root)
+	if err != nil || sourceIdentity.Dirty || sourceIdentity.Root != root {
+		return fmt.Errorf("Homebrew packages committed source; commit or set aside source changes before updating")
+	}
+	installer := filepath.Join(root, "scripts", "install_homebrew.py")
+	if info, err := os.Lstat(installer); err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("selected source is missing the Homebrew installer")
+	}
+	fmt.Fprintf(output, "Homebrew: %s\nSource: %s\n", homebrew.Formula, root)
+	if dryRun {
+		fmt.Fprintln(output, "Dry run: refresh the committed snapshot, local formula and checksum; brew upgrade "+homebrew.Formula)
+		if cliOnly {
+			fmt.Fprintln(output, "Runtime: unchanged (--cli-only)")
+		} else if dependencies {
+			fmt.Fprintln(output, "Runtime: refresh public dependencies using the installed package source")
+		} else {
+			fmt.Fprintln(output, "Runtime: rebuild from the installed package with source-pins")
+		}
+	}
+	if pull {
+		if err := requireCleanUpdateSource(ctx, root); err != nil {
+			return err
+		}
+		if dryRun {
+			_, err := fmt.Fprintln(output, "Would fast-forward the clean checkout with git pull --ff-only. No remote was contacted; the preview describes current local source.")
+			return err
+		}
+		command := exec.CommandContext(ctx, "git", "-C", root, "pull", "--ff-only", "--no-rebase")
+		command.Stdout, command.Stderr = output, diagnostics
+		if err := command.Run(); err != nil {
+			return fmt.Errorf("source fast-forward failed; Homebrew update was not started: %w", err)
+		}
+	}
+	if dryRun {
+		return nil
+	}
+	args := []string{installer, "--source", root, "--state-dir", stateDir}
+	if cliOnly {
+		args = append(args, "--cli-only")
+	}
+	if dependencies {
+		args = append(args, "--dependencies")
+	}
+	command := exec.CommandContext(ctx, "python3", args...)
+	command.Dir = root
+	if cwd, err := os.Getwd(); err == nil {
+		if callerRoot, err := checkoutRoot(ctx, cwd); err == nil {
+			command.Env = append(os.Environ(), "SDLC_UPDATE_PROJECT_ROOT="+callerRoot)
+		}
+	}
+	command.Stdout, command.Stderr = output, diagnostics
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("Homebrew update did not complete; see the installation result above: %w", err)
 	}
 	return nil
 }

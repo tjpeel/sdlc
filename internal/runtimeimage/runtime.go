@@ -39,6 +39,9 @@ type State struct {
 type BuildOptions struct {
 	// SourcePins ignores private dependency overrides and uses the source Dockerfile.
 	SourcePins bool
+	// SourceRevision supplies verified archive provenance when no Git checkout exists.
+	// A checkout's own revision takes priority.
+	SourceRevision string
 	// ValidatePrevious runs under the writer lock before Docker operations.
 	ValidatePrevious  func(context.Context, State) error
 	Pins              *runtimepins.Pins
@@ -127,6 +130,7 @@ func (manager Manager) engine(ctx context.Context) (string, error) {
 }
 
 var imageID = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var sourceCommitID = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 func (manager Manager) inspect(ctx context.Context, image string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -205,6 +209,9 @@ func (manager Manager) Build(ctx context.Context, source string) (State, error) 
 func (manager Manager) BuildWithOptions(ctx context.Context, source string, options BuildOptions) (State, error) {
 	if err := ctx.Err(); err != nil {
 		return State{}, err
+	}
+	if options.SourceRevision != "" && !sourceCommitID.MatchString(options.SourceRevision) {
+		return State{}, errors.New("archive source revision must be a full Git commit ID")
 	}
 	if options.ExpectedImageID != "" && !imageID.MatchString(options.ExpectedImageID) {
 		return State{}, errors.New("expected runtime image identity is invalid")
@@ -307,9 +314,20 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 			return State{}, err
 		}
 	}
-	revision := "unknown"
+	revision := options.SourceRevision
+	if revision == "" {
+		revision = "unknown"
+	}
+	useCheckoutRevision := true
+	if options.SourceRevision != "" {
+		// A keg can live inside Homebrew's own Git repository. Only the
+		// selected source's checkout can override verified archive provenance.
+		top, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--show-toplevel").Output()
+		checkout, resolveErr := filepath.EvalSymlinks(strings.TrimSpace(string(top)))
+		useCheckoutRevision = err == nil && resolveErr == nil && checkout == root
+	}
 	git := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD")
-	if output, err := git.Output(); err == nil {
+	if output, err := git.Output(); err == nil && useCheckoutRevision {
 		revision = strings.TrimSpace(string(output))
 		status := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain")
 		if output, err := status.Output(); err != nil {

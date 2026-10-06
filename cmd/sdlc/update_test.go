@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,5 +126,64 @@ func TestUpdateReceiptKeepsSourceVisibleFromAnotherProject(t *testing.T) {
 	}
 	if version.Source.Path != root || version.Installed.Version != "0.1.0-test" || version.BuiltArtifact != "verified installation receipt" {
 		t.Fatalf("version view from other project: %+v", version)
+	}
+}
+
+func TestHomebrewUpdatePreviewUsesSavedCheckoutAndNeverCallsBrew(t *testing.T) {
+	executable, _ := bundledSourceFixture(t)
+	root := updateSourceFixture(t)
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "install_homebrew.py"), []byte("# offline fixture\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		if data, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git fixture: %v %s", err, data)
+		}
+	}
+	run("add", ".")
+	run("-c", "commit.gpgsign=false", "commit", "-m", "Prepare offline source")
+	stateDir := os.Getenv("SDLC_STATE_DIR")
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"schema_version":1,"formula":"local/sdlc/sdlc","source":` + strconvJSON(root) + `}`)
+	if err := os.WriteFile(filepath.Join(stateDir, "homebrew.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Dir(executable)
+	marker := filepath.Join(bin, "external-call")
+	for _, name := range []string{"brew", "python3", "docker"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Chdir(t.TempDir())
+	before := dashboardTree(t, stateDir)
+	var out bytes.Buffer
+	if err := updateCommand(context.Background(), []string{"--dry-run"}, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "brew upgrade local/sdlc/sdlc") || !strings.Contains(out.String(), root) || !strings.Contains(out.String(), "source-pins") {
+		t.Fatal(out.String())
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("offline preview called an external builder or provider")
+	}
+	if strconvJSON(before) != strconvJSON(dashboardTree(t, stateDir)) {
+		t.Fatal("preview changed installation state")
+	}
+	if err := updateCommand(context.Background(), []string{"--dry-run", "--bin-dir", bin}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "Homebrew owns") {
+		t.Fatalf("Homebrew destination override accepted: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/tjpeel/sdlc\n\ngo 1.26.0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateCommand(context.Background(), []string{"--dry-run"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "committed source") {
+		t.Fatalf("uncommitted Homebrew source accepted: %v", err)
 	}
 }

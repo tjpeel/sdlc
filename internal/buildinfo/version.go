@@ -6,7 +6,10 @@ import (
 	"runtime/debug"
 )
 
-var Version = "0.1.0-beta.4"
+var Version = "0.1.0-beta.5"
+
+// Revision can be set by the package builder when source has no Git metadata.
+var Revision = "unknown"
 
 type Identity struct {
 	Version  string `json:"version"`
@@ -17,7 +20,7 @@ type Identity struct {
 }
 
 func Current() Identity {
-	identity := Identity{Version: Version, Revision: "unknown", OS: runtime.GOOS, Arch: runtime.GOARCH}
+	identity := Identity{Version: Version, Revision: Revision, OS: runtime.GOOS, Arch: runtime.GOARCH}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
 			switch setting.Key {
