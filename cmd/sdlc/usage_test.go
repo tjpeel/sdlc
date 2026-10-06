@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/runusage"
+	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 func TestUsageReportsDurableMetricsReadOnly(t *testing.T) {
@@ -82,4 +83,60 @@ func TestUsageMissingMetricsAndSelection(t *testing.T) {
 		}
 	}
 	assertDashboardReadOnly(t, root, marker, before)
+}
+
+func TestUsagePresentationKeepsUnknownMeasurementsAndCapacitySeparate(t *testing.T) {
+	measured := int64(42)
+	var output bytes.Buffer
+	if err := writeUsageRows(&output, []usageRow{{RunID: "example", State: "stopped", Metrics: &runusage.Summary{
+		Attempts: 1, Missing: 2, Incomplete: 1, UnknownBaseline: 1,
+		Groups: []runusage.Group{{Provider: "codex", Tokens: runusage.TokenUsage{InputTokens: &measured}}},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "input 42") || !strings.Contains(text, "output unknown") || !strings.Contains(text, "capacity: unknown") || !strings.Contains(text, "Incomplete 1; missing 2; unknown resume baseline 1") {
+		t.Fatalf("recorded values or gaps lost: %s", text)
+	}
+	if strings.Index(text, "input 42") > strings.Index(text, "== Gaps and capacity observations ==") || strings.Index(text, "capacity: unknown") < strings.Index(text, "== Gaps and capacity observations ==") {
+		t.Fatal("capacity mixed with recorded token measurements")
+	}
+	if !strings.Contains(text, "Repair/check outcomes: unrecorded") || strings.Contains(text, "checks passed false") {
+		t.Fatal("unrecorded outcome presented as a measured failure")
+	}
+}
+
+func TestUsageJournalWithoutCheckEvidenceDoesNotClaimFailedChecks(t *testing.T) {
+	_, _, journals := dashboardFixture(t)
+	j := journals[0]
+	evidence := j.Evidence
+	j.Evidence = workrun.CheckEvidence{}
+	if err := workrun.Save(filepath.Dir(j.Workspace), &j); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := usageCommand(context.Background(), []string{"--run", j.ID}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "checks passed false") || !strings.Contains(out.String(), "Check result: not run") {
+		t.Fatalf("unexecuted checks reported as failed: %s", out.String())
+	}
+	for _, passed := range []bool{false, true} {
+		j.Evidence = evidence
+		j.Evidence.Passed = passed
+		if err := workrun.Save(filepath.Dir(j.Workspace), &j); err != nil {
+			t.Fatal(err)
+		}
+		out.Reset()
+		if err := usageCommand(context.Background(), []string{"--run", j.ID}, &out); err != nil {
+			t.Fatal(err)
+		}
+		result := "failed"
+		if passed {
+			result = "passed"
+		}
+		if !strings.Contains(out.String(), "Check result: "+result) || strings.Contains(out.String(), "Check result: not run") {
+			t.Fatalf("recorded result lost: %s", out.String())
+		}
+	}
 }

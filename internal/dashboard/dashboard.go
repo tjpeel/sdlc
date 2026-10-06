@@ -14,6 +14,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runusage"
+	"github.com/tjpeel/sdlc/internal/textview"
 )
 
 // SafeText prevents repository names, questions and logs from controlling a terminal.
@@ -152,6 +153,37 @@ func Page(views []runstatus.View, requested int) ([]runstatus.View, Pagination) 
 	return ordered[start:end], Pagination{requested, PageSize, len(ordered), pages}
 }
 
+func viewCategory(v runstatus.View) string {
+	if v.State == "waiting_for_human" {
+		return "input"
+	}
+	if !v.Available || v.ActivityError != "" || v.State == "blocked" || v.State == "failed" || v.Stale || (v.Stopped && v.NeedsAttention && v.State != "ready" && v.State != "awaiting_reviewer") {
+		return "problem"
+	}
+	if v.NeedsAttention || v.State == "ready" || v.State == "awaiting_reviewer" {
+		return "review"
+	}
+	if v.Live {
+		return "active"
+	}
+	return "recorded"
+}
+
+func categoryHeading(category string) string {
+	switch category {
+	case "input":
+		return "Needs human input"
+	case "problem":
+		return "Needs attention"
+	case "review":
+		return "Ready for review"
+	case "active":
+		return "Active runs"
+	default:
+		return "Recorded runs"
+	}
+}
+
 func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested int) error {
 	rows, page := Page(views, requested)
 	live, attention := 0, 0
@@ -176,7 +208,15 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 	if _, err := fmt.Fprintf(output, "%-4s %-12s %-17s %-21s %-19s %-8s %-7s %-7s\n", "", "RUN", "REPOSITORY", "TICKET", "STAGE", "CONTROL", "PROVIDER", "ACTIVITY"); err != nil {
 		return err
 	}
+	lastCategory := ""
 	for _, v := range rows {
+		category := viewCategory(v)
+		if category != lastCategory {
+			if _, err := fmt.Fprintln(output, textview.Heading(categoryHeading(category))); err != nil {
+				return err
+			}
+			lastCategory = category
+		}
 		mark := ""
 		if v.NeedsAttention {
 			mark = "!"
@@ -206,7 +246,7 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 			}
 		}
 		if reason := Reason(v); reason != "" {
-			if _, err := fmt.Fprintf(output, "     %s\n", clip(reason, 112)); err != nil {
+			if _, err := fmt.Fprintf(output, "     %s\n", textview.Status(category, clip(reason, 112))); err != nil {
 				return err
 			}
 		}
@@ -338,6 +378,21 @@ func WriteUsageSignals(output io.Writer, group runusage.Group) {
 
 func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error {
 	var text strings.Builder
+	category := viewCategory(v)
+	fmt.Fprintln(&text, textview.Heading(categoryHeading(category)))
+	fmt.Fprintln(&text, textview.Status(category, "State: "+v.State))
+	if next := NextAction(v); next != "" {
+		fmt.Fprintf(&text, "Next: %s\n", next)
+	}
+	if reason := Reason(v); reason != "" {
+		fmt.Fprintf(&text, "Attention: %s\n", reason)
+	}
+	if v.State == "waiting_for_human" {
+		for _, question := range v.Questions {
+			fmt.Fprintf(&text, "Question: %s\n", question)
+		}
+	}
+	fmt.Fprintln(&text, textview.Heading("Run details"))
 	fmt.Fprintf(&text, "Run: %s\nRepository: %s\nTicket: %s / %s\nStage: %s | controller: %s | elapsed: %s\nRole: %s | model: %s / %s / %s\nLast output: %s ago | heartbeat: %s ago\n", v.ID, v.Root, v.Reference, filepath.Base(v.Ticket), v.State, controller(v), elapsed(v, now), v.Role, v.Provider, v.Model, v.Effort, age(now, v.LastActivityAt), age(now, v.HeartbeatAt))
 	fmt.Fprintln(&text, usageSummary(v.Activity.Usage))
 	if v.MetricsError != "" {
@@ -352,9 +407,6 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 				group.MeasuredAttempts, group.Attempts, time.Duration(group.ElapsedMS)*time.Millisecond)
 			WriteUsageSignals(&text, group)
 		}
-	}
-	if reason := Reason(v); reason != "" {
-		fmt.Fprintf(&text, "Attention: %s\n", reason)
 	}
 	if v.PR.URL != "" {
 		fmt.Fprintf(&text, "PR: %s\n", v.PR.URL)
@@ -376,19 +428,11 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 			fmt.Fprintf(&text, "Observed controller time: %s | check worker time: %s | CI polling wait: %s\n", time.Duration(j.Timings.ControllerMS)*time.Millisecond, time.Duration(j.Timings.ChecksMS)*time.Millisecond, time.Duration(j.Timings.CIWaitMS)*time.Millisecond)
 		}
 	}
-	if v.State == "waiting_for_human" {
-		for _, question := range v.Questions {
-			fmt.Fprintf(&text, "Question: %s\n", question)
-		}
-	}
 	for _, finding := range v.Findings {
 		fmt.Fprintf(&text, "Finding: %s %s:%d %s — %s\n", finding.Priority, finding.Path, finding.Line, finding.Scenario, finding.Recommendation)
 	}
 	fmt.Fprintf(&text, "Private state: %s\n", v.Directory)
 	if v.Available && v.Journal != nil {
-		if next := NextAction(v); next != "" {
-			fmt.Fprintf(&text, "Next: %s\n", next)
-		}
 		fmt.Fprintf(&text, "Resume from repository: sdlc run --reference %s --ticket %s --resume %s", quote(v.Reference), quote(filepath.Base(v.Ticket)), v.ID)
 		if v.State == "waiting_for_human" {
 			text.WriteString(" --answer-file /PATH/TO/PRIVATE_ANSWER.txt")

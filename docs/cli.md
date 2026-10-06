@@ -35,6 +35,22 @@ current project without executing checks or connecting accounts. The opt-in
 `sdlc shell` provides slash commands over these operations; see the
 [interactive shell guide](interactive-shell.md).
 
+Onboarding starts with observed problems, missing setup and the next useful
+action, followed by the same eight-step walkthrough on each run. Local settings
+are validated, and work references count only when numbered tickets are found.
+Invalid or unreadable evidence is shown separately from missing evidence.
+Configured settings and recorded images do not establish execution readiness:
+provider access, GitHub access, signing, checks and Docker availability are not
+checked by onboarding. The terminal bridge is optional; an external controller
+terminal remains supported.
+
+Onboarding, dashboard, version details and usage share plain section headings
+and explicit status labels. Dashboard separates human input, stopped problems
+and review while keeping its attention order and paging. Version details flag
+only confirmed identity differences. Usage separates recorded measurements
+from missing telemetry and capacity observations; unknown values are not zero.
+These cues also work in redirected output without colour.
+
 ### Local Homebrew installation
 
 On macOS or Linux, Homebrew can own the CLI through a local tap. No GitHub tap

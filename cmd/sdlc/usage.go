@@ -15,19 +15,22 @@ import (
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runusage"
+	"github.com/tjpeel/sdlc/internal/textview"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 type usageRow struct {
-	Timings        *workrun.Timings  `json:"timings,omitempty"`
-	RunID          string            `json:"run_id"`
-	State          string            `json:"state"`
-	RepairRounds   int               `json:"repair_rounds"`
-	CheckAttempts  int               `json:"check_attempts"`
-	ChecksPassed   bool              `json:"checks_passed"`
-	ReviewFindings int               `json:"review_findings"`
-	Metrics        *runusage.Summary `json:"metrics,omitempty"`
-	MetricsError   string            `json:"metrics_error,omitempty"`
+	outcomeRecorded bool
+	checksRecorded  bool
+	Timings         *workrun.Timings  `json:"timings,omitempty"`
+	RunID           string            `json:"run_id"`
+	State           string            `json:"state"`
+	RepairRounds    int               `json:"repair_rounds"`
+	CheckAttempts   int               `json:"check_attempts"`
+	ChecksPassed    bool              `json:"checks_passed"`
+	ReviewFindings  int               `json:"review_findings"`
+	Metrics         *runusage.Summary `json:"metrics,omitempty"`
+	MetricsError    string            `json:"metrics_error,omitempty"`
 }
 
 func usageDuration(value string) (time.Duration, error) {
@@ -101,6 +104,8 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 		}
 		row := usageRow{RunID: view.ID, State: view.State, Metrics: view.Metrics, MetricsError: view.MetricsError}
 		if view.Journal != nil {
+			row.outcomeRecorded = true
+			row.checksRecorded = view.Journal.Evidence.Tree != ""
 			row.Timings = view.Journal.Timings.Recorded()
 			row.RepairRounds = view.Journal.Rounds
 			row.CheckAttempts = view.Journal.CheckAttempt
@@ -120,32 +125,71 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 			Runs      []usageRow `json:"runs"`
 		}{1, now, "Full recorded attempts of runs updated within --since; --run ignores age. Missing telemetry is unknown; dollar estimates do not measure subscription allowance.", rows})
 	}
+	return writeUsageRows(output, rows)
+}
+
+func writeUsageRows(output io.Writer, rows []usageRow) error {
+	fmt.Fprintln(output, textview.Heading("Recorded usage"))
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(output, "No registered runs in the selected period.")
 		return err
 	}
 	for _, row := range rows {
-		fmt.Fprintf(output, "%s: %s | repairs %d | checks %d | checks passed %t\n", row.RunID, row.State, row.RepairRounds, row.CheckAttempts, row.ChecksPassed)
-		if row.Timings != nil {
-			fmt.Fprintf(output, "  Observed controller %s; check worker %s; CI polling wait %s.\n", time.Duration(row.Timings.ControllerMS)*time.Millisecond, time.Duration(row.Timings.ChecksMS)*time.Millisecond, time.Duration(row.Timings.CIWaitMS)*time.Millisecond)
-		} else {
-			fmt.Fprintln(output, "  Controller/check/CI timing: unrecorded.")
+		fmt.Fprintf(output, "%s: %s\n", dashboard.SafeText(row.RunID), dashboard.SafeText(row.State))
+		fmt.Fprintln(output, textview.Heading("Recorded measurements"))
+		if row.outcomeRecorded {
+			fmt.Fprintf(output, "Repairs %d | checks %d\n", row.RepairRounds, row.CheckAttempts)
 		}
-		if row.Metrics == nil {
-			fmt.Fprintln(output, "  Recorded usage unavailable.")
-			continue
+		if row.checksRecorded {
+			result := "failed"
+			if row.ChecksPassed {
+				result = "passed"
+			}
+			fmt.Fprintln(output, "Check result: "+result)
+		}
+		if row.Timings != nil {
+			fmt.Fprintf(output, " Observed controller %s; check worker %s; CI polling wait %s.\n", time.Duration(row.Timings.ControllerMS)*time.Millisecond, time.Duration(row.Timings.ChecksMS)*time.Millisecond, time.Duration(row.Timings.CIWaitMS)*time.Millisecond)
+		}
+		if s := row.Metrics; s != nil {
+			if s.Attempts > 0 {
+				fmt.Fprintf(output, " Attempts %d; elapsed %s (setup/queue/execution).\n", s.Attempts, time.Duration(s.ElapsedMS)*time.Millisecond)
+			} else {
+				fmt.Fprintln(output, "No recorded provider attempts.")
+			}
+			for _, group := range s.Groups {
+				fmt.Fprintf(output, " %s %s (%s; optimizer %s): input %s, cache read %s, cache creation %s, output %s; measured %d/%d attempts.\n", dashboard.SafeText(group.Provider), dashboard.SafeText(group.Model), dashboard.SafeText(group.Role), dashboard.SafeText(group.OptimizerMode), usageCount(group.Tokens.InputTokens), usageCount(group.Tokens.CachedInputTokens), usageCount(group.Tokens.CacheCreationInputTokens), usageCount(group.Tokens.OutputTokens), group.MeasuredAttempts, group.Attempts)
+			}
+		}
+		fmt.Fprintln(output, textview.Heading("Gaps and capacity observations"))
+		if !row.outcomeRecorded {
+			fmt.Fprintln(output, textview.Status("unverified", "Repair/check outcomes: unrecorded."))
+		}
+		if !row.checksRecorded {
+			fmt.Fprintln(output, textview.Status("unverified", "Check result: not run (no check evidence recorded)."))
+		}
+		if row.Timings == nil {
+			fmt.Fprintln(output, textview.Status("unverified", "Controller/check/CI timing: unrecorded."))
 		}
 		if row.MetricsError != "" {
-			fmt.Fprintf(output, "  %s\n", dashboard.SafeText(row.MetricsError))
+			fmt.Fprintln(output, textview.Status("problem", "Recorded usage: "+dashboard.SafeText(row.MetricsError)))
 		}
-		s := row.Metrics
-		fmt.Fprintf(output, "  Attempts %d; incomplete %d; missing %d; unknown resume baseline %d; elapsed %s (setup/queue/execution).\n", s.Attempts, s.Incomplete, s.Missing, s.UnknownBaseline, time.Duration(s.ElapsedMS)*time.Millisecond)
-		for _, group := range s.Groups {
-			fmt.Fprintf(output, "  %s %s / %s / %s: input %s, cache read %s, cache creation %s, output %s; measured %d/%d attempts.\n", dashboard.SafeText(group.Provider), dashboard.SafeText(group.Model), dashboard.SafeText(group.Role), dashboard.SafeText(group.OptimizerMode), usageCount(group.Tokens.InputTokens), usageCount(group.Tokens.CachedInputTokens), usageCount(group.Tokens.CacheCreationInputTokens), usageCount(group.Tokens.OutputTokens), group.MeasuredAttempts, group.Attempts)
-			dashboard.WriteUsageSignals(output, group)
+		if row.Metrics == nil {
+			fmt.Fprintln(output, textview.Status("unverified", "Recorded usage unavailable; subscription capacity unknown."))
+		} else {
+			fmt.Fprintf(output, "Incomplete %d; missing %d; unknown resume baseline %d.\n", row.Metrics.Incomplete, row.Metrics.Missing, row.Metrics.UnknownBaseline)
+			if len(row.Metrics.Groups) == 0 {
+				fmt.Fprintln(output, textview.Status("unverified", "Subscription capacity: unknown (no native quota event recorded)."))
+			}
+			if row.Metrics.UnknownBaseline > 0 {
+				fmt.Fprintln(output, textview.Status("unverified", "Some attempt baselines are unknown; missing measurements are not zero."))
+			}
+			for _, group := range row.Metrics.Groups {
+				fmt.Fprintf(output, " %s %s (%s)\n", dashboard.SafeText(group.Provider), dashboard.SafeText(group.Model), dashboard.SafeText(group.Role))
+				dashboard.WriteUsageSignals(output, group)
+			}
 		}
 	}
-	_, err = fmt.Fprintln(output, "Input categories retain native semantics: Codex input includes cache reads; Claude input excludes cache reads/writes. Compare matching models and outcomes; subscription capacity is separate.")
+	_, err := fmt.Fprintln(output, "Input categories retain native semantics: Codex input includes cache reads; Claude input excludes cache reads/writes. Compare matching models and outcomes; subscription capacity is separate.")
 	return err
 }
 

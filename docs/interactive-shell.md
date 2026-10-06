@@ -18,6 +18,19 @@ and a yellow dirty marker. There is no theme selector.
 
 ## Commands and help
 
+`/onboard` starts with what needs attention and the next useful action, then
+shows the full eight-step walkthrough. Revisit it after changing local setup.
+It validates local project settings and counts numbered tickets, but it does
+not check provider or GitHub access, signing, execute checks or query Docker.
+Local configuration and recorded runtime evidence remain distinct from verified
+readiness. A missing terminal bridge is optional because jobs can use an
+external controller terminal.
+
+Onboarding, dashboard, version details and usage use the same plain section
+headings and status labels. Problems and human actions come before details;
+unverified evidence and missing measurements stay visible without relying on
+colour. Page through longer views using the controls below.
+
 Type `/` to see commands, then keep typing to narrow the list. Tab or Enter
 inserts the selected completion; another Enter submits it. Arrow keys move
 through suggestions, Escape dismisses them, and the mouse wheel or Page Up/Down

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	identity "github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/dashboard"
@@ -27,6 +28,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/terminallaunch"
+	"github.com/tjpeel/sdlc/internal/textview"
 )
 
 type shellProject struct {
@@ -274,9 +276,10 @@ type versionView struct {
 		Revision string `json:"revision"`
 		Dirty    bool   `json:"dirty"`
 	} `json:"source"`
-	BuiltArtifact string              `json:"built_artifact"`
-	Runtime       *runtimeimage.State `json:"runtime,omitempty"`
-	RuntimeStatus string              `json:"runtime_status"`
+	BuiltArtifact   string              `json:"built_artifact"`
+	Runtime         *runtimeimage.State `json:"runtime,omitempty"`
+	RuntimeStatus   string              `json:"runtime_status"`
+	RuntimeCategory string              `json:"runtime_category"`
 }
 
 func versionDetailsCommand(ctx context.Context, args []string, out io.Writer) error {
@@ -291,7 +294,7 @@ func versionDetailsCommand(ctx context.Context, args []string, out io.Writer) er
 	if flags.NArg() != 0 {
 		return fmt.Errorf("version accepts no positional arguments")
 	}
-	v := versionView{Running: identity.Current(), BuiltArtifact: "not recorded", RuntimeStatus: "not recorded"}
+	v := versionView{Running: identity.Current(), BuiltArtifact: "not recorded", RuntimeStatus: "not recorded", RuntimeCategory: "setup"}
 	v.Installed.Version = "unknown"
 	v.Installed.Revision = "unknown"
 	v.Source.Version = "not recorded"
@@ -420,23 +423,87 @@ func versionDetailsCommand(ctx context.Context, args []string, out io.Writer) er
 	if dir, err := shellStateDirectory(); err == nil {
 		if data, err := viewReadFile(filepath.Join(dir, "runtime.json"), 256*1024, true); err == nil {
 			var state runtimeimage.State
-			if json.Unmarshal(data, &state) == nil && state.Version == 1 && state.ImageID != "" {
+			if err := localRuntimeRecord(data, &state); err == nil {
 				v.Runtime = &state
 				v.RuntimeStatus = "recorded locally; Docker not queried"
+				v.RuntimeCategory = "unverified"
 			} else {
 				v.RuntimeStatus = "invalid local record"
+				v.RuntimeCategory = "problem"
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			v.RuntimeStatus = "local record unavailable"
+			v.RuntimeCategory = "problem"
 		}
+	} else {
+		v.RuntimeStatus = "local state unavailable: " + err.Error()
+		v.RuntimeCategory = "problem"
 	}
 	if *asJSON {
 		return json.NewEncoder(out).Encode(v)
 	}
-	fmt.Fprintf(out, "Running SDLC: %s (%s; dirty=%t; %s/%s)\nInstalled on PATH: %s (%s; revision=%s; dirty=%t; %s/%s)\nSDLC source: %s (%s; revision=%s; dirty=%t)\nLast built CLI artifact: %s\nRuntime image: %s\n", dashboard.SafeText(v.Running.Version), dashboard.SafeText(v.Running.Revision), v.Running.Dirty, v.Running.OS, v.Running.Arch, dashboard.SafeText(v.Installed.Version), dashboard.SafeText(v.Installed.Path), dashboard.SafeText(v.Installed.Revision), v.Installed.Dirty, v.Installed.OS, v.Installed.Arch, dashboard.SafeText(v.Source.Version), dashboard.SafeText(v.Source.Path), dashboard.SafeText(v.Source.Revision), v.Source.Dirty, v.BuiltArtifact, v.RuntimeStatus)
+	return writeVersionDetails(out, v)
+}
+
+func knownIdentity(value string) bool {
+	return value != "" && value != "unknown" && value != "not recorded"
+}
+
+// localRuntimeRecord checks the saved evidence only; it never queries Docker.
+func localRuntimeRecord(data []byte, state *runtimeimage.State) error {
+	if !utf8.Valid(data) || json.Unmarshal(data, state) != nil || state.Version != 1 || !strings.HasPrefix(state.ImageID, "sha256:") || len(state.ImageID) != 71 || strings.Trim(strings.TrimPrefix(state.ImageID, "sha256:"), "0123456789abcdef") != "" {
+		return fmt.Errorf("runtime.json does not contain a valid version 1 image record")
+	}
+	if state.Inventory != nil {
+		if err := runtimeimage.ValidateInventory(*state.Inventory); err != nil {
+			return err
+		}
+	}
+	if state.DependencyPins != nil {
+		if err := state.DependencyPins.Validate(); err != nil {
+			return err
+		}
+	}
+	if state.BuildRecipe != "" && (len(state.BuildRecipe) > 1<<20 || !utf8.ValidString(state.BuildRecipe) || strings.ContainsRune(state.BuildRecipe, 0)) {
+		return fmt.Errorf("runtime build recipe contains invalid text")
+	}
+	return nil
+}
+
+func writeVersionDetails(out io.Writer, v versionView) error {
+	fmt.Fprintln(out, textview.Heading("Running CLI"))
+	fmt.Fprintf(out, "Running SDLC: %s (%s; dirty=%t; %s/%s)\n", dashboard.SafeText(v.Running.Version), dashboard.SafeText(v.Running.Revision), v.Running.Dirty, v.Running.OS, v.Running.Arch)
+	fmt.Fprintln(out, textview.Heading("Installed CLI on PATH"))
+	fmt.Fprintf(out, "Installed on PATH: %s (%s; revision=%s; dirty=%t; %s/%s)\nLast built CLI artifact: %s\n", dashboard.SafeText(v.Installed.Version), dashboard.SafeText(v.Installed.Path), dashboard.SafeText(v.Installed.Revision), v.Installed.Dirty, v.Installed.OS, v.Installed.Arch, v.BuiltArtifact)
+	fmt.Fprintln(out, textview.Heading("SDLC source"))
+	fmt.Fprintf(out, "SDLC source: %s (%s; revision=%s; dirty=%t)\n", dashboard.SafeText(v.Source.Version), dashboard.SafeText(v.Source.Path), dashboard.SafeText(v.Source.Revision), v.Source.Dirty)
+	fmt.Fprintln(out, textview.Heading("Identity comparison"))
+	compared, mismatches := 0, 0
+	for _, pair := range []struct{ name, a, b string }{
+		{"Running/PATH version", v.Running.Version, v.Installed.Version},
+		{"Running/PATH revision", v.Running.Revision, v.Installed.Revision},
+		{"PATH/source version", v.Installed.Version, v.Source.Version},
+		{"PATH/source revision", v.Installed.Revision, v.Source.Revision},
+	} {
+		if !knownIdentity(pair.a) || !knownIdentity(pair.b) {
+			fmt.Fprintln(out, textview.Status("unverified", pair.name+": identity unavailable"))
+			continue
+		}
+		compared++
+		if pair.a != pair.b {
+			mismatches++
+			fmt.Fprintln(out, textview.Status("problem", pair.name+" differs: "+dashboard.SafeText(pair.a)+" / "+dashboard.SafeText(pair.b)))
+		}
+	}
+	if compared > 0 && mismatches == 0 {
+		fmt.Fprintln(out, textview.Status("configured", "Comparable version and revision values match; execution readiness is not checked here."))
+	}
+	fmt.Fprintln(out, textview.Heading("Runtime image record"))
+	fmt.Fprintln(out, textview.Status(v.RuntimeCategory, "Runtime image: "+v.RuntimeStatus))
 	if v.Runtime != nil {
 		fmt.Fprintf(out, "Image ID: %s\nRuntime source revision: %s\n", dashboard.SafeText(v.Runtime.ImageID), dashboard.SafeText(v.Runtime.Revision))
 	}
+
 	return nil
 }
 
@@ -445,6 +512,8 @@ type onboardingStep struct {
 	State       string `json:"state"`
 	Purpose     string `json:"purpose"`
 	Instruction string `json:"instruction"`
+	Category    string `json:"category"`
+	Reason      string `json:"reason"`
 }
 
 func onboardCommand(ctx context.Context, args []string, out io.Writer) error {
@@ -469,43 +538,81 @@ func onboardCommand(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	steps := []onboardingStep{
-		{"project", "needs configuration", "Define project inputs and checks.", "Run sdlc init; review .sdlc/project.json."},
-		{"checks", "needs review", "Validate completed work with project checks.", "Review checks in .sdlc/project.json; onboarding does not execute them."},
-		{"runtime", "not recorded", "Pin the execution image used by jobs.", "Use sdlc runtime build and sdlc runtime status."},
-		{"providers", "unchecked", "Allow official provider clients to perform work.", "Use sdlc auth status and review provider setup; no connected checks run here."},
-		{"github", "unchecked", "Select the GitHub identity and repository for work.", "Use sdlc github list; connected validation is explicit."},
-		{"signing", "unchecked", "Sign commits using the configured identity.", "Use sdlc signing status; verify setup before launching work."},
-		{"work", "not found", "Supply local references and numbered tickets.", "Add ignored tickets under .sdlc/work/REFERENCE/tickets, then run sdlc work --references."},
-		{"background terminal", "unavailable", "Keep job controllers independent of this shell.", "Run sdlc terminal setup explicitly, then sdlc terminal status; or use the suggested command in another terminal."},
+		{Name: "project", State: "needs configuration", Category: "setup", Reason: "No local project settings found.", Purpose: "Define project inputs and checks.", Instruction: "Run sdlc init; review .sdlc/project.json."},
+		{Name: "checks", State: "needs review", Category: "review", Reason: "Project checks have not been inspected or executed.", Purpose: "Validate completed work with project checks.", Instruction: "Review checks in .sdlc/project.json; onboarding does not execute them."},
+		{Name: "runtime", State: "not recorded", Category: "setup", Reason: "No local runtime image record found.", Purpose: "Pin the execution image used by jobs.", Instruction: "Use sdlc runtime status --offline to inspect local evidence; build explicitly if required."},
+		{Name: "providers", State: "unchecked", Category: "unverified", Reason: "Provider clients and accounts are not checked here.", Purpose: "Allow official provider clients to perform work.", Instruction: "Use sdlc auth status and review provider setup; no connected checks run here."},
+		{Name: "github", State: "unchecked", Category: "unverified", Reason: "GitHub access is not checked here.", Purpose: "Select the GitHub identity and repository for work.", Instruction: "Use sdlc github list; connected validation is explicit."},
+		{Name: "signing", State: "unchecked", Category: "unverified", Reason: "Signing configuration is not checked here.", Purpose: "Sign commits using the configured identity.", Instruction: "Use sdlc signing status; verify setup before launching work."},
+		{Name: "work", State: "not found", Category: "setup", Reason: "No numbered local tickets found.", Purpose: "Supply local references and numbered tickets.", Instruction: "Add ignored tickets under .sdlc/work/REFERENCE/tickets, then run sdlc work --references."},
+		{Name: "background terminal", State: "bridge not recorded", Category: "optional", Reason: "An external controller terminal is supported without the bridge.", Purpose: "Keep job controllers independent of this shell.", Instruction: "Use the suggested command in another terminal; optionally run sdlc terminal setup explicitly, then sdlc terminal status."},
 	}
 	if data, err := viewReadFile(filepath.Join(root, project.ConfigPath), 64*1024, false); err == nil {
-		var cfg project.Config
-		if json.Unmarshal(data, &cfg) == nil && cfg.Version == 1 {
-			steps[0].State = "configured locally"
+		if cfg, err := project.ParseConfig(data); err == nil {
+			steps[0].State, steps[0].Category, steps[0].Reason = "configured locally", "configured", "Project settings passed local validation."
+			steps[0].Instruction = "Review inputs and checks in .sdlc/project.json before launching work."
 			if len(cfg.Checks) > 0 {
-				steps[1].State = "configured; not executed"
+				steps[1].State, steps[1].Category, steps[1].Reason = "configured; not executed", "unverified", fmt.Sprintf("%d check commands configured; results are not checked here.", len(cfg.Checks))
+			} else {
+				steps[1].Reason = "No check commands configured."
 			}
 		} else {
-			steps[0].State = "invalid; needs review"
+			steps[0].State, steps[0].Category, steps[0].Reason = "invalid; needs review", "problem", err.Error()
+			steps[0].Instruction = "Repair .sdlc/project.json, then run sdlc onboard status again."
+			steps[1].Reason = "Checks cannot be assessed until project settings are valid."
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		steps[0].State = "unavailable; needs review"
+		steps[0].State, steps[0].Category, steps[0].Reason = "unavailable; needs review", "problem", err.Error()
+		steps[0].Instruction = "Review ownership and access to .sdlc/project.json, then run sdlc onboard status again."
 	}
 	if dir, err := shellStateDirectory(); err == nil {
 		if data, err := viewReadFile(filepath.Join(dir, "runtime.json"), 256*1024, true); err == nil {
 			var state runtimeimage.State
-			if json.Unmarshal(data, &state) == nil && state.Version == 1 && state.ImageID != "" {
-				steps[2].State = "recorded locally; unverified"
+			if err := localRuntimeRecord(data, &state); err == nil {
+				steps[2].State, steps[2].Category, steps[2].Reason = "recorded locally; unverified", "unverified", "A local image record exists; Docker and image availability are not checked here."
+			} else {
+				steps[2].State, steps[2].Category, steps[2].Reason = "invalid local record", "problem", err.Error()
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			steps[2].State, steps[2].Category, steps[2].Reason = "local record unavailable", "problem", err.Error()
+		}
+		if _, err := viewReadFile(filepath.Join(dir, "terminal", "ready.json"), 16*1024, true); err == nil {
+			status, err := terminallaunch.TerminalStatus(filepath.Join(dir, "terminal"))
+			if err != nil {
+				steps[7].State, steps[7].Category, steps[7].Reason = "bridge record unavailable", "problem", err.Error()
+			} else if status.Ready {
+				steps[7].State, steps[7].Category, steps[7].Reason = "configured bridge; native focus unverified", "unverified", status.Message
+			} else {
+				steps[7].State, steps[7].Category, steps[7].Reason = "bridge needs review", "problem", status.Message
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			steps[7].State, steps[7].Category, steps[7].Reason = "bridge record unavailable", "problem", err.Error()
+		}
+	} else {
+		for _, i := range []int{2, 7} {
+			steps[i].State, steps[i].Category, steps[i].Reason = "local state unavailable", "problem", err.Error()
+		}
+	}
+	if refs, err := project.References(ctx, root); err == nil {
+		tickets, problems := 0, []string{}
+		for _, ref := range refs.References {
+			tickets += len(ref.Tickets)
+			if ref.Error != "" {
+				problems = append(problems, ref.Name+": "+ref.Error)
 			}
 		}
-	}
-	if refs, err := project.References(ctx, root); err == nil && len(refs.References) > 0 {
-		steps[6].State = "local references present; use work to inspect"
-	}
-	if dir, err := shellStateDirectory(); err == nil {
-		if status, err := terminallaunch.TerminalStatus(filepath.Join(dir, "terminal")); err == nil && status.Ready {
-			steps[7].State = "configured bridge; native focus unverified"
+		if len(problems) > 0 {
+			steps[6].State, steps[6].Category, steps[6].Reason = "local work needs review", "problem", strings.Join(problems, "; ")
+			steps[6].Instruction = "Run sdlc work --references and repair the reported local work problem."
+		} else if tickets > 0 {
+			steps[6].State, steps[6].Category, steps[6].Reason = "local tickets present; contents unverified", "unverified", fmt.Sprintf("%d numbered tickets found across %d references; ticket bodies are not read here.", tickets, len(refs.References))
+			steps[6].Instruction = "Use sdlc work --references, then inspect the selected ticket before launching work."
+		} else if len(refs.References) > 0 {
+			steps[6].State, steps[6].Reason = "references present; no numbered tickets", "References alone do not supply work tickets."
 		}
+	} else {
+		steps[6].State, steps[6].Category, steps[6].Reason = "local work unavailable", "problem", err.Error()
+		steps[6].Instruction = "Run sdlc work --references and review the reported local work problem."
 	}
 	result := struct {
 		Root  string           `json:"root"`
@@ -515,8 +622,36 @@ func onboardCommand(ctx context.Context, args []string, out io.Writer) error {
 		return json.NewEncoder(out).Encode(result)
 	}
 	fmt.Fprintf(out, "Project onboarding: %s\n", dashboard.SafeText(root))
+	fmt.Fprintln(out, textview.Heading("Needs attention"))
+	attention := false
+	for _, category := range []string{"problem", "setup", "review"} {
+		for i, step := range steps {
+			if step.Category == category {
+				attention = true
+				fmt.Fprintf(out, "%s (step %d): %s\n", textview.Status(category, step.Name), i+1, dashboard.SafeText(step.Reason))
+			}
+		}
+	}
+	if !attention {
+		fmt.Fprintln(out, "No local setup problems observed. Execution readiness is unverified.")
+	}
+	for _, category := range []string{"problem", "setup", "review", "unverified"} {
+		found := false
+		for _, step := range steps {
+			if step.Category == category {
+				fmt.Fprintf(out, "Next: %s\n", dashboard.SafeText(step.Instruction))
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	fmt.Fprintln(out, "Offline summary: provider access, GitHub access, signing, checks and Docker availability are not checked here.")
+	fmt.Fprintln(out, textview.Heading("Walkthrough"))
 	for i, step := range steps {
-		fmt.Fprintf(out, "\n%d. %s\n  Status: %s\n  Purpose: %s\n  Next: %s\n", i+1, step.Name, step.State, step.Purpose, step.Instruction)
+		fmt.Fprintf(out, "\n%d. %s\n Status: %s\n Reason: %s\n Purpose: %s\n Next: %s\n", i+1, step.Name, textview.Status(step.Category, step.State), dashboard.SafeText(step.Reason), step.Purpose, step.Instruction)
 	}
 	return nil
 }

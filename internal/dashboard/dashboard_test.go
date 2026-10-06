@@ -56,6 +56,32 @@ func TestOrderedPutsQuestionsAndBrokenControllersBeforeReadyAndActiveRuns(t *tes
 	}
 }
 
+func TestDashboardGroupsAttentionAndPutsQuestionsBeforeDetails(t *testing.T) {
+	now := time.Now().UTC()
+	views := []runstatus.View{
+		{ID: "ready-run", Available: true, State: "ready", NeedsAttention: true},
+		{ID: "question-run", Available: true, State: "waiting_for_human", NeedsAttention: true, Questions: []string{"Which option?"}},
+		{ID: "broken-run", Available: true, State: "blocked", NeedsAttention: true},
+	}
+	var output bytes.Buffer
+	if err := List(&output, views, now); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	input, problem, review := strings.Index(text, "== Needs human input =="), strings.Index(text, "== Needs attention =="), strings.Index(text, "== Ready for review ==")
+	if input < 0 || problem <= input || review <= problem || strings.Index(text, "question-run") > strings.Index(text, "broken-run") || strings.Index(text, "broken-run") > strings.Index(text, "ready-run") {
+		t.Fatalf("attention sections changed run ordering: %s", text)
+	}
+	output.Reset()
+	if err := Detail(&output, views[1], now, false); err != nil {
+		t.Fatal(err)
+	}
+	text = output.String()
+	if strings.Index(text, "Question: Which option?") > strings.Index(text, "== Run details ==") || !strings.Contains(text, "Question: Which option?") || !strings.Contains(text, "Next:") {
+		t.Fatalf("question or action buried below details: %s", text)
+	}
+}
+
 func TestListDistinguishesQuietLiveControllerFromStaleHeartbeat(t *testing.T) {
 	now := time.Now().UTC()
 	quiet := runstatus.View{ID: "quiet-live", Available: true, Live: true, State: "ci", Root: "/example/quiet", LastActivityAt: now.Add(-time.Hour), HeartbeatAt: now, StartedAt: now.Add(-2 * time.Hour)}

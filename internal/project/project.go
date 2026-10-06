@@ -380,6 +380,14 @@ func writeRegular(path string, data []byte, exclusive bool, expected []byte) err
 	}
 	return nil
 }
+
+// ParseConfig validates already-read project settings without reading or changing files.
+func ParseConfig(data []byte) (Config, error) {
+	var config Config
+	err := decodeConfig(data, &config)
+	return config, err
+}
+
 func decodeConfig(data []byte, c *Config) error {
 	var decoded Config
 	target := c

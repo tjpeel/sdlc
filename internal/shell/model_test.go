@@ -48,6 +48,62 @@ func TestLongHelpStartsAtBeginning(t *testing.T) {
 	}
 }
 
+func TestSnapshotReadStartsAtSummary(t *testing.T) {
+	m := NewModel(context.Background(), Config{Root: "/example/project", Commands: []Command{{Name: "version"}}, Read: func(context.Context, string, []string) (string, error) {
+		return "Important summary\n" + strings.Repeat("Supporting evidence\n", 30), nil
+	}})
+	m.Update(tea.WindowSizeMsg{Width: 50, Height: 10})
+	m.Update(enter(m, "/version")())
+	if !strings.HasPrefix(ansi.Strip(m.View()), "Important summary\n") {
+		t.Fatalf("snapshot opened after its summary: %q", m.View())
+	}
+}
+
+func TestDashboardRefreshKeepsReadingPosition(t *testing.T) {
+	reads := 0
+	m := NewModel(context.Background(), Config{Root: "/example/project", Read: func(context.Context, string, []string) (string, error) {
+		reads++
+		var body strings.Builder
+		body.WriteString("Needs attention\n")
+		for i := 0; i < 30+reads*5; i++ {
+			fmt.Fprintf(&body, "Run detail %02d\n", i)
+		}
+		fmt.Fprintf(&body, "Latest snapshot %d", reads)
+		return body.String(), nil
+	}})
+	m.Update(tea.WindowSizeMsg{Width: 50, Height: 10})
+	m.Update(enter(m, "/dashboard")())
+	refresh := func() {
+		t.Helper()
+		_, cmd := m.Update(poll{})
+		if cmd == nil {
+			t.Fatal("dashboard refresh did not start")
+		}
+		m.Update(cmd())
+	}
+	if !strings.HasPrefix(ansi.Strip(m.View()), "Needs attention\n") {
+		t.Fatal("initial dashboard hid its attention summary")
+	}
+	refresh()
+	if !strings.HasPrefix(ansi.Strip(m.View()), "Needs attention\n") {
+		t.Fatal("dashboard refresh moved away from its summary")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	first, _, _ := strings.Cut(ansi.Strip(m.View()), "\n")
+	refresh()
+	after, _, _ := strings.Cut(ansi.Strip(m.View()), "\n")
+	if after != first {
+		t.Fatalf("refresh moved the reading position: %q -> %q", first, after)
+	}
+	for i := 0; i < 30; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	refresh()
+	if !strings.Contains(ansi.Strip(m.View()), "Latest snapshot 4") {
+		t.Fatal("dashboard no longer follows its tail when scrolled to the end")
+	}
+}
+
 func TestOnboardStartsAtHeadingAndScrollsWithoutLosingDraft(t *testing.T) {
 	for _, wheel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("wheel=%v", wheel), func(t *testing.T) {

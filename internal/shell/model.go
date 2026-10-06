@@ -565,6 +565,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.generation {
 			return m, nil
 		}
+		viewStart, followDashboardTail := 0, false
+		if msg.kind == "dashboard" && m.busyKind == "dashboard-refresh" {
+			lines, available := m.scrollViewport()
+			limit := max(0, len(lines)-available)
+			followDashboardTail = limit > 0 && m.scroll == 0
+			viewStart = max(0, limit-m.scroll)
+		}
 		m.busy = false
 		m.busyKind = ""
 		if m.cancel != nil {
@@ -611,9 +618,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.kind != "dashboard" {
 			m.scroll = 0
 		}
-		if msg.kind == "read" && len(msg.args) > 0 && msg.args[0] == "onboard" {
+		if msg.kind == "read" || (msg.kind == "dashboard" && !followDashboardTail) {
 			lines, available := m.scrollViewport()
-			m.scroll = max(0, len(lines)-available)
+			m.scroll = max(0, len(lines)-available-viewStart)
 		}
 		switch msg.kind {
 		case "resolve-answer", "resolve-resume":
