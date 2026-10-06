@@ -141,8 +141,8 @@ func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnl
 	if info, err := os.Lstat(installer); err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("selected source is missing the Homebrew installer")
 	}
-	fmt.Fprintf(output, "Homebrew: %s\nSource: %s\n", homebrew.Formula, root)
 	if dryRun {
+		fmt.Fprintf(output, "Homebrew: %s\nSource: %s\n", homebrew.Formula, root)
 		fmt.Fprintln(output, "Dry run: refresh the committed snapshot, local formula and checksum; brew upgrade "+homebrew.Formula)
 		if cliOnly {
 			fmt.Fprintln(output, "Runtime: unchanged (--cli-only)")
@@ -179,14 +179,19 @@ func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnl
 	}
 	command := exec.CommandContext(ctx, "python3", args...)
 	command.Dir = root
+	command.Env = append(os.Environ(), "SDLC_INSTALL_RESULT_PROTOCOL=1")
 	if cwd, err := os.Getwd(); err == nil {
 		if callerRoot, err := checkoutRoot(ctx, cwd); err == nil {
-			command.Env = append(os.Environ(), "SDLC_UPDATE_PROJECT_ROOT="+callerRoot)
+			command.Env = append(command.Env, "SDLC_UPDATE_PROJECT_ROOT="+callerRoot)
 		}
 	}
 	command.Stdout, command.Stderr = output, diagnostics
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("Homebrew update did not complete; see the installation result above: %w", err)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 3 {
+			return &reportedError{err}
+		}
+		return fmt.Errorf("Homebrew installer failed before reporting its result: %w", err)
 	}
 	return nil
 }

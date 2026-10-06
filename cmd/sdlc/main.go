@@ -69,7 +69,7 @@ func main() {
 		}
 		if command != nil {
 			if err := command(); err != nil {
-				fmt.Fprintln(os.Stderr, "sdlc:", err)
+				reportCommandError(os.Stderr, err)
 				var usage shellUsageError
 				if errors.As(err, &usage) {
 					os.Exit(2)
@@ -120,7 +120,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := initCommand(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -129,7 +129,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := workCommand(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -138,7 +138,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := runCommand(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -147,7 +147,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := dashboardCommand(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -156,14 +156,14 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := interactive(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "instructions" {
 		if err := instructionsCommand(os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -172,7 +172,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := githubCommand(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -181,7 +181,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := signingCommand(ctx, os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -190,7 +190,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if err := auth(ctx, os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -199,7 +199,7 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 		if err := runtimeCommand(ctx, os.Args[2:], os.Stdout, os.Stderr); err != nil {
-			fmt.Fprintln(os.Stderr, "sdlc:", err)
+			reportCommandError(os.Stderr, err)
 			os.Exit(1)
 		}
 		return

@@ -212,3 +212,46 @@ func TestHomebrewUpdatePreviewUsesSavedCheckoutAndNeverCallsBrew(t *testing.T) {
 		t.Fatalf("uncommitted Homebrew source accepted: %v", err)
 	}
 }
+
+func TestHomebrewUpdateReportsChildOutcomeOnceAndKeepsSilentFailureVisible(t *testing.T) {
+	for _, test := range []struct {
+		name, script string
+		reported     bool
+	}{
+		{"reported", "import sys\nprint('Homebrew: local/sdlc/sdlc')\nprint('Source: disposable checkout')\nprint('Update incomplete\\nCLI: installed through Homebrew\\nRuntime: kept to protect saved work\\nProblem: saved work blocks replacement\\nNext: sdlc update --cli-only', file=sys.stderr)\nsys.exit(3)\n", true},
+		{"silent", "import sys\nsys.exit(1)\n", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := updateSourceFixture(t)
+			scripts := filepath.Join(root, "scripts")
+			if err := os.MkdirAll(scripts, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(scripts, "install_homebrew.py"), []byte(test.script), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"add", "."}, {"-c", "commit.gpgsign=false", "-c", "user.name=Example Developer", "-c", "user.email=example@example.invalid", "commit", "-m", "Prepare offline installer"}} {
+				if data, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+					t.Fatalf("%s: %v", data, err)
+				}
+			}
+			var output, diagnostics bytes.Buffer
+			err := updateHomebrew(context.Background(), t.TempDir(), root, false, false, false, false, &output, &diagnostics)
+			if err == nil {
+				t.Fatal("child failure became success")
+			}
+			before := diagnostics.String()
+			reportCommandError(&diagnostics, err)
+			if test.reported {
+				if strings.Count(output.String(), "Homebrew:") != 1 || strings.Count(output.String(), "Source:") != 1 {
+					t.Fatal(output.String())
+				}
+				if before != diagnostics.String() || !strings.Contains(before, "Next: sdlc update --cli-only") {
+					t.Fatal(diagnostics.String())
+				}
+			} else if !strings.Contains(diagnostics.String(), "Homebrew installer failed before reporting its result") {
+				t.Fatal("silent failure hidden:", diagnostics.String())
+			}
+		})
+	}
+}

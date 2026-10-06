@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,7 +14,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"io"
 )
 
 const captureLimit = 256 * 1024
@@ -128,6 +128,48 @@ func commandStatus(err error, cancelled bool) string {
 	}
 	return "Command finished (exit 0)."
 }
+
+// Command outcome styling comes from process metadata, never captured log text.
+func (m *Model) setCommandOutcome(err error, cancelled bool) {
+	m.commandView = true
+	m.commandOutcome = commandStatus(err, cancelled)
+	m.commandOutcomeKind = "success"
+	if cancelled {
+		m.commandOutcomeKind = "cancelled"
+	} else if err != nil {
+		m.commandOutcomeKind = "failed"
+	}
+}
+func (m *Model) clearCommandOutcome() {
+	m.commandView = false
+	m.commandOutcome, m.commandOutcomeKind = "", ""
+}
+func (m *Model) outcomeHeight() int {
+	if m.commandView {
+		return 1
+	}
+	return 0
+}
+func (m *Model) commandOutcomeRow(width int) string {
+	text := m.commandOutcome
+	code := "32"
+	if text == "" {
+		text = "Command running…"
+		code = "36"
+	}
+	if m.commandOutcomeKind == "failed" {
+		code = "1;31"
+	}
+	if m.commandOutcomeKind == "cancelled" {
+		code = "33"
+	}
+	text = ansi.Truncate(text, max(1, width), "")
+	if os.Getenv("NO_COLOR") == "" {
+		return color(code, text)
+	}
+	return text
+}
+
 func (m *Model) capture(args []string) tea.Cmd {
 	ctx, cancel := context.WithCancel(m.ctx)
 	process, err := m.config.Execute(ctx, m.root, args)
@@ -137,6 +179,7 @@ func (m *Model) capture(args []string) tea.Cmd {
 			err = fmt.Errorf("native adapter returned no process")
 		}
 		m.lastError, m.body = true, safe(err.Error())
+		m.setCommandOutcome(err, false)
 		return nil
 	}
 	m.generation++
@@ -144,6 +187,8 @@ func (m *Model) capture(args []string) tea.Cmd {
 	m.busy, m.busyKind, m.cancel = true, "command", cancel
 	m.readEcho = ""
 	m.commandEcho = commandLabel(process)
+	m.commandView = true
+	m.commandOutcome, m.commandOutcomeKind = "", ""
 	m.body, m.scroll = m.commandEcho+"\nRunning…", 0
 	s := &captureStream{ctx: ctx, notify: make(chan struct{}, 1)}
 	prepareCapture(process, s)

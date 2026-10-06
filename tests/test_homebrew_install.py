@@ -7,8 +7,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -51,6 +53,7 @@ elif args[:1] in (['install'], ['upgrade']):
     candidate.write_text("#!/usr/bin/env python3\\nimport os,sys\\nfrom pathlib import Path\\n"
         "if sys.argv[1:] == ['--version']: print('sdlc " + version + " (" + revision + "; test/test)')\\n"
         "else:\\n Path(os.environ['SDLC_STATE_DIR'],'runtime-call').write_text(os.environ.get('SDLC_UPDATE_PROJECT_ROOT','')+'\\\\n'+' '.join(sys.argv[1:]))\\n"
+        " if os.environ.get('FAKE_BREW_FAIL') == 'guard': print('sdlc: runtime replacement would prevent resuming feature EX-123, run abcdef123; complete this saved work first, or use sdlc update --cli-only', file=sys.stderr); sys.exit(1)\\n"
         " if os.environ.get('FAKE_BREW_FAIL') == 'runtime': sys.exit(1)\\n")
     candidate.chmod(0o700)
     (keg/'libexec/sdlc-homebrew.json').write_text(json.dumps({'schema_version':1,
@@ -209,13 +212,89 @@ class HomebrewInstallChecks(unittest.TestCase):
         self.addCleanup(os.chdir, previous_cwd)
         os.chdir(work)
         with mock.patch.dict(os.environ, {'FAKE_BREW_FAIL': 'runtime', 'SDLC_UPDATE_PROJECT_ROOT': ''}):
-            with self.assertRaisesRegex(installer.InstallError, 'installed the CLI, but runtime preparation failed'):
+            with self.assertRaisesRegex(installer.InstallError, 'Runtime command exited with status 1 without diagnostics'):
                 self.install(cli_only=False)
         self.assertTrue(self.native.is_symlink())
         caller, args = (self.state / 'runtime-call').read_text().split('\n', 1)
         self.assertEqual(caller, str(work))
         self.assertIn('runtime build --source', args)
         self.assertIn('--source-pins', args)
+
+
+    def test_guard_failure_has_one_metadata_header_and_actionable_partial_result(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        args = ['--source', str(self.source), '--state-dir', str(self.state)]
+        with mock.patch.dict(os.environ, {'FAKE_BREW_FAIL': 'guard', 'SDLC_INSTALL_RESULT_PROTOCOL': '1'}), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = installer.main(args)
+        self.assertEqual(status, 3)
+        self.assertEqual(stdout.getvalue().count('Homebrew: local/sdlc/sdlc'), 1)
+        self.assertEqual(stdout.getvalue().count('Source: '), 1)
+        final = stderr.getvalue().split('Update incomplete', 1)[1]
+        self.assertIn('CLI: installed through Homebrew', final)
+        self.assertIn('Runtime: kept to protect saved work', final)
+        self.assertIn('Problem: runtime replacement would prevent resuming feature EX-123, run abcdef123', final)
+        self.assertIn('Next: sdlc update --cli-only', final)
+        self.assertNotIn('Homebrew installation failed', stderr.getvalue())
+        self.assertNotIn('\x1b', stdout.getvalue() + stderr.getvalue())
+        self.assertEqual((self.state / 'runtime.json').read_text(), '{"private_runtime":"unchanged"}')
+        self.assertTrue(self.native.is_symlink())
+
+    def test_cli_only_success_summary_keeps_runtime(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--cli-only'])
+        self.assertEqual(status, 0)
+        self.assertIn('Update complete\nCLI: installed through Homebrew\nRuntime: kept (--cli-only)', stdout.getvalue())
+        self.assertFalse((self.state / 'runtime-call').exists())
+
+    def test_failure_before_cli_install_does_not_claim_partial_success(self):
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, {'FAKE_BREW_FAIL': 'build'}), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state)])
+        self.assertEqual(status, 1)
+        self.assertIn('CLI: installation did not complete', stderr.getvalue())
+        self.assertIn('Runtime: not updated', stderr.getvalue())
+        self.assertNotIn('CLI: installed through Homebrew', stderr.getvalue())
+
+    def test_runtime_result_does_not_wait_for_inherited_descendant_pipe(self):
+        # The orphan emits continuously until our reader closes; it cannot retain
+        # the installer's pipe after the direct runtime process has exited.
+        program = """import os,time
+pid=os.fork()
+if pid:
+ time.sleep(0.02)
+ os._exit(0)
+try:
+ deadline=time.monotonic()+2.5
+ while time.monotonic()<deadline:
+  os.write(2,b'descendant')
+  time.sleep(0.001)
+except BrokenPipeError:
+ os._exit(0)
+"""
+        started = time.monotonic()
+        with contextlib.redirect_stderr(io.StringIO()):
+            installer.runtime_command([sys.executable, '-c', program], dict(os.environ))
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_runtime_diagnostics_keep_split_unicode_and_sanitize_cause(self):
+        stderr = io.StringIO()
+        program = "import os,sys,time; os.write(2,b'x'*20000+b'\\nsdlc: \\x1b[31m'); data='caf\u00e9'.encode(); os.write(2,data[:-1]); time.sleep(0.02); os.write(2,data[-1:]+b'\\x1b[0m\\n'); sys.exit(1)"
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaisesRegex(installer.InstallError, '^caf\u00e9$'):
+                installer.runtime_command([sys.executable, '-c', program], dict(os.environ))
+        self.assertIn('caf\u00e9', stderr.getvalue())
+        self.assertNotIn('\ufffd', stderr.getvalue())
+        self.assertEqual(installer.plain_text('\x1b]0;hidden\x07bad\u202e\x1b[31m cause'), 'bad cause')
+
+    def test_color_only_for_supported_terminal(self):
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        with mock.patch.dict(os.environ, {'TERM': 'xterm'}, clear=True):
+            self.assertIn('\x1b[1;31m', installer.styled('Problem', '1;31', stream))
+        for env in ({'TERM': 'xterm', 'NO_COLOR': ''}, {'TERM': 'dumb'}):
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(installer.styled('Problem', '1;31', stream), 'Problem')
 
 
 if __name__ == '__main__':

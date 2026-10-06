@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Install a committed SDLC snapshot through a private local Homebrew tap."""
 import argparse
+import codecs
 import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
+import unicodedata
 
 FORMULA = 'local/sdlc/sdlc'
 TAP = 'local/sdlc'
@@ -20,6 +24,80 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class InstallError(ValueError):
     pass
+
+
+def styled(text, code, stream):
+    if stream.isatty() and 'NO_COLOR' not in os.environ and os.environ.get('TERM') != 'dumb':
+        return f'\033[{code}m{text}\033[0m'
+    return text
+
+
+def plain_text(text):
+    # Strip terminal escapes before allowing trusted summary styling.
+    text = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b.', '', text)
+    return ''.join(char for char in text if char in '\n\t' or unicodedata.category(char) not in {'Cc', 'Cf'})
+
+
+def runtime_command(args, env):
+    """Stream stderr and keep a bounded cause; surviving descendants cannot hold it open."""
+    process = subprocess.Popen(args, env=env, stderr=subprocess.PIPE)
+    tail = bytearray()
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stderr, selectors.EVENT_READ)
+            drain_deadline = None
+            drained = 0
+            while selector.get_map():
+                ended = process.poll() is not None
+                if ended and drain_deadline is None:
+                    drain_deadline = time.monotonic() + 0.25
+                if ended and (time.monotonic() >= drain_deadline or drained >= 65536):
+                    break
+                ready = selector.select(0 if ended else 0.1)
+                if not ready and ended:
+                    break
+                for key, _ in ready:
+                    chunk = os.read(key.fd, 4096)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    sys.stderr.write(decoder.decode(chunk))
+                    sys.stderr.flush()
+                    if ended:
+                        drained += len(chunk)
+                    tail.extend(chunk)
+                    del tail[:-16384]
+            sys.stderr.write(decoder.decode(b'', final=True))
+            sys.stderr.flush()
+        code = process.wait()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stderr.close()
+    if code:
+        lines = plain_text(tail.decode('utf-8', errors='replace')).splitlines()
+        causes = [line.removeprefix('sdlc: ').strip() for line in lines if line.startswith('sdlc: ')]
+        cause = causes[-1] if causes else next((line.strip() for line in reversed(lines) if line.strip()), '')
+        raise InstallError(cause or f'Runtime command exited with status {code} without diagnostics.')
+
+
+def outcome(args, error=None):
+    stream = sys.stderr if error else sys.stdout
+    title = 'Update incomplete' if error else 'Update complete'
+    print('\n' + styled(title, '1;31' if error else '1;32', stream), file=stream, flush=True)
+    installed = getattr(args, '_cli_installed', False)
+    print('CLI: installed through Homebrew' if installed else 'CLI: installation did not complete', file=stream)
+    if error:
+        guarded = 'runtime replacement would prevent resuming' in str(error)
+        print('Runtime: kept to protect saved work' if guarded else 'Runtime: preparation did not complete' if installed and not args.cli_only else 'Runtime: not updated', file=stream)
+        print(styled('Problem: ' + plain_text(str(error)), '1;31', stream), file=stream)
+        if guarded:
+            print(styled('Next: sdlc update --cli-only', '1;36', stream), file=stream)
+            print('Complete the saved work before replacing the runtime.', file=stream)
+    else:
+        print('Runtime: kept (--cli-only)' if args.cli_only else 'Runtime: prepared', file=stream)
 
 
 def command(args, *, cwd=None, capture=False, env=None):
@@ -299,19 +377,15 @@ def install(args):
             print(f'Previous CLI backed up: {backup}', flush=True)
         elif not destination.exists():
             command([brew, 'link', FORMULA], env=env)
-        print(f'Installed {actual} through Homebrew.', flush=True)
+        args._cli_installed = True
         if not args.cli_only:
             runtime_source = candidate.resolve().parent.parent / 'libexec/source'
             runtime_args = [str(candidate), 'runtime', 'build', '--source', str(runtime_source), '--source-pins']
             if args.dependencies:
                 if not (state / 'runtime.json').exists():
-                    command(runtime_args, env=env)
+                    runtime_command(runtime_args, env)
                 runtime_args = [str(candidate), 'runtime', 'update', '--source', str(runtime_source)]
-            try:
-                command(runtime_args, env=env)
-            except subprocess.CalledProcessError as error:
-                raise InstallError('Homebrew installed the CLI, but runtime preparation failed. '
-                                   'The runtime command above reports its result; retry sdlc update after resolving it.') from error
+            runtime_command(runtime_args, env)
 
 
 def main(argv=None):
@@ -329,8 +403,10 @@ def main(argv=None):
     try:
         install(args)
     except (InstallError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print(f'Homebrew installation failed: {error}', file=sys.stderr)
-        return 1
+        outcome(args, error)
+        return 3 if os.environ.get('SDLC_INSTALL_RESULT_PROTOCOL') == '1' else 1
+    if not args.dry_run:
+        outcome(args)
     return 0
 
 

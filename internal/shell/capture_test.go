@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func capturedModel(script string) *Model {
@@ -53,10 +54,10 @@ func TestCapturedCommandRetainsBothStreamsAndResult(t *testing.T) {
 			if strings.Contains(m.body, "\x1b") || m.busy || m.lastError != (code != 0) {
 				t.Fatalf("bad result: %q", m.body)
 			}
-			if code == 0 && !strings.Contains(m.body, "exit 0") {
+			if code == 0 && !strings.Contains(m.commandOutcome, "exit 0") {
 				t.Fatal("missing success result")
 			}
-			if code != 0 && !strings.Contains(m.body, "exit status 7") {
+			if code != 0 && !strings.Contains(m.commandOutcome, "exit status 7") {
 				t.Fatal("missing failure result")
 			}
 		})
@@ -95,7 +96,7 @@ func TestCapturedCancellationRetainsCleanupAndRejectsStaleResult(t *testing.T) {
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	finishCapture(t, m, cmd)
-	if m.busy || !strings.Contains(m.body, "cleanup") || !strings.Contains(m.body, "cancelled") {
+	if m.busy || !strings.Contains(m.body, "cleanup") || !strings.Contains(m.commandOutcome, "cancelled") {
 		t.Fatalf("cleanup/cancel result: %s", m.body)
 	}
 	old := m.body
@@ -279,5 +280,72 @@ func TestInteractiveCommandOnlyHandsOffWhenHelpIsNotRequested(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCommandFailureStaysPinnedAbovePromptWhileReadingLongOutput(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	m := capturedModel("i=0; while [ $i -lt 100 ]; do printf 'line %s\\n' \"$i\"; i=$((i+1)); done; printf '\\033[31mprivate failure\\033[0m\\n\\033]52;c;ignored\\a'; exit 7")
+	m.width, m.height = 40, 9
+	finishCapture(t, m, enter(m, "/test"))
+	m.scroll = 50
+	view := m.View()
+	rows := strings.Split(view, "\n")
+	if len(rows) != 9 || !strings.HasPrefix(rows[6], "\x1b[1;31mCommand failed: exit status 7") {
+		t.Fatalf("failure not pinned: %q", view)
+	}
+	output := strings.TrimPrefix(m.body, m.commandEcho+"\n")
+	if strings.Contains(output, "\x1b") || strings.Contains(output, "ignored") || strings.Contains(output, "exit status 7") {
+		t.Fatal("unsafe output or duplicate final status")
+	}
+	for _, row := range rows {
+		if ansi.StringWidth(row) > 40 {
+			t.Fatalf("physical overflow %q", row)
+		}
+	}
+	m.draft = []rune("next draft")
+	m.cursor = len(m.draft)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.commandOutcome == "" {
+		t.Fatal("draft edit cleared outcome")
+	}
+	m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 6})
+	if m.selectionView == "" {
+		t.Fatal("pinned result cannot be copied")
+	}
+	frozen := m.View()
+	m.Update(captureResult{generation: m.generation, text: "later", done: true})
+	if m.View() != frozen {
+		t.Fatal("capture update changed copy frame")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	enter(m, "/help")
+	if m.commandView || m.commandOutcome != "" {
+		t.Fatal("new view retained previous command outcome")
+	}
+}
+
+func TestCommandOutcomeReserveColorAndClear(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := capturedModel("printf plain; exit 0")
+	m.width, m.height = 18, 5
+	cmd := enter(m, "/test")
+	if m.outcomeHeight() != 1 {
+		t.Fatal("running command did not reserve outcome row")
+	}
+	finishCapture(t, m, cmd)
+	if m.outcomeHeight() != 1 || m.commandOutcomeKind != "success" {
+		t.Fatal("completion moved reserved row")
+	}
+	if strings.Contains(m.commandOutcomeRow(m.width), "\x1b") || len(strings.Split(m.View(), "\n")) != 5 {
+		t.Fatal("NO_COLOR or bounded geometry failed")
+	}
+	m.setCommandOutcome(nil, true)
+	if m.commandOutcome != "Command cancelled." || m.commandOutcomeKind != "cancelled" {
+		t.Fatal("cancellation metadata missing")
+	}
+	m.Update(result{generation: m.generation, kind: "dashboard", text: "dashboard"})
+	if m.commandView || m.commandOutcome != "" {
+		t.Fatal("direct view switch retained outcome")
 	}
 }

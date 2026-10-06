@@ -67,6 +67,8 @@ type Model struct {
 	dashboardView                               bool
 	selectionView                               string
 	commandEcho                                 string
+	commandOutcome, commandOutcomeKind          string
+	commandView                                 bool
 	readEcho                                    string
 }
 
@@ -296,6 +298,7 @@ func (m *Model) submit() tea.Cmd {
 		return nil
 	}
 	m.dashboardView = false
+	m.clearCommandOutcome()
 	args, err := Parse(string(m.draft))
 	if err != nil {
 		m.lastError = true
@@ -587,6 +590,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.dashboardView = msg.kind == "dashboard"
+		m.clearCommandOutcome()
 		viewStart, followDashboardTail := 0, false
 		if msg.kind == "dashboard" && m.busyKind == "dashboard-refresh" {
 			lines, available := m.scrollViewport()
@@ -703,6 +707,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.generation {
 			return m, nil
 		}
+		m.commandView = true
 		oldLines, _ := m.scrollViewport()
 		m.body = m.commandEcho + "\n" + msg.text
 		if m.scroll > 0 {
@@ -714,10 +719,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, msg.stream.wait(msg.generation)
 		}
 		m.busy, m.busyKind, m.lastError = false, "", msg.err != nil || msg.cancelled
-		m.body += "\n" + commandStatus(msg.err, msg.cancelled)
-		if m.scroll > 0 {
-			m.scroll++
-		}
+		m.setCommandOutcome(msg.err, msg.cancelled)
 		m.clampScroll()
 		if m.config.Prompt != nil {
 			m.branch, m.dirty = m.config.Prompt(m.ctx, m.root)
@@ -728,6 +730,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case completed:
+		m.clearCommandOutcome()
 		m.lastError = msg.err != nil
 		if msg.err != nil {
 			m.body = "Native command failed: " + safe(msg.err.Error())
@@ -896,7 +899,7 @@ func (m *Model) scrollViewport() ([]string, int) {
 		body = dashboard.StyleSnapshot(body, os.Getenv("NO_COLOR") == "")
 	}
 	lines := dashboard.Wrap(body, width)
-	return lines, max(0, height-m.completionHeight()-2-m.echoHeight())
+	return lines, max(0, height-m.completionHeight()-2-m.echoHeight()-m.outcomeHeight())
 }
 
 func (m *Model) clampScroll() {
@@ -996,6 +999,9 @@ func (m *Model) View() string {
 	}
 	if m.readEcho != "" {
 		bottom = append(bottom, ansi.Truncate(m.readEcho, width, ""))
+	}
+	if m.commandView {
+		bottom = append(bottom, m.commandOutcomeRow(width))
 	}
 	bottom = append(bottom, prompt, ansi.Truncate("F2 select · "+footer, width, ""))
 	if len(bottom) > height {

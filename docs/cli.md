@@ -107,6 +107,14 @@ rebuilds that snapshot. Use `sdlc update` for the full checkout-to-runtime flow.
 CLI upgrade and runtime selection are separate operations. A runtime failure
 leaves the upgraded CLI installed and reports the partial result; fix the reported
 problem and retry `sdlc update`. Saved work continues to block runtime replacement.
+`sdlc update` prints one source/snapshot header and ends with an update outcome.
+If saved work blocks replacement after Homebrew installs the CLI, the outcome
+shows the CLI installed, the runtime kept, the blocking run and
+`Next: sdlc update --cli-only`. The command still exits with a failure status;
+complete the saved work before retrying a full update. Terminal failures use a
+red heading and an accented next action. Redirected output and `NO_COLOR` keep
+plain text.
+
 `--cli-only` remains available while work is paused. Runtime build/update commands
 discover the running package's current bundle, so Homebrew cleanup of older kegs
 does not leave them dependent on a removed source path. `version --details` checks

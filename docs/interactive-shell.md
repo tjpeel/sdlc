@@ -82,11 +82,18 @@ Suggestions use reference names and filenames; they do not load ticket bodies.
 An explicit `--reference` must agree with the locator. Existing selection,
 ignored/untracked work, numeric ordering and filesystem validation still apply.
 
-Ordinary CLI commands run inside the shell, with their command, stdout, stderr
-and completion result retained in the output view. Longer commands stream their
+Ordinary CLI commands run inside the shell, with their command, stdout and stderr
+retained in the output view. Longer commands stream their
 output as they work. Ctrl+C interrupts the current command and keeps the shell
 open. Captured output is held in memory and bounded; older output may be omitted
 when the limit is reached.
+
+Native command outcomes stay visible above the command prompt while you scroll
+through output. Failures are bold red, successful exits green, and cancellations
+remain labelled. The displayed command and its output stay in the scrollable
+area; editing a draft keeps the result visible until the next command or view.
+Copy mode freezes this result along with the output. `NO_COLOR=1` disables outcome
+colors while retaining the result text.
 
 Provider sessions, account login and signing setup hand the terminal to the
 existing interactive command. Its prompts and provider slash commands belong
