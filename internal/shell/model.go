@@ -654,7 +654,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case poll:
 		if m.monitor && !m.busy && !m.progressView {
-			return m, m.dashboard()
+			cmd := m.dashboard()
+			m.busyKind = "dashboard-refresh"
+			return m, cmd
 		}
 		return m, nil
 	case completed:
@@ -850,7 +852,7 @@ func (m *Model) View() string {
 		}
 		footer = state + " · Wheel/PgUp pause · PgDn/End tail · /answer ID · /resume ID · Esc stop view"
 	}
-	if m.busy {
+	if m.busy && m.busyKind != "dashboard-refresh" {
 		footer = "Working… Ctrl+C cancels this UI query, never a run"
 	}
 	if m.busy && (m.busyKind == "launch" || m.busyKind == "run-action") {

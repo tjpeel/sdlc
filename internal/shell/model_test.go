@@ -287,15 +287,58 @@ func TestMonitorPollKeepsSelectedRunAndFlags(t *testing.T) {
 	var received [][]string
 	m := NewModel(context.Background(), Config{Read: func(_ context.Context, _ string, args []string) (string, error) {
 		received = append(received, append([]string(nil), args...))
-		return "snapshot", nil
+		return fmt.Sprintf("snapshot %d", len(received)), nil
 	}})
+	m.width, m.height = 120, 12
 	cmd := enter(m, "/dashboard --run abcdef --logs --page 2 --scope all")
+	if !strings.Contains(m.View(), "Working…") {
+		t.Fatal("initial dashboard read has no loading footer")
+	}
 	m.Update(cmd())
+	m.draft = []rune("/help")
+	m.cursor = 2
+	footer := func() string {
+		lines := strings.Split(ansi.Strip(m.View()), "\n")
+		return lines[len(lines)-1]
+	}
+	wantFooter := "Wheel/PgUp/PgDn scroll · / commands · Tab/Enter complete · Enter dispatch"
+	if footer() != wantFooter {
+		t.Fatalf("dashboard footer before refresh: %q", footer())
+	}
 	_, cmd = m.Update(poll{})
+	if cmd == nil || footer() != wantFooter {
+		t.Fatalf("pending refresh footer: %q", footer())
+	}
+	if _, duplicate := m.Update(poll{}); duplicate != nil {
+		t.Fatal("duplicate poll started another read")
+	}
 	m.Update(cmd())
+	if footer() != wantFooter || m.body != "snapshot 2" || string(m.draft) != "/help" || m.cursor != 2 {
+		t.Fatalf("refresh lost view state: footer=%q body=%q draft=%q cursor=%d", footer(), m.body, m.draft, m.cursor)
+	}
 	want := []string{"dashboard", "--run", "abcdef", "--logs", "--page", "2", "--scope", "all", "--once"}
 	if len(received) != 2 || !reflect.DeepEqual(received[0], want) || !reflect.DeepEqual(received[1], want) {
 		t.Fatalf("poll argv: %#v", received)
+	}
+}
+
+func TestCtrlCCancelsPendingDashboardRefreshAndIgnoresLateResult(t *testing.T) {
+	var readContext context.Context
+	m := NewModel(context.Background(), Config{Read: func(ctx context.Context, _ string, _ []string) (string, error) {
+		readContext = ctx
+		return "snapshot", nil
+	}})
+	cmd := enter(m, "/dashboard --run abcdef")
+	m.Update(cmd())
+	_, cmd = m.Update(poll{})
+	late := cmd()
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if readContext.Err() != context.Canceled || m.busy || m.monitor {
+		t.Fatalf("refresh not cancelled: context=%v busy=%v monitor=%v", readContext.Err(), m.busy, m.monitor)
+	}
+	body := m.body
+	if _, next := m.Update(late); next != nil || m.monitor || m.body != body {
+		t.Fatalf("late refresh resumed monitoring: monitor=%v body=%q", m.monitor, m.body)
 	}
 }
 func TestLongDraftCaretRemainsVisible(t *testing.T) {
