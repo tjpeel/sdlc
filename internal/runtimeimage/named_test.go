@@ -330,3 +330,43 @@ func TestCatalogueLinksRejectCyclesMissingTargetsAndParentLinks(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalSkillsSourceBuildPreservesBlankOptionalDockerfileDefaults(t *testing.T) {
+	manager, base, source := fixture(t)
+	recipe, err := os.ReadFile(filepath.Join("..", "..", "runtime", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceFile(t, source, "runtime/Dockerfile", string(recipe))
+	skills, revision := skillsFixture(t)
+	inventory := testInventory()
+	for i := range inventory.Dependencies {
+		if inventory.Dependencies[i].Source == "tjpeel/skills" {
+			inventory.Dependencies[i].Version = revision
+		}
+	}
+	base.inventoryOverride = &inventory
+	manager.Name = "skills-test"
+	docker := &namedDocker{fakeDocker: base, tags: map[string]string{}}
+	manager.Docker = docker
+	state, err := manager.BuildWithOptions(context.Background(), source, BuildOptions{SkillsSource: skills})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DependencyPins != nil {
+		t.Fatal("source defaults promoted to full dependency overrides")
+	}
+	for _, arg := range []string{"NPM_VERSION", "YARN_VERSION", "COMPOSE_VERSION", "BUILDX_VERSION"} {
+		blank := "ARG " + arg + "=\n"
+		if !strings.Contains(string(recipe), blank) || !strings.Contains(state.BuildRecipe, blank) {
+			t.Fatalf("optional default changed: %s", arg)
+		}
+	}
+	expected, err := localSkillsRecipe(recipe, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.BuildRecipe != string(expected) || string(base.buildRecipe) != string(expected) || state.SkillsRevision != revision || docker.tags[manager.ImageName()] != newImage {
+		t.Fatal("actual local recipe or provenance differs")
+	}
+}

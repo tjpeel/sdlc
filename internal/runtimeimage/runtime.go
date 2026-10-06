@@ -308,15 +308,10 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 		if err != nil {
 			return State{}, err
 		}
-		if pins == nil {
-			parsed, e := runtimepins.ReadDockerfile(recipe)
-			if e != nil {
-				return State{}, e
-			}
-			pins = &parsed
+		if pins != nil {
+			pins.Arguments["SKILLS_REVISION"] = skillsRevision
 		}
-		pins.Arguments["SKILLS_REVISION"] = skillsRevision
-		recipe, err = localSkillsRecipe(recipe)
+		recipe, err = localSkillsRecipe(recipe, skillsRevision)
 		if err != nil {
 			return State{}, err
 		}
@@ -326,6 +321,8 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 		if err != nil {
 			return State{}, err
 		}
+	}
+	if pins != nil || skillsRevision != "" {
 		if err := os.WriteFile(path, recipe, 0600); err != nil {
 			return State{}, err
 		}

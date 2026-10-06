@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -305,10 +306,16 @@ func validateSkillsArchive(archive string) error {
 	return os.Rename(materialized.Name(), archive)
 }
 
-func localSkillsRecipe(recipe []byte) ([]byte, error) {
+var skillsRecipeArgument = regexp.MustCompile(`(?m)^ARG SKILLS_REVISION=[0-9a-f]{40}$`)
+
+func localSkillsRecipe(recipe []byte, revision string) ([]byte, error) {
 	text := string(recipe)
 	if !strings.Contains(text, "ARG LOCAL_SKILLS=0\n") || !strings.Contains(text, "/tmp/sdlc-local-catalogues/skills.tar") {
 		return nil, fmt.Errorf("runtime source does not support local skills archives")
 	}
+	if !sourceCommitID.MatchString(revision) || len(skillsRecipeArgument.FindAllStringIndex(text, -1)) != 1 {
+		return nil, errors.New("runtime source must contain one exact skills revision argument")
+	}
+	text = skillsRecipeArgument.ReplaceAllString(text, "ARG SKILLS_REVISION="+revision)
 	return []byte(strings.Replace(text, "ARG LOCAL_SKILLS=0\n", "ARG LOCAL_SKILLS=1\n", 1)), nil
 }
