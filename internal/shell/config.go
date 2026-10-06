@@ -25,7 +25,15 @@ type Command struct {
 	Native  bool   `json:"native"`
 }
 type Suggestion struct{ Label, Insert, Description string }
+type RunAction struct {
+	ID, Root, Reference, Ticket, State, Checkpoint string
+	Questions                                      []string
+}
+
 type Config struct {
+	ResolveRun            func(context.Context, string, string) (RunAction, error)
+	RespondRun            func(context.Context, RunAction, string) (string, error)
+	ResumeRun             func(context.Context, RunAction) (string, error)
 	Root, Version, Branch string
 	Dirty                 bool
 	Commands              []Command

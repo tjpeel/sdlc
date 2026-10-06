@@ -26,6 +26,7 @@ const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--pag
 
 type dashboardOptions struct {
 	once, watch, json, logs bool
+	attention               bool
 	run                     string
 	interval                time.Duration
 	page                    int
@@ -41,6 +42,7 @@ func parseDashboardOptions(args []string) (dashboardOptions, error) {
 	flags.BoolVar(&options.watch, "watch", false, "refresh even with redirected output")
 	flags.BoolVar(&options.json, "json", false, "one JSON snapshot")
 	flags.BoolVar(&options.logs, "logs", false, "bounded private output tail")
+	flags.BoolVar(&options.attention, "attention", false, "show only runs requiring human attention")
 	flags.StringVar(&options.run, "run", "", "selected run ID or unique prefix")
 	flags.StringVar(&options.scope, "scope", "installation", "project or installation: filter history before paging")
 	flags.IntVar(&options.page, "page", 1, "history page, ten runs per page")
@@ -97,7 +99,7 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 	}
 	options, err := parseDashboardOptions(args)
 	if errors.Is(err, flag.ErrHelp) {
-		_, err = fmt.Fprintln(output, dashboardUsage+"\nScope: --scope project|installation (external CLI defaults to installation; shell defaults to project).")
+		_, err = fmt.Fprintln(output, dashboardUsage+"\nScope: --scope project|installation (external CLI defaults to installation; shell defaults to project).\nAttention: --attention filters questions, problems and work ready for human review.")
 		return err
 	}
 	if err != nil {
@@ -159,6 +161,15 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 			}
 			views = filtered
 		}
+		if options.attention {
+			filtered := make([]runstatus.View, 0, len(views))
+			for _, view := range views {
+				if view.NeedsAttention {
+					filtered = append(filtered, view)
+				}
+			}
+			views = filtered
+		}
 		views = dashboard.Ordered(views)
 		newWarning := false
 		if options.notifications.Mode != "off" {
@@ -186,6 +197,8 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 		}
 		if options.run != "" {
 			err = dashboard.Detail(output, views[0], now, options.logs)
+		} else if options.attention && len(allViews) == 0 {
+			_, err = fmt.Fprintln(output, "No runs require human attention in this scope.")
 		} else {
 			_, page := dashboard.Page(allViews, options.page)
 			options.page = page.Page
@@ -265,6 +278,8 @@ func writeDashboardJSONPage(output io.Writer, views []runstatus.View, now time.T
 		Metrics         *runusage.Summary `json:"metrics,omitempty"`
 		MetricsError    string            `json:"metrics_error,omitempty"`
 		Timings         *workrun.Timings  `json:"timings,omitempty"`
+		Questions       []string          `json:"questions,omitempty"`
+		NextAction      string            `json:"next_action,omitempty"`
 	}
 	rows := make([]row, 0, len(views))
 	for _, v := range views {
@@ -272,7 +287,11 @@ func writeDashboardJSONPage(output io.Writer, views []runstatus.View, now time.T
 		if v.Journal != nil {
 			timings = v.Journal.Timings.Recorded()
 		}
-		rows = append(rows, row{v.ID, v.Root, v.Reference, v.Ticket, v.Directory, v.State, v.Role, v.Provider, v.Model, v.Effort, v.Live, v.Stale, v.Stopped, v.Available, v.NeedsAttention, v.StartedAt, v.UpdatedAt, v.HeartbeatAt, v.LastActivityAt, v.StopReason, v.Error, v.ActivityError, v.CI.Status, v.PR.URL, v.Activity.Usage, v.Activity.WaitingProvider, v.Activity.WaitReason, v.Activity.WaitingSince, v.Metrics, v.MetricsError, timings})
+		var questions []string
+		if v.State == "waiting_for_human" {
+			questions = v.Questions
+		}
+		rows = append(rows, row{v.ID, v.Root, v.Reference, v.Ticket, v.Directory, v.State, v.Role, v.Provider, v.Model, v.Effort, v.Live, v.Stale, v.Stopped, v.Available, v.NeedsAttention, v.StartedAt, v.UpdatedAt, v.HeartbeatAt, v.LastActivityAt, v.StopReason, v.Error, v.ActivityError, v.CI.Status, v.PR.URL, v.Activity.Usage, v.Activity.WaitingProvider, v.Activity.WaitReason, v.Activity.WaitingSince, v.Metrics, v.MetricsError, timings, questions, dashboard.NextAction(v)})
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int       `json:"version"`

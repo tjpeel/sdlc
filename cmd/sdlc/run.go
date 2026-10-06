@@ -59,8 +59,8 @@ type runOptions struct {
 	parallel                                                                                                                           int
 	jsonOutput                                                                                                                         bool
 	terminalMode, launchID                                                                                                             string
-	// Controller-only selections are never accepted as CLI flags.
-	root, runID                           string
+	// Internal resume selections recover recorded paths and freeze the checkpoint.
+	root, runID, checkpoint               string
 	featureOwned                          bool
 	snapshot                              *workrun.BranchSnapshot
 	frozenImage                           string
@@ -89,6 +89,8 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.effort, "effort", "", "implementation lead reasoning effort")
 	flags.StringVar(&options.reviewModel, "review-model", "", "opposite-provider review lead model")
 	flags.StringVar(&options.reviewEffort, "review-effort", "", "review lead reasoning effort")
+	flags.StringVar(&options.root, "run-root", "", "internal recorded root for resume")
+	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
 	flags.StringVar(&options.resume, "resume", "", "recorded run ID")
 	flags.StringVar(&options.answerFile, "answer-file", "", "human answer to recorded questions")
 	flags.Var(&options.inputs, "input", "exact additional requirements input; repeatable")
@@ -170,10 +172,18 @@ func parseRunOptions(args []string) (runOptions, error) {
 		return options, fmt.Errorf("--launch-id requires --terminal background and a nonempty UUID")
 	}
 	if options.resume != "" {
+		if options.supplied["run-root"] && (options.root == "" || !filepath.IsAbs(options.root) || filepath.Clean(options.root) != options.root) {
+			return options, fmt.Errorf("--run-root requires an absolute recorded root")
+		}
+		if options.supplied["checkpoint"] {
+			if _, err := time.Parse(time.RFC3339Nano, options.checkpoint); err != nil {
+				return options, fmt.Errorf("--checkpoint requires a recorded timestamp")
+			}
+		}
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "reference", "ticket", "resume", "answer-file", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -181,6 +191,8 @@ func parseRunOptions(args []string) (runOptions, error) {
 		if invalid != "" {
 			return options, fmt.Errorf("resume preserves recorded settings; cannot change --%s", invalid)
 		}
+	} else if options.root != "" || options.checkpoint != "" {
+		return options, fmt.Errorf("--run-root and --checkpoint require --resume")
 	} else if options.answerFile != "" {
 		return options, fmt.Errorf("--answer-file requires --resume")
 	}
@@ -459,7 +471,28 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		preparationOwner = nil
 	}
+	answer := ""
+	if options.resume != "" {
+		if options.checkpoint != "" && options.checkpoint != journal.UpdatedAt.Format(time.RFC3339Nano) {
+			return fmt.Errorf("run checkpoint changed; review the current questions again")
+		}
+		if options.answerFile != "" {
+			if journal.State != "waiting_for_human" || len(journal.Outcome.Questions) == 0 {
+				return fmt.Errorf("this run has no pending human question")
+			}
+			data, err := readHumanAnswer(options.answerFile)
+			if err != nil {
+				return err
+			}
+			answer = string(data)
+		} else if options.checkpoint != "" && journal.State == "waiting_for_human" {
+			return fmt.Errorf("answer the recorded questions with sdlc answer --run %s", journal.ID)
+		}
+	}
 	if options.dryRun {
+		if options.resume != "" {
+			return printResumePlan(output, journal, answer, options.jsonOutput)
+		}
 		return printSelectedPlan(output, journal, options.jsonOutput)
 	}
 	if err := observeLaunch(ctx, terminallaunch.RunIdentity{Reference: options.reference, Directory: directory, RunIDs: []string{journal.ID}}); err != nil {
@@ -491,14 +524,6 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	}
 	if err := printRunPlan(output, journal, false); err != nil {
 		return err
-	}
-	answer := ""
-	if options.answerFile != "" {
-		data, err := readHumanAnswer(options.answerFile)
-		if err != nil {
-			return err
-		}
-		answer = string(data)
 	}
 	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests, DaemonImage: journal.Plan.DaemonImage, UseDefaultDaemonImage: journal.Plan.DaemonImage == ""}
 	if len(journal.Plan.CheckInputs) > 0 {
@@ -769,7 +794,7 @@ func readHumanAnswer(path string) ([]byte, error) {
 		return nil, fmt.Errorf("human answer changed while opening")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 64*1024+1))
-	if err != nil || len(data) == 0 || len(data) > 64*1024 || !utf8.Valid(data) {
+	if err != nil || strings.TrimSpace(string(data)) == "" || len(data) > 64*1024 || !utf8.Valid(data) {
 		return nil, fmt.Errorf("cannot read a bounded nonempty UTF-8 human answer")
 	}
 	return data, nil

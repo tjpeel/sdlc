@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 )
 
-var Version = "0.1.0-beta.2"
+var Version = "0.1.0-beta.3"
 
 type Identity struct {
 	Version  string `json:"version"`

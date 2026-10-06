@@ -110,6 +110,27 @@ func TestSelectRequiresUnambiguousPrefixOrExactID(t *testing.T) {
 	}
 }
 
+func TestListShowsPendingQuestionsEvenWhenStopReasonIsGeneric(t *testing.T) {
+	v := runstatus.View{ID: "0123456789abcdef01234567", Available: true, Stopped: true, NeedsAttention: true, State: "waiting_for_human", StopReason: "Answer the recorded questions", Questions: []string{"Should missing records return 404?", "Should empty names be rejected?"}}
+	var output bytes.Buffer
+	if err := List(&output, []runstatus.View{v}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Question: Should missing records return 404?", "Question: Should empty names be rejected?", "sdlc answer --run " + v.ID} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q: %s", expected, output.String())
+		}
+	}
+	v.State, v.StopReason = "implementing", ""
+	output.Reset()
+	if err := List(&output, []runstatus.View{v}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "Should missing") || strings.Contains(output.String(), "sdlc answer") {
+		t.Fatal("answered questions remained in the run list")
+	}
+}
+
 func assertNoTerminalControls(t *testing.T, text string) {
 	t.Helper()
 	for _, char := range text {

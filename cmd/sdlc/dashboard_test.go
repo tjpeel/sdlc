@@ -180,11 +180,17 @@ func TestDashboardJSONIncludesAllRepositoriesWithoutPrivateJournal(t *testing.T)
 		t.Fatal("quiet live controller classified incorrectly")
 	}
 	for _, row := range document.Runs {
-		for _, key := range []string{"journal", "instructions", "plan", "feedback", "questions"} {
+		for _, key := range []string{"journal", "instructions", "plan", "feedback"} {
 			if _, exists := row[key]; exists {
 				t.Fatalf("private journal field %q included", key)
 			}
 		}
+	}
+	if got := document.Runs[0]["questions"]; !reflect.DeepEqual(got, []any{"Should missing items return 404?"}) {
+		t.Fatalf("pending question missing: %v", got)
+	}
+	if _, exists := document.Runs[1]["questions"]; exists {
+		t.Fatal("nonwaiting run retained questions in attention output")
 	}
 	if strings.Contains(output.String(), journals[0].Instructions) || strings.Contains(output.String(), "private-recent-event") {
 		t.Fatal("JSON copied private prompts or log output")
@@ -260,6 +266,38 @@ func TestDashboardSelectedRunShowsQuestionsPRChecksAndBoundedLogs(t *testing.T) 
 	}
 	if err := json.Unmarshal(output.Bytes(), &selected); err != nil || len(selected.Runs) != 1 || selected.Runs[0]["id"] != journals[1].ID {
 		t.Fatalf("selected JSON: %s %v", output.String(), err)
+	}
+	assertDashboardReadOnly(t, root, marker, before)
+}
+
+func TestDashboardAttentionSurfacesQuestionAndAnswerCommandWithoutConnecting(t *testing.T) {
+	root, marker, journals := dashboardFixture(t)
+	before := dashboardTree(t, root)
+	var output bytes.Buffer
+	if err := dashboardCommand(context.Background(), []string{"--attention", "--once"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Should missing items return 404?", "sdlc answer --run " + journals[1].ID} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("attention omitted %q: %s", expected, output.String())
+		}
+	}
+	if !strings.Contains(output.String(), "1 runs") {
+		t.Fatal("attention included runs that need no response")
+	}
+	output.Reset()
+	if err := dashboardCommand(context.Background(), []string{"--attention", "--json"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Runs []struct {
+			ID         string
+			Questions  []string
+			NextAction string `json:"next_action"`
+		}
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || len(result.Runs) != 1 || result.Runs[0].ID != journals[1].ID || len(result.Runs[0].Questions) != 1 || result.Runs[0].NextAction != "sdlc answer --run "+journals[1].ID {
+		t.Fatalf("attention JSON: %s %v", output.String(), err)
 	}
 	assertDashboardReadOnly(t, root, marker, before)
 }

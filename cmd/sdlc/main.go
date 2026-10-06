@@ -28,6 +28,12 @@ func main() {
 		defer cancel()
 		var command func() error
 		switch os.Args[1] {
+		case "attention":
+			command = func() error { return dashboardCommand(ctx, append([]string{"--attention"}, os.Args[2:]...), os.Stdout) }
+		case "answer":
+			command = func() error { return answerCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
+		case "resume":
+			command = func() error { return resumeCommand(ctx, os.Args[2:], os.Stdout) }
 		case "usage":
 			command = func() error { return usageCommand(ctx, os.Args[2:], os.Stdout) }
 		case "shell":
@@ -87,6 +93,7 @@ func main() {
 		fmt.Println("       sdlc runtime headroom build|status (separate pinned proxy image)")
 		fmt.Println("         Offline plan: --dry-run --json; independent iTerm2 controller: --terminal background [--launch-id UUID] [--json]")
 		fmt.Println("       sdlc dashboard [--once | --json] [--scope project|installation] [--page N] [--run RUN_ID] [--logs]")
+		fmt.Println("       sdlc attention [--once | --json] | answer --run RUN_ID [--text TEXT | --stdin] | resume --run RUN_ID")
 		fmt.Println("       sdlc dashboard forget --run RUN_ID")
 		fmt.Println("       sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY")
 		fmt.Println("       sdlc interactive [--provider codex|claude]")

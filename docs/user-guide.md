@@ -563,7 +563,40 @@ can duplicate notifications.
 
 ## 11. Resolve a stop and resume the recorded run
 
-Use the full original run ID and the same work folder/ticket:
+Use `sdlc attention` to find questions, problems and work ready for human review.
+The run list shows recorded questions and the next command. Inspect one run with
+`sdlc dashboard --run RUN_ID --once`; IDs may be full or a unique prefix of at least
+six characters.
+
+For `waiting_for_human`, answer directly:
+
+```sh
+sdlc answer --run RUN_ID
+sdlc answer --run RUN_ID --text "Return 404 when the item is missing."
+```
+
+The first command displays the saved questions and accepts a multiline answer.
+Use a line containing `.` to submit and resume, or `/cancel` to cancel. Use `..`
+or `//cancel` to include those literal lines. `--stdin` reads an entire piped
+answer through EOF; `--answer-file FILE` retains the file-based option. A
+source-free `--dry-run` displays the questions and frozen resume plan without
+reading an answer or starting work.
+
+For another stopped stage, resolve its problem and use:
+
+```sh
+sdlc resume --run RUN_ID
+```
+
+These commands recover the recorded project, reference and ticket. They work
+outside that checkout and preserve its frozen settings and metrics history.
+Answers become provider input and private run history. The shell offers
+`/attention`, `/answer RUN_ID` and `/resume RUN_ID`; its free-text answer editor
+submits with Ctrl+S. A changed checkpoint requires a new answer, and an active
+controller cannot be resumed twice.
+
+The original explicit resume commands remain available. Use the full original
+run ID and the same work folder/ticket:
 
 ```sh
 sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-feature.md \

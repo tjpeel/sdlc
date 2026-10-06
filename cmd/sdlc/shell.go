@@ -65,6 +65,7 @@ func shellCommand(ctx context.Context, args []string, input, output *os.File) er
 	adapter := &shellAdapter{executable: executable, plans: map[string]string{}}
 	config := shell.Config{Root: root, Version: buildinfo.Version, Branch: branch, Dirty: dirty, Commands: shellCommands(), Input: input, Output: output,
 		Read: adapter.read, Execute: adapter.execute, Launch: adapter.launch, Complete: shellCompletion, Prompt: promptIdentity,
+		ResolveRun: adapter.resolveRun, RespondRun: adapter.respondRun, ResumeRun: adapter.resumeRun,
 		SelectProject: func(ctx context.Context, current, name string) (string, error) {
 			projects, err := projectList(ctx)
 			if err != nil {

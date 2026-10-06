@@ -7,6 +7,20 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.3 - 2026-10-06
+
+### Added
+
+- `sdlc answer --run ID` displays pending questions and accepts a multiline reply, inline `--text`, or `--stdin`, then resumes the recorded run without repeating its project, reference or ticket. `sdlc resume --run ID` continues other stopped runs.
+- `/answer ID` opens a free-text shell editor; Ctrl+S submits the answer and resumes. `/answer` uses the run selected by `/dashboard --run ID`. Plain mode accepts multiline replies with an explicit submit line.
+- `sdlc attention`, `/attention`, and `dashboard --attention` show questions, problems and work ready for human review. Run lists show pending questions and the next command; dashboard JSON includes pending questions and the next action.
+- Feature summaries identify each stopped run, its reason and the command to inspect or answer it.
+
+### Fixed
+
+- Bind resume previews to the checkpoint and answer content. Changed questions or answers require a fresh submission; busy controllers and ambiguous run IDs are rejected.
+- Preserve space key events in typed shell commands and free-text replies.
+
 ## 0.1.0-beta.2 - 2026-10-06
 
 ### Added

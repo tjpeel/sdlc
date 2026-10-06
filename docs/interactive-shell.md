@@ -36,6 +36,10 @@ Useful commands:
 | `/work` | List exact ticket filenames for the selected reference. |
 | `/inspect "@Example stream/01-first.md"` | Explicitly read a bounded local ticket. |
 | `/dashboard` | Follow project-scoped registered jobs and recorded activity. |
+| `/attention` | Follow pending questions, problems and work ready for human review. |
+| `/answer RUN_ID` | Read the questions, type a reply, then Ctrl+S to answer and resume. |
+| `/resume RUN_ID` | Inspect a stopped run, then Ctrl+S to resume its saved stage. |
+| `/usage` | Read recorded provider tokens, Headroom estimates and completion outcomes. |
 | `/scope all` | Browse installation-wide history from multiple projects. |
 | `/scope project` | Return to the selected project's history. |
 | `/clear` | Clear the displayed view. |
@@ -76,6 +80,36 @@ This first pass shows existing journal evidence and bounded recorded output.
 It does not parse complete provider conversations. `/dashboard forget --run
 RUN_ID` retains saved work and refuses active controllers under the existing
 rules. Reviewed bulk history clearing remains a later iteration.
+
+## Answer a stopped run
+
+The dashboard reads saved questions directly from the run checkpoint and shows
+them in both the list and selected-run details. `/attention` narrows the view to
+runs needing human action. Questions, stop reasons and next commands remain
+visible without opening their private files.
+
+Use `/answer RUN_ID` to open the answer editor. A unique ID prefix of at least
+six characters is sufficient. After `/dashboard --run RUN_ID`, `/answer` uses
+that selected run. The editor shows its project, ticket and questions. Type free
+text; Enter inserts a newline, Ctrl+S submits the answer and requests a resumed
+controller in an independent terminal, and Escape or Ctrl+C discards the editor.
+Page Up/Down scroll the questions while the reply and submit controls stay visible.
+Quotes, slash commands and punctuation remain literal answer text. The limit is
+64 KiB of nonempty UTF-8 text.
+
+Plain mode displays the same questions. Enter a line containing `.` to submit,
+or `/cancel` to discard. Use `..` or `//cancel` for those literal lines. End of
+input before the submit line cancels the answer.
+
+For other stopped runs, resolve the displayed problem, then `/resume RUN_ID` and
+Ctrl+S (`/start` in plain mode). The recorded run supplies its project and frozen
+settings, even when another project is selected. The shell then monitors that run.
+If the checkpoint changes while an answer is being written, inspect it again
+before submitting. An active controller cannot be resumed a second time.
+
+Answers are saved in private run history and sent as provider input. They are
+never placed in the terminal launch command. A failed submission keeps the
+editor text unless the terminal launch may already have dispatched the controller.
 
 ## Review and start a job
 

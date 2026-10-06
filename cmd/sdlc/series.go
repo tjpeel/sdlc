@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
@@ -283,6 +284,11 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	}
 	err = runner.Run(ctx, directory, &state)
 	fmt.Fprintf(output, "Private feature state: %q\nResume feature: sdlc run --reference %q --all --parallel %d\n", directory, options.reference, options.parallel)
+	printSeriesResults(output, plan, state)
+	return err
+}
+
+func printSeriesResults(output io.Writer, plan workseries.Plan, state workseries.State) {
 	for _, ticket := range plan.Tickets {
 		result := state.Results[ticket.File]
 		status := result.State
@@ -290,8 +296,31 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			status = "waiting for dependencies"
 		}
 		fmt.Fprintf(output, "  %s: %s %s\n", ticket.File, status, result.URL)
+		if result.RunID != "" {
+			fmt.Fprintf(output, "    Run: %s | inspect: sdlc dashboard --run %s --once\n", result.RunID, result.RunID)
+		}
+		if result.StopReason != "" {
+			fmt.Fprintf(output, "    Stop: %s\n", dashboard.SafeText(result.StopReason))
+		}
+		journal, journalErr := workrun.Load(result.Directory)
+		if result.RunID != "" {
+			switch result.State {
+			case "waiting_for_human", "waiting_human":
+				if journalErr == nil && journal.ID == result.RunID && journal.State == "waiting_for_human" {
+					for _, question := range journal.Outcome.Questions {
+						fmt.Fprintf(output, "    Question: %s\n", dashboard.SafeText(question))
+					}
+				}
+				fmt.Fprintf(output, "    Answer: sdlc answer --run %s\n", result.RunID)
+			case "blocked", "failed", "awaiting_reviewer":
+				if journalErr == nil && journal.ID == result.RunID {
+					fmt.Fprintf(output, "    After resolving the stop: sdlc resume --run %s\n", result.RunID)
+				} else {
+					fmt.Fprintln(output, "    Correct the preparation failure, then repeat the feature command.")
+				}
+			}
+		}
 	}
-	return err
 }
 
 func seriesHeadroomMode(config headroom.Config) string {

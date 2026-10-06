@@ -210,9 +210,39 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 				return err
 			}
 		}
+		if v.State == "waiting_for_human" {
+			for _, question := range v.Questions {
+				if _, err := fmt.Fprintln(output, "     Question: "+clip(question, 160)); err != nil {
+					return err
+				}
+			}
+		}
+		if next := NextAction(v); next != "" {
+			if _, err := fmt.Fprintln(output, "     Next: "+SafeText(next)); err != nil {
+				return err
+			}
+		}
 	}
 	_, err := fmt.Fprintln(output, "\nSelect: sdlc dashboard --run RUN_ID   History: --page N   Snapshot: --once   JSON: --json\nRemove from dashboard: sdlc dashboard forget --run RUN_ID (saved work is retained)\nCtrl-C closes this view; run controllers continue independently.")
 	return err
+}
+
+// NextAction points to the next human action without restarting an uncertain controller.
+func NextAction(v runstatus.View) string {
+	if !v.Available || v.Preparation || v.Live || v.Stale {
+		return ""
+	}
+	switch v.State {
+	case "waiting_for_human":
+		return "sdlc answer --run " + v.ID
+	case "blocked", "failed", "awaiting_reviewer":
+		return "Resolve the stop reason, then sdlc resume --run " + v.ID
+	case "ready":
+		if v.PR.URL != "" {
+			return "Review PR: " + v.PR.URL
+		}
+	}
+	return ""
 }
 
 func elapsed(v runstatus.View, now time.Time) string {
@@ -356,6 +386,9 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 	}
 	fmt.Fprintf(&text, "Private state: %s\n", v.Directory)
 	if v.Available && v.Journal != nil {
+		if next := NextAction(v); next != "" {
+			fmt.Fprintf(&text, "Next: %s\n", next)
+		}
 		fmt.Fprintf(&text, "Resume from repository: sdlc run --reference %s --ticket %s --resume %s", quote(v.Reference), quote(filepath.Base(v.Ticket)), v.ID)
 		if v.State == "waiting_for_human" {
 			text.WriteString(" --answer-file /PATH/TO/PRIVATE_ANSWER.txt")

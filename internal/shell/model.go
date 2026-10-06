@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
 type result struct {
+	action             RunAction
 	generation         uint64
 	kind               string
 	args               []string
@@ -26,6 +28,8 @@ type completed struct{ err error }
 
 // Model owns view state only. Resize and background messages do not replace the draft.
 type Model struct {
+	action                                   *RunAction
+	answerMode                               bool
 	busyKind, launchNotice                   string
 	lastError                                bool
 	config                                   Config
@@ -112,7 +116,7 @@ func (m *Model) complete() {
 	}
 }
 func (m *Model) externalCompletion() tea.Cmd {
-	if m.config.Complete == nil || m.dismissed {
+	if m.action != nil || m.config.Complete == nil || m.dismissed {
 		return nil
 	}
 	draft, root, g := string(m.draft), m.root, m.draftGeneration
@@ -129,7 +133,15 @@ type suggestionsMsg struct {
 	err        error
 }
 
-func (m *Model) changeDraft() { m.dismissed = false; m.draftGeneration++; m.complete() }
+func (m *Model) changeDraft() {
+	m.draftGeneration++
+	if m.action != nil {
+		m.suggestions = nil
+		return
+	}
+	m.dismissed = false
+	m.complete()
+}
 func (m *Model) insert() {
 	s := m.suggestions[m.selection]
 	m.draft = []rune(s.Insert)
@@ -189,6 +201,7 @@ func (m *Model) submit() tea.Cmd {
 		m.body = err.Error()
 		return nil
 	}
+	m.action = nil
 	m.draft = nil
 	m.cursor = 0
 	m.dismissed = true
@@ -197,6 +210,8 @@ func (m *Model) submit() tea.Cmd {
 	m.monitor = false
 	m.scroll = 0
 	switch args[0] {
+	case "answer", "resume":
+		return m.resolveAction(args)
 	case "exit":
 		if len(args) != 1 {
 			m.lastError = true
@@ -269,6 +284,11 @@ func (m *Model) submit() tea.Cmd {
 		if len(args) == 1 && m.reference != "" {
 			args = append(args, "--reference", m.reference)
 		}
+	case "attention":
+		args = append([]string{"dashboard", "--attention"}, args[1:]...)
+		m.monitor = true
+		m.monitorArgs = append([]string(nil), args...)
+		return m.dashboard()
 	case "dashboard":
 		if c, ok := m.command(args); ok && c.Native {
 			break
@@ -357,7 +377,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(1, msg.Height)
 		return m, nil
 	case suggestionsMsg:
-		if msg.generation == m.draftGeneration && msg.draft == string(m.draft) && !m.dismissed {
+		if m.action == nil && msg.generation == m.draftGeneration && msg.draft == string(m.draft) && !m.dismissed {
 			m.suggestions = append(m.suggestions, msg.items...)
 		}
 		return m, nil
@@ -377,6 +397,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.monitor = false
 			if msg.kind == "dashboard" && m.launchNotice != "" {
 				m.body = m.launchNotice + "\n\n" + m.body
+			}
+			if msg.kind == "run-action" && launchMayHaveStarted(msg.text) {
+				m.launchNotice = m.body
+				m.action = nil
+				m.draft = nil
+				m.cursor = 0
+				m.monitor = true
+				m.monitorArgs = []string{"dashboard", "--run", msg.action.ID, "--scope", "all"}
+				return m, m.dashboard()
 			}
 			if msg.kind == "launch" {
 				m.launchNotice = m.body
@@ -403,6 +432,31 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll = 0
 		}
 		switch msg.kind {
+		case "resolve-answer", "resolve-resume":
+			if msg.kind == "resolve-answer" && msg.action.State != "waiting_for_human" {
+				m.lastError = true
+				m.body = "Run is " + safe(msg.action.State) + "; answers require waiting_for_human."
+				return m, nil
+			}
+			if msg.kind == "resolve-resume" && msg.action.State == "waiting_for_human" {
+				m.lastError = true
+				m.body = "This run needs an answer. Use /answer " + safe(msg.action.ID) + " to answer and resume."
+				return m, nil
+			}
+			m.action = &msg.action
+			m.answerMode = msg.kind == "resolve-answer"
+			m.draft = nil
+			m.cursor = 0
+			m.suggestions = nil
+		case "run-action":
+			m.launchNotice = safe(msg.text)
+			m.action = nil
+			m.draft = nil
+			m.cursor = 0
+			m.monitor = true
+			id := msg.action.ID
+			m.monitorArgs = []string{"dashboard", "--run", id, "--scope", "all"}
+			return m, m.dashboard()
 		case "plan":
 			if !hasOption(msg.args, "dry-run") {
 				m.review = msg.args
@@ -442,9 +496,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		if m.action != nil {
+			return m.answerKey(msg)
+		}
 		switch msg.String() {
 		case "ctrl+c":
-			if m.busy && m.busyKind == "launch" {
+			if m.busy && (m.busyKind == "launch" || m.busyKind == "run-action") {
 				m.draft = nil
 				m.cursor = 0
 				m.suggestions = nil
@@ -522,8 +579,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.externalCompletion()
 		}
-		if msg.Type == tea.KeyRunes {
-			for _, r := range msg.Runes {
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+			runes := msg.Runes
+			if msg.Type == tea.KeySpace {
+				runes = []rune{' '}
+			}
+			for _, r := range runes {
 				if unicode.IsControl(r) {
 					continue
 				}
@@ -541,7 +602,7 @@ func safe(text string) string {
 		if r == '\n' || r == '\t' {
 			return r
 		}
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -549,12 +610,15 @@ func safe(text string) string {
 }
 func color(code, text string) string { return "\x1b[" + code + "m" + text + "\x1b[0m" }
 func (m *Model) View() string {
+	if m.action != nil {
+		return m.actionView()
+	}
 	width, height := max(1, m.width), max(1, m.height)
 	footer := "/ commands · Tab complete · Enter inserts then dispatches · PgUp/PgDn scroll"
 	if m.busy {
 		footer = "Working… Ctrl+C cancels this UI query, never a run"
 	}
-	if m.busy && m.busyKind == "launch" {
+	if m.busy && (m.busyKind == "launch" || m.busyKind == "run-action") {
 		footer = "Waiting for background terminal acknowledgment · Ctrl+C clears draft only"
 	}
 	if len(m.review) > 0 && !m.busy {
@@ -652,9 +716,234 @@ func launchMayHaveStarted(text string) bool {
 
 func inlineSafe(text string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
 	}, text)
+}
+
+const maxAnswerBytes = 64 * 1024
+
+func validateAnswer(text string) error {
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("answer must be valid UTF-8")
+	}
+	if len(text) > maxAnswerBytes {
+		return fmt.Errorf("answer exceeds 64 KiB")
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("answer must contain non-whitespace text")
+	}
+	return nil
+}
+func (m *Model) resolveAction(args []string) tea.Cmd {
+	id := ""
+	if len(args) == 2 {
+		id = args[1]
+	} else if len(args) == 1 {
+		id, _ = optionValue(m.monitorArgs, "run")
+	} else {
+		m.lastError = true
+		m.body = "Usage: /" + args[0] + " RUN_ID"
+		return nil
+	}
+	if id == "" {
+		m.lastError = true
+		m.body = "Specify a run: /" + args[0] + " RUN_ID, or select one with /dashboard --run RUN_ID."
+		return nil
+	}
+	m.busy = true
+	m.busyKind = "resolve"
+	m.generation++
+	g, root, kind := m.generation, m.root, "resolve-"+args[0]
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancel = cancel
+	return func() tea.Msg {
+		if m.config.ResolveRun == nil {
+			return result{generation: g, kind: kind, err: fmt.Errorf("run resolver unavailable")}
+		}
+		action, err := m.config.ResolveRun(ctx, root, id)
+		return result{generation: g, kind: kind, action: action, err: err}
+	}
+}
+func (m *Model) dispatchAction() tea.Cmd {
+	if m.busy || m.action == nil {
+		return nil
+	}
+	text := string(m.draft)
+	if m.answerMode {
+		if err := validateAnswer(text); err != nil {
+			m.lastError = true
+			m.body = err.Error()
+			return nil
+		}
+	}
+	action, answering := *m.action, m.answerMode
+	m.busy = true
+	m.busyKind = "run-action"
+	m.generation++
+	g := m.generation
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancel = cancel
+	return func() tea.Msg {
+		var receipt string
+		var err error
+		if answering {
+			if m.config.RespondRun == nil {
+				err = fmt.Errorf("answer adapter unavailable")
+			} else {
+				receipt, err = m.config.RespondRun(ctx, action, text)
+			}
+		} else {
+			if m.config.ResumeRun == nil {
+				err = fmt.Errorf("resume adapter unavailable")
+			} else {
+				receipt, err = m.config.ResumeRun(ctx, action)
+			}
+		}
+		return result{generation: g, kind: "run-action", action: action, text: receipt, err: err}
+	}
+}
+func (m *Model) discardAction() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.generation++
+	m.busy = false
+	m.busyKind = ""
+	m.action = nil
+	m.draft = nil
+	m.cursor = 0
+	m.body = "Run action cancelled."
+}
+func (m *Model) answerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.busy {
+		if m.busyKind == "run-action" && (msg.String() == "ctrl+c" || msg.String() == "esc") {
+			m.action = nil
+			m.draft = nil
+			m.cursor = 0
+			m.body = "Waiting for run action acknowledgment. The dispatched action continues."
+		}
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.discardAction()
+		return m, nil
+	case "ctrl+s":
+		return m, m.dispatchAction()
+	case "pgup", "pgdown":
+		_, header, _ := strings.Cut(m.actionContext(), "\n")
+		if m.lastError {
+			header += "\n" + m.body
+		}
+		count := len(strings.Split(ansi.Hardwrap(header, max(1, m.width), true), "\n"))
+		contextHeight := min(count, max(0, min(m.height/2, m.height-3)))
+		step := max(1, contextHeight)
+		if msg.String() == "pgup" {
+			m.scroll = max(0, m.scroll-step)
+		} else {
+			m.scroll = min(max(0, count-contextHeight), m.scroll+step)
+		}
+	case "left":
+		m.cursor = max(0, m.cursor-1)
+	case "right":
+		m.cursor = min(len(m.draft), m.cursor+1)
+	case "home", "ctrl+a":
+		m.cursor = 0
+	case "end", "ctrl+e":
+		m.cursor = len(m.draft)
+	case "backspace", "ctrl+h":
+		if m.cursor > 0 {
+			m.draft = append(m.draft[:m.cursor-1], m.draft[m.cursor:]...)
+			m.cursor--
+		}
+	case "delete":
+		if m.cursor < len(m.draft) {
+			m.draft = append(m.draft[:m.cursor], m.draft[m.cursor+1:]...)
+		}
+	default:
+		if !m.answerMode {
+			return m, nil
+		}
+		var runes []rune
+		if msg.Type == tea.KeyEnter {
+			runes = []rune{'\n'}
+		} else if msg.Type == tea.KeySpace {
+			runes = []rune{' '}
+		} else if msg.Type == tea.KeyRunes {
+			runes = msg.Runes
+		} else {
+			return m, nil
+		}
+		next := append([]rune(nil), m.draft[:m.cursor]...)
+		next = append(next, runes...)
+		next = append(next, m.draft[m.cursor:]...)
+		if len(string(next)) > maxAnswerBytes {
+			m.lastError = true
+			m.body = "Answer exceeds 64 KiB"
+			return m, nil
+		}
+		m.draft = next
+		m.cursor += len(runes)
+	}
+	return m, nil
+}
+func (m *Model) actionContext() string {
+	a := m.action
+	header := "Run " + safe(a.ID) + " · project " + safe(a.Root) + "\nState: " + safe(a.State)
+	if a.Ticket != "" {
+		header += "\nTicket: " + safe(a.Reference) + "/" + safe(a.Ticket)
+	}
+	if a.State == "waiting_for_human" {
+		for _, question := range a.Questions {
+			header += "\nQuestion: " + safe(question)
+		}
+	}
+	return header
+}
+func (m *Model) actionView() string {
+	width, height := max(1, m.width), max(1, m.height)
+	if height == 1 {
+		return ansi.Truncate("Ctrl+S submit · Esc cancel", width, "")
+	}
+	identity, header, _ := strings.Cut(m.actionContext(), "\n")
+	if m.lastError {
+		header += "\n" + m.body
+	}
+	contextLines := strings.Split(ansi.Hardwrap(header, width, true), "\n")
+	// Reserve the editor and controls even when questions wrap over many lines.
+	contextHeight := min(len(contextLines), max(0, min(height/2, height-3)))
+	contextStart := min(m.scroll, max(0, len(contextLines)-contextHeight))
+	lines := []string{ansi.Truncate(identity, width, "…")}
+	lines = append(lines, contextLines[contextStart:contextStart+contextHeight]...)
+	editorHeight := max(0, height-contextHeight-2)
+	cursor := min(m.cursor, len(m.draft))
+	before := safe(string(m.draft[:cursor]))
+	after := safe(string(m.draft[cursor:]))
+	caret := color("7", " ")
+	if after != "" {
+		next := []rune(after)
+		caret = color("7", string(next[0]))
+		after = string(next[1:])
+	}
+	draftLines := strings.Split(ansi.Hardwrap(before+caret+after, width, true), "\n")
+	cursorLine := len(strings.Split(ansi.Hardwrap(before+caret, width, true), "\n")) - 1
+	editorStart := max(0, cursorLine-editorHeight+1)
+	editorEnd := min(len(draftLines), editorStart+editorHeight)
+	lines = append(lines, draftLines[editorStart:editorEnd]...)
+	for len(lines) < height-1 {
+		lines = append(lines, "")
+	}
+	instruction := "Ctrl+S resume · PgUp/PgDn context · Esc cancel"
+	if m.answerMode {
+		instruction = "Ctrl+S submit · PgUp/PgDn questions · Enter newline · Esc cancel"
+	}
+	if m.busy {
+		instruction = "Submitting run action…"
+	}
+	lines = append(lines, ansi.Truncate(instruction, width, ""))
+	return strings.Join(lines, "\n")
 }
