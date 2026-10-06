@@ -17,6 +17,17 @@ prefixes list the matching full IDs; use more characters to select one. Commands
 retain the full ID after selection and keep their existing project or
 installation scope. Explicit `usage --run` selection ignores the age filter.
 
+New runs require complete Git history so their saved workspace can be reviewed
+and published. Shallow checkouts or missing reachable objects fail before
+provider preparation; restore the history or use a complete checkout. An offline
+`--dry-run` remains available to inspect the plan.
+
+When an isolated check fails, repair feedback identifies the command number and
+exit status. Recognised Prettier warnings also identify committed source files
+that need formatting, including when checks share one shell command. Raw check
+logs stay in `checks-N.log`; arbitrary output and private inputs are withheld
+from provider prompts.
+
 ## Keep a portable checkpoint report
 
 Export before removing a dashboard registration:

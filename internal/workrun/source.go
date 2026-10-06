@@ -17,6 +17,22 @@ import (
 
 const maximumInputBytes = 16 * 1024 * 1024
 
+// ValidateSourceHistory checks that capture can export the complete authentic
+// history. A missing shallow marker must not hide missing ancestry objects.
+func ValidateSourceHistory(ctx context.Context, root string) error {
+	shallow, err := isolatedGit(ctx, root, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return errors.New("cannot inspect source history; repair the repository before starting work")
+	}
+	if strings.TrimSpace(shallow) == "true" {
+		return errors.New("source repository has shallow history; fetch the complete history before starting work")
+	}
+	if _, err := isolatedGit(ctx, root, "--no-replace-objects", "rev-list", "--objects", "--missing=error", "HEAD"); err != nil {
+		return errors.New("source repository has incomplete history; restore missing Git objects or use a complete checkout before starting work")
+	}
+	return nil
+}
+
 // SafeGit disables inherited Git environment, global configuration and hooks.
 // The workspace must have a real, locally generated .git directory.
 func SafeGit(ctx context.Context, workspace string, args ...string) (string, error) {
@@ -73,14 +89,17 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 		return plan, errors.New("source base branch must exist locally")
 	}
 	plan.BaseSHA = strings.TrimSpace(baseHead)
+	head, err := isolatedGit(ctx, launch.Root, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || strings.TrimSpace(head) != launch.Head {
+		return plan, errors.New("source HEAD changed after launch")
+	}
+	if err = ValidateSourceHistory(ctx, launch.Root); err != nil {
+		return plan, err
+	}
 	// The exported HEAD must contain the fixed base used by the independent
 	// reviewer. A behind or diverged checkout cannot supply that review boundary.
 	if _, e := isolatedGit(ctx, launch.Root, "merge-base", "--is-ancestor", plan.BaseSHA, launch.Head); e != nil {
 		return plan, errors.New("source HEAD must include the selected base; update the checkout before launching work")
-	}
-	head, err := isolatedGit(ctx, launch.Root, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || strings.TrimSpace(head) != launch.Head {
-		return plan, errors.New("source HEAD changed after launch")
 	}
 	if err = realDirectory(launch.Root); err != nil {
 		return plan, err

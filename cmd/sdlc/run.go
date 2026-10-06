@@ -334,6 +334,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if err != nil {
 			return err
 		}
+		if !options.dryRun {
+			if err := workrun.ValidateSourceHistory(ctx, launch.Root); err != nil {
+				return err
+			}
+		}
 		if !options.dryRun && len(launch.Config.Checks) == 0 {
 			return fmt.Errorf("no verification checks configured: set checks in .sdlc/project.json before starting a provider run; inspect sdlc onboard status or preview with --dry-run")
 		}

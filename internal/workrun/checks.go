@@ -270,6 +270,7 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 	if output == nil {
 		output = io.Discard
 	}
+	approvedPaths := diagnosticSourcePaths(ctx, workspace)
 	for i, command := range commands {
 		worker := fmt.Sprintf("%s-worker-%d", name, i)
 		cleanups = append(cleanups, []string{"rm", "--force", worker})
@@ -287,7 +288,9 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 		args = checkContainerEnvironment(args)
 		args = append(args, "--entrypoint", command[0], state.ImageID)
 		args = append(args, command[1:]...)
-		if err = runner.Run(ctx, output, args...); err != nil {
+		diagnostic := &formatterDiagnostic{approved: approvedPaths}
+		commandOutput := io.MultiWriter(output, diagnostic)
+		if err = runner.Run(ctx, commandOutput, args...); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -308,7 +311,8 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 			if json.Unmarshal(metadata, &status) != nil || status.Status != "exited" || status.Running || status.ExitCode == 0 || status.Error != "" || status.OOMKilled {
 				return fmt.Errorf("repository check %d did not complete successfully: %w", i+1, err)
 			}
-			return fmt.Errorf("%w: command %d exited %d", ErrCheckFailed, i+1, status.ExitCode)
+			diagnostic.finish()
+			return &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths}
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()

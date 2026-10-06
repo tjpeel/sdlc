@@ -386,3 +386,61 @@ func TestCaptureRejectsPrivateAndUnsafeTrackedTemplates(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureRejectsIncompleteSourceHistory(t *testing.T) {
+	for _, mode := range []string{"shallow", "missing-parent"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			root, launch := sourceFixture(t)
+			parent := launch.Head
+			sourceWrite(t, root, "README.md", "second commit\n")
+			if _, err := isolatedGit(ctx, root, "add", "README.md"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := isolatedGit(ctx, root, "commit", "-m", "Second source commit"); err != nil {
+				t.Fatal(err)
+			}
+			head, err := isolatedGit(ctx, root, "rev-parse", "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			launch.Head = strings.TrimSpace(head)
+			if mode == "shallow" {
+				clone := filepath.Join(realTemp(t), "shallow")
+				if _, err := isolatedGit(ctx, root, "clone", "--depth", "1", "file://"+root, clone); err != nil {
+					t.Fatal(err)
+				}
+				root = clone
+				launch.Root = clone
+			} else {
+				if err := os.Remove(filepath.Join(root, ".git", "objects", parent[:2], parent[2:])); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Lstat(filepath.Join(root, ".git", "shallow")); !os.IsNotExist(err) {
+					t.Fatalf("unexpected shallow marker: %v", err)
+				}
+			}
+			treeBefore, err := isolatedGit(ctx, root, "rev-parse", "HEAD^{tree}")
+			if err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(realTemp(t), "workspace")
+			_, err = Capture(ctx, launch, destination, "ticket-work", "main", "example/repository", Roles{})
+			want := "incomplete history"
+			if mode == "shallow" {
+				want = "shallow history"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("wanted %q error, got %v", want, err)
+			}
+			if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+				t.Fatalf("capture created destination: %v", err)
+			}
+			headAfter, _ := isolatedGit(ctx, root, "rev-parse", "HEAD")
+			treeAfter, _ := isolatedGit(ctx, root, "rev-parse", "HEAD^{tree}")
+			if strings.TrimSpace(headAfter) != launch.Head || treeBefore != treeAfter {
+				t.Fatal("preflight changed source HEAD or tree")
+			}
+		})
+	}
+}

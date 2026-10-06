@@ -305,7 +305,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					if journal.Rounds > runner.MaxRounds {
 						return runner.stop(directory, journal, "blocked", "repository checks still fail after the repair bound")
 					}
-					journal.Feedback = "Configured checks failed on committed tree " + revision.Tree + ". Inspect the selected tests and code, repair within ticket scope, and request isolated checks again. Diagnostic logs remain private on the host. Ask a human if the evidence needed for repair is unavailable."
+					journal.Feedback = checkRepairFeedback(revision.Tree, checkErr, journal.Plan.Checks)
 					if err := runner.transition(directory, journal, "repairing"); err != nil {
 						return err
 					}
