@@ -43,14 +43,17 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	flags := flag.NewFlagSet("runtime "+args[0], flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	var source string
+	var name, skillsSource string
 	var offline bool
 	var githubProfile string
 	var dryRun bool
 	var all bool
 	var sourcePins bool
+	flags.StringVar(&name, "name", "", "select a separate named runtime (default: shared local image)")
 	if args[0] == "build" || args[0] == "update" {
 		flags.StringVar(&source, "source", "", "SDLC source (uses bundled Homebrew source or saved source when omitted)")
 		if args[0] == "build" {
+			flags.StringVar(&skillsSource, "skills-source", "", "clean committed local skills Git catalogue (requires --name)")
 			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
 		}
 		if args[0] == "update" {
@@ -75,7 +78,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 			return err
 		}
 	}
-	manager, err := runtimeimage.New(output, diagnostics)
+	manager, err := runtimeimage.NewNamed(output, diagnostics, name)
 	if err != nil {
 		return err
 	}
@@ -89,6 +92,9 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		return err
 	}
 	if args[0] == "update" {
+		if name != "" {
+			return fmt.Errorf("named runtimes use runtime build --name NAME; runtime update manages the default runtime")
+		}
 		return runtimeUpdate(ctx, manager, runtimeupdates.New(), source, dryRun, output)
 	}
 	policy := "retain private dependency pins for the same source"
@@ -100,9 +106,12 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if err != nil {
 		return err
 	}
-	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SourcePins: sourcePins, SourceRevision: revision, ValidatePrevious: runtimeSavedWorkGuard(manager.Directory, source)})
+	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SkillsSource: skillsSource, SourcePins: sourcePins, SourceRevision: revision, ValidatePrevious: runtimeSavedWorkGuard(manager.Directory, source)})
 	if err != nil {
 		return err
+	}
+	if state.SkillsRevision != "" {
+		fmt.Fprintf(output, "Local skills commit: %s\n", state.SkillsRevision)
 	}
 	return printRuntime(output, state)
 }
@@ -149,7 +158,7 @@ func pairedSigningStatus(runtime runtimeimage.Manager, pair githubprofile.Pair, 
 }
 
 func printRuntime(output io.Writer, state runtimeimage.State) error {
-	_, err := fmt.Fprintf(output, "Shared image: %s\nImage ID: %s\nSource revision: %s\n%s\n", runtimeimage.Image, state.ImageID, state.Revision, state.Tools)
+	_, err := fmt.Fprintf(output, "Shared image: %s\nImage ID: %s\nSource revision: %s\n%s\n", runtimeimage.Manager{Name: state.Name}.ImageName(), state.ImageID, state.Revision, state.Tools)
 	return err
 }
 

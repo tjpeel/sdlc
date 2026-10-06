@@ -7,7 +7,7 @@ review. It does not merge the PR or remove local files.
 The dashboard shows ten runs per page. Questions and problems come first,
 followed by missing reviewer login, queued/running work, then completed work.
 Within a priority group, newer updates come first. Use `--page N`, or `n` / `p`
-followed by Enter in a watching terminal, to page history. The page can change
+in a watching terminal, to page history. The page can change
 when new runs arrive or their priority changes.
 
 Run selectors accept a full ID or a unique lowercase hexadecimal prefix of at
@@ -126,3 +126,40 @@ configuration. Credentials should be configured separately when restoring.
 The GitHub PR remains after local dashboard removal. Local checks, full native
 transcripts and `.env` contents are not automatically attached to that PR.
 Deleting the checkout would delete its local run history unless backed up first.
+
+## Inspect retained project storage
+
+From a configured repository, use the CLI or the same shell command:
+
+```sh
+sdlc storage
+sdlc storage status --older-than 30
+sdlc storage --json
+```
+
+In `sdlc shell`, use `/storage [status] [--older-than DAYS] [--json]`.
+The scan is read-only. It reports directory totals, storage categories, and each
+retained run's size, file count, checkpoint state and last activity. Completed
+runs awaiting review are distinguished from resumable runs. Controller status
+uses saved heartbeat evidence; a recent heartbeat does not prove the controller
+is running.
+
+Sizes are logical bytes for regular-file paths, rather than allocated disk
+blocks. Hard links count once per path. The scan excludes symbolic links, Git
+metadata, known authentication directories/files and entries on other filesystem
+devices. It lists these exclusions and reports unreadable files or malformed
+checkpoint metadata as a partial measurement, with a failing exit status. It
+reads bounded checkpoint/activity metadata and never displays artifact contents.
+Filesystem boundary checks currently support Linux and macOS; other hosts fail
+closed.
+
+Age uses the newest measured artifact modification time or saved checkpoint,
+heartbeat or activity timestamp. `--older-than DAYS` accepts 0–36500 and filters
+run rows strictly older than that age. Exact-boundary and unknown-age runs are
+excluded. Folder and category totals still cover the full scan; matching-run
+totals are shown separately. Fresh artifacts keep a run out of an older-age view,
+even when its checkpoint is old.
+
+This command does not purge files, unregister runs, stop controllers or change
+checkpoints. Age alone does not make a run safe to remove. Retention and cleanup
+policy can be chosen after inspecting the retained artifacts.

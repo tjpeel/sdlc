@@ -598,6 +598,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 
 func (runner Runner) prompt(journal Journal, role string) string {
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
+	contextDiscipline += "For authorised supplementary repository inspection, reuse an existing selected checkout or clone beneath /workspace/.sdlc/repositories/ and exclude that directory locally with Git info/exclude. Preserve the checkout and record its revision for later inspection. Do not clone repositories into /tmp. Inspection does not authorise modifying or publishing a companion repository; follow the selected ticket delivery boundary.\n"
 	if role == "implementation" && journal.SessionID != "" {
 		identity, _ := json.Marshal(struct {
 			Reference string `json:"reference"`

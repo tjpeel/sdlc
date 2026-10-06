@@ -14,6 +14,7 @@ ARG CODEX_VERSION=0.160.0
 ARG GH_VERSION=2.102.0
 ARG CLAUDE_VERSION=2.1.287
 ARG DOTNET_VERSION=10.0.401
+ARG LOCAL_SKILLS=0
 ARG SKILLS_REVISION=cb1fa123bfea578de51f567aafc66096a8f65ebf
 ARG AGENTS_REVISION=ca463638c94e3dc44f51420554692636fa5fe0d0
 # An installation update fills these exact versions in its private build recipe.
@@ -103,6 +104,8 @@ RUN set -eu; \
     tar -xzf /tmp/dotnet-sdk.tar.gz -C /opt/dotnet; \
     rm /tmp/dotnet-releases.json /tmp/dotnet-archive.txt /tmp/dotnet-sdk.tar.gz
 
+COPY local-catalogues/ /tmp/sdlc-local-catalogues/
+
 # Keep pinned catalogue sources for provenance and generated packages outside
 # provider authentication storage.
 RUN set -eu; \
@@ -117,7 +120,11 @@ RUN set -eu; \
             -C "/opt/sdlc/catalogues/$catalogue"; \
         rm "/tmp/$catalogue.tar.gz"; \
     }; \
-    fetch_catalogue skills "$SKILLS_REVISION"; \
+    if [ "$LOCAL_SKILLS" = 1 ]; then \
+        mkdir -p /opt/sdlc/catalogues/skills; \
+        tar -xf /tmp/sdlc-local-catalogues/skills.tar -C /opt/sdlc/catalogues/skills; \
+    else fetch_catalogue skills "$SKILLS_REVISION"; fi; \
+    rm -rf /tmp/sdlc-local-catalogues; \
     fetch_catalogue agents "$AGENTS_REVISION"; \
     bash /opt/sdlc/catalogues/skills/scripts/install-skills \
         --provider codex --prefix tjpeel -- /home/node/.agents/skills; \

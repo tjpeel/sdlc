@@ -26,3 +26,9 @@ source/**
 !source/internal/providerauth/headless.py
 !source/internal/instructions/default.md
 source/**/*_test.go
+
+# Explicit committed catalogue snapshot prepared by the CLI.
+!local-catalogues/
+local-catalogues/**
+!local-catalogues/.keep
+!local-catalogues/skills.tar

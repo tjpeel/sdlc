@@ -420,3 +420,47 @@ func TestRunDryRunRejectsMissingOrUnsafeExplicitInputs(t *testing.T) {
 		t.Fatal("invalid input contacted connected command")
 	}
 }
+
+func TestRunRequiresChecksBeforeConnectedPreparation(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".sdlc", "project.json"), []byte(`{"version":1,"checks":[],"input_files":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := runCommand(context.Background(), runArgs("--repo", "example/project"), &output)
+	if err == nil || !strings.Contains(err.Error(), "no verification checks configured") {
+		t.Fatalf("missing actionable readiness failure: %v", err)
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatal("empty check plan reached provider or Docker")
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".sdlc", "work", "TASK-1", "runs")); !os.IsNotExist(err) {
+		t.Fatal("empty check plan captured an execution workspace")
+	}
+	if err := runCommand(context.Background(), runArgs("--repo", "example/project", "--dry-run", "--json"), &output); err != nil {
+		t.Fatalf("incomplete offline plan unavailable: %v", err)
+	}
+}
+
+func TestRunNamedRuntimePlanAndResumeSelection(t *testing.T) {
+	runGitFixture(t)
+	var output bytes.Buffer
+	if err := runCommand(context.Background(), runArgs("--repo", "example/project", "--runtime", "reviewed-skills", "--dry-run", "--json"), &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Plan workrun.Plan `json:"plan"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Plan.RuntimeName != "reviewed-skills" {
+		t.Fatalf("runtime selection absent from plan: %+v %v", result, err)
+	}
+	for _, extra := range [][]string{{"--runtime", "../escape"}, {"--runtime", "local"}, {"--runtime", ""}, {"--runtime", "reviewed-skills", "--resume", "abc"}} {
+		if _, err := parseRunOptions(runArgs(extra...)); err == nil {
+			t.Fatalf("invalid runtime selection accepted: %v", extra)
+		}
+	}
+	if _, err := parseRunOptions([]string{"--reference", "TASK-1", "--all", "--runtime", "reviewed-skills"}); err == nil {
+		t.Fatal("feature silently accepted unsupported runtime")
+	}
+}

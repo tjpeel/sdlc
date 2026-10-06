@@ -33,7 +33,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--runtime NAME] [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -47,7 +47,7 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
-	headroomMode                                                                                                                       string
+	runtimeName, headroomMode                                                                                                          string
 	frozenHeadroom                                                                                                                     *headroom.Config
 	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, resume, answerFile, githubProfile string
 	inputs                                                                                                                             selectedInputs
@@ -82,6 +82,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.ticket, "ticket", "", "exact numbered ticket filename")
 	flags.StringVar(&options.githubProfile, "github-profile", "", "registered GitHub account/key pair; defaults to repository selection")
 	flags.StringVar(&options.provider, "provider", "codex", "implementation provider")
+	flags.StringVar(&options.runtimeName, "runtime", "", "named runtime for one ticket; resume uses the recorded selection")
 	flags.StringVar(&options.headroomMode, "headroom", "off", "provider route: off, passthrough or optimize (opt-in local Headroom)")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
 	flags.StringVar(&options.branch, "branch", "", "destination branch; defaults to a unique ticket branch")
@@ -117,6 +118,15 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	if options.all && (options.ticket != "" || options.branch != "" || options.resume != "" || options.answerFile != "") {
 		return options, fmt.Errorf("--all owns ticket selection and branches; resume the feature by repeating its command, or answer a selected run separately")
+	}
+	if options.all && options.runtimeName != "" {
+		return options, fmt.Errorf("--runtime selects one ticket runtime; use --ticket without --all")
+	}
+	if options.supplied["runtime"] && options.runtimeName == "" {
+		return options, fmt.Errorf("--runtime cannot be empty")
+	}
+	if err := runtimeimage.ValidateName(options.runtimeName); err != nil {
+		return options, err
 	}
 	if options.parallel < 1 || options.parallel > 8 {
 		return options, fmt.Errorf("parallel must be between 1 and 8")
@@ -249,7 +259,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	if ticket == "" {
 		return fmt.Errorf("select an exact numbered ticket filename from sdlc work")
 	}
-	runtime, err := runtimeimage.New(output, io.Discard)
+	runtime, err := runtimeimage.NewNamed(output, io.Discard, options.runtimeName)
 	if err != nil {
 		return err
 	}
@@ -298,6 +308,10 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if journal.Plan.Root != work.Root || journal.Plan.Reference != options.reference || filepath.Base(journal.Plan.Ticket) != ticket {
 			return fmt.Errorf("run journal does not match selected work")
 		}
+		runtime, err = runtimeimage.NewNamed(output, io.Discard, journal.Plan.RuntimeName)
+		if err != nil {
+			return err
+		}
 	} else {
 		var roles workrun.Roles
 		if options.frozenRoles != nil {
@@ -319,6 +333,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		launch, err := launchInput(ctx, current, options.reference, ticket, options.inputs)
 		if err != nil {
 			return err
+		}
+		if !options.dryRun && len(launch.Config.Checks) == 0 {
+			return fmt.Errorf("no verification checks configured: set checks in .sdlc/project.json before starting a provider run; inspect sdlc onboard status or preview with --dry-run")
 		}
 		if options.frozenConfig != nil && !sameSeriesConfig(launch.Config, *options.frozenConfig) {
 			return fmt.Errorf("project checks or check inputs changed during the feature; restore the frozen configuration")
@@ -347,7 +364,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 				return err
 			}
 		}
-		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{RuntimeName: options.runtimeName, GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
 		journal.Plan.Headroom, err = headroom.Selection(options.headroomMode)
 		if err != nil {
 			return err
@@ -421,6 +438,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		plan.GitHubProfile = options.githubProfile
 		plan.SigningProfile = pair.SigningProfile
+		plan.RuntimeName = options.runtimeName
 		plan.DockerTests = options.dockerTests
 		journal.Plan = plan
 		var shared []byte

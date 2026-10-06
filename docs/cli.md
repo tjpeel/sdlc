@@ -1479,3 +1479,9 @@ Normal exit and cancellation remove the container and instruction snapshot while
 keeping the provider cache. If cleanup fails or the host crashes, inspect leftover
 `sdlc-interactive-*` containers before trying again. Reinstall the CLI after this
 change; the existing image can be reused.
+
+## Retained storage and runtime variants
+
+Use `sdlc storage` from a project repository to report retained `.sdlc` sizes, categories and run ages. `sdlc storage --older-than 30 --json` filters the run rows by their latest recorded activity; total directory sizes still cover the complete scan. This command reads metadata and file sizes without initializing accounts or removing files. See [run history](run-history.md) for scan boundaries and partial reports.
+
+A single-ticket run can select `--runtime NAME`. Resume recovers that selection from its journal. Named runtimes have their own image tag and state while retaining the installation's account caches and build lock. To test committed local skill changes without replacing a paused run's default image, build with `sdlc runtime build --name reviewed-skills --source . --skills-source /path/to/skills`, then select `--runtime reviewed-skills` on the new ticket run. See [runtime variants](runtime-variants.md) for provenance, rebuild options and limitations.

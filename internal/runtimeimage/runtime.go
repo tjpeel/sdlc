@@ -24,6 +24,9 @@ import (
 const Image = "sdlc:local"
 
 type State struct {
+	Name           string            `json:"name,omitempty"`
+	SkillsSource   string            `json:"skills_source,omitempty"`
+	SkillsRevision string            `json:"skills_revision,omitempty"`
 	Version        int               `json:"version"`
 	Source         string            `json:"source"`
 	Revision       string            `json:"source_revision"`
@@ -37,6 +40,7 @@ type State struct {
 }
 
 type BuildOptions struct {
+	SkillsSource string
 	// SourcePins ignores private dependency overrides and uses the source Dockerfile.
 	SourcePins bool
 	// SourceRevision supplies verified archive provenance when no Git checkout exists.
@@ -80,11 +84,19 @@ func (docker LocalDocker) Run(ctx context.Context, args ...string) error {
 }
 
 type Manager struct {
+	Name      string
 	Directory string
 	Docker    Docker
 }
 
 func New(stdout, stderr io.Writer) (Manager, error) {
+	return NewNamed(stdout, stderr, "")
+}
+
+func NewNamed(stdout, stderr io.Writer, name string) (Manager, error) {
+	if err := ValidateName(name); err != nil {
+		return Manager{}, err
+	}
 	directory := os.Getenv("SDLC_STATE_DIR")
 	if directory == "" {
 		base, err := os.UserConfigDir()
@@ -93,7 +105,7 @@ func New(stdout, stderr io.Writer) (Manager, error) {
 		}
 		directory = filepath.Join(base, "sdlc")
 	}
-	return Manager{directory, LocalDocker{stdout, stderr}}, nil
+	return Manager{Name: name, Directory: directory, Docker: LocalDocker{stdout, stderr}}, nil
 }
 
 func (manager Manager) engine(ctx context.Context) (string, error) {
@@ -147,13 +159,20 @@ func (manager Manager) inspect(ctx context.Context, image string) (string, error
 }
 
 func (manager Manager) read() (State, error) {
-	data, err := os.ReadFile(filepath.Join(manager.Directory, "runtime.json"))
+	path, err := manager.statePath()
+	if err != nil {
+		return State{}, err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return State{}, fmt.Errorf("no recorded runtime; run sdlc runtime build --source SDLC_DIRECTORY: %w", err)
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); !utf8.Valid(data) || err != nil || state.Version != 1 || !imageID.MatchString(state.ImageID) {
 		return State{}, fmt.Errorf("runtime state is invalid; rebuild from the SDLC clone")
+	}
+	if state.Name != manager.Name || state.SkillsRevision != "" && !sourceCommitID.MatchString(state.SkillsRevision) {
+		return State{}, fmt.Errorf("runtime state provenance differs from selected runtime")
 	}
 	if state.Inventory != nil {
 		if err := ValidateInventory(*state.Inventory); err != nil {
@@ -197,7 +216,11 @@ func (manager Manager) save(state State) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), filepath.Join(manager.Directory, "runtime.json"))
+	path, err := manager.statePath()
+	if err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func (manager Manager) Build(ctx context.Context, source string) (State, error) {
@@ -207,6 +230,12 @@ func (manager Manager) Build(ctx context.Context, source string) (State, error) 
 // BuildWithOptions verifies a private candidate before changing the shared tag
 // or saved state. The writer lock also excludes authenticated runtime leases.
 func (manager Manager) BuildWithOptions(ctx context.Context, source string, options BuildOptions) (State, error) {
+	if err := ValidateName(manager.Name); err != nil {
+		return State{}, err
+	}
+	if options.SkillsSource != "" && manager.Name == "" {
+		return State{}, errors.New("local skills require a named runtime to preserve the default image")
+	}
 	if err := ctx.Err(); err != nil {
 		return State{}, err
 	}
@@ -255,6 +284,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if err != nil {
 		return State{}, err
 	}
+	if previousErr == nil && previous.SkillsSource != "" && options.SkillsSource == "" && !options.SourcePins {
+		return State{}, errors.New("runtime used local skills; pass --skills-source or --source-pins for an explicit remote build")
+	}
 	pins := options.Pins
 	if pins == nil && !options.SourcePins && previousErr == nil && previous.Source == root {
 		pins = previous.DependencyPins
@@ -269,6 +301,25 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	recipe, err := os.ReadFile(path)
 	if err != nil {
 		return State{}, err
+	}
+	skillsSource, skillsRevision := "", ""
+	if options.SkillsSource != "" {
+		skillsSource, skillsRevision, err = snapshotSkills(ctx, options.SkillsSource, contextDirectory)
+		if err != nil {
+			return State{}, err
+		}
+		if pins == nil {
+			parsed, e := runtimepins.ReadDockerfile(recipe)
+			if e != nil {
+				return State{}, e
+			}
+			pins = &parsed
+		}
+		pins.Arguments["SKILLS_REVISION"] = skillsRevision
+		recipe, err = localSkillsRecipe(recipe)
+		if err != nil {
+			return State{}, err
+		}
 	}
 	if pins != nil {
 		recipe, err = runtimepins.ApplyDockerfile(recipe, *pins)
@@ -286,7 +337,7 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if err != nil {
 		return State{}, err
 	}
-	oldID, inspectErr := manager.inspect(ctx, Image)
+	oldID, inspectErr := manager.inspect(ctx, manager.ImageName())
 	if inspectErr != nil {
 		if previousErr == nil && previous.Engine == engine {
 			return State{}, fmt.Errorf("recorded shared image cannot be inspected; resolve its Docker state before rebuilding: %w", inspectErr)
@@ -296,7 +347,7 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	// A lost runtime.json must not hide saved work frozen to an existing tag.
 	// This is the inspected image identity, not reconstructed recorded state.
 	if errors.Is(previousErr, os.ErrNotExist) && oldID != "" && options.ValidatePrevious != nil {
-		if err := options.ValidatePrevious(ctx, State{ImageID: oldID, Engine: engine, Source: root}); err != nil {
+		if err := options.ValidatePrevious(ctx, State{Name: manager.Name, ImageID: oldID, Engine: engine, Source: root}); err != nil {
 			return State{}, err
 		}
 	}
@@ -350,6 +401,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if options.Refresh {
 		buildArgs = append(buildArgs, "--no-cache")
 	}
+	if skillsRevision != "" {
+		buildArgs = append(buildArgs, "--build-arg", "LOCAL_SKILLS=1")
+	}
 	buildArgs = append(buildArgs, "--tag", candidate, "--label", "io.sdlc.managed=true", "--label", "io.sdlc.source-revision="+revision, contextDirectory)
 	build := manager.Docker.Run
 	if options.Refresh || pins != nil {
@@ -381,7 +435,12 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 			return State{}, err
 		}
 	}
-	state := State{Version: 1, Source: root, Revision: revision, Engine: engine, ImageID: id, BuiltAt: time.Now().UTC(), Tools: strings.TrimSpace(string(tools)), Inventory: inventory, DependencyPins: pins, BuildRecipe: string(recipe)}
+	if skillsRevision != "" {
+		if err := inventoryVersionMatches(*inventory, "git", "tjpeel/skills", skillsRevision); err != nil {
+			return State{}, fmt.Errorf("local skills inventory mismatch: %w", err)
+		}
+	}
+	state := State{Name: manager.Name, SkillsSource: skillsSource, SkillsRevision: skillsRevision, Version: 1, Source: root, Revision: revision, Engine: engine, ImageID: id, BuiltAt: time.Now().UTC(), Tools: strings.TrimSpace(string(tools)), Inventory: inventory, DependencyPins: pins, BuildRecipe: string(recipe)}
 	if options.ValidateCandidate != nil {
 		if err := options.ValidateCandidate(ctx, state); err != nil {
 			return State{}, fmt.Errorf("built runtime failed update validation: %w", err)
@@ -396,20 +455,20 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if currentEngine != engine {
 		return State{}, errors.New("selected Docker engine changed during the build; candidate was not selected")
 	}
-	currentID, currentErr := manager.inspect(ctx, Image)
+	currentID, currentErr := manager.inspect(ctx, manager.ImageName())
 	if (oldID == "" && currentErr == nil) || (oldID != "" && (currentErr != nil || currentID != oldID)) {
 		return State{}, errors.New("shared runtime changed during the build; candidate was not selected")
 	}
 	if err := manager.noDependentContainers(ctx, oldID); err != nil {
 		return State{}, err
 	}
-	if err := manager.Docker.Run(ctx, "image", "tag", id, Image); err != nil {
+	if err := manager.Docker.Run(ctx, "image", "tag", id, manager.ImageName()); err != nil {
 		return State{}, errors.Join(err, manager.restoreSharedTag(oldID))
 	}
 	if err := manager.save(state); err != nil {
 		return State{}, errors.Join(fmt.Errorf("cannot save runtime state: %w", err), manager.restoreSharedTag(oldID))
 	}
-	if oldID != "" && oldID != id {
+	if manager.Name == "" && oldID != "" && oldID != id {
 		if _, err := manager.Docker.Output(ctx, "image", "rm", oldID); err != nil {
 			return state, fmt.Errorf("new runtime is ready, but superseded image cleanup failed: %w", err)
 		}
@@ -421,9 +480,9 @@ func (manager Manager) restoreSharedTag(oldID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if oldID != "" {
-		return manager.Docker.Run(ctx, "image", "tag", oldID, Image)
+		return manager.Docker.Run(ctx, "image", "tag", oldID, manager.ImageName())
 	}
-	_, err := manager.Docker.Output(ctx, "image", "rm", Image)
+	_, err := manager.Docker.Output(ctx, "image", "rm", manager.ImageName())
 	return err
 }
 
@@ -439,7 +498,7 @@ func (manager Manager) Status(ctx context.Context) (State, error) {
 	if state.Engine != engine {
 		return State{}, fmt.Errorf("selected Docker engine differs from the recorded runtime; build on this engine explicitly")
 	}
-	id, err := manager.inspect(ctx, Image)
+	id, err := manager.inspect(ctx, manager.ImageName())
 	if err != nil {
 		return State{}, fmt.Errorf("shared runtime is missing or unavailable; run sdlc runtime build: %w", err)
 	}

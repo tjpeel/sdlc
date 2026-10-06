@@ -42,6 +42,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	RuntimeName         string               `json:"runtime_name,omitempty"`
 	Headroom            headroom.Config      `json:"headroom,omitzero"`
 	GitHubProfile       string               `json:"github_profile,omitempty"`
 	SigningProfile      string               `json:"signing_profile,omitempty"`

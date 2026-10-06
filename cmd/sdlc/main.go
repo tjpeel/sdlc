@@ -40,6 +40,8 @@ func main() {
 			command = func() error { return resumeCommand(ctx, os.Args[2:], os.Stdout) }
 		case "usage":
 			command = func() error { return usageCommand(ctx, os.Args[2:], os.Stdout) }
+		case "storage":
+			command = func() error { return storageCommand(ctx, os.Args[2:], os.Stdout) }
 		case "progress":
 			command = func() error { return progressCommand(ctx, os.Args[2:], os.Stdout) }
 		case "shell":
@@ -98,9 +100,10 @@ func main() {
 		fmt.Println("       sdlc init (from a project repository)")
 		fmt.Println("       sdlc work --reference REFERENCE | --references [--json] (local ticket metadata)")
 		fmt.Println("       sdlc references [--json] | tickets REFERENCE [--json] (local ticket metadata)")
+		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
-		fmt.Println("         Optional provider route: --headroom off|passthrough|optimize (default: off)")
+		fmt.Println("         Optional provider route: --headroom off|passthrough|optimize (default: off); ticket runtime: --runtime NAME")
 		fmt.Println("       sdlc usage [--since 7d] [--scope project|installation] [--run RUN_ID] [--json]")
 		fmt.Println("       sdlc progress --run RUN_ID | --launch-id UUID [--once | --follow] [--json]")
 		fmt.Println("       sdlc runtime headroom build|status (separate pinned proxy image)")

@@ -46,6 +46,9 @@ func buildContext(source string) (directory string, cleanup func(), err error) {
 			cleanup()
 		}
 	}()
+	if os.MkdirAll(filepath.Join(directory, "local-catalogues"), 0700) != nil || os.WriteFile(filepath.Join(directory, "local-catalogues", ".keep"), nil, 0600) != nil {
+		return "", cleanup, fmt.Errorf("cannot prepare local catalogue directory")
+	}
 	var total int64
 	copied := map[string]bool{}
 	copyFile := func(relative, target string) ([]byte, error) {
