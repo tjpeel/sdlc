@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/notify"
 	"github.com/tjpeel/sdlc/internal/runstatus"
@@ -21,7 +22,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--page N] [--run RUN_ID] [--logs] [--interval 2s]\n  [--notify off|desktop|bell] [--sound]\nHistory: sdlc dashboard forget --run RUN_ID\nExport: sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY\nShows at most ten runs per page: questions, problems, queued/running work, then completed work.\nA terminal refreshes live by default; redirected output produces one snapshot.\nIn a live terminal: n Enter = next page, p Enter = previous page, q Enter = close.\n--run accepts a full ID or a unique prefix of at least three characters.\n--logs adds a bounded private output tail to a selected run.\nforget removes a stopped run from the dashboard and retains all saved work.\nNotifications are optional and report fixed messages without private work details.\nClosing the dashboard leaves run controllers working."
+const dashboardUsage = "Usage: sdlc dashboard [--once | --watch | --json] [--page N] [--run RUN_ID] [--logs] [--interval 2s]\n  [--notify off|desktop|bell] [--sound]\nHistory: sdlc dashboard forget --run RUN_ID\nExport: sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY\nShows at most ten runs per page: questions, problems, queued/running work, then completed work.\nA terminal refreshes live by default; redirected output produces one snapshot.\nIn a live terminal: n/p = next/previous page; arrows, wheel or PgUp/PgDn scroll; q closes.\nClick/F2/Space pauses for terminal copying; Esc resumes.\n--run accepts a full ID or a unique prefix of at least three characters.\n--logs adds a bounded private output tail to a selected run.\nforget removes a stopped run from the dashboard and retains all saved work.\nNotifications are optional and report fixed messages without private work details.\nClosing the dashboard leaves run controllers working."
 
 type dashboardOptions struct {
 	once, watch, json, logs bool
@@ -137,21 +138,12 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 	}
 	observer := notify.NewObserver(sender)
 	warned := false
-	var commands <-chan string
-	if terminal && watch && options.run == "" {
-		if input, openErr := openDashboardInput(); openErr == nil {
-			defer input.Close()
-			commands = readDashboardInput(ctx, input)
-		}
-	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
+
+	load := func() (dashboard.LiveSnapshot, error) {
 		now := time.Now().UTC()
 		views, err := registry.List(now)
 		if err != nil {
-			return err
+			return dashboard.LiveSnapshot{}, err
 		}
 		if projectRoot != "" {
 			filtered := make([]runstatus.View, 0, len(views))
@@ -179,6 +171,37 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 			cancel()
 		}
 		warned = warned || newWarning
+		warning := ""
+		if newWarning || terminal && warned {
+			warning = "SDLC could not deliver a local notification; check local notification settings. Runs continue."
+		}
+		return dashboard.LiveSnapshot{Views: views, Now: now, Warning: warning}, nil
+	}
+	if terminal && watch {
+		input, e := openDashboardInput()
+		if e != nil {
+			return e
+		}
+		defer input.Close()
+		model := dashboard.NewLiveModel(dashboard.LiveConfig{Load: load, Interval: options.interval, Page: options.page, Run: options.run, Logs: options.logs, Attention: options.attention, Color: os.Getenv("NO_COLOR") == ""})
+		_, e = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx), tea.WithInput(input), tea.WithOutput(output)).Run()
+		if ctx.Err() != nil {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		return model.Err
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
+		snapshot, err := load()
+		if err != nil {
+			return err
+		}
+		views, now := snapshot.Views, snapshot.Now
 		allViews := views
 		if options.run != "" {
 			selected, err := dashboard.Select(views, options.run)
@@ -187,11 +210,7 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 			}
 			views = []runstatus.View{selected}
 		}
-		if terminal && watch {
-			if _, err := io.WriteString(output, "\x1b[H\x1b[2J"); err != nil {
-				return err
-			}
-		}
+
 		if options.json {
 			rows, page := dashboard.Page(views, options.page)
 			return writeDashboardJSONPage(output, rows, now, page)
@@ -204,11 +223,8 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 			_, page := dashboard.Page(allViews, options.page)
 			options.page = page.Page
 			err = dashboard.ListPage(output, allViews, now, options.page)
-			if commands != nil && err == nil {
-				_, err = fmt.Fprintln(output, "Live paging: n Enter / p Enter. Close: q Enter.")
-			}
 		}
-		if err == nil && (newWarning || terminal && warned) {
+		if err == nil && snapshot.Warning != "" {
 			_, err = fmt.Fprintln(output, "SDLC could not deliver a local notification; check local notification settings. Runs continue.")
 		}
 		if err != nil || !watch {
@@ -220,17 +236,6 @@ func dashboardCommandWithNotifications(ctx context.Context, args []string, outpu
 			timer.Stop()
 			return nil
 		case <-timer.C:
-		case command, ok := <-commands:
-			timer.Stop()
-			if !ok {
-				commands = nil
-				continue
-			}
-			page, quit := dashboardPageAction(options.page, command)
-			if quit {
-				return nil
-			}
-			options.page = page
 		}
 	}
 }

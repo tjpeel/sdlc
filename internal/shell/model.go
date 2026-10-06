@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/runprogress"
 )
 
@@ -61,6 +63,8 @@ type Model struct {
 	draftGeneration                             uint64
 	monitorArgs                                 []string
 	review                                      []string
+	selectionContent                            string
+	dashboardView                               bool
 	selectionView                               string
 	commandEcho                                 string
 	readEcho                                    string
@@ -261,12 +265,12 @@ func (m *Model) appendProgress(text string) {
 	if text == "" {
 		return
 	}
-	before := len(strings.Split(ansi.Hardwrap(m.body, max(1, m.width), true), "\n"))
+	before := len(dashboard.Wrap(m.body, max(1, m.width)))
 	if m.body != "" {
 		m.body += "\n"
 	}
 	m.body += strings.TrimRight(safe(text), "\n")
-	after := len(strings.Split(ansi.Hardwrap(m.body, max(1, m.width), true), "\n"))
+	after := len(dashboard.Wrap(m.body, max(1, m.width)))
 	if m.scroll > 0 {
 		m.scroll += after - before
 	}
@@ -291,6 +295,7 @@ func (m *Model) submit() tea.Cmd {
 	if m.busy {
 		return nil
 	}
+	m.dashboardView = false
 	args, err := Parse(string(m.draft))
 	if err != nil {
 		m.lastError = true
@@ -549,11 +554,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
+		sameSize := m.width == max(1, msg.Width) && m.height == max(1, msg.Height)
 		m.width = max(1, msg.Width)
 		m.height = max(1, msg.Height)
 		m.clampScroll()
-		if m.selectionView != "" {
-			return m, m.leaveSelection()
+		if m.selectionView != "" && !sameSize {
+			m.reflowSelection()
 		}
 		return m, nil
 	case tea.MouseMsg:
@@ -580,6 +586,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.generation {
 			return m, nil
 		}
+		m.dashboardView = msg.kind == "dashboard"
 		viewStart, followDashboardTail := 0, false
 		if msg.kind == "dashboard" && m.busyKind == "dashboard-refresh" {
 			lines, available := m.scrollViewport()
@@ -881,10 +888,14 @@ func (m *Model) scrollViewport() ([]string, int) {
 		if m.lastError {
 			header += "\n" + m.body
 		}
-		lines := strings.Split(ansi.Hardwrap(header, width, true), "\n")
+		lines := dashboard.Wrap(header, width)
 		return lines, min(len(lines), max(0, min(height/2, height-3)))
 	}
-	lines := strings.Split(ansi.Hardwrap(m.body, width, true), "\n")
+	body := m.body
+	if m.dashboardView {
+		body = dashboard.StyleSnapshot(body, os.Getenv("NO_COLOR") == "")
+	}
+	lines := dashboard.Wrap(body, width)
 	return lines, max(0, height-m.completionHeight()-2-m.echoHeight())
 }
 
@@ -1018,13 +1029,27 @@ func (m *Model) outputHeight() int {
 }
 func (m *Model) enterSelection() tea.Cmd {
 	lines := strings.Split(m.View(), "\n")
-	lines[len(lines)-1] = ansi.Truncate("F2/Esc resume · Drag to select · Use terminal copy", max(1, m.width), "")
+	m.selectionContent = strings.Join(lines[:len(lines)-1], "\n")
+	lines[len(lines)-1] = m.selectionFooter()
 	m.selectionView = strings.Join(lines, "\n")
 	return tea.DisableMouse
+}
+func (m *Model) selectionFooter() string {
+	return ansi.Truncate("F2/Esc resume · Drag to select · Use terminal copy", max(1, m.width), "")
+}
+func (m *Model) reflowSelection() {
+	lines := dashboard.Wrap(m.selectionContent, m.width)
+	available := max(0, m.height-1)
+	lines = lines[:min(len(lines), available)]
+	for len(lines) < available {
+		lines = append(lines, "")
+	}
+	m.selectionView = strings.Join(append(lines, m.selectionFooter()), "\n")
 }
 
 func (m *Model) leaveSelection() tea.Cmd {
 	m.selectionView = ""
+	m.selectionContent = ""
 	return tea.EnableMouseCellMotion
 }
 

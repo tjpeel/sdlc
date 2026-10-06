@@ -696,8 +696,10 @@ being stale. Missing or corrupt records remain visible as unavailable.
 In a terminal, the view refreshes every two seconds. Redirected output defaults to
 one snapshot. Use `--watch` to append snapshots to redirected output, `--once` for
 one terminal snapshot, or `--json` for one structured snapshot. In a live terminal,
-type `n` then Enter for the next page, `p` then Enter for the previous page, or `q`
-then Enter to close. Set `--interval` between `250ms` and `1m`. Details include
+press `n` for the next page, `p` for the previous page, or `q` to close.
+Scroll using the wheel, arrows or Page Up/Down. Click the output (or press F2/Space)
+to freeze the visible text, then drag and use your terminal copy shortcut. Escape
+or F2 resumes with the latest status. Set `--interval` between `250ms` and `1m`. Details include
 questions, findings, check evidence, PR links and the existing resume command. Optional `--logs` reads a
 bounded tail from that selected run's private output; it requires `--run` and
 cannot combine with JSON. Terminal control characters in displayed content are

@@ -26,7 +26,7 @@ Local configuration and recorded runtime evidence remain distinct from verified
 readiness. A missing terminal bridge is optional because jobs can use an
 external controller terminal.
 
-Onboarding, dashboard, version details and usage use the same plain section
+Onboarding, dashboard, version details and usage use the same section
 headings and status labels. Problems and human actions come before details;
 unverified evidence and missing measurements stay visible without relying on
 colour. Page through longer views using the controls below.
@@ -46,8 +46,7 @@ mouse capture. Escape returns to shell scrolling; your command or answer draft
 is retained. Jobs and monitoring continue collecting updates while the frame is
 frozen. Page or scroll to the text you need before entering selection mode.
 F2 remains a keyboard shortcut (Fn+F2 if your Mac uses F2 for brightness); F2 or
-Ctrl+C can also resume controls without cancelling work. Resizing the terminal
-resumes the view. Selection and copying are handled by the terminal.
+Ctrl+C can also resume controls without cancelling work. Resizing the terminal reflows the frozen output without resuming updates. Selection and copying are handled by the terminal.
 
 Quotes and backslashes group literal arguments. Shell substitutions, pipes
 and environment expansion are not evaluated.
@@ -264,3 +263,19 @@ The [proposal](proposals/interactive-cli.md) and
 [CLI contracts](proposals/interactive-cli/cli-contract.md) retain later work:
 richer onboarding forms, complete conversation inspection, reviewed bulk clear,
 broader terminal/platform validation and eventual bare-command shell launch.
+
+### Live terminal dashboard
+
+`sdlc dashboard` uses a separate terminal screen and updates only changed rows.
+Its output stays within the terminal dimensions; wheel, arrows and Page Up/Down
+scroll the current page, and `n`/`p` change pages without Enter. `q` or Ctrl+C closes
+it while jobs continue. `--once`, JSON and redirected output remain plain snapshots.
+
+Click the output (or press F2/Space) to pause the displayed dashboard and release
+mouse capture. Then drag to select and use your terminal's copy shortcut. Escape
+or F2 resumes with the latest collected status. A resize reflows the paused text.
+The first click switches modes; selection starts with the subsequent drag.
+
+Dashboard sections use cyan/blue headings and restrained green accents for active
+work. Recorded runs are grey; questions and review actions remain prominent.
+Set `NO_COLOR=1` to disable dashboard colors.

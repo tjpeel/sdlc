@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -107,17 +108,84 @@ func TestSelectionCollectsProgressAndF2RevealsIt(t *testing.T) {
 }
 
 func TestSelectionResizeAndTerminalRestore(t *testing.T) {
-	m := NewModel(context.Background(), Config{Root: "/example/project"})
 	for _, msg := range []tea.Msg{completed{}, tea.ResumeMsg{}} {
+		m := NewModel(context.Background(), Config{Root: "/example/project"})
 		_, cmd := m.Update(msg)
 		requireMouseCommand(t, cmd, tea.EnableMouseCellMotion())
 		m.Update(tea.KeyMsg{Type: tea.KeyF2})
 		_, cmd = m.Update(msg)
 		requireMouseCommand(t, cmd, tea.DisableMouse())
 		_, cmd = m.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
-		requireMouseCommand(t, cmd, tea.EnableMouseCellMotion())
-		if m.selectionView != "" || m.width != 40 || m.height != 8 || len(strings.Split(m.View(), "\n")) > 8 {
-			t.Fatal("resize retained the frozen viewport")
+		if cmd != nil {
+			t.Fatal("resize changed mouse mode")
 		}
+		if m.selectionView == "" || m.width != 40 || m.height != 8 || len(strings.Split(m.View(), "\n")) > 8 {
+			t.Fatal("resize lost the frozen viewport")
+		}
+	}
+}
+
+func TestSelectionResizeKeepsOldDashboardWhileNewStatusArrives(t *testing.T) {
+	m := NewModel(context.Background(), Config{Root: "/example/project"})
+	m.body = "old status\t界"
+	m.Update(tea.KeyMsg{Type: tea.KeyF2})
+	frozen := m.View()
+	m.Update(result{generation: m.generation, kind: "dashboard", text: "new status"})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if m.View() != frozen {
+		t.Fatal("same size changed selection")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 6})
+	if m.selectionView == "" || !strings.Contains(m.View(), "old status") || strings.Contains(m.View(), "new status") {
+		t.Fatal("resize resumed latest dashboard")
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.ContainsRune(line, '\t') {
+			t.Fatal("physical tab remains")
+		}
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !strings.Contains(m.View(), "new status") {
+		t.Fatal("resume omitted refreshed status")
+	}
+}
+
+func TestGenericViewDoesNotKeepDashboardStyling(t *testing.T) {
+	m := NewModel(context.Background(), Config{Root: "/example/project"})
+	m.Update(result{generation: m.generation, kind: "dashboard", text: "== Recorded runs ==\nfinished"})
+	if !m.dashboardView {
+		t.Fatal("dashboard styling not enabled")
+	}
+	m.Update(result{generation: m.generation, kind: "read", text: "== Recorded runs ==\ngeneric command text"})
+	if m.dashboardView || strings.Contains(m.View(), "\x1b[90m") {
+		t.Fatal("generic output inherited dashboard styling")
+	}
+	m.Update(result{generation: m.generation, kind: "dashboard", text: "== Recorded runs ==\nfinished"})
+	m.draft = []rune("/help")
+	m.submit()
+	if m.dashboardView || strings.Contains(m.View(), "\x1b[90m") {
+		t.Fatal("help inherited dashboard styling")
+	}
+}
+
+func TestSelectionResizeKeepsVisibleHistoryAnchor(t *testing.T) {
+	m := NewModel(context.Background(), Config{Root: "/example/project"})
+	var history strings.Builder
+	for i := 0; i < 100; i++ {
+		history.WriteString("row-" + fmt.Sprintf("%03d", i) + " " + strings.Repeat("detail", 6) + "\n")
+	}
+	m.body = strings.TrimSuffix(history.String(), "\n")
+	m.width, m.height, m.scroll = 80, 10, 50
+	anchor := strings.Fields(strings.Split(m.View(), "\n")[0])[0]
+	m.draft = []rune("unfinished draft")
+	m.enterSelection()
+	m.Update(result{generation: m.generation, kind: "dashboard", text: "new status"})
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 10})
+	if !strings.HasPrefix(m.View(), anchor) || strings.Contains(m.View(), "row-072") || strings.Contains(m.View(), "new status") {
+		t.Fatal("narrow resize substituted unrelated history")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if string(m.draft) != "unfinished draft" || !strings.Contains(m.View(), "new status") {
+		t.Fatal("resume lost draft or latest status")
 	}
 }

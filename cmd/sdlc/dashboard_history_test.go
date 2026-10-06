@@ -147,29 +147,7 @@ func TestDashboardExportIsPrivateAndLeavesRunUnchanged(t *testing.T) {
 	assertDashboardReadOnly(t, root, marker, before)
 }
 
-func TestDashboardPagingInputAndValidation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var commands []string
-	for cmd := range readDashboardInput(ctx, strings.NewReader("ignore\nn\np\n q \n")) {
-		commands = append(commands, cmd)
-	}
-	if strings.Join(commands, ",") != "n,p,q" {
-		t.Fatal(commands)
-	}
-	page := 1
-	for _, cmd := range commands[:2] {
-		page, _ = dashboardPageAction(page, cmd)
-	}
-	if page != 1 {
-		t.Fatal(page)
-	}
-	if page, quit := dashboardPageAction(1, "q"); page != 1 || !quit {
-		t.Fatal("quit did not stop view")
-	}
-	if page, _ := dashboardPageAction(1, "p"); page != 1 {
-		t.Fatal("previous went before first page")
-	}
+func TestDashboardOptionsValidation(t *testing.T) {
 	for _, args := range [][]string{{"--page", "0"}, {"--page", "-1"}, {"--run", "123456", "--page", "2"}, {"--json", "--notify", "bell"}, {"--once", "--notify", "bell"}, {"--sound"}, {"--notify", "invalid"}} {
 		if _, err := parseDashboardOptions(args); err == nil {
 			t.Fatalf("invalid options accepted: %v", args)

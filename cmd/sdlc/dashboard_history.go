@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -9,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/dashboard"
@@ -98,48 +96,12 @@ func dashboardForgetCommand(ctx context.Context, args []string, output io.Writer
 	return err
 }
 
-func dashboardPageAction(page int, command string) (int, bool) {
-	switch strings.TrimSpace(command) {
-	case "n":
-		return page + 1, false
-	case "p":
-		if page > 1 {
-			return page - 1, false
-		}
-	case "q":
-		return page, true
-	}
-	return page, false
-}
-
-// Own a separate descriptor so closing the dashboard cancels its input reader
-// without closing the host process's standard input. Canonical mode is kept:
-// commands require Enter and no terminal settings need restoring.
+// Own a separate descriptor so the dashboard closes its input without closing
+// the host process's standard input. Bubble Tea restores terminal settings.
 func openDashboardInput() (*os.File, error) {
 	info, err := os.Stdin.Stat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return nil, fmt.Errorf("dashboard paging requires terminal input")
+		return nil, fmt.Errorf("live dashboard requires terminal input")
 	}
 	return os.Open("/dev/tty")
-}
-
-func readDashboardInput(ctx context.Context, input io.Reader) <-chan string {
-	commands := make(chan string)
-	go func() {
-		defer close(commands)
-		scanner := bufio.NewScanner(input)
-		scanner.Buffer(make([]byte, 128), 1024)
-		for scanner.Scan() {
-			command := strings.TrimSpace(scanner.Text())
-			if command != "n" && command != "p" && command != "q" {
-				continue
-			}
-			select {
-			case commands <- command:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return commands
 }
