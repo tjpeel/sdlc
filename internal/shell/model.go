@@ -273,7 +273,7 @@ func (m *Model) appendProgress(text string) {
 	if len(m.body) > 256*1024 {
 		m.body = string([]rune(m.body)[max(0, len([]rune(m.body))-65536):])
 	}
-	m.scroll = min(m.scroll, max(0, len(strings.Split(ansi.Hardwrap(m.body, max(1, m.width), true), "\n"))-1))
+	m.clampScroll()
 }
 func (m *Model) submit() tea.Cmd {
 	if len(m.suggestions) > 0 {
@@ -320,6 +320,8 @@ func (m *Model) submit() tea.Cmd {
 		return nil
 	case "help":
 		m.body = m.help(strings.Join(args[1:], " "))
+		lines, available := m.scrollViewport()
+		m.scroll = max(0, len(lines)-available)
 		m.lastError = m.body == "No matching command."
 		return nil
 	case "scope":
@@ -537,6 +539,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = max(1, msg.Width)
 		m.height = max(1, msg.Height)
+		m.clampScroll()
+		return m, nil
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.scrollBy(-3)
+		case tea.MouseButtonWheelDown:
+			m.scrollBy(3)
+		}
 		return m, nil
 	case suggestionsMsg:
 		if m.action == nil && msg.generation == m.draftGeneration && msg.draft == string(m.draft) && !m.dismissed {
@@ -710,10 +721,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "pgup":
-			m.scroll += max(1, m.height/2)
+			m.scrollBy(-m.scrollPageSize())
 			return m, nil
 		case "pgdown":
-			m.scroll = max(0, m.scroll-max(1, m.height/2))
+			m.scrollBy(m.scrollPageSize())
 			return m, nil
 		case "left":
 			m.cursor = max(0, m.cursor-1)
@@ -774,12 +785,58 @@ func safe(text string) string {
 	}, text)
 }
 func color(code, text string) string { return "\x1b[" + code + "m" + text + "\x1b[0m" }
+func (m *Model) completionHeight() int {
+	return min(len(m.suggestions), max(0, min(6, max(1, m.height)/4)))
+}
+
+// scrollViewport uses the same wrapped lines and reserved controls as View.
+func (m *Model) scrollViewport() ([]string, int) {
+	width, height := max(1, m.width), max(1, m.height)
+	if m.action != nil {
+		_, header, _ := strings.Cut(m.actionContext(), "\n")
+		if m.lastError {
+			header += "\n" + m.body
+		}
+		lines := strings.Split(ansi.Hardwrap(header, width, true), "\n")
+		return lines, min(len(lines), max(0, min(height/2, height-3)))
+	}
+	lines := strings.Split(ansi.Hardwrap(m.body, width, true), "\n")
+	return lines, max(0, height-m.completionHeight()-2)
+}
+
+func (m *Model) clampScroll() {
+	lines, available := m.scrollViewport()
+	m.scroll = max(0, min(m.scroll, max(0, len(lines)-available)))
+}
+
+// Positive deltas move toward later output. Ordinary output stores distance
+// from the tail; answer context stores distance from the beginning.
+func (m *Model) scrollBy(delta int) {
+	lines, available := m.scrollViewport()
+	limit := max(0, len(lines)-available)
+	m.scroll = max(0, min(m.scroll, limit))
+	if m.action != nil {
+		m.scroll += delta
+	} else {
+		m.scroll -= delta
+	}
+	m.scroll = max(0, min(m.scroll, limit))
+}
+
+func (m *Model) scrollPageSize() int {
+	_, available := m.scrollViewport()
+	if m.action != nil {
+		return max(1, available)
+	}
+	return max(1, available/2)
+}
+
 func (m *Model) View() string {
 	if m.action != nil {
 		return m.actionView()
 	}
 	width, height := max(1, m.width), max(1, m.height)
-	footer := "/ commands · Tab complete · Enter inserts then dispatches · PgUp/PgDn scroll"
+	footer := "Wheel/PgUp/PgDn scroll · / commands · Tab/Enter complete · Enter dispatch"
 	if m.progressView {
 		state := "Following"
 		if m.scroll > 0 {
@@ -791,7 +848,7 @@ func (m *Model) View() string {
 		if !m.monitor && !m.progressDone {
 			state = "Following stopped"
 		}
-		footer = state + " · PgUp pause · End tail · /answer ID · /resume ID · Esc stop view"
+		footer = state + " · Wheel/PgUp pause · PgDn/End tail · /answer ID · /resume ID · Esc stop view"
 	}
 	if m.busy {
 		footer = "Working… Ctrl+C cancels this UI query, never a run"
@@ -825,7 +882,7 @@ func (m *Model) View() string {
 	left := max(0, ansi.StringWidth(string(draft[:cursor]))-remaining+1)
 	prompt := prefix + ansi.Truncate(ansi.TruncateLeft(input, left, ""), remaining, "")
 	var bottom []string
-	maxChoices := min(len(m.suggestions), max(0, min(6, height/4)))
+	maxChoices := m.completionHeight()
 	for i := 0; i < maxChoices; i++ {
 		idx := (m.selection + i) % len(m.suggestions)
 		s := m.suggestions[idx]
@@ -843,10 +900,8 @@ func (m *Model) View() string {
 	if len(bottom) > height {
 		bottom = bottom[len(bottom)-height:]
 	}
-	available := max(0, height-len(bottom))
-	body := ansi.Hardwrap(m.body, width, true)
-	lines := strings.Split(body, "\n")
-	end := max(0, len(lines)-min(m.scroll, len(lines)))
+	lines, available := m.scrollViewport()
+	end := len(lines) - max(0, min(m.scroll, max(0, len(lines)-available)))
 	start := max(0, end-available)
 	visible := lines[start:end]
 	if len(visible) > available {
@@ -1016,17 +1071,10 @@ func (m *Model) answerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		return m, m.dispatchAction()
 	case "pgup", "pgdown":
-		_, header, _ := strings.Cut(m.actionContext(), "\n")
-		if m.lastError {
-			header += "\n" + m.body
-		}
-		count := len(strings.Split(ansi.Hardwrap(header, max(1, m.width), true), "\n"))
-		contextHeight := min(count, max(0, min(m.height/2, m.height-3)))
-		step := max(1, contextHeight)
 		if msg.String() == "pgup" {
-			m.scroll = max(0, m.scroll-step)
+			m.scrollBy(-m.scrollPageSize())
 		} else {
-			m.scroll = min(max(0, count-contextHeight), m.scroll+step)
+			m.scrollBy(m.scrollPageSize())
 		}
 	case "left":
 		m.cursor = max(0, m.cursor-1)
@@ -1090,14 +1138,10 @@ func (m *Model) actionView() string {
 	if height == 1 {
 		return ansi.Truncate("Ctrl+S submit · Esc cancel", width, "")
 	}
-	identity, header, _ := strings.Cut(m.actionContext(), "\n")
-	if m.lastError {
-		header += "\n" + m.body
-	}
-	contextLines := strings.Split(ansi.Hardwrap(header, width, true), "\n")
+	identity, _, _ := strings.Cut(m.actionContext(), "\n")
 	// Reserve the editor and controls even when questions wrap over many lines.
-	contextHeight := min(len(contextLines), max(0, min(height/2, height-3)))
-	contextStart := min(m.scroll, max(0, len(contextLines)-contextHeight))
+	contextLines, contextHeight := m.scrollViewport()
+	contextStart := max(0, min(m.scroll, max(0, len(contextLines)-contextHeight)))
 	lines := []string{ansi.Truncate(identity, width, "…")}
 	lines = append(lines, contextLines[contextStart:contextStart+contextHeight]...)
 	editorHeight := max(0, height-contextHeight-2)
@@ -1118,9 +1162,9 @@ func (m *Model) actionView() string {
 	for len(lines) < height-1 {
 		lines = append(lines, "")
 	}
-	instruction := "Ctrl+S resume · PgUp/PgDn context · Esc cancel"
+	instruction := "Ctrl+S resume · Wheel/PgUp/PgDn context · Esc cancel"
 	if m.answerMode {
-		instruction = "Ctrl+S submit · PgUp/PgDn questions · Enter newline · Esc cancel"
+		instruction = "Ctrl+S submit · Wheel/PgUp/PgDn questions · Enter newline · Esc cancel"
 	}
 	if m.busy {
 		instruction = "Submitting run action…"

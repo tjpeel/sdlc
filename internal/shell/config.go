@@ -52,7 +52,7 @@ type Config struct {
 
 func IsTerminal(file *os.File) bool { return file != nil && term.IsTerminal(int(file.Fd())) }
 func Run(ctx context.Context, c Config) error {
-	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
+	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)}
 	if c.Input != nil {
 		options = append(options, tea.WithInput(c.Input))
 	}

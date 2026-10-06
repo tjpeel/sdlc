@@ -20,7 +20,11 @@ and a yellow dirty marker. There is no theme selector.
 
 Type `/` to see commands, then keep typing to narrow the list. Tab or Enter
 inserts the selected completion; another Enter submits it. Arrow keys move
-through suggestions, Escape dismisses them, and Page Up/Down scroll the view.
+through suggestions, Escape dismisses them, and the mouse wheel or Page Up/Down
+scroll the output while the command line stays visible. `/help` opens at the
+beginning of the matching command catalogue.
+On Mac keyboards, Fn+↑ and Fn+↓ send Page Up and Page Down; plain arrow keys
+continue to edit the command or move through suggestions.
 Quotes and backslashes group literal arguments. Shell substitutions, pipes
 and environment expansion are not evaluated.
 
@@ -92,9 +96,10 @@ view. Labels identify the run and producer: `[RUN_ID sdlc]`, `[RUN_ID checks]`,
 Native messages, commands, tool results and diagnostics are rendered as text;
 the original provider events remain in private run logs.
 
-The rich view follows the newest output. Page Up pauses scrolling while the
-feed continues; Page Down or End returns to the tail. New output preserves a
-typed command. Escape stops following, and `/exit` closes the shell. The
+The rich view follows the newest output. Scrolling up with the mouse wheel or
+Page Up pauses scrolling while the feed continues; scrolling down to the end or
+pressing End returns to the tail. New output preserves a typed command.
+Escape stops following, and `/exit` closes the shell. The
 controller continues in its independent terminal. A stopped controller's
 questions and answer/resume commands appear in the feed. `/answer` can use the
 sole run being followed; a feature with several runs requires `/answer RUN_ID`.
@@ -125,7 +130,8 @@ six characters is sufficient. After `/dashboard --run RUN_ID`, `/answer` uses
 that selected run. The editor shows its project, ticket and questions. Type free
 text; Enter inserts a newline, Ctrl+S submits the answer and requests a resumed
 controller in an independent terminal, and Escape or Ctrl+C discards the editor.
-Page Up/Down scroll the questions while the reply and submit controls stay visible.
+The mouse wheel or Page Up/Down scroll the questions while the reply and submit
+controls stay visible.
 Quotes, slash commands and punctuation remain literal answer text. The limit is
 64 KiB of nonempty UTF-8 text.
 

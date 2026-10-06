@@ -22,6 +22,125 @@ func enter(m *Model, text string) tea.Cmd {
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	return cmd
 }
+
+func longHelpModel() *Model {
+	m := NewModel(context.Background(), Config{Root: "/example/project"})
+	for i := 0; i < 16; i++ {
+		m.config.Commands = append(m.config.Commands, Command{
+			Name: fmt.Sprintf("command-%02d", i), Usage: fmt.Sprintf("/command-%02d", i),
+			Summary: strings.Repeat("Detailed command description ", 3),
+			Flags:   []Flag{{Name: "--example", Summary: fmt.Sprintf("FLAG %02d", i)}},
+		})
+	}
+	m.Update(tea.WindowSizeMsg{Width: 50, Height: 10})
+	enter(m, "/help")
+	return m
+}
+
+func TestLongHelpStartsAtBeginning(t *testing.T) {
+	m := longHelpModel()
+	view := ansi.Strip(m.View())
+	if !strings.HasPrefix(view, "/command-00\n") || strings.Contains(view, "FLAG 15") {
+		t.Fatalf("help did not open at its beginning: %q", view)
+	}
+	if !strings.Contains(view, "Wheel/PgUp/PgDn scroll") {
+		t.Fatal("narrow help view hides scroll controls")
+	}
+}
+
+func TestHelpScrollControlsStayWithinOutput(t *testing.T) {
+	for _, wheel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wheel=%v", wheel), func(t *testing.T) {
+			m := longHelpModel()
+			m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/command-")})
+			m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+			draft, cursor := string(m.draft), m.cursor
+			scroll := func(down bool) {
+				if wheel {
+					button := tea.MouseButtonWheelUp
+					if down {
+						button = tea.MouseButtonWheelDown
+					}
+					m.Update(tea.MouseMsg{Button: button, Action: tea.MouseActionPress})
+				} else {
+					key := tea.KeyPgUp
+					if down {
+						key = tea.KeyPgDown
+					}
+					m.Update(tea.KeyMsg{Type: key})
+				}
+			}
+			for i := 0; i < 150; i++ {
+				scroll(true)
+			}
+			if !strings.Contains(m.View(), "FLAG 15") {
+				t.Fatalf("cannot reach help end: %q", m.View())
+			}
+			for i := 0; i < 150; i++ {
+				scroll(false)
+			}
+			if !strings.HasPrefix(m.View(), "/command-00\n") {
+				t.Fatalf("scrolling past beginning hid output: %q", m.View())
+			}
+			if string(m.draft) != draft || m.cursor != cursor || !strings.Contains(m.View(), "› command-00") || !strings.Contains(m.View(), "\x1b[7m") {
+				t.Fatal("scrolling changed draft, cursor or completion visibility")
+			}
+		})
+	}
+}
+
+func TestHelpResizeClampsWrappedOutput(t *testing.T) {
+	m := longHelpModel()
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("unfinished draft")})
+	draft, cursor := string(m.draft), m.cursor
+	for i := 0; i < 150; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	if !strings.HasPrefix(m.View(), "/command-00\n") {
+		t.Fatalf("resize left viewport beyond output: %q", m.View())
+	}
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+	for i := 0; i < 150; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	if !strings.Contains(m.View(), "FLAG 15") || string(m.draft) != draft || m.cursor != cursor {
+		t.Fatalf("resize lost output end or draft: %q", m.View())
+	}
+	if len(strings.Split(m.View(), "\n")) != 6 {
+		t.Fatal("resized view does not fill terminal")
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if ansi.StringWidth(line) > 40 {
+			t.Fatal("resized output exceeds width")
+		}
+	}
+}
+
+func TestAnswerMouseWheelKeepsEditorVisible(t *testing.T) {
+	c := answerConfig()
+	c.ResolveRun = func(context.Context, string, string) (RunAction, error) {
+		return RunAction{ID: "recorded-id", Root: "/example/recorded", State: "waiting_for_human", Questions: []string{strings.Repeat("earlier context ", 100), "FINAL QUESTION"}}, nil
+	}
+	m := NewModel(context.Background(), c)
+	m.Update(enter(m, "/answer id")())
+	m.Update(tea.WindowSizeMsg{Width: 54, Height: 8})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("draft stays")})
+	draft, cursor := string(m.draft), m.cursor
+	for _, button := range []tea.MouseButton{tea.MouseButtonWheelDown, tea.MouseButtonWheelUp} {
+		for i := 0; i < 100; i++ {
+			m.Update(tea.MouseMsg{Button: button, Action: tea.MouseActionPress})
+		}
+		view := m.View()
+		marker := "State: waiting_for_human"
+		if button == tea.MouseButtonWheelDown {
+			marker = "FINAL QUESTION"
+		}
+		if !strings.Contains(view, marker) || !strings.Contains(view, "draft stays") || !strings.Contains(view, "Ctrl+S") || !strings.Contains(view, "\x1b[7m") || string(m.draft) != draft || m.cursor != cursor {
+			t.Fatalf("wheel lost context or editor: %q", view)
+		}
+	}
+}
 func TestLaunchRequiresExplicitStartAndDryRunCannotStart(t *testing.T) {
 	var launches int
 	var received []string
