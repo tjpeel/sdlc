@@ -326,7 +326,7 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 				return fmt.Errorf("repository check %d did not complete successfully: %w", i+1, err)
 			}
 			diagnostic.finish()
-			return &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths}
+			return &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths, compiler: diagnostic.compiler}
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -14,6 +15,7 @@ type CheckFailure struct {
 	ExitCode  int
 	formatter bool
 	paths     []string
+	compiler  *compilerDiagnostic
 }
 
 func (f *CheckFailure) Error() string {
@@ -46,24 +48,22 @@ func diagnosticSourcePaths(ctx context.Context, workspace string) map[string]boo
 	return paths
 }
 
-// Only fixed Prettier warnings and exact committed file names may cross into
+// Only fixed diagnostic metadata and exact committed file names may cross into
 // repair feedback. This is deliberately not a general purpose log redactor.
 type formatterDiagnostic struct {
 	approved    map[string]bool
 	line        []byte
-	bytes       int
 	dropping    bool
 	styleIssues bool
 	paths       []string
+	compiler    *compilerDiagnostic
 }
 
 func (d *formatterDiagnostic) Write(p []byte) (int, error) {
 	n := len(p)
 	for _, b := range p {
-		if d.bytes >= 65536 {
-			break
-		}
-		d.bytes++
+		// Scan the entire stream with bounded retained state. Build output can
+		// exceed 64 KiB before its first useful error; teardown may follow it.
 		if b == '\n' {
 			if !d.dropping {
 				d.consume()
@@ -83,6 +83,9 @@ func (d *formatterDiagnostic) consume() {
 	line, safe := formatterLine(d.line)
 	if !safe {
 		return
+	}
+	if d.compiler == nil {
+		d.compiler = parseCompilerDiagnostic(line, d.approved)
 	}
 	path, warning := strings.CutPrefix(line, "[warn] ")
 	if !warning {
@@ -110,7 +113,36 @@ func (d *formatterDiagnostic) consume() {
 	d.paths = append(d.paths, path)
 }
 
-// Prettier may colour warnings with SGR codes. Accept only bounded numeric SGR
+type compilerDiagnostic struct {
+	code   string
+	path   string
+	line   string
+	column string
+}
+
+// Docker BuildKit prefixes command output with a step and elapsed time. Accept
+// those fixed prefixes, then only C# code/location metadata, never message text.
+var compilerErrorLine = regexp.MustCompile(`^(?:#[0-9]{1,6} [0-9]{1,6}(?:\.[0-9]{1,6})? |[0-9]{1,6}(?:\.[0-9]{1,6})? )?([^()]+)\(([0-9]{1,7}),([0-9]{1,5})\): error (CS[0-9]{4}): `)
+
+func parseCompilerDiagnostic(line string, approved map[string]bool) *compilerDiagnostic {
+	match := compilerErrorLine.FindStringSubmatch(line)
+	if match == nil {
+		return nil
+	}
+	path := match[1]
+	for _, prefix := range []string{"/src/", "/workspace/"} {
+		if strings.HasPrefix(path, prefix) {
+			path = strings.TrimPrefix(path, prefix)
+			break
+		}
+	}
+	if !approved[path] {
+		return nil
+	}
+	return &compilerDiagnostic{code: match[4], path: path, line: match[2], column: match[3]}
+}
+
+// Formatters and compilers may colour output. Accept only bounded numeric SGR
 // sequences; cursor movement, OSC payloads and other controls discard the line.
 // The runtime publisher copies this package without third-party dependencies.
 func formatterLine(raw []byte) (string, bool) {
@@ -149,7 +181,7 @@ func formatterLine(raw []byte) (string, bool) {
 }
 
 func (d *formatterDiagnostic) finish() {
-	if !d.dropping && d.bytes < 65536 && len(d.line) > 0 {
+	if !d.dropping && len(d.line) > 0 {
 		d.consume()
 	}
 }
@@ -159,6 +191,14 @@ func checkRepairFeedback(tree string, err error, commands [][]string) string {
 	var failure *CheckFailure
 	if errors.As(err, &failure) && failure.Command > 0 && failure.Command <= len(commands) && failure.ExitCode > 0 {
 		feedback += fmt.Sprintf(" Check command %d exited with status %d.", failure.Command, failure.ExitCode)
+		if c := failure.compiler; c != nil {
+			feedback += fmt.Sprintf("\nFailure phase: C# compilation. First recognised compiler error: %s at committed source %s:%s:%s.", c.code, c.path, c.line, c.column)
+			if c.code == "CS0104" {
+				feedback += " C# reports an ambiguous reference. Inspect that location and qualify the intended symbol or resolve conflicting namespace imports."
+			} else {
+				feedback += " Inspect that source location and repair the compiler error before rerunning checks."
+			}
+		}
 		// Compound checks may invoke Prettier through a shell. A fixed output
 		// marker identifies formatter evidence without interpreting shell text.
 		if failure.formatter || formatterCheck(commands[failure.Command-1]) {
