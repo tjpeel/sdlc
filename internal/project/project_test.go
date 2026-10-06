@@ -26,6 +26,9 @@ func repo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	run(t, root, "init", "-b", "main")
+	// Fixture commits must not leave background jobs changing read-only snapshots.
+	run(t, root, "config", "maintenance.auto", "false")
+	run(t, root, "config", "gc.auto", "0")
 	run(t, root, "config", "user.name", "Example")
 	run(t, root, "config", "user.email", "example@example.invalid")
 	write(t, root, "README.md", "example\n")
