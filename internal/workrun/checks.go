@@ -54,11 +54,25 @@ const checkDaemonImage = runtimepins.DefaultDaemonImage
 const checkSocket = "/run/sdlc/docker.sock"
 
 // Explicit empties also override Docker CLI proxy injection from host config.
+var checkSuppressedEnvironment = []string{"HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "ftp_proxy", "no_proxy", "all_proxy", "DOCKER_AUTH_CONFIG", "GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"}
+
 func checkContainerEnvironment(args []string) []string {
-	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "ftp_proxy", "no_proxy", "all_proxy", "DOCKER_AUTH_CONFIG", "GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"} {
+	for _, key := range checkSuppressedEnvironment {
 		args = append(args, "--env", key+"=")
 	}
 	return args
+}
+
+// Docker needs explicit empty overrides to suppress host proxy injection, but
+// the check itself needs these keys absent: some libraries treat empty proxies
+// as configured URLs. The pinned Debian image supplies GNU env.
+func checkProcessArguments(command []string) []string {
+	args := make([]string, 0, len(checkSuppressedEnvironment)+1+len(command))
+	for _, key := range checkSuppressedEnvironment {
+		args = append(args, "--unset="+key)
+	}
+	args = append(args, "--")
+	return append(args, command...)
 }
 
 // Build the test copy from HEAD, excluding ignored outputs and local Git state.
@@ -286,8 +300,8 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 			args = append(args, "--mount", "type=volume,src="+volumes[1]+",dst=/run/sdlc", "--env", "DOCKER_HOST=unix://"+checkSocket, "--env", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "--env", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="+checkSocket)
 		}
 		args = checkContainerEnvironment(args)
-		args = append(args, "--entrypoint", command[0], state.ImageID)
-		args = append(args, command[1:]...)
+		args = append(args, "--entrypoint", "/usr/bin/env", state.ImageID)
+		args = append(args, checkProcessArguments(command)...)
 		diagnostic := &formatterDiagnostic{approved: approvedPaths}
 		commandOutput := io.MultiWriter(output, diagnostic)
 		if err = runner.Run(ctx, commandOutput, args...); err != nil {

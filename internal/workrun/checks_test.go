@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -213,6 +214,17 @@ func TestDockerChecksUseDedicatedDaemonAndUnchangedArgv(t *testing.T) {
 	}
 	for i, call := range runner.calls {
 		joined := strings.Join(call, " ")
+		for _, key := range checkSuppressedEnvironment {
+			found := false
+			for j, arg := range call {
+				if arg == "--env" && j+1 < len(call) && call[j+1] == key+"=" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Docker injection override missing: %s", key)
+			}
+		}
 		for _, expected := range []string{"--user 1000:1000", "--read-only", "--cap-drop ALL", "no-new-privileges", "--network container:sdlc-check-", "DOCKER_HOST=unix:///run/sdlc/docker.sock", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "type=volume", "size=2g", "HTTP_PROXY=", "GH_TOKEN=", "SSH_AUTH_SOCK="} {
 			if !strings.Contains(joined, expected) {
 				t.Fatalf("missing worker restriction: %s", expected)
@@ -225,7 +237,7 @@ func TestDockerChecksUseDedicatedDaemonAndUnchangedArgv(t *testing.T) {
 		}
 		for j, arg := range call {
 			if arg == "--entrypoint" {
-				if call[j+1] != commands[i][0] || !reflect.DeepEqual(call[j+3:], commands[i][1:]) {
+				if call[j+1] != "/usr/bin/env" || !reflect.DeepEqual(call[j+3:], checkProcessArguments(commands[i])) {
 					t.Fatal("argv was changed or interpreted")
 				}
 				break
@@ -262,6 +274,59 @@ func TestDockerChecksUseDedicatedDaemonAndUnchangedArgv(t *testing.T) {
 	last := docker.calls[len(docker.calls)-1]
 	if last[0] != "volume" || last[1] != "rm" {
 		t.Fatal("volumes were not removed last")
+	}
+}
+
+func TestCheckProcessEnvironmentIsAbsentAndArgvPreserved(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	original := []string{python, "-c", `import json, os, sys
+print(json.dumps({'environment': dict(os.environ), 'args': sys.argv[1:]}))`, "--option", "value with spaces", "Name=a; echo unsafe", "$(echo not-run)", ""}
+	args := checkProcessArguments(original)
+	wantPrefix := make([]string, 0, len(checkSuppressedEnvironment)+1)
+	for _, key := range checkSuppressedEnvironment {
+		wantPrefix = append(wantPrefix, "--unset="+key)
+	}
+	wantPrefix = append(wantPrefix, "--")
+	if !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) || !reflect.DeepEqual(args[len(wantPrefix):], original) {
+		t.Fatal("check wrapper changed argv")
+	}
+	if runtime.GOOS == "darwin" {
+		// BSD env has the same unset behavior but lacks GNU long options.
+		args = nil
+		for _, key := range checkSuppressedEnvironment {
+			args = append(args, "-u", key)
+		}
+		args = append(args, original...)
+	}
+	cmd := exec.Command("/usr/bin/env", args...)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "DOCKER_HOST=unix:///run/sdlc/docker.sock", "TESTCONTAINERS_HOST_OVERRIDE=localhost"}
+	for _, key := range checkSuppressedEnvironment {
+		cmd.Env = append(cmd.Env, key+"=")
+	}
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var child struct {
+		Environment map[string]string `json:"environment"`
+		Args        []string          `json:"args"`
+	}
+	if err := json.Unmarshal(output, &child); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range checkSuppressedEnvironment {
+		if _, exists := child.Environment[key]; exists {
+			t.Fatalf("suppressed key remains present: %s", key)
+		}
+	}
+	if child.Environment["DOCKER_HOST"] != "unix:///run/sdlc/docker.sock" || child.Environment["TESTCONTAINERS_HOST_OVERRIDE"] != "localhost" {
+		t.Fatal("check daemon settings removed")
+	}
+	if !reflect.DeepEqual(child.Args, original[3:]) {
+		t.Fatal("child arguments changed")
 	}
 }
 

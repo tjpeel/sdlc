@@ -28,6 +28,12 @@ that need formatting, including when checks share one shell command. Raw check
 logs stay in `checks-N.log`; arbitrary output and private inputs are withheld
 from provider prompts.
 
+Check processes receive no inherited proxy or publication credential variables.
+SDLC first overrides Docker's automatic proxy injection, then removes those
+variables before executing the original command. This also supports libraries
+that interpret an empty proxy value as a configured URL. Docker integration
+checks retain their dedicated daemon connection.
+
 ## Keep a portable checkpoint report
 
 Export before removing a dashboard registration:
