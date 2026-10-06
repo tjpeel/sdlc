@@ -162,7 +162,7 @@ func TestHomebrewUpdatePreviewUsesSavedCheckoutAndNeverCallsBrew(t *testing.T) {
 		}
 	}
 	run("add", ".")
-	run("-c", "commit.gpgsign=false", "commit", "-m", "Prepare offline source")
+	run("-c", "commit.gpgsign=false", "-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit", "-m", "Prepare offline source")
 	stateDir := os.Getenv("SDLC_STATE_DIR")
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		t.Fatal(err)

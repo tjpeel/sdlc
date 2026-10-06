@@ -33,7 +33,7 @@ func SafeGit(ctx context.Context, workspace string, args ...string) (string, err
 }
 
 func isolatedGit(ctx context.Context, directory string, args ...string) (string, error) {
-	prefix := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false", "-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null", "-c", "protocol.file.allow=always"}
+	prefix := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false", "-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null", "-c", "protocol.file.allow=always"}
 	cmd := exec.CommandContext(ctx, "git", append(prefix, args...)...)
 	cmd.Dir = directory
 	for _, entry := range os.Environ() {

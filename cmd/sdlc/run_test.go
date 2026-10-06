@@ -39,7 +39,9 @@ func TestRunCaptureFailureIsVisibleBeforeExecutionJournal(t *testing.T) {
 			marker := forbidConnectedRunCommands(t, root)
 			state, profile := pairingFixture(t)
 			t.Setenv("SDLC_STATE_DIR", state)
-			t.Setenv("CI", "")
+			for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILD_BUILDID"} {
+				t.Setenv(name, "")
+			}
 			pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
 			if err := githubprofile.Store(state, pair, false); err != nil {
 				t.Fatal(err)
@@ -313,7 +315,7 @@ func runGitFixture(t *testing.T) string {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	git := func(args ...string) {
 		t.Helper()
-		command := exec.Command("git", append([]string{"-C", root, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Example User", "-c", "user.email=example@example.invalid"}, args...)...)
+		command := exec.Command("git", append([]string{"-C", root, "-c", "core.hooksPath=/dev/null", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "commit.gpgsign=false", "-c", "user.name=Example User", "-c", "user.email=example@example.invalid"}, args...)...)
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("fixture git: %v: %s", err, output)
 		}
