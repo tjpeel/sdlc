@@ -59,7 +59,9 @@ sdlc run --reference REFERENCE --ticket 01-ticket-title.md \
   --input .sdlc/work/REFERENCE/specification.md --docker-tests --dry-run
 ```
 
-Omit `--input` or `--docker-tests` when they are unnecessary. Inspect the source,
+Run preflight includes Markdown requirements linked within the selected work
+reference. Use `--input` for additional exact requirements; do not select whole
+folders. Omit `--input` or `--docker-tests` when they are unnecessary. Inspect the source,
 repository, branch/base and role selection. Resolve a wrong repository account
 using `sdlc github use --profile NAME`; do not silently change the pairing or
 signing key. A dry run performs no connected access validation.
@@ -115,8 +117,9 @@ the individual recorded run using its resume/answer command, then rerun the
 feature command. Track child run IDs through the individual-run dashboard; do
 not claim the dashboard has a separate feature view.
 
-Feature dry-run stays offline and does not read ticket bodies or credentials or
-make model calls. Offline tests do not establish that a connected feature trial
+Feature dry-run stays offline and reads selected Markdown only to validate
+linked requirements. It does not read credentials or make model calls.
+Offline tests do not establish that a connected feature trial
 has passed.
 
 ## Monitor with little context
@@ -140,7 +143,7 @@ private code or secrets.
 | --- | --- |
 | Live implementation, checks, publication, CI, review or repair | Continue monitoring; the controller owns the next step. |
 | Waiting for the provider cache | Let the lease queue clear; queue time counts toward the invocation timeout. |
-| `waiting_for_human` | Present the recorded current questions. Obtain the user's answer, save it in a private file, then resume the same run with `--answer-file`. Never fabricate a product decision. |
+| `waiting_for_human` | Present the recorded current questions. For a missing file in an unpublished implementation, inspect `sdlc inputs --run ID`, preview `--add RELATIVE_PATH --dry-run`, then attach the authorised file. Obtain the user's answer and resume the same run. Never fabricate a product decision. |
 | `awaiting_reviewer` | Explain which opposite provider needs official login, then resume after it is available. Do not review with the implementer as a fallback. |
 | `blocked` or `failed` | Read the specific stop reason. Fix only an authorised operational cause; resume once it has changed. Do not loop unchanged failures. |
 | Stale, stopped unexpectedly, or unavailable | Confirm the original controller is no longer alive before recovery. Do not start a second owner or treat missing metadata as success. |
@@ -161,7 +164,9 @@ remove the extra answer copy only when authorised; the run retains its own
 private history.
 Resume retains frozen choices and the original native implementation session.
 Do not start fresh merely because a repair is needed, and do not try to change
-image, identity, inputs or roles mid-run. External PR/base changes require
+image, identity or roles mid-run. Only the supported offline `inputs --add`
+operation may append missing requirements to an eligible paused run; it must
+preserve original hashes and leave an audit record. External PR/base changes require
 reconciliation, not a force push.
 
 ## Recognise completion and retain evidence

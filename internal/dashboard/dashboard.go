@@ -15,6 +15,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runusage"
 	"github.com/tjpeel/sdlc/internal/textview"
+	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 // SafeText prevents repository names, questions and logs from controlling a terminal.
@@ -262,6 +263,11 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 				return err
 			}
 		}
+		if inputs := InputAction(v); inputs != "" {
+			if _, err := fmt.Fprintln(output, "     Missing file? "+SafeText(inputs)); err != nil {
+				return err
+			}
+		}
 	}
 	_, err := fmt.Fprintln(output, "\nSelect: sdlc dashboard --run RUN_ID   History: --page N   Snapshot: --once   JSON: --json\nRemove from dashboard: sdlc dashboard forget --run RUN_ID (saved work is retained)\nCtrl-C closes this view; run controllers continue independently.")
 	return err
@@ -271,6 +277,9 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 func NextAction(v runstatus.View) string {
 	if !v.Available || v.Preparation || v.Live || v.Stale {
 		return ""
+	}
+	if v.Journal != nil && v.Journal.PendingInputs != nil {
+		return "sdlc inputs --run " + v.ID
 	}
 	switch v.State {
 	case "waiting_for_human":
@@ -283,6 +292,18 @@ func NextAction(v runstatus.View) string {
 		}
 	}
 	return ""
+}
+
+// InputAction offers an offline repair route for missing requirements without
+// treating an attachment as an answer or launching a provider.
+func InputAction(v runstatus.View) string {
+	if !v.Available || v.Preparation || v.Live || v.Stale || v.Journal == nil {
+		return ""
+	}
+	if workrun.CanAttachInputs(*v.Journal) != nil {
+		return ""
+	}
+	return "sdlc inputs --run " + v.ID
 }
 
 func elapsed(v runstatus.View, now time.Time) string {
@@ -391,6 +412,9 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 		for _, question := range v.Questions {
 			fmt.Fprintf(&text, "Question: %s\n", question)
 		}
+	}
+	if inputs := InputAction(v); inputs != "" {
+		fmt.Fprintf(&text, "Missing file? %s (inspect requirements and attach missing files offline)\n", inputs)
 	}
 	fmt.Fprintln(&text, textview.Heading("Run details"))
 	fmt.Fprintf(&text, "Run: %s\nRepository: %s\nTicket: %s / %s\nStage: %s | controller: %s | elapsed: %s\nRole: %s | model: %s / %s / %s\nLast output: %s ago | heartbeat: %s ago\n", v.ID, v.Root, v.Reference, filepath.Base(v.Ticket), v.State, controller(v), elapsed(v, now), v.Role, v.Provider, v.Model, v.Effort, age(now, v.LastActivityAt), age(now, v.HeartbeatAt))

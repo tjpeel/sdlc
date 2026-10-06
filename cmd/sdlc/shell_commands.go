@@ -34,6 +34,7 @@ func shellCommands() []shell.Command {
 		command("inspect", "Work", "Read one explicitly selected safe local ticket or run", "/inspect @REF/NUMBERED_FILE | @ref:REF | @run:ID", false, "reference ticket json"),
 		command("run", "Work", "Review the existing run plan, then start an independent terminal", "/run --reference REF --ticket FILE | --all [--parallel 2]", false, "reference ticket all parallel watch alternate-providers provider github-profile input base branch repo model effort review-model review-effort resume answer-file docker-tests dry-run timeout notify sound json terminal launch-id headroom"),
 		command("answer", "Work", "Read pending questions, type an answer and resume the recorded run; CLI: sdlc answer --run ID", "/answer [RUN_ID]", false, ""),
+		command("inputs", "Work", "Inspect captured requirements or attach missing files to an unpublished paused run without starting it", "/inputs --run ID [--add RELATIVE_PATH] [--dry-run]", true, "run add dry-run json"),
 		command("resume", "Work", "Resume a stopped run using its saved project and settings; CLI: sdlc resume --run ID", "/resume [RUN_ID]", false, ""),
 		command("usage", "Monitor", "Read recorded provider usage and completion outcomes", "/usage [--since 7d] [--scope project|installation] [--run ID]", false, "since scope run json"),
 		command("attention", "Monitor", "Follow questions, problems and work ready for human review", "/attention [--scope project|installation]", false, "scope page"),

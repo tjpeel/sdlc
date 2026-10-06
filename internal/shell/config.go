@@ -36,6 +36,7 @@ func SafeOutput(text string) string { return safe(text) }
 type RunAction struct {
 	ID, Root, Reference, Ticket, State, Checkpoint string
 	Questions                                      []string
+	InputAction                                    string
 }
 
 type Config struct {

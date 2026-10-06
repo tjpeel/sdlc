@@ -487,8 +487,8 @@ sdlc work --reference YOUR_WORK_REFERENCE
 Discovery reads filenames and local Git metadata, not ticket bodies. It orders numeric prefixes, rejects
 duplicates, and ignores unnumbered notes. It does not judge eligibility, dependencies, blockers or
 completeness. Selecting one ticket never launches the next. The implementation skill evaluates those gates
-when encountered. Specification/decision files are optional explicit inputs; SDLC does not discover or supply
-them automatically.
+when encountered. Run preflight includes Markdown specifications, decisions and related tickets linked
+within the selected work reference. Additional requirements can be selected explicitly with `--input`.
 
 ## 9. Preview, then launch
 
@@ -500,7 +500,8 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-feature.md \
   --input .sdlc/work/YOUR_WORK_REFERENCE/decisions.md --dry-run
 ```
 
-Omit inputs that do not exist or are not needed. Review provider roles, selected paths, checks, repository and
+Use `--input` only for additional required files; linked local requirements are included automatically.
+Missing or unsafe linked documents stop preflight before a provider starts. Review provider roles, selected paths, checks, repository and
 pairing. This dry-run is offline: it makes no model, GitHub or vault request and does not capture source or
 register a dashboard run. Missing pairing produces a warning, while malformed/changed metadata and ambiguous
 selection fail. Dry-run cannot prove account/model access or check success.

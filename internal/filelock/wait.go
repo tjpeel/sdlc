@@ -2,10 +2,13 @@ package filelock
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 )
+
+var ErrBusy = errors.New("another SDLC operation holds the lock")
 
 // Mode selects a shared reader lease or an exclusive writer lease.
 type Mode bool

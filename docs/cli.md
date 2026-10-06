@@ -246,7 +246,7 @@ integration revision (`main` by default, or the selected `--base`).
 | `--parallel` | `1`; maximum concurrent ticket controllers, from `1` to `8`. |
 | `--watch` | Keep the foreground controller observing human merges and scheduling or reconciling remaining work. |
 | `--alternate-providers` | Alternate implementation providers in planned ticket order, starting with `--provider` (default `codex`); each ticket uses the opposite reviewer. Explicit model overrides cannot be combined with this flag. |
-| `--dry-run` | Show the offline schedule without reading ticket bodies, credentials or making model calls. |
+| `--dry-run` | Show the offline schedule and validate linked requirements without reading credentials or making model calls. |
 
 Without `--watch`, the controller runs all currently unblocked work and exits;
 repeat the command after merging or resolving a stop. `--watch` requires a live
@@ -323,11 +323,15 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
   --input .sdlc/work/YOUR_WORK_REFERENCE/decisions.md
 ```
 
-The ticket is an exact numbered filename from `sdlc work`. Only that ticket and
-repeatable `--input` requirements are selected; SDLC does not discover a
-specification automatically or launch the next ticket. `--dry-run` prints the
-plan without Docker, authentication checks or execution. The plan lists selected
-provider inputs and configured check inputs without reading their bodies; their
+The ticket is an exact numbered filename from `sdlc work`. Run preflight includes
+Markdown requirements linked from the selected ticket and documents within its
+`.sdlc/work/REFERENCE/` folder, including specifications, decisions and related
+tickets. It follows their local links, removes duplicates and rejects missing or
+unsafe targets before launching. External URLs, images and code examples do not
+select files. It does not copy the whole work folder or launch linked tickets.
+Use repeatable `--input` for additional exact project-relative requirements.
+`--dry-run` reads the selected Markdown to validate links and prints paths without
+document bodies, Docker, authentication checks or execution; their
 content hashes remain empty until source capture. A resumed run's plan shows its
 recorded paths and hashes. The offline plan cannot prove account or model access. A missing pair produces
 a warning with the requested or unresolved profile; malformed or changed pair
@@ -554,6 +558,33 @@ review starts fresh. Cancellation, timeout, invalid handoffs, missing inputs,
 usage/access limits and policy refusals retain a stopped checkpoint. Fix the
 reported cause before resuming; never restart or change identities to evade
 provider restrictions. Journals and native storage must remain intact for resume.
+
+### Missing requirement files
+
+An older run may lack a linked requirement that was present on the host. A text
+answer cannot copy that file into its private Docker workspace. Inspect and
+attach requirements without starting a provider:
+
+```sh
+sdlc inputs --run RUN_ID
+sdlc inputs --run RUN_ID --add .sdlc/work/REFERENCE/specification.md --dry-run
+sdlc inputs --run RUN_ID --add .sdlc/work/REFERENCE/specification.md
+sdlc answer --run RUN_ID
+```
+
+`--add` is repeatable. The preview shows selected paths and hashes; attachment
+copies the validated files, records an audit entry and leaves the run paused.
+Existing captured bytes, native session, account, models and branch stay fixed.
+Linked requirements from the added document are included through the
+same preflight as a new launch. Conflicting destinations, unsafe paths and
+changes to existing inputs are refused. Only stopped, unpublished implementation
+questions support attachment; review or published work requires a separate
+reimplementation decision. Current check evidence is invalidated when requirements
+are added. Other tickets in a feature do not receive the attachment.
+
+If attachment is interrupted, `inputs` shows the pending operation. Complete it
+before answering or resuming; the controller refuses a partial input manifest.
+Use `--json` for structured input metadata without file bodies.
 
 ## Shared agent instructions
 

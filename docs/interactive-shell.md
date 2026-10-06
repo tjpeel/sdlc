@@ -69,6 +69,7 @@ Useful commands:
 | `/progress --run RUN_ID` | Tail labelled SDLC steps, checks, and provider agent output. |
 | `/attention` | Follow pending questions, problems and work ready for human review. |
 | `/answer RUN_ID` | Read the questions, type a reply, then Ctrl+S to answer and resume. |
+| `/inputs --run RUN_ID [--add RELATIVE_PATH] [--dry-run]` | Inspect captured requirements or attach missing files to an unpublished paused implementation without starting it. |
 | `/resume RUN_ID` | Inspect a stopped run, then Ctrl+S to resume its saved stage. |
 | `/usage` | Read recorded provider tokens, Headroom estimates and completion outcomes. |
 | `/update` | Install the saved source's CLI and runtime; `--cli-only` keeps the runtime. |
@@ -157,6 +158,14 @@ The dashboard reads saved questions directly from the run checkpoint and shows
 them in both the list and selected-run details. `/attention` narrows the view to
 runs needing human action. Questions, stop reasons and next commands remain
 visible without opening their private files.
+
+For a missing requirement file, use `/inputs --run RUN_ID` to see captured paths
+and missing linked documents. Preview `/inputs --run RUN_ID --add RELATIVE_PATH
+--dry-run`, then repeat without `--dry-run` to attach it. The run stays paused;
+use `/answer RUN_ID` after the file is available. Existing input hashes are
+preserved. Dashboard, progress and the answer editor show this file-repair route
+for eligible unpublished implementation questions. In the answer editor, Escape
+returns to commands before attaching a file.
 
 Use `/answer RUN_ID` to open the answer editor. A unique ID prefix of at least
 six characters is sufficient. After `/dashboard --run RUN_ID`, `/answer` uses

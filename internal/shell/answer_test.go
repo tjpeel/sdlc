@@ -17,6 +17,20 @@ func answerConfig() Config {
 		return RunAction{ID: "recorded-id", Root: "/example/recorded", State: "waiting_for_human", Checkpoint: "requirements", Questions: []string{"Which format?", "What delimiter?"}}, nil
 	}}
 }
+
+func TestAnswerEditorShowsMissingFileRepairRoute(t *testing.T) {
+	c := answerConfig()
+	c.ResolveRun = func(context.Context, string, string) (RunAction, error) {
+		return RunAction{ID: "recorded-id", State: "waiting_for_human", Questions: []string{"Please supply specification.md."}, InputAction: "/inputs --run recorded-id"}, nil
+	}
+	m := NewModel(context.Background(), c)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	cmd := enter(m, "/answer recorded-id")
+	m.Update(cmd())
+	if !strings.Contains(ansi.Strip(m.View()), "Missing file? Esc, then /inputs --run recorded-id") {
+		t.Fatalf("file repair route hidden: %s", m.View())
+	}
+}
 func TestAnswerEditorPreservesRawTextAndDispatchesOnce(t *testing.T) {
 	c := answerConfig()
 	calls := 0

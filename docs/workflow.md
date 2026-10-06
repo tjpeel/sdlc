@@ -31,8 +31,10 @@ The work layout is:
 
 `sdlc work --reference REFERENCE` discovers numbered filenames in numeric order.
 `sdlc run --reference REFERENCE --ticket NUMBERED_FILE` selects exactly one ticket.
-Add exact specification or decision paths with repeatable `--input`; SDLC does
-not automatically supply them or execute the remaining tickets. The pinned
+Run preflight includes local Markdown requirements linked within the selected
+work reference, including specifications, decisions and related tickets. Use
+repeatable `--input` for additional exact requirements outside that link set.
+Linked tickets supply context; they are not executed by a single-ticket run. The pinned
 implementation skill retains its eligibility, dependency, missing-input and
 human-decision gates. A run consumes prepared requirements rather than creating
 decisions, specifications or tickets.
@@ -210,6 +212,12 @@ image, shared instructions and frozen GitHub/signing identity. Implementation re
 native session; independent review always starts fresh. Retain the journal and
 native session files. See [resume commands](cli.md#logs-questions-and-resume).
 
+For an unpublished implementation question caused by a missing file, inspect
+`sdlc inputs --run RUN_ID`, then attach it with `--add RELATIVE_PATH --dry-run`
+and repeat without `--dry-run`. Attachment records new hashes without replacing
+existing inputs or starting a provider. Then answer the recorded question. An
+interrupted attachment must be completed before answer or resume.
+
 ## Feature scheduling and stacked PRs
 
 `sdlc run --reference REFERENCE --all --parallel 2` schedules pending tickets from
@@ -246,8 +254,10 @@ original native implementation session. A product decision stops for a human.
 Unrecognised external changes stop for reconciliation rather than being overwritten.
 
 Compatible existing runs are adopted or resumed without duplicate work. One
-feature checkpoint freezes the plan, models, accounts, runtime, common inputs
-and checks. Human-attention states stop feature execution; resolve the recorded
+feature checkpoint freezes the plan, models, accounts, runtime, common inputs,
+each ticket's linked requirements and checks. Explicit file recovery applies only
+to the selected paused ticket and retains the original frozen hashes.
+Human-attention states stop feature execution; resolve the recorded
 individual run with its resume/answer command, then repeat the feature command.
 The dashboard retains individual-run reporting. Detached supervision remains
 future work. Offline tests cover feature scheduling and reconciliation; a

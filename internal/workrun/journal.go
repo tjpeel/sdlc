@@ -50,7 +50,10 @@ func saveJSON(path string, value any) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), path)
+	if err := os.Rename(file.Name(), path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
 }
 
 func Save(directory string, journal *Journal) error {
@@ -119,6 +122,9 @@ func Load(directory string) (Journal, error) {
 				return Journal{}, fmt.Errorf("invalid reconciliation conflict path")
 			}
 		}
+	}
+	if err := validateInputRecoveries(journal); err != nil {
+		return Journal{}, err
 	}
 	return journal, nil
 }

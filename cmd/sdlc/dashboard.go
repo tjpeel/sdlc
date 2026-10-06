@@ -280,6 +280,7 @@ func writeDashboardJSONPage(output io.Writer, views []runstatus.View, now time.T
 		Timings         *workrun.Timings  `json:"timings,omitempty"`
 		Questions       []string          `json:"questions,omitempty"`
 		NextAction      string            `json:"next_action,omitempty"`
+		InputAction     string            `json:"input_action,omitempty"`
 	}
 	rows := make([]row, 0, len(views))
 	for _, v := range views {
@@ -291,7 +292,7 @@ func writeDashboardJSONPage(output io.Writer, views []runstatus.View, now time.T
 		if v.State == "waiting_for_human" {
 			questions = v.Questions
 		}
-		rows = append(rows, row{v.ID, v.Root, v.Reference, v.Ticket, v.Directory, v.State, v.Role, v.Provider, v.Model, v.Effort, v.Live, v.Stale, v.Stopped, v.Available, v.NeedsAttention, v.StartedAt, v.UpdatedAt, v.HeartbeatAt, v.LastActivityAt, v.StopReason, v.Error, v.ActivityError, v.CI.Status, v.PR.URL, v.Activity.Usage, v.Activity.WaitingProvider, v.Activity.WaitReason, v.Activity.WaitingSince, v.Metrics, v.MetricsError, timings, questions, dashboard.NextAction(v)})
+		rows = append(rows, row{v.ID, v.Root, v.Reference, v.Ticket, v.Directory, v.State, v.Role, v.Provider, v.Model, v.Effort, v.Live, v.Stale, v.Stopped, v.Available, v.NeedsAttention, v.StartedAt, v.UpdatedAt, v.HeartbeatAt, v.LastActivityAt, v.StopReason, v.Error, v.ActivityError, v.CI.Status, v.PR.URL, v.Activity.Usage, v.Activity.WaitingProvider, v.Activity.WaitReason, v.Activity.WaitingSince, v.Metrics, v.MetricsError, timings, questions, dashboard.NextAction(v), dashboard.InputAction(v)})
 	}
 	return json.NewEncoder(output).Encode(struct {
 		Version int       `json:"version"`

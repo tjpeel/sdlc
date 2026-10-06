@@ -1,14 +1,47 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
+
+func TestMissingFileRecoveryIsVisibleInRunAndShellViews(t *testing.T) {
+	j, marker := attentionFixture(t)
+	j.ResumeState = "implementing"
+	j.Outcome.Questions = []string{"Please supply .sdlc/work/TASK-1/specification.md."}
+	if err := workrun.Save(filepath.Dir(j.Workspace), &j); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &shellAdapter{}
+	selected, err := adapter.resolveRun(context.Background(), "", j.ID)
+	if err != nil || selected.InputAction != "/inputs --run "+j.ID {
+		t.Fatalf("shell file repair: %+v %v", selected, err)
+	}
+	action, err := inspectRunAction(context.Background(), j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail bytes.Buffer
+	if err := dashboard.Detail(&detail, action.View, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{detail.String(), progressStateText(action.View)} {
+		if !strings.Contains(text, "Missing file? sdlc inputs --run "+j.ID) {
+			t.Fatalf("missing file repair route: %s", text)
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("inspection started connected work")
+	}
+}
 
 func TestShellResponseUsesRecordedProjectAndBindsAnswerToQuestion(t *testing.T) {
 	j, marker := attentionFixture(t)

@@ -317,6 +317,9 @@ func progressStateText(v runstatus.View) string {
 	}
 	if v.State == "waiting_for_human" {
 		text += "\nAnswer: sdlc answer --run " + v.ID + " (shell: /answer " + v.ID + ")"
+		if inputs := dashboard.InputAction(v); inputs != "" {
+			text += "\nMissing file? " + inputs
+		}
 	} else if v.State == "ready" {
 		text += "\nReady for human review: " + v.PR.URL
 	} else if v.Stopped && !v.Preparation && v.Available {

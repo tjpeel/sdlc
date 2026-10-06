@@ -68,6 +68,7 @@ type runOptions struct {
 	frozenRoles                           *workrun.Roles
 	frozenConfig                          *project.Config
 	frozenInstructions                    *string
+	frozenInputs                          bool
 	frozenInputHashes                     map[string]string
 	frozenSigningImage, frozenDaemonImage string
 	supplied                              map[string]bool
@@ -310,7 +311,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 				return err
 			}
 		}
-		launch, err := project.Launch(ctx, current, options.reference, ticket, options.inputs)
+		launchInput := project.Launch
+		if options.frozenInputs {
+			launchInput = project.LaunchFrozen
+		}
+		launch, err := launchInput(ctx, current, options.reference, ticket, options.inputs)
 		if err != nil {
 			return err
 		}

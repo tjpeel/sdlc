@@ -109,7 +109,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 	lock, err := filelock.Acquire(lockPath)
 	if err != nil {
-		return fmt.Errorf("another controller owns this run")
+		return fmt.Errorf("cannot acquire run controller lock: %w", err)
 	}
 	defer lock.Close()
 	if !journal.UpdatedAt.IsZero() {
@@ -120,6 +120,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if current.UpdatedAt != journal.UpdatedAt {
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
 		}
+	}
+	if journal.PendingInputs != nil {
+		return fmt.Errorf("input recovery is unfinished; complete it with sdlc inputs --run %s", journal.ID)
 	}
 	if runner.OnStart != nil {
 		if err := runner.OnStart(*journal); err != nil {

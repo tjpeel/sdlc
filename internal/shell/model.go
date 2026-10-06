@@ -1253,6 +1253,9 @@ func (m *Model) actionContext() string {
 			header += "\nQuestion: " + safe(question)
 		}
 	}
+	if a.InputAction != "" {
+		header += "\nMissing file? Esc, then " + safe(a.InputAction)
+	}
 	return header
 }
 func (m *Model) actionView() string {

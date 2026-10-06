@@ -25,11 +25,15 @@ func TestFeatureAdoptsOnlyOwnedMetadataPreparationFailure(t *testing.T) {
 	for _, change := range []string{"metadata only", "busy", "workspace", "models", "standalone", "corrupt journal"} {
 		t.Run(change, func(t *testing.T) {
 			driver, result := featureAdoptionFixture(t, "blocked")
-			directory, _, err := driver.loadRun("01-selected.md", result)
+			directory, journal, err := driver.loadRun("01-selected.md", result)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Remove(filepath.Join(directory, "journal.json")); err != nil {
+				t.Fatal(err)
+			}
+			// Model a failure before source capture; the workspace case adds the unsafe leftover below.
+			if err := os.RemoveAll(journal.Workspace); err != nil {
 				t.Fatal(err)
 			}
 			owner, err := runstatus.OwnPreparation(directory)
@@ -132,6 +136,10 @@ func TestFeaturePreparationRetryUsesMovedBaseWithoutReconciliation(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(directory, "journal.json")); err != nil {
+		t.Fatal(err)
+	}
+	// Model interrupted preparation before any workspace was captured.
+	if err := os.RemoveAll(journal.Workspace); err != nil {
 		t.Fatal(err)
 	}
 	owner, err := runstatus.OwnPreparation(directory)
@@ -264,6 +272,7 @@ func featureAdoptionFixture(t *testing.T, state string) (*seriesDriver, workseri
 	}
 	ticket := ".sdlc/work/TASK-1/tickets/01-selected.md"
 	journal := workrun.Journal{Version: 1, ID: result.RunID, State: state, SessionID: "retained-original-session", Attempt: 9, Rounds: 2, ImageID: settings.ImageID, Instructions: settings.Instructions, Workspace: filepath.Join(directory, "workspace"), Plan: workrun.Plan{Root: root, Reference: "TASK-1", Ticket: ticket, SourceSHA: launch.Head, StartingSHA: launch.Head, Base: "main", BaseSHA: launch.Head, Branch: "work/example", Repository: settings.Repository, GitHubProfile: settings.GitHubProfile, SigningProfile: settings.SigningProfile, PublicationIdentity: identity, Roles: settings.Roles["01-selected.md"], Checks: settings.Config.Checks, Inputs: []workrun.Input{{Path: ticket, SHA256: settings.InputHashes[ticket]}}, CheckInputs: []workrun.Input{{Path: "README.md", SHA256: settings.InputHashes["README.md"]}}, SigningImage: settings.SigningImage}}
+	materializeFeatureCapturedInputs(t, journal)
 	if err := workrun.Save(directory, &journal); err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +310,7 @@ func TestFeatureAdoptsActiveAndAttentionStagesWithoutResettingSession(t *testing
 }
 
 func TestFeatureAdoptionRejectsChangedPairAndMissingInput(t *testing.T) {
-	for _, change := range []string{"pair", "input", "models", "instructions"} {
+	for _, change := range []string{"pair", "input", "models", "instructions", "captured bytes", "captured missing"} {
 		t.Run(change, func(t *testing.T) {
 			driver, result := featureAdoptionFixture(t, "ready")
 			directory, journal, err := driver.loadRun("01-selected.md", result)
@@ -317,6 +326,14 @@ func TestFeatureAdoptionRejectsChangedPairAndMissingInput(t *testing.T) {
 				journal.Plan.Roles = workrun.DefaultModels().Claude
 			case "instructions":
 				journal.Instructions = "changed"
+			case "captured bytes":
+				if err := os.WriteFile(filepath.Join(journal.Workspace, filepath.FromSlash(journal.Plan.Ticket)), []byte("Changed captured ticket"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "captured missing":
+				if err := os.Remove(filepath.Join(journal.Workspace, filepath.FromSlash(journal.Plan.Ticket))); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := workrun.Save(directory, &journal); err != nil {
 				t.Fatal(err)
@@ -595,5 +612,107 @@ func TestFeatureInputSetsRequireEveryFrozenSelection(t *testing.T) {
 	driver := seriesDriver{plan: workseries.Plan{Reference: "TASK-1", Tickets: []workseries.Ticket{{File: "01-selected.md"}}}, settings: seriesSettings{Provider: "codex", Roles: map[string]workrun.Roles{"01-selected.md": workrun.DefaultModels().Codex}, Config: project.Config{}, InputHashes: map[string]string{}}}
 	if err := driver.validateSettings(); err == nil {
 		t.Fatal("absent hashes accepted")
+	}
+}
+
+func TestFeaturePreflightsLaterLinkedInputBeforeConnecting(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	ticket := ".sdlc/work/TASK-1/tickets/02-other.md"
+	if err := os.WriteFile(filepath.Join(root, ticket), []byte("[source](../missing.md)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := runCommand(context.Background(), []string{"--reference", "TASK-1", "--all"}, &output)
+	if err == nil || !strings.Contains(err.Error(), ticket) || !strings.Contains(err.Error(), "../missing.md") {
+		t.Fatalf("later missing requirement not preflighted: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("preflight connected: %v", err)
+	}
+}
+
+func TestFeatureFreezesDistinctTicketRequirementSets(t *testing.T) {
+	root := runGitFixture(t)
+	forbidConnectedRunCommands(t, root)
+	for path, data := range map[string]string{
+		".sdlc/work/TASK-1/tickets/01-selected.md": "[source](../specification.md)",
+		".sdlc/work/TASK-1/specification.md":       "[decisions](decisions.md)",
+		".sdlc/work/TASK-1/decisions.md":           "Decision record",
+		".sdlc/work/TASK-1/tickets/02-other.md":    "[other](../other.md)",
+		".sdlc/work/TASK-1/other.md":               "Other specification",
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := workseries.Discover(context.Background(), root, "TASK-1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := selectSeriesSettings(context.Background(), os.Getenv("SDLC_STATE_DIR"), plan, runOptions{provider: "codex", inputs: selectedInputs{"spec.md"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := settings.ticketInputs(plan.Reference, "01-selected.md")
+	second := settings.ticketInputs(plan.Reference, "02-other.md")
+	if len(first) != 4 || len(second) != 3 || containsSeriesPath(first, ".sdlc/work/TASK-1/other.md") || containsSeriesPath(second, ".sdlc/work/TASK-1/specification.md") {
+		t.Fatalf("mixed input sets: %v %v", first, second)
+	}
+	driver := seriesDriver{plan: plan, settings: settings}
+	if err := driver.validateSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.checkInputs(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdlc/work/TASK-1/decisions.md"), []byte("Changed decision"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.checkInputs(); err == nil {
+		t.Fatal("linked requirement hash not frozen")
+	}
+	legacy := seriesSettings{Inputs: []string{"spec.md"}}
+	paths := legacy.ticketInputs("TASK-1", "01-selected.md")
+	if len(paths) != 2 || containsSeriesPath(paths, ".sdlc/work/TASK-1/specification.md") {
+		t.Fatalf("legacy selection expanded: %v", paths)
+	}
+}
+
+// Build the actual captured files described by the synthetic journal. Adoption
+// must verify bytes in both the original source and its private snapshot.
+func materializeFeatureCapturedInputs(t *testing.T, journal workrun.Journal) {
+	t.Helper()
+	for _, input := range append(append([]workrun.Input{}, journal.Plan.Inputs...), journal.Plan.CheckInputs...) {
+		hash, err := seriesInputHash(journal.Plan.Root, input.Path)
+		if err != nil || hash != input.SHA256 {
+			t.Fatalf("fixture source differs from manifest for %s: %v", input.Path, err)
+		}
+		data, err := os.ReadFile(filepath.Join(journal.Plan.Root, filepath.FromSlash(input.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(journal.Workspace, filepath.FromSlash(input.Path))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := workrun.VerifyCapturedInputs(journal.Workspace, journal.Plan.Inputs); err != nil {
+		t.Fatal(err)
+	}
+	if err := workrun.VerifyCapturedInputs(journal.Workspace, journal.Plan.CheckInputs); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFeatureLegacyRepeatedSelectionsRetainCapturedSet(t *testing.T) {
+	ticket := ".sdlc/work/TASK-1/tickets/01-selected.md"
+	settings := seriesSettings{Inputs: []string{ticket, "spec.md", "spec.md", ticket}}
+	got := settings.ticketInputs("TASK-1", "01-selected.md")
+	if len(got) != 2 || got[0] != ticket || got[1] != "spec.md" {
+		t.Fatalf("legacy captured selection gained duplicates: %v", got)
 	}
 }

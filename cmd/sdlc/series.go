@@ -47,6 +47,7 @@ type seriesSettings struct {
 	Identity                  *workrun.PublicationIdentity
 	Roles                     map[string]workrun.Roles
 	Inputs                    []string
+	TicketInputs              map[string][]string
 	InputHashes               map[string]string
 	Config                    project.Config
 	DockerTests               bool
@@ -190,13 +191,14 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 				Checks        [][]string                   `json:"checks"`
 				CheckInputs   []string                     `json:"check_inputs"`
 				Inputs        []string                     `json:"inputs"`
+				TicketInputs  map[string][]string          `json:"ticket_inputs"`
 				DockerTests   bool                         `json:"docker_tests"`
 				Headroom      headroom.Config              `json:"headroom"`
 				HeadroomImage string                       `json:"headroom_image,omitempty"`
 				InputHashes   map[string]string            `json:"input_hashes,omitempty"`
 				Saved         map[string]workseries.Result `json:"saved,omitempty"`
 				Notice        string                       `json:"notice"`
-			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; ticket content, account access and live PR state are checked during execution."})
+			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
 		}
 		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
 		for _, ticket := range plan.Tickets {
@@ -205,6 +207,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			}
 		}
 		for _, ticket := range plan.Tickets {
+			fmt.Fprintf(output, "Requirement inputs for %s: %v\n", ticket.File, selections.ticketInputs(plan.Reference, ticket.File))
 			roles := selections.Roles[ticket.File]
 			fmt.Fprintf(output, "%s: implementation %s/%s (%s); review %s/%s (%s).\n", ticket.File, roles.Implementation.Provider, roles.Implementation.Name, roles.Implementation.Effort, roles.Review.Provider, roles.Review.Name, roles.Review.Effort)
 		}
@@ -312,6 +315,9 @@ func printSeriesResults(output io.Writer, plan workseries.Plan, state workseries
 					}
 				}
 				fmt.Fprintf(output, "    Answer: sdlc answer --run %s\n", result.RunID)
+				if journalErr == nil && journal.ID == result.RunID && workrun.CanAttachInputs(journal) == nil {
+					fmt.Fprintf(output, "    Missing file? sdlc inputs --run %s\n", result.RunID)
+				}
 			case "blocked", "failed", "awaiting_reviewer":
 				if journalErr == nil && journal.ID == result.RunID {
 					fmt.Fprintf(output, "    After resolving the stop: sdlc resume --run %s\n", result.RunID)
@@ -348,11 +354,27 @@ func selectSeriesSettings(ctx context.Context, directory string, plan workseries
 	if err != nil {
 		return settings, err
 	}
-	launch, err := project.Launch(ctx, plan.Root, plan.Reference, plan.Tickets[0].File, options.inputs)
-	if err != nil {
-		return settings, err
+	settings.TicketInputs = map[string][]string{}
+	for _, ticket := range plan.Tickets {
+		launch, err := project.Launch(ctx, plan.Root, plan.Reference, ticket.File, options.inputs)
+		if err != nil {
+			return settings, err
+		}
+		settings.Config = launch.Config
+		settings.TicketInputs[ticket.File] = launch.Inputs
 	}
-	settings.Config = launch.Config
+	settings.InputHashes = map[string]string{}
+	paths := append([]string{project.ConfigPath}, settings.Config.InputFiles...)
+	for _, ticket := range plan.Tickets {
+		paths = append(paths, settings.ticketInputs(plan.Reference, ticket.File)...)
+	}
+	for _, path := range paths {
+		hash, err := seriesInputHash(plan.Root, path)
+		if err != nil {
+			return settings, err
+		}
+		settings.InputHashes[path] = hash
+	}
 	models, err := workrun.LoadModels(directory)
 	if err != nil {
 		return settings, err
@@ -409,7 +431,6 @@ func freezeSelectedSeriesSettings(ctx context.Context, runtime runtimeimage.Mana
 	settings.Version, settings.Repository = 1, identity.RepositoryName
 	settings.GitHubProfile, settings.SigningProfile = pair.GitHubProfile, pair.SigningProfile
 	settings.ImageID, settings.Identity = state.ImageID, identity
-	settings.InputHashes = map[string]string{}
 	settings.Headroom, err = headroom.Resolve(ctx, runtime.Docker, seriesHeadroomMode(settings.Headroom))
 	if err != nil {
 		return settings, err
@@ -427,14 +448,16 @@ func freezeSelectedSeriesSettings(ctx context.Context, runtime runtimeimage.Mana
 	paths := append([]string{project.ConfigPath}, options.inputs...)
 	paths = append(paths, settings.Config.InputFiles...)
 	for _, ticket := range plan.Tickets {
-		paths = append(paths, ".sdlc/work/"+plan.Reference+"/tickets/"+ticket.File)
+		paths = append(paths, settings.ticketInputs(plan.Reference, ticket.File)...)
 	}
 	for _, path := range paths {
 		hash, err := seriesInputHash(plan.Root, path)
 		if err != nil {
 			return seriesSettings{}, err
 		}
-		settings.InputHashes[path] = hash
+		if settings.InputHashes[path] != hash {
+			return seriesSettings{}, fmt.Errorf("feature inputs changed after preflight; retry the feature command")
+		}
 	}
 	return settings, nil
 }
@@ -594,6 +617,9 @@ func (d *seriesDriver) validateSettings() error {
 	if len(d.settings.Roles) != len(d.plan.Tickets) || (d.settings.Provider != "codex" && d.settings.Provider != "claude") {
 		return fmt.Errorf("private feature models do not match its tickets")
 	}
+	if d.settings.TicketInputs != nil && len(d.settings.TicketInputs) != len(d.plan.Tickets) {
+		return fmt.Errorf("private feature input selections do not match its tickets")
+	}
 	expected := map[string]bool{project.ConfigPath: true}
 	for _, path := range append(append([]string{}, d.settings.Inputs...), d.settings.Config.InputFiles...) {
 		expected[path] = true
@@ -602,7 +628,17 @@ func (d *seriesDriver) validateSettings() error {
 		if _, ok := d.settings.Roles[ticket.File]; !ok {
 			return fmt.Errorf("private feature lacks a recorded ticket model")
 		}
-		expected[".sdlc/work/"+d.plan.Reference+"/tickets/"+ticket.File] = true
+		if !containsSeriesPath(d.settings.ticketInputs(d.plan.Reference, ticket.File), ".sdlc/work/"+d.plan.Reference+"/tickets/"+ticket.File) {
+			return fmt.Errorf("private feature lacks recorded ticket inputs")
+		}
+		for _, shared := range d.settings.Inputs {
+			if !containsSeriesPath(d.settings.ticketInputs(d.plan.Reference, ticket.File), shared) {
+				return fmt.Errorf("private feature ticket lacks a shared explicit input")
+			}
+		}
+		for _, path := range d.settings.ticketInputs(d.plan.Reference, ticket.File) {
+			expected[path] = true
+		}
 	}
 	if len(expected) != len(d.settings.InputHashes) {
 		return fmt.Errorf("private feature requirement set changed")
@@ -699,13 +735,16 @@ func (d *seriesDriver) loadRun(ticket string, result workseries.Result) (string,
 	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
 		return "", journal, fmt.Errorf("saved ticket run differs from frozen feature settings")
 	}
-	for _, input := range append(append([]workrun.Input{}, journal.Plan.Inputs...), journal.Plan.CheckInputs...) {
+	for _, input := range journal.Plan.CheckInputs {
 		if expected, ok := d.settings.InputHashes[input.Path]; !ok || input.SHA256 != expected {
 			return "", journal, fmt.Errorf("saved ticket requirements differ from the feature")
 		}
 	}
-	expectedInputs := append([]string{".sdlc/work/" + d.plan.Reference + "/tickets/" + ticket}, d.settings.Inputs...)
-	if !sameSeriesInputPaths(journal.Plan.Inputs, expectedInputs) || !sameSeriesInputPaths(journal.Plan.CheckInputs, d.settings.Config.InputFiles) {
+	expectedInputs := d.settings.ticketInputs(d.plan.Reference, ticket)
+	if err := validateSeriesRunInputs(context.Background(), journal, expectedInputs, d.settings.InputHashes); err != nil {
+		return "", journal, err
+	}
+	if !sameSeriesInputPaths(journal.Plan.CheckInputs, d.settings.Config.InputFiles) {
 		return "", journal, fmt.Errorf("saved ticket input selection differs from the feature")
 	}
 	return directory, journal, nil
@@ -753,7 +792,8 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	options.featureOwned = true
 	options.root, options.reference, options.ticket, options.runID = d.plan.Root, d.plan.Reference, ticket.File, previous.RunID
 	options.base, options.branch, options.repository, options.githubProfile = target.Base, "", d.settings.Repository, d.settings.GitHubProfile
-	options.inputs, options.dockerTests = d.settings.Inputs, d.settings.DockerTests
+	options.inputs, options.dockerTests = d.settings.ticketInputs(d.plan.Reference, ticket.File), d.settings.DockerTests
+	options.frozenInputs = true
 	roles := d.settings.Roles[ticket.File]
 	options.provider = roles.Implementation.Provider
 	options.frozenRoles, options.frozenConfig = &roles, &d.settings.Config
@@ -1081,4 +1121,30 @@ func (d *seriesDriver) retryPreparation(ticket string, previous workseries.Resul
 	// preparation failure has no journal or workspace to reconcile yet.
 	previous.State, previous.Directory = "prepared", ""
 	return previous, nil
+}
+
+// ticketInputs preserves legacy explicit selections when no closure was recorded.
+func (s seriesSettings) ticketInputs(reference, ticket string) []string {
+	if s.TicketInputs != nil {
+		return s.TicketInputs[ticket]
+	}
+	paths := append([]string{".sdlc/work/" + reference + "/tickets/" + ticket}, s.Inputs...)
+	seen := map[string]bool{}
+	unique := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !seen[path] {
+			seen[path] = true
+			unique = append(unique, path)
+		}
+	}
+	return unique
+}
+
+func containsSeriesPath(paths []string, wanted string) bool {
+	for _, path := range paths {
+		if path == wanted {
+			return true
+		}
+	}
+	return false
 }

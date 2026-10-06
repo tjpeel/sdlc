@@ -15,9 +15,18 @@ type LaunchResult struct {
 	Inputs                                []string
 }
 
-// Launch validates existing settings and explicit input paths without writing
-// project state or interpreting ticket contents.
+// Launch validates project settings and resolves linked requirement documents
+// without writing project state.
 func Launch(ctx context.Context, directory, reference, ticket string, inputs []string) (LaunchResult, error) {
+	return launch(ctx, directory, reference, ticket, inputs, true)
+}
+
+// LaunchFrozen validates a recorded selection without discovering new links.
+func LaunchFrozen(ctx context.Context, directory, reference, ticket string, inputs []string) (LaunchResult, error) {
+	return launch(ctx, directory, reference, ticket, inputs, false)
+}
+
+func launch(ctx context.Context, directory, reference, ticket string, inputs []string, resolve bool) (LaunchResult, error) {
 	var r LaunchResult
 	work, err := InspectWork(ctx, directory, reference)
 	if err != nil {
@@ -75,6 +84,12 @@ func Launch(ctx context.Context, directory, reference, ticket string, inputs []s
 		seen[path] = true
 		if path == r.Ticket || containsLaunchInput(inputs, path) {
 			r.Inputs = append(r.Inputs, path)
+		}
+	}
+	if resolve {
+		r.Inputs, err = ResolveRequirements(ctx, r.Root, reference, r.Inputs)
+		if err != nil {
+			return r, err
 		}
 	}
 	return r, ctx.Err()

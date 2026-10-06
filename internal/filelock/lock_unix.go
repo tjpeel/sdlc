@@ -18,7 +18,10 @@ func Acquire(path string) (*os.File, error) {
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		file.Close()
-		return nil, fmt.Errorf("another SDLC operation holds the lock: %w", err)
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("%w: %w", ErrBusy, err)
+		}
+		return nil, fmt.Errorf("cannot acquire operation lock: %w", err)
 	}
 	return file, nil
 }

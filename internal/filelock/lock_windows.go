@@ -20,7 +20,10 @@ func Acquire(path string) (*os.File, error) {
 	result, _, callErr := lockFileEx.Call(file.Fd(), 3, 0, 1, 0, uintptr(unsafe.Pointer(&overlapped)))
 	if result == 0 {
 		file.Close()
-		return nil, fmt.Errorf("another SDLC operation holds the lock: %w", callErr)
+		if errors.Is(callErr, syscall.Errno(33)) {
+			return nil, fmt.Errorf("%w: %w", ErrBusy, callErr)
+		}
+		return nil, fmt.Errorf("cannot acquire operation lock: %w", callErr)
 	}
 	return file, nil
 }

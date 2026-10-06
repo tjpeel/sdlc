@@ -97,6 +97,9 @@ func resolveRunAction(ctx context.Context, id string, answer bool) (runAction, e
 	if err != nil {
 		return runAction{}, err
 	}
+	if action.View.Journal.PendingInputs != nil {
+		return runAction{}, fmt.Errorf("input recovery is unfinished; complete it with sdlc inputs --run %s", action.View.ID)
+	}
 	if answer && action.View.State != "waiting_for_human" {
 		return runAction{}, fmt.Errorf("this run has no pending human question")
 	}
@@ -120,7 +123,10 @@ func probeRunController(directory string) (*os.File, error) {
 	}
 	lock, err := filelock.Acquire(path)
 	if err != nil {
-		return nil, fmt.Errorf("another controller owns this run")
+		if errors.Is(err, filelock.ErrBusy) {
+			return nil, fmt.Errorf("another controller owns this run: %w", err)
+		}
+		return nil, fmt.Errorf("cannot probe run controller: %w", err)
 	}
 	opened, statErr := lock.Stat()
 	current, currentErr := os.Lstat(path)
@@ -277,6 +283,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if answer {
 		fmt.Fprintf(output, "Run %s | project %s\nTicket: %s/%s\nRecorded questions:\n", action.View.ID, dashboard.SafeText(action.View.Root), dashboard.SafeText(action.View.Reference), dashboard.SafeText(filepath.Base(action.View.Ticket)))
+		if workrun.CanAttachInputs(*action.View.Journal) == nil {
+			fmt.Fprintf(output, "Missing file? Inspect recorded inputs with sdlc inputs --run %s\n", action.View.ID)
+		}
 		for _, question := range action.View.Questions {
 			fmt.Fprintln(output, dashboard.SafeText(question))
 		}

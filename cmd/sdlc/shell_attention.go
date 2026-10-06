@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	"github.com/tjpeel/sdlc/internal/dashboard"
 	"github.com/tjpeel/sdlc/internal/shell"
 )
 
@@ -18,7 +20,8 @@ func (a *shellAdapter) resolveRun(ctx context.Context, _ string, id string) (she
 	if v.State == "waiting_for_human" {
 		questions = append([]string(nil), v.Questions...)
 	}
-	return shell.RunAction{ID: v.ID, Root: v.Root, Reference: v.Reference, Ticket: filepath.Base(v.Ticket), State: v.State, Checkpoint: action.Checkpoint, Questions: questions}, nil
+	inputAction := strings.Replace(dashboard.InputAction(v), "sdlc inputs", "/inputs", 1)
+	return shell.RunAction{ID: v.ID, Root: v.Root, Reference: v.Reference, Ticket: filepath.Base(v.Ticket), State: v.State, Checkpoint: action.Checkpoint, Questions: questions, InputAction: inputAction}, nil
 }
 
 func currentShellAction(ctx context.Context, selected shell.RunAction, answer bool) (runAction, error) {
