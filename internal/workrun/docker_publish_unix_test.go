@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/tjpeel/sdlc/internal/headroom"
 )
 
 func TestPublisherBundleReadableWithPrivateUmask(t *testing.T) {
@@ -77,7 +79,7 @@ func TestPublisherFrozenImageRequestDocker(t *testing.T) {
 	if err := os.Chmod(shim, 0755); err != nil {
 		t.Fatal(err)
 	}
-	request := publisherRequestForContainer(PublisherRequest{Action: "publish", Plan: Plan{PublicationIdentity: frozenTestIdentity(), SigningImage: "controller-pin", DaemonImage: "controller-pin"}})
+	request := publisherRequestForContainer(PublisherRequest{Action: "publish", Plan: Plan{PublicationIdentity: frozenTestIdentity(), SigningImage: "controller-pin", DaemonImage: "controller-pin", Headroom: headroom.Config{Mode: "optimize", ImageID: "sha256:" + strings.Repeat("a", 64), PolicyVersion: headroom.PolicyVersion}}})
 	requestPath := filepath.Join(directory, "request.json")
 	if err := saveJSON(requestPath, request); err != nil {
 		t.Fatal(err)

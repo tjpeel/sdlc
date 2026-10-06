@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/githubauth"
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
 
@@ -356,6 +357,7 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 // Sidecar pins belong to the host controller. Keep the publisher wire format
 // compatible with frozen images, and exclude paths and inputs it never needs.
 func publisherRequestForContainer(request PublisherRequest) PublisherRequest {
+	request.Plan.Headroom = headroom.Config{}
 	request.Plan.Root = ""
 	request.Plan.Ticket = ""
 	request.Plan.Inputs = nil

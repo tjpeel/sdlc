@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/tjpeel/sdlc/internal/githubauth"
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 )
 
@@ -158,6 +159,7 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 			original := PublisherRequest{
 				Action: action,
 				Plan: Plan{
+					Headroom:            headroom.Config{Mode: "optimize", ImageID: "sha256:" + strings.Repeat("a", 64), PolicyVersion: headroom.PolicyVersion},
 					PublicationIdentity: frozenTestIdentity(), GitHubProfile: "example", SigningProfile: "example-key",
 					Repository: "example/project", SourceSHA: testBase, BaseSHA: testBase,
 					Base: "main", Branch: "example-ticket", PRTitle: "Example", PRBody: "Example body",
@@ -172,6 +174,7 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 			}
 			projected := publisherRequestForContainer(original)
 			expected := original
+			expected.Plan.Headroom = headroom.Config{}
 			expected.Plan.Root, expected.Plan.Ticket = "", ""
 			expected.Plan.Inputs, expected.Plan.CheckInputs, expected.Plan.Checks = nil, nil, nil
 			expected.Plan.SigningImage, expected.Plan.DaemonImage = "", ""
@@ -183,13 +186,30 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, excluded := range []string{"signing_image", "signing_profile", "daemon_image", "/private/project", "/private/ticket.md", ".env"} {
+			for _, excluded := range []string{"headroom", "signing_image", "signing_profile", "daemon_image", "/private/project", "/private/ticket.md", ".env"} {
 				if strings.Contains(string(data), excluded) {
 					t.Fatalf("controller-only field reached publisher: %s", excluded)
 				}
 			}
-			if original.Plan.SigningProfile != "example-key" || original.Plan.SigningImage != "controller-signing-pin" || original.Plan.DaemonImage != "controller-daemon-pin" || original.Plan.Root != "/private/project" || len(original.Plan.CheckInputs) != 1 {
+			if !original.Plan.Headroom.Enabled() || original.Plan.SigningProfile != "example-key" || original.Plan.SigningImage != "controller-signing-pin" || original.Plan.DaemonImage != "controller-daemon-pin" || original.Plan.Root != "/private/project" || len(original.Plan.CheckInputs) != 1 {
 				t.Fatal("projection mutated the retained controller plan")
+			}
+		})
+	}
+}
+
+func TestPublisherWireRequestOmitsEveryHeadroomMode(t *testing.T) {
+	for _, mode := range []string{"", "off", "passthrough", "optimize"} {
+		t.Run(mode, func(t *testing.T) {
+			config := headroom.Config{Mode: mode}
+			if config.Enabled() {
+				config.ImageID = "sha256:" + strings.Repeat("a", 64)
+				config.PolicyVersion = headroom.PolicyVersion
+			}
+			original := PublisherRequest{Plan: Plan{Headroom: config, PublicationIdentity: frozenTestIdentity()}}
+			data, err := json.Marshal(publisherRequestForContainer(original))
+			if err != nil || strings.Contains(string(data), "headroom") || original.Plan.Headroom != config {
+				t.Fatal("Headroom reached the frozen publisher or changed the controller plan", err)
 			}
 		})
 	}
