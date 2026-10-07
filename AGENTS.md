@@ -3,6 +3,16 @@
 Work directly on `main`. Commit and push each completed, validated iteration.
 Use plain commit messages without prefixes.
 
+For each completed, user-visible application iteration, advance the numeric beta
+identifier in `internal/buildinfo/version.go` and add a dated section to
+`CHANGELOG.md` in the same delivery. Update the README's current beta reference.
+An iteration may contain several commits; investigation, test maintenance and
+rebuilding unchanged source do not require a new version. Keep delivered
+changelog sections unchanged; collect completed changes under Unreleased until
+the next delivery.
+Follow `docs/proposals/beta-versioning.md` and verify the built/installed CLI's
+version and source revision before reporting delivery complete.
+
 # Provider service rules
 
 Account safety and compliance with provider terms are requirements throughout

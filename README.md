@@ -17,7 +17,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.5`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.7`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Ticket and feature runs retain [usage metrics](docs/usage-metrics.md) across
 attempts and resumes. Read them with `sdlc usage --since 7d --json`.

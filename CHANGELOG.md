@@ -7,6 +7,40 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.7 - 2026-10-07
+
+This release records the completed changes since the beta.6 progress delivery,
+including changes previously installed under beta.6 with newer source revisions.
+
+### Added
+
+- Unique run ID prefixes and terminal-launch UUID prefixes of at least three characters. Dashboard, answers, resume, inputs, usage, progress, history actions and run inspection resolve prefixes; ambiguous matches report candidate IDs.
+- `sdlc references` and `sdlc tickets REFERENCE` list local work references and their tickets, with matching shell commands.
+- `sdlc inputs --run ID` inspects captured requirements and attaches missing files to eligible paused runs without restarting them. Questions and run details identify the recovery command.
+- Read-only `sdlc storage` reports retained file sizes, categories and run ages. `--older-than DAYS` filters run rows; `--json` provides numeric results.
+- Named runtime builds from a committed local skills checkout, selected with `--runtime NAME` for single-ticket runs. Each run retains its selected image; variant builds preserve the shared runtime.
+- Bulk dashboard clearing with `dashboard remove --all`, previewed by default and applied with `--yes`. `forget` remains an alias; both retain saved work and its runtime update protection.
+- `storage purge --run ID|--all` previews permanent deletion of stopped saved runs and affected feature checkpoints; `--yes` applies it. Tickets, specifications, archives and account settings remain.
+- `work archive --reference REF` moves the complete stopped reference into `.sdlc/work/.archive`, preserving its files and freeing the original reference name for fresh scoping. Archived work no longer blocks runtime replacement or resumes from its original paths.
+- `sdlc update --agent-tools` refreshes Codex, Claude, skills and agents while retaining other dependency pins. Add `--update-dockerfile` to write those four selected pins into the source Dockerfile after a successful runtime update; review and commit that change to share it with CI.
+
+### Changed
+
+- Rename host-only installation/update mode to `--sdlc-only`, keeping `--cli-only` as a compatibility alias. This mode retains the complete runtime, including provider CLIs and instruction catalogues.
+- Present onboarding, setup problems and next actions in separate readable sections. Run and usage views distinguish missing evidence from failed checks.
+- Pin the published skills catalogue with evidence-based test selection guidance.
+
+### Fixed
+
+- Scroll long shell help and command output with arrows, wheel and Page Up/Page Down. Clicking pauses output for terminal text selection; Escape restores scrolling and live updates.
+- Keep dashboard footers and copy viewports steady during refreshes, and highlight questions, failures and active work while dimming completed rows.
+- Capture native shell command output without the terminal flash, retain the command and its result, and keep runtime update failures visible without duplicate installer headings.
+- Resolve committed links to requirements before snapshotting them. Preserve native sessions and captured inputs when recovering missing files, and reject incomplete source history before connected work begins.
+- Use the active project's GitHub account for runtime status and explain account-pairing waits.
+- Give repair agents bounded, actionable check failure details, preserving late compiler diagnostics. Isolated checks remove inherited proxy and publication credential variables.
+- Preserve source dependency defaults when building local skills variants.
+- Explain dashboard entries already removed while their saved work remains. Cleanup accepts ordinary owned scoping folders and ignores empty preparation directories while retaining checkpoint permissions, ownership and controller-lock checks.
+
 ## 0.1.0-beta.6 - 2026-10-06
 
 ### Added
