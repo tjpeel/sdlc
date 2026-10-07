@@ -89,12 +89,12 @@ func checkout(ctx context.Context, root string) (string, error) {
 
 func realPath(path string) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return fmt.Errorf("saved work paths must be absolute and clean")
+		return fmt.Errorf("saved work path %q must be absolute and clean", path)
 	}
 	for p := path; ; p = filepath.Dir(p) {
 		i, err := os.Lstat(p)
 		if err != nil || !i.IsDir() || i.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("saved work paths must be real directories")
+			return fmt.Errorf("saved work directory %q must be a real directory; symlink paths are unsupported", p)
 		}
 		if p == filepath.Dir(p) {
 			break
@@ -104,21 +104,47 @@ func realPath(path string) error {
 }
 
 func openDirectory(path string) (*os.Root, error) {
+	return openCheckedDirectory(path, false)
+}
+
+// Reference folders also hold ordinary specifications before any controller
+// starts. Read access is allowed, but only their owner may write them. Runtime
+// checkpoints, work storage, archive storage and registry directories remain
+// subject to the private-directory policy.
+func openReference(path string) (*os.Root, error) {
+	return openCheckedDirectory(path, true)
+}
+
+func directoryMode(info os.FileInfo, reference bool) bool {
+	mode := info.Mode().Perm()
+	if reference {
+		return mode&0700 == 0700 && mode&0022 == 0
+	}
+	return mode == 0700
+}
+
+func openCheckedDirectory(path string, reference bool) (*os.Root, error) {
 	if err := realPath(path); err != nil {
 		return nil, err
 	}
 	i, err := os.Lstat(path)
-	if err != nil || i.Mode().Perm() != 0700 || !owned(i, false) {
-		return nil, fmt.Errorf("saved work requires private owned directories")
+	if err != nil {
+		return nil, fmt.Errorf("cannot inspect saved work directory %q: %w", path, err)
+	}
+	if !directoryMode(i, reference) || !owned(i, false) {
+		if reference {
+			return nil, fmt.Errorf("work reference directory %q requires owner rwx permissions, no group or other write permissions, and current-user ownership (mode %04o is unsupported)", path, i.Mode().Perm())
+		}
+		return nil, fmt.Errorf("saved work directory %q requires mode 0700 and current-user ownership (mode %04o is unsupported)", path, i.Mode().Perm())
 	}
 	r, err := os.OpenRoot(path)
 	if err != nil {
 		return nil, err
 	}
 	opened, err := r.Stat(".")
-	if err != nil || !os.SameFile(i, opened) {
+	if err != nil || !os.SameFile(i, opened) || !directoryMode(opened, reference) || !owned(opened, false) {
 		r.Close()
-		return nil, fmt.Errorf("saved work directory changed while opening")
+		return nil, fmt.Errorf("saved work directory %q changed while opening", path)
 	}
 	return r, nil
 }
@@ -182,11 +208,18 @@ func scan(ctx context.Context, root string) (inventory, error) {
 		if strings.EqualFold(ref.Name(), ".archive") {
 			continue
 		}
-		if !component(ref.Name()) || !ref.IsDir() {
-			return in, fmt.Errorf("unsafe work reference entry")
-		}
 		path := filepath.Join(work, ref.Name())
-		r, err := openDirectory(path)
+		if !component(ref.Name()) {
+			return in, fmt.Errorf("unsafe work reference entry %q", path)
+		}
+		if !ref.IsDir() {
+			info, err := ref.Info()
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || !owned(info, true) {
+				return in, fmt.Errorf("work reference entry %q must be an owned regular file or a safe reference directory; links and writable entries are unsupported", path)
+			}
+			continue
+		}
+		r, err := openReference(path)
 		if err != nil {
 			return in, err
 		}
@@ -205,7 +238,7 @@ func scan(ctx context.Context, root string) (inventory, error) {
 			r.Close()
 			s, err := workseries.Load(seriesDir)
 			if err != nil || s.Plan.Root != in.root || s.Plan.Reference != ref.Name() {
-				return in, fmt.Errorf("invalid saved feature checkpoint")
+				return in, fmt.Errorf("invalid saved feature checkpoint in %q", seriesDir)
 			}
 			in.series[seriesDir] = s
 		} else if !os.IsNotExist(err) {
@@ -217,7 +250,7 @@ func scan(ctx context.Context, root string) (inventory, error) {
 		}
 		for _, ticket := range tickets {
 			if !component(ticket.Name()) || !ticket.IsDir() {
-				return in, fmt.Errorf("unsafe saved run namespace")
+				return in, fmt.Errorf("unsafe saved run namespace %q", filepath.Join(path, "runs", ticket.Name()))
 			}
 			namespace := filepath.Join(path, "runs", ticket.Name())
 			runs, err := entries(namespace)
@@ -226,12 +259,32 @@ func scan(ctx context.Context, root string) (inventory, error) {
 			}
 			for _, entry := range runs {
 				if !identifier.MatchString(entry.Name()) || !entry.IsDir() {
-					return in, fmt.Errorf("invalid saved run directory")
+					return in, fmt.Errorf("invalid saved run directory %q", filepath.Join(namespace, entry.Name()))
 				}
 				directory := filepath.Join(namespace, entry.Name())
 				r, err := openDirectory(directory)
 				if err != nil {
 					return in, err
+				}
+				// Preparation can stop after creating its canonical directory but
+				// before writing any checkpoint. Only a genuinely empty directory
+				// is absent saved work; even a lone lock or invalid journal still
+				// requires inspection. Creators hold the runtime shared lease
+				// before mkdir, and mutations repeat this scan under its writer lock.
+				f, err := r.Open(".")
+				if err != nil {
+					r.Close()
+					return in, err
+				}
+				contents, readErr := f.ReadDir(1)
+				f.Close()
+				if readErr != nil && readErr != io.EOF {
+					r.Close()
+					return in, fmt.Errorf("cannot inspect saved run directory %q: %w", directory, readErr)
+				}
+				if len(contents) == 0 && readErr == io.EOF {
+					r.Close()
+					continue
 				}
 				if _, err := privateFile(r, "journal.json"); err != nil && !os.IsNotExist(err) {
 					r.Close()
@@ -243,22 +296,22 @@ func scan(ctx context.Context, root string) (inventory, error) {
 				if err == nil {
 					run.Ticket = j.Plan.Ticket
 					if j.ID != run.ID || j.Plan.Root != in.root || j.Plan.Reference != run.Reference {
-						return in, fmt.Errorf("saved run identity does not match its location")
+						return in, fmt.Errorf("saved run identity does not match its location %q", directory)
 					}
 				} else {
 					p, e := runstatus.LoadPreparation(directory)
 					if e != nil {
-						return in, fmt.Errorf("invalid saved run or preparation checkpoint")
+						return in, fmt.Errorf("invalid saved run or preparation checkpoint in %q", directory)
 					}
 					run.Ticket = filepath.ToSlash(filepath.Join(".sdlc", "work", p.Reference, "tickets", p.Ticket))
 					in.featureOwned[run.Directory] = p.FeatureOwned
 					if p.ID != run.ID || p.Root != in.root || p.Reference != run.Reference {
-						return in, fmt.Errorf("saved preparation identity does not match its location")
+						return in, fmt.Errorf("saved preparation identity does not match its location %q", directory)
 					}
 				}
 				ticketFile := filepath.Base(run.Ticket)
 				if !component(ticketFile) || run.Ticket != filepath.ToSlash(filepath.Join(".sdlc", "work", run.Reference, "tickets", ticketFile)) || strings.TrimSuffix(ticketFile, ".md") != ticket.Name() {
-					return in, fmt.Errorf("saved run ticket identity does not match its namespace")
+					return in, fmt.Errorf("saved run ticket identity does not match its namespace %q", namespace)
 				}
 				in.runs = append(in.runs, run)
 			}
@@ -319,6 +372,7 @@ func selectRemoval(in inventory, options RemoveOptions) (Removal, error) {
 // held retains anchored directories and lock inodes until the mutation ends.
 type held struct {
 	dirs          map[string]*os.Root
+	references    map[string]bool
 	locks         map[string]*os.File
 	registrations []registration
 }
@@ -337,14 +391,28 @@ func (h *held) close() {
 	}
 }
 func (h *held) directory(path string) (*os.Root, error) {
+	return h.checkedDirectory(path, false)
+}
+
+func (h *held) reference(path string) (*os.Root, error) {
+	return h.checkedDirectory(path, true)
+}
+
+func (h *held) checkedDirectory(path string, reference bool) (*os.Root, error) {
 	if r := h.dirs[path]; r != nil {
 		return r, nil
 	}
-	r, err := openDirectory(path)
+	r, err := openCheckedDirectory(path, reference)
 	if err != nil {
 		return nil, err
 	}
 	h.dirs[path] = r
+	if reference {
+		if h.references == nil {
+			h.references = map[string]bool{}
+		}
+		h.references[path] = true
+	}
 	return r, nil
 }
 func privateFile(r *os.Root, name string) (os.FileInfo, error) {
@@ -353,7 +421,7 @@ func privateFile(r *os.Root, name string) (os.FileInfo, error) {
 		return nil, err
 	}
 	if !i.Mode().IsRegular() || i.Mode().Perm() != 0600 || !owned(i, true) {
-		return nil, fmt.Errorf("saved work metadata and locks must be private, owned, regular and single-linked")
+		return nil, fmt.Errorf("saved work metadata or lock %q must be mode 0600, owned, regular and single-linked", filepath.Join(r.Name(), name))
 	}
 	return i, nil
 }
@@ -396,8 +464,8 @@ func (h *held) validate() error {
 	for path, r := range h.dirs {
 		i, e := os.Lstat(path)
 		opened, oe := r.Stat(".")
-		if e != nil || oe != nil || realPath(path) != nil || !os.SameFile(i, opened) || i.Mode().Perm() != 0700 || !owned(i, false) {
-			return fmt.Errorf("saved work directory changed")
+		if e != nil || oe != nil || realPath(path) != nil || !os.SameFile(i, opened) || !directoryMode(i, h.references[path]) || !owned(i, false) {
+			return fmt.Errorf("saved work directory %q changed or has unsupported permissions", path)
 		}
 	}
 	for path, f := range h.locks {
@@ -538,13 +606,14 @@ func acquire(stateDir string, in inventory, result Removal) (*held, error) {
 	}
 	for _, run := range result.Runs {
 		for p := filepath.Dir(run.Directory); p != filepath.Join(in.root, ".sdlc"); p = filepath.Dir(p) {
-			if _, err := h.directory(p); err != nil {
+			reference := p == filepath.Join(in.root, ".sdlc", "work", run.Reference)
+			if _, err := h.checkedDirectory(p, reference); err != nil {
 				return fail(err)
 			}
 		}
 	}
 	for _, p := range result.Series {
-		if _, err := h.directory(filepath.Dir(p)); err != nil {
+		if _, err := h.reference(filepath.Dir(p)); err != nil {
 			return fail(err)
 		}
 	}
@@ -857,7 +926,7 @@ func Archive(ctx context.Context, stateDir, root, reference string, dryRun bool)
 	if err != nil {
 		return result, err
 	}
-	if _, err := h.directory(refPath); err != nil {
+	if _, err := h.reference(refPath); err != nil {
 		return result, err
 	}
 	current, err := scan(ctx, in.root)

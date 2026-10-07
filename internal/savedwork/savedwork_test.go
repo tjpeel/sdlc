@@ -413,3 +413,219 @@ func TestInstallationStateInsideWorkIsNeverMovedOrDeleted(t *testing.T) {
 	}
 	exists(t, filepath.Join(state, "profile.json"), true)
 }
+
+func referenceMode(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadableScopingReferencesDoNotBlockSavedWork(t *testing.T) {
+	root, state := fixture(t)
+	referenceMode(t, root, 0755)
+	run, _ := saved(t, root, "Example", firstID)
+	work := filepath.Join(root, ".sdlc", "work")
+	empty := filepath.Join(work, "Empty")
+	mkdir(t, empty)
+	referenceMode(t, empty, 0755)
+	scoped := filepath.Join(work, "Scoping")
+	spec := filepath.Join(scoped, "spec.md")
+	write(t, spec, "Disposable scoping specification\n")
+	referenceMode(t, scoped, 0755)
+	write(t, filepath.Join(work, "notes.txt"), "Disposable ordinary work note\n")
+	ctx := context.Background()
+	runs, err := Discover(ctx, root)
+	if err != nil || len(runs) != 1 || runs[0] != run {
+		t.Fatalf("discovery with ordinary references: %+v %v", runs, err)
+	}
+	preview, err := Remove(ctx, state, root, RemoveOptions{All: true, DryRun: true})
+	if err != nil || len(preview.Runs) != 1 || len(preview.Series) != 0 {
+		t.Fatalf("all preview with ordinary references: %+v %v", preview, err)
+	}
+	if _, err := Archive(ctx, state, root, "Example", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(ctx, state, root, RemoveOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	exists(t, run.Directory, false)
+	exists(t, empty, true)
+	exists(t, spec, true)
+	exists(t, filepath.Join(work, "notes.txt"), true)
+	data, err := os.ReadFile(spec)
+	if err != nil || string(data) != "Disposable scoping specification\n" {
+		t.Fatalf("scoping input changed: %q %v", data, err)
+	}
+	for _, path := range []string{root, empty, scoped} {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode().Perm() != 0755 {
+			t.Fatalf("ordinary directory mode changed: %s %v", filepath.Base(path), err)
+		}
+	}
+}
+
+func TestArchiveReadableReferencePreservesModeAndFullContents(t *testing.T) {
+	root, state := fixture(t)
+	referenceMode(t, root, 0755)
+	run, j := saved(t, root, "Example", firstID)
+	series(t, root, "Example", run)
+	if err := runstatus.New(state).Register(run.Directory, j); err != nil {
+		t.Fatal(err)
+	}
+	ref := filepath.Join(root, ".sdlc", "work", "Example")
+	referenceMode(t, ref, 0755)
+	write(t, filepath.Join(ref, "spec.md"), "Disposable specification\n")
+	write(t, filepath.Join(ref, "inputs", "example.txt"), "Disposable input\n")
+	journal, err := os.ReadFile(filepath.Join(run.Directory, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := Archive(ctx, state, root, "Example", true); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Archive(ctx, state, root, "Example", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(result.Destination)
+	if err != nil || info.Mode().Perm() != 0755 {
+		t.Fatalf("archived reference mode changed: %v", err)
+	}
+	for _, item := range []struct{ path, contents string }{{"spec.md", "Disposable specification\n"}, {"inputs/example.txt", "Disposable input\n"}, {"tickets/01-example.md", "Disposable ticket\n"}, {"runs/01-example/" + firstID + "/journal.json", string(journal)}} {
+		data, err := os.ReadFile(filepath.Join(result.Destination, filepath.FromSlash(item.path)))
+		if err != nil || string(data) != item.contents {
+			t.Fatalf("archive changed %s: %v", item.path, err)
+		}
+	}
+	exists(t, filepath.Join(result.Destination, "series", "journal.json"), true)
+	// A runtime-free scoping reference follows the same permission policy.
+	notes := filepath.Join(root, ".sdlc", "work", "Notes")
+	write(t, filepath.Join(notes, "spec.md"), "Disposable scoping input")
+	referenceMode(t, notes, 0755)
+	result, err = Archive(ctx, state, root, "Notes", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Lstat(result.Destination)
+	if err != nil || info.Mode().Perm() != 0755 {
+		t.Fatalf("scoping archive changed mode: %v", err)
+	}
+	exists(t, filepath.Join(result.Destination, "spec.md"), true)
+}
+
+func TestReferencePermissionsAndLinksStillFailClosed(t *testing.T) {
+	for _, kind := range []string{"group-writable", "other-writable", "symlink", "runtime-mode", "malformed-runtime"} {
+		t.Run(kind, func(t *testing.T) {
+			root, state := fixture(t)
+			run, _ := saved(t, root, "Example", firstID)
+			ref := filepath.Join(root, ".sdlc", "work", "Unsafe")
+			mkdir(t, ref)
+			badPath := ref
+			switch kind {
+			case "group-writable":
+				referenceMode(t, ref, 0775)
+			case "other-writable":
+				referenceMode(t, ref, 0757)
+			case "symlink":
+				if err := os.Remove(ref); err != nil {
+					t.Fatal(err)
+				}
+				outside, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, ref); err != nil {
+					t.Fatal(err)
+				}
+			case "runtime-mode":
+				referenceMode(t, ref, 0755)
+				badPath = filepath.Join(ref, "runs")
+				mkdir(t, badPath)
+				referenceMode(t, badPath, 0755)
+			case "malformed-runtime":
+				other, _ := saved(t, root, "Unsafe", secondID)
+				referenceMode(t, ref, 0755)
+				badPath = other.Directory
+				write(t, filepath.Join(other.Directory, "journal.json"), "{}")
+			}
+			ctx := context.Background()
+			if _, err := Discover(ctx, root); err == nil {
+				t.Fatal("unsafe reference allowed discovery")
+			} else if !strings.Contains(err.Error(), badPath) {
+				t.Fatalf("error does not identify unsafe directory: %v", err)
+			}
+			if _, err := Remove(ctx, state, root, RemoveOptions{All: true}); err == nil {
+				t.Fatal("unsafe reference allowed purge")
+			}
+			if _, err := Archive(ctx, state, root, "Example", false); err == nil {
+				t.Fatal("unsafe sibling allowed archive")
+			}
+			exists(t, run.Directory, true)
+		})
+	}
+}
+
+func TestEmptyPreparationSiblingDoesNotBlockSavedWork(t *testing.T) {
+	root, state := fixture(t)
+	run, _ := saved(t, root, "Example", firstID)
+	empty, err := workrun.RunDirectory(root, "Pending", "01-pending.md", secondID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, ".sdlc", "work", "Pending", "spec.md"), "Disposable pending specification")
+	ctx := context.Background()
+	runs, err := Discover(ctx, root)
+	if err != nil || len(runs) != 1 || runs[0] != run {
+		t.Fatalf("empty preparation blocked discovery: %+v %v", runs, err)
+	}
+	preview, err := Remove(ctx, state, root, RemoveOptions{All: true, DryRun: true})
+	if err != nil || len(preview.Runs) != 1 {
+		t.Fatalf("empty preparation blocked purge preview: %+v %v", preview, err)
+	}
+	if _, err := Archive(ctx, state, root, "Example", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(ctx, state, root, RemoveOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	exists(t, run.Directory, false)
+	exists(t, empty, true)
+	exists(t, filepath.Join(empty, "run.lock"), false)
+	archived, err := Archive(ctx, state, root, "Pending", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived.Runs) != 0 {
+		t.Fatalf("empty directory advertised as saved run: %+v", archived.Runs)
+	}
+	exists(t, filepath.Join(archived.Destination, "runs", "01-pending", secondID), true)
+	exists(t, filepath.Join(archived.Destination, "spec.md"), true)
+}
+
+func TestNonemptyCheckpointlessPreparationStillFailsClosed(t *testing.T) {
+	for _, entry := range []string{"run.lock", "activity.json", "unexpected.txt"} {
+		t.Run(entry, func(t *testing.T) {
+			root, state := fixture(t)
+			run, _ := saved(t, root, "Example", firstID)
+			empty, err := workrun.RunDirectory(root, "Pending", "01-pending.md", secondID, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, filepath.Join(empty, entry), "Disposable incomplete preparation metadata")
+			ctx := context.Background()
+			if _, err := Discover(ctx, root); err == nil || !strings.Contains(err.Error(), empty) {
+				t.Fatalf("nonempty preparation escaped validation: %v", err)
+			}
+			if _, err := Remove(ctx, state, root, RemoveOptions{All: true}); err == nil {
+				t.Fatal("nonempty preparation allowed purge")
+			}
+			if _, err := Archive(ctx, state, root, "Example", false); err == nil {
+				t.Fatal("nonempty preparation allowed archive")
+			}
+			exists(t, run.Directory, true)
+			exists(t, filepath.Join(empty, entry), true)
+		})
+	}
+}
