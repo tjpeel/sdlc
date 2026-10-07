@@ -66,7 +66,7 @@ The command creates `local/sdlc`, packages `HEAD` with `git archive`, records it
 checksum in the formula, and runs `brew install local/sdlc/sdlc`. Homebrew installs
 Go as a build dependency, the native CLI into its Cellar, and public source under
 the keg's `libexec/source`. The new CLI then prepares Docker with the snapshot's
-pins. No account login occurs during installation. `--cli-only` keeps the runtime;
+pins. No account login occurs during installation. `--sdlc-only` keeps the runtime;
 `--dependencies` refreshes public runtime dependencies.
 
 An existing native CLI can be migrated only when its private installation receipt
@@ -88,7 +88,7 @@ After committing new source, update from any directory:
 ```sh
 sdlc update --dry-run
 sdlc update
-sdlc update --cli-only
+sdlc update --sdlc-only
 ```
 
 `sdlc update` refreshes the local snapshot and formula, runs
@@ -110,12 +110,12 @@ problem and retry `sdlc update`. Saved work continues to block runtime replaceme
 `sdlc update` prints one source/snapshot header and ends with an update outcome.
 If saved work blocks replacement after Homebrew installs the CLI, the outcome
 shows the CLI installed, the runtime kept, the blocking run and
-`Next: sdlc update --cli-only`. The command still exits with a failure status;
+`Next: sdlc update --sdlc-only`. The command still exits with a failure status;
 complete the saved work before retrying a full update. Terminal failures use a
 red heading and an accented next action. Redirected output and `NO_COLOR` keep
 plain text.
 
-`--cli-only` remains available while work is paused. Runtime build/update commands
+`--sdlc-only` remains available while work is paused. Runtime build/update commands
 discover the running package's current bundle, so Homebrew cleanup of older kegs
 does not leave them dependent on a removed source path. `version --details` checks
 the package checksum and reports its source revision outside a Git checkout.
@@ -231,6 +231,21 @@ project commands. It writes no state and needs no Docker or provider login.
 The listing describes filename order; it does not approve or launch tickets.
 Use `sdlc run` to select a ticket; its implementation skill checks ticket
 eligibility, dependencies and missing requirements when encountered.
+
+To retire a reference while keeping its complete local evidence:
+
+```sh
+sdlc work archive --reference TASK-123 --dry-run
+sdlc work archive --reference TASK-123
+```
+
+`archive` moves the complete `.sdlc/work/TASK-123` tree into a unique directory
+under `.sdlc/work/.archive/` and removes its run registrations. It refuses live
+runs or series. This reversible local move needs no `--yes`; the source reference
+is then free for fresh scoping. Archived trees are excluded from active reference
+discovery, resume and runtime guards. A later update may replace the recorded
+runtime image, so the archive is not a portable backup and does not guarantee
+later resumability.
 
 ## Run a feature
 
@@ -659,7 +674,9 @@ sdlc progress --run RECORDED_RUN_ID
 sdlc progress --run RECORDED_RUN_ID --follow
 sdlc progress --launch-id RECORDED_LAUNCH_ID --follow
 sdlc progress --run RECORDED_RUN_ID --once --json
-sdlc dashboard forget --run RECORDED_RUN_ID
+sdlc dashboard remove --run RECORDED_RUN_ID
+sdlc dashboard remove --all --scope project
+sdlc storage purge --all --dry-run
 ```
 
 `progress` appends labelled SDLC steps, check output and native agent output as
@@ -736,19 +753,29 @@ UI, rather than detached execution. Resume older runs to register them; dry runs
 do not register. The registry and logs can contain private repository paths and
 work details, so keep dashboard output private too.
 
-Runs have no automatic expiry. `dashboard forget --run RUN_ID` (also `remove`)
-removes one stopped run's registry entry while keeping its journal, logs, inputs,
-workspace and lock files. It checks the actual controller lock; a stale heartbeat
-alone is insufficient. Resuming re-registers the retained run. Corrupt records or
-missing run directories must be repaired before removal. Removal and report
-export currently fail closed on Windows because Unix ownership checks do not
-establish private Windows file ownership.
+Runs have no automatic expiry. `dashboard remove --run ID` hides one stopped
+run's registry entry immediately while retaining saved files and lock files.
+Saved work can still block an update; resuming registers the run again.
+`dashboard remove --all [--yes|--dry-run] [--scope project|installation]` previews clearing
+stopped registrations by default. Use `--yes` to clear them. The default scope
+is the installation.
 
-Use `sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY` before forgetting
-a run to keep a portable checkpoint report outside Git checkouts. The destination
-must already exist with mode `0700`; reports have mode `0600` and cannot overwrite
-an existing export. See [run history and retention](run-history.md) for the report
-contents, full artifact inventory and backup guidance.
+`storage purge --run ID|--all [--yes|--dry-run]` permanently deletes stopped
+saved runs in the current Git repository, including runs absent from the
+dashboard. Both selections preview by default and require `--yes` for deletion.
+It also removes affected feature series checkpoint directories; the preview
+reports the abandonment. Ticket and specification files remain. Live runs or
+series refuse removal. `--all` excludes archived references and credentials.
+`dashboard remove` is the recommended spelling; `dashboard forget` remains an
+alias. Both accept `--run ID` or `--all`, `--scope project|installation`, and
+`--yes|--dry-run`. Single-run removal remains immediate unless `--dry-run` is
+selected; bulk removal previews unless `--yes` is selected.
+
+Use `sdlc dashboard export --run ID --to PRIVATE_DIRECTORY` before hiding or
+deleting a run to keep a private checkpoint report outside Git checkouts. The
+destination must already exist with mode `0700`; reports have mode `0600` and
+cannot overwrite an existing export. A report cannot resume a run. See
+[run history and retention](run-history.md) for safeguards and backup guidance.
 
 Optional `--notify desktop [--sound]` sends fixed local macOS notifications for
 human questions, blocked/failed/interrupted runs, missing reviewer login and new
@@ -815,7 +842,7 @@ It validates a native CLI candidate, runs that candidate to build the runtime wi
 the checkout's pins, then atomically replaces the managed executable on PATH.
 Build or runtime preparation failure keeps the old host executable. Runtime and
 host installation are separate filesystem/Docker operations; if replacement fails
-after runtime selection, the error reports the partial outcome. `--cli-only`
+after runtime selection, the error reports the partial outcome. `--sdlc-only`
 skips runtime preparation; `--dependencies` selects newer public dependencies.
 
 Subsequent updates can run from any directory:
@@ -824,8 +851,10 @@ Subsequent updates can run from any directory:
 sdlc update --dry-run
 sdlc update
 sdlc update --pull
+sdlc update --agent-tools
+sdlc update --agent-tools --update-dockerfile
 sdlc update --dependencies
-sdlc update --cli-only
+sdlc update --sdlc-only
 ```
 
 For native installations, `update` runs the selected checkout's installer, using
@@ -844,16 +873,30 @@ described [above](#local-homebrew-installation).
 
 The default uses source pins and clears previously selected private dependency
 overrides after a successful runtime build. `--dependencies` instead selects the
-newer exact public versions supported by `runtime update`. `--cli-only` updates
-the host command while retaining the runtime. These options also work with
+newer exact public versions supported by `runtime update`. `--agent-tools` refreshes
+only Codex, Claude, the skills catalogue and the agents catalogue, retaining other
+dependency pins. An incomplete older pin record is filled from installed inventory;
+an existing exact Docker daemon tag may be resolved to its digest without upgrading its version.
+The selected exact versions are saved locally; source Dockerfile pins remain the shared build baseline.
+`runtime update --agent-tools` performs the same runtime-only refresh.
+`runtime status` only inspects versions. Default `update` rebuilds the source
+baseline; `--agent-tools` refreshes the four agent tools and `--dependencies`
+refreshes the full dependency set. Add `--update-dockerfile` to `--agent-tools`
+when those four selections should also become source pins.
+`--sdlc-only` updates the host SDLC program and shell while retaining all runtime
+components. `--cli-only` remains a compatibility alias. These modes cannot be combined.
+These options also work with
 `/update` in the shell. Reopen existing shells after installation.
 
 Resumable runs and incomplete feature series in known project roots block runtime
 replacement under the build lock. Ready standalone tickets and fully merged
-features permit it. The error identifies the saved work and offers `--cli-only`.
+features permit it. The error identifies the saved work and offers `--sdlc-only`.
 Checks cover registered, catalogued, current and source roots, including forgotten
 runs in those roots. An external root removed from every locator cannot be found;
 keep projects registered while they contain unfinished work.
+Archived references are excluded. Use `storage purge` to delete stopped saved
+runs or `work archive` to retain a complete reference outside active work; hiding
+a dashboard entry with `forget` does not release the guard.
 
 ### Where version pins live
 
@@ -864,11 +907,24 @@ keep projects registered while they contain unfinished work.
 | Local selected runtime | Private `runtime.json`, immutable image ID and inventory | `runtime update` or `update --dependencies` saves exact private selections. Default `update` or `runtime build --source-pins` returns to the source baseline. |
 | Saved run and feature settings | Private checkpoints | Frozen for their work; installation does not migrate them. |
 
-Local updates intentionally leave tracked pipeline pins untouched. They do not
-create source edits, commits or pull requests. CI pin changes reach a machine
-after updating its source and rebuilding the runtime; reinstalling only the CLI
-does not change provider versions. `runtime build` retains private pins for an
-ordinary rebuild; `--source-pins` explicitly applies the checkout's defaults.
+Local updates keep selections private by default. `--agent-tools --update-dockerfile`
+also writes the selected Codex, Claude, skills and agents pins to the source
+`runtime/Dockerfile`. It changes exactly `CODEX_VERSION`, `CLAUDE_VERSION`,
+`SKILLS_REVISION` and `AGENTS_REVISION`, retaining unrelated pins and text.
+`--update-dockerfile` requires `--agent-tools`. The outer `sdlc update` uses its
+selected source checkout; direct `runtime update` also requires an explicit
+`--source /PATH/TO/SDLC_SOURCE` for writeback.
+
+The source write follows successful runtime selection, including when the runtime
+is already current. If the runtime updates but the source write fails, the command
+returns an explicit partial result. Dry-run writes no source files; outer
+`update --dry-run` remains offline. The command does not commit or push. CI uses
+these source changes after a reviewed commit reaches the build checkout.
+
+`runtime build` retains private pins for an ordinary rebuild; `--source-pins`
+explicitly applies the checkout's defaults. Reinstalling only SDLC does not
+change provider versions. Debian packages are not individually pinned during
+ordinary rebuilds, so retaining tool pins does not guarantee an identical image.
 
 ## Build the shared runtime
 
@@ -904,7 +960,7 @@ sdlc runtime build
 
 Use `--source /PATH/TO/SDLC_CLONE` if the clone moves. Builds are local; CI neither
 builds nor publishes the Docker image. The one-shot installer/update performs
-both operations; `--cli-only` performs only executable replacement.
+both operations; `--sdlc-only` performs only executable replacement.
 
 If an existing installation uses `sdlc-codex-spike:local`, check that
 `sdlc runtime status` succeeds with the old CLI, then reinstall the CLI and rename
@@ -997,6 +1053,8 @@ After inspecting status, run from any directory:
 ```sh
 sdlc runtime update --dry-run
 sdlc runtime update
+sdlc runtime update --agent-tools
+sdlc runtime update --agent-tools --update-dockerfile --source /PATH/TO/SDLC_SOURCE
 ```
 
 `--dry-run` fetches public release metadata and checks Debian candidates in a
@@ -1032,9 +1090,11 @@ system plugin directories remain trusted host software. Configured plugins from
 the host's Docker settings are not inherited by the update build.
 
 The source clone is used to construct the existing allowlisted private build
-context. Selected pins alter only that context's Dockerfile. Successful selection
-records the pins and exact build recipe in private `runtime.json`; the tracked
-source checkout is not edited or committed by this command. Subsequent builds
+context. Selected pins alter that context's Dockerfile. Successful selection
+records the pins and exact build recipe in private `runtime.json`. The tracked
+source remains unchanged unless `--agent-tools --update-dockerfile` is selected;
+that option writes only the four agent tool pins described above. No update
+command commits or pushes the source changes. Subsequent builds
 from the same saved source retain these pins, even if source defaults changed.
 Use `runtime build --source-pins` or default `sdlc update` to apply the checkout's
 pins. An explicit different source uses its own defaults. Use

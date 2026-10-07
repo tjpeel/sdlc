@@ -14,7 +14,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/project"
 )
 
-const workUsage = "Usage: sdlc work --reference REFERENCE [--json] | work --references [--json]\nRun from a project repository to list local references and tickets without reading their bodies."
+const workUsage = "Usage: sdlc work --reference REFERENCE [--json] | work --references [--json]\n       sdlc work archive --reference REFERENCE [--dry-run]\nRun from a project repository to list local references and tickets, or archive a stopped reference."
 
 func referencesCommand(ctx context.Context, args []string, output io.Writer) error {
 	return browseWorkCommand(ctx, "references", args, output)
@@ -66,6 +66,9 @@ func browseWorkCommand(ctx context.Context, name string, args []string, output i
 }
 
 func workCommand(ctx context.Context, args []string, output io.Writer) error {
+	if len(args) > 0 && args[0] == "archive" {
+		return workArchiveCommand(ctx, args[1:], output)
+	}
 	flags := flag.NewFlagSet("work", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	reference := flags.String("reference", "", "work folder under .sdlc/work")

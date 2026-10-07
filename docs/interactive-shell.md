@@ -71,11 +71,21 @@ Useful commands:
 | `/inputs --run RUN_ID [--add RELATIVE_PATH] [--dry-run]` | Inspect captured requirements or attach missing files to an unpublished paused implementation without starting it. |
 | `/resume RUN_ID` | Inspect a stopped run, then Ctrl+S to resume its saved stage. |
 | `/usage` | Read recorded provider tokens, Headroom estimates and completion outcomes. |
-| `/update` | Install the saved source's CLI and runtime; `--cli-only` keeps the runtime. |
+| `/update` | Install SDLC and its runtime; `--agent-tools` refreshes Codex, Claude, skills and agents; add `--update-dockerfile` to write those source pins; `--sdlc-only` keeps the entire runtime. |
 | `/scope all` | Browse installation-wide history from multiple projects. |
 | `/scope project` | Return to the selected project's history. |
 | `/clear` | Clear the displayed view. |
 | `/exit` | Close this frontend. |
+
+`/update --agent-tools --update-dockerfile` writes only `CODEX_VERSION`,
+`CLAUDE_VERSION`, `SKILLS_REVISION` and `AGENTS_REVISION` in the selected source
+Dockerfile after successful runtime selection, including an already-current
+result. It retains other pins and text and makes no Git commit or push. A failed
+source write after runtime replacement reports a partial result. Dry-run stays
+offline and writes nothing. Without writeback, refresh selections stay private.
+Default `/update` rebuilds the source baseline; `--dependencies` refreshes the
+full dependency set. `runtime status` is read-only. `--cli-only` remains an alias
+for `--sdlc-only`.
 
 Use `@REFERENCE/NUMBERED_FILE` in `/run --ticket` for local ticket completion.
 Suggestions use reference names and filenames; they do not load ticket bodies.
@@ -127,9 +137,30 @@ least three characters. The same rule applies to answer, resume, inputs, usage
 and progress. Ambiguous prefixes list the matching full IDs; use more characters
 to select one. Commands retain the full ID after selection.
 Use `/progress --run RUN_ID` or `/dashboard --run RUN_ID --logs` to follow its
-output. `/dashboard forget --run
-RUN_ID` retains saved work and refuses active controllers under the existing
-rules. Reviewed bulk history clearing remains a later iteration.
+output.
+
+`dashboard remove` is the recommended spelling; `dashboard forget` remains an alias.
+Both hide registry entries and retain saved files.
+
+`/dashboard remove --run RUN_ID` hides the registry entry, retains saved
+work and refuses active controllers. Saved work can still block an update.
+`/dashboard remove --all` previews clearing stopped registrations across the
+installation; add `--scope project` to narrow it and `--yes` to clear them.
+Use `--dry-run` for an explicit preview.
+
+`/storage purge --run RUN_ID` or `/storage purge --all` previews permanent
+deletion of stopped saved runs in the current repository, including those absent
+from the dashboard. Add `--yes` to delete or `--dry-run` to preview. The preview
+also reports abandonment of affected feature series checkpoints, which are
+removed with the runs. Tickets and specs remain. Live runs or series refuse
+removal; `--all` excludes archived references and credentials.
+
+`/work archive --reference TASK-123 [--dry-run]` moves the full reference tree
+into a unique directory under `.sdlc/work/.archive/`, removes its run registrations
+and frees the name for fresh scoping. It refuses live runs or series and needs
+no `--yes`. The tree and evidence remain, but archived work is excluded from
+active discovery, resume and runtime guards. An update may replace its image,
+so archiving does not guarantee later resumability and is not a portable backup.
 
 ## Follow job output
 

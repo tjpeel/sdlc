@@ -53,7 +53,7 @@ elif args[:1] in (['install'], ['upgrade']):
     candidate.write_text("#!/usr/bin/env python3\\nimport os,sys\\nfrom pathlib import Path\\n"
         "if sys.argv[1:] == ['--version']: print('sdlc " + version + " (" + revision + "; test/test)')\\n"
         "else:\\n Path(os.environ['SDLC_STATE_DIR'],'runtime-call').write_text(os.environ.get('SDLC_UPDATE_PROJECT_ROOT','')+'\\\\n'+' '.join(sys.argv[1:]))\\n"
-        " if os.environ.get('FAKE_BREW_FAIL') == 'guard': print('sdlc: runtime replacement would prevent resuming feature EX-123, run abcdef123; complete this saved work first, or use sdlc update --cli-only', file=sys.stderr); sys.exit(1)\\n"
+        " if os.environ.get('FAKE_BREW_FAIL') == 'guard': print('sdlc: runtime replacement would prevent resuming feature EX-123, run abcdef123; complete this saved work first, or use sdlc update --sdlc-only', file=sys.stderr); sys.exit(1)\\n"
         " if os.environ.get('FAKE_BREW_FAIL') == 'runtime': sys.exit(1)\\n")
     candidate.chmod(0o700)
     (keg/'libexec/sdlc-homebrew.json').write_text(json.dumps({'schema_version':1,
@@ -123,7 +123,7 @@ class HomebrewInstallChecks(unittest.TestCase):
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
 
     def install(self, cli_only=True, dry_run=False):
-        args = argparse.Namespace(source=self.source, state_dir=self.state, cli_only=cli_only,
+        args = argparse.Namespace(source=self.source, state_dir=self.state, cli_only=cli_only, agent_tools=False, update_dockerfile=False,
                                   dependencies=False, dry_run=dry_run)
         with contextlib.redirect_stdout(io.StringIO()):
             installer.install(args)
@@ -233,18 +233,55 @@ class HomebrewInstallChecks(unittest.TestCase):
         self.assertIn('CLI: installed through Homebrew', final)
         self.assertIn('Runtime: kept to protect saved work', final)
         self.assertIn('Problem: runtime replacement would prevent resuming feature EX-123, run abcdef123', final)
-        self.assertIn('Next: sdlc update --cli-only', final)
+        self.assertIn('Next: sdlc update --sdlc-only', final)
         self.assertNotIn('Homebrew installation failed', stderr.getvalue())
         self.assertNotIn('\x1b', stdout.getvalue() + stderr.getvalue())
         self.assertEqual((self.state / 'runtime.json').read_text(), '{"private_runtime":"unchanged"}')
         self.assertTrue(self.native.is_symlink())
 
+    def test_dockerfile_flag_targets_selected_checkout_and_preview_is_offline(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--agent-tools', '--update-dockerfile', '--dry-run'])
+        self.assertEqual(status, 0)
+        self.assertIn('Dockerfile: update only the four agent-tool pins', output.getvalue())
+        self.assertFalse((self.brew / 'calls').exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--agent-tools', '--update-dockerfile'])
+        self.assertEqual(status, 0)
+        invocation = (self.state / 'runtime-call').read_text()
+        self.assertIn('runtime update --source ' + str(self.source.resolve()), invocation)
+        self.assertTrue(invocation.endswith('--agent-tools --update-dockerfile'))
+
+    def test_dockerfile_flag_requires_agent_tools(self):
+        for modes in (['--update-dockerfile'], ['--sdlc-only', '--update-dockerfile'], ['--dependencies', '--update-dockerfile']):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                installer.main(modes)
+            self.assertEqual(error.exception.code, 2)
+
+    def test_agent_tools_forwards_selected_mode(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--agent-tools'])
+        self.assertEqual(status, 0)
+        invocation = (self.state / 'runtime-call').read_text()
+        self.assertIn('runtime update --source ', invocation)
+        self.assertTrue(invocation.endswith('--agent-tools'))
+
+    def test_update_modes_are_exclusive_and_legacy_alias_works(self):
+        for modes in (['--agent-tools', '--dependencies'], ['--agent-tools', '--sdlc-only'], ['--agent-tools', '--cli-only']):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                installer.main(modes)
+            self.assertEqual(error.exception.code, 2)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--cli-only']), 0)
+        self.assertFalse((self.state / 'runtime-call').exists())
+
     def test_cli_only_success_summary_keeps_runtime(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--cli-only'])
+            status = installer.main(['--source', str(self.source), '--state-dir', str(self.state), '--sdlc-only'])
         self.assertEqual(status, 0)
-        self.assertIn('Update complete\nCLI: installed through Homebrew\nRuntime: kept (--cli-only)', stdout.getvalue())
+        self.assertIn('Update complete\nCLI: installed through Homebrew\nRuntime: kept (--sdlc-only)', stdout.getvalue())
         self.assertFalse((self.state / 'runtime-call').exists())
 
     def test_failure_before_cli_install_does_not_claim_partial_success(self):

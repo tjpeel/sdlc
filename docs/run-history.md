@@ -64,29 +64,58 @@ summaries can themselves contain sensitive material. File permissions are not
 encryption. Keep reports in private, backed-up storage and inspect them before
 sharing. A report cannot resume a run.
 
-## Remove a run from the dashboard
+## Hide dashboard entries, remove saved runs or archive work
 
 ```sh
-sdlc dashboard forget --run RECORDED_RUN_ID
+sdlc dashboard remove --run RECORDED_RUN_ID
+sdlc dashboard remove --all
+sdlc dashboard remove --all --scope project --yes
+sdlc storage purge --run RECORDED_RUN_ID
+sdlc storage purge --all --yes
+sdlc work archive --reference TASK-123 --dry-run
+sdlc work archive --reference TASK-123
 ```
 
-`remove` is an alias for `forget`. It removes only that run's JSON registration
-from the installation's private registry. It retains both registry and controller
-lock files, and every run artifact. It prints where the saved work remains.
+`dashboard remove` is the recommended spelling; `dashboard forget` remains an alias.
+Both hide registry entries and retain saved files. Both accept `--run ID` or
+`--all`, `--scope project|installation`, and `--yes|--dry-run`. The default scope
+is the installation. Single-run removal remains immediate unless `--dry-run` is
+selected; bulk removal previews unless `--yes` is selected.
 
-An active controller cannot be forgotten, even if its heartbeat is stale. The
-command acquires the controller's real lock and checks private metadata, file
-ownership and links before removing the registration. Missing directories or
-unsafe registry metadata must be repaired first. Removal and export fail closed
-on Windows until equivalent ownership checks are implemented.
+`dashboard remove --run` (also `forget --run`) hides one stopped run by deleting only its registry JSON. It
+retains saved work and lock files, so that work can still block an update.
+Resuming the retained run registers it again. An active controller cannot be
+forgotten, even if its heartbeat is stale. Export a report first if you want a
+snapshot that remains accessible without the registration.
 
-The dashboard stops listing the run; resuming it registers it again. The legacy
-`sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID` command
-resolves prefixes within that ticket's retained checkpoint directory, including
-runs forgotten from the dashboard.
+`dashboard remove --all` (also `forget --all`) previews clearing stopped registrations by default. Use `--yes`
+to clear them or `--dry-run` for an explicit preview. Its default scope is the
+installation; `--scope project` limits it to the current repository. It leaves
+all saved run files in place.
 
-Export a report first if you want it accessible independently of that registration.
-There is no automatic expiry, disk purge or credential deletion in this command.
+`storage purge` permanently deletes stopped saved runs
+from the current Git repository, including runs absent from the dashboard.
+Choose `--run ID` or `--all`. Both preview by default; `--yes` authorises deletion
+and `--dry-run` explicitly previews it. Affected feature series checkpoint
+directories are also removed, and the preview reports that the series will be
+abandoned. Ticket and specification files remain. Live runs or series refuse
+removal. `--all` excludes archived references and credentials.
+
+`work archive --reference REF` moves the complete `.sdlc/work/REF` tree to a
+unique directory under `.sdlc/work/.archive/` and removes dashboard registrations
+for its runs. `--dry-run` previews the move. It retains the tickets, specs, saved
+runs and evidence; the reversible local move needs no `--yes`. The source
+reference becomes available for fresh scoping. Live runs or series refuse
+archiving.
+
+Archived references are excluded from active discovery, resume and runtime
+guards. A later update can replace their runtime image, so archiving does not
+guarantee that a restored run can resume. It is not a portable backup.
+
+These operations check controller locks and private filesystem metadata.
+Unsafe links, ownership or metadata must be repaired first. Report export and
+history changes fail closed on Windows until equivalent ownership checks are
+implemented. There is no automatic expiry or credential deletion.
 
 ## What stays on disk
 

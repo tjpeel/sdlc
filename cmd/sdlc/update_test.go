@@ -236,7 +236,7 @@ func TestHomebrewUpdateReportsChildOutcomeOnceAndKeepsSilentFailureVisible(t *te
 				}
 			}
 			var output, diagnostics bytes.Buffer
-			err := updateHomebrew(context.Background(), t.TempDir(), root, false, false, false, false, &output, &diagnostics)
+			err := updateHomebrew(context.Background(), t.TempDir(), root, false, false, false, false, false, false, &output, &diagnostics)
 			if err == nil {
 				t.Fatal("child failure became success")
 			}
@@ -253,5 +253,46 @@ func TestHomebrewUpdateReportsChildOutcomeOnceAndKeepsSilentFailureVisible(t *te
 				t.Fatal("silent failure hidden:", diagnostics.String())
 			}
 		})
+	}
+}
+
+func TestNativeUpdateForwardsSelectedModesToSourceInstaller(t *testing.T) {
+	root := updateSourceFixture(t)
+	bin := t.TempDir()
+	nativeUpdateDestination(t, bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	captured := filepath.Join(t.TempDir(), "arguments")
+	t.Setenv("TEST_UPDATE_ARGUMENTS", captured)
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_UPDATE_ARGUMENTS\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"--agent-tools", "--sdlc-only", "--cli-only"} {
+		if err := updateCommand(context.Background(), []string{"--source", root, "--bin-dir", bin, mode}, io.Discard, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(captured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical := mode
+		if mode == "--cli-only" {
+			canonical = "--sdlc-only"
+		}
+		expected := []string{"run", "./cmd/sdlc-install", "--source", root, "--bin-dir", bin, canonical}
+		if string(data) != strings.Join(expected, "\n")+"\n" {
+			t.Fatalf("unexpected installer invocation: %s", data)
+		}
+	}
+	if err := updateCommand(context.Background(), []string{"--source", root, "--bin-dir", bin, "--agent-tools", "--update-dockerfile"}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(captured)
+	if !strings.HasSuffix(string(data), "--agent-tools\n--update-dockerfile\n") {
+		t.Fatal("Dockerfile flag not forwarded", string(data))
+	}
+	for _, modes := range [][]string{{"--agent-tools", "--dependencies"}, {"--agent-tools", "--sdlc-only"}, {"--agent-tools", "--cli-only"}, {"--update-dockerfile"}, {"--sdlc-only", "--update-dockerfile"}, {"--dependencies", "--update-dockerfile"}} {
+		if err := updateCommand(context.Background(), modes, io.Discard, io.Discard); err == nil {
+			t.Fatal("conflicting update modes accepted")
+		}
 	}
 }

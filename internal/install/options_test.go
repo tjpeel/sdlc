@@ -33,7 +33,7 @@ func main(){
 }
 
 func TestRuntimeUsesCandidateBeforeReplacement(t *testing.T) {
-	for _, policy := range []string{"source-pins", "dependencies", "bootstrap"} {
+	for _, policy := range []string{"source-pins", "dependencies", "bootstrap", "agent-tools", "agent-tools-bootstrap", "agent-tools-dockerfile"} {
 		t.Run(policy, func(t *testing.T) {
 			source, bin := fixture(t)
 			state, _ := canonicalStateDirectory(os.Getenv("SDLC_STATE_DIR"))
@@ -52,8 +52,8 @@ func TestRuntimeUsesCandidateBeforeReplacement(t *testing.T) {
 				projectRoot, _ = os.Getwd()
 				projectRoot, _ = filepath.EvalSymlinks(projectRoot)
 			}
-			options := Options{StateDirectory: state, Dependencies: policy != "source-pins"}
-			if policy == "dependencies" {
+			options := Options{StateDirectory: state, Dependencies: policy == "dependencies" || policy == "bootstrap", AgentTools: strings.HasPrefix(policy, "agent-tools"), UpdateDockerfile: policy == "agent-tools-dockerfile"}
+			if policy == "dependencies" || policy == "agent-tools" {
 				if err := os.WriteFile(filepath.Join(state, "runtime.json"), []byte(`{}`), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -76,11 +76,18 @@ func TestRuntimeUsesCandidateBeforeReplacement(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(source)
 			canonicalBin, _ := filepath.EvalSymlinks(bin)
 			wants := [][]string{{"runtime", "build", "--source", root, "--source-pins"}}
-			if policy == "dependencies" {
+			if policy == "dependencies" || policy == "agent-tools" {
 				wants = nil
 			}
 			if policy != "source-pins" {
-				wants = append(wants, []string{"runtime", "update", "--source", root})
+				update := []string{"runtime", "update", "--source", root}
+				if options.AgentTools {
+					update = append(update, "--agent-tools")
+				}
+				if options.UpdateDockerfile {
+					update = append(update, "--update-dockerfile")
+				}
+				wants = append(wants, update)
 			}
 			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
 			if len(lines) != len(wants) {
@@ -317,5 +324,20 @@ func TestValidateSourceRejectsUnsafeModuleFiles(t *testing.T) {
 				t.Fatalf("unsafe go.mod accepted: %s", kind)
 			}
 		})
+	}
+}
+
+func TestAgentToolPreviewAndExclusiveModes(t *testing.T) {
+	source, bin := fixture(t)
+	state := filepath.Join(t.TempDir(), "state")
+	var output bytes.Buffer
+	_, err := BuildWithOptions(context.Background(), source, bin, Options{AgentTools: true, DryRun: true, StateDirectory: state}, &output, io.Discard)
+	if err != nil || !strings.Contains(output.String(), "runtime build --source") || !strings.Contains(output.String(), "--agent-tools") {
+		t.Fatal(err, output.String())
+	}
+	for _, options := range []Options{{AgentTools: true, CLIOnly: true}, {AgentTools: true, Dependencies: true}, {UpdateDockerfile: true}, {UpdateDockerfile: true, CLIOnly: true}, {UpdateDockerfile: true, Dependencies: true}} {
+		if _, err := BuildWithOptions(context.Background(), source, bin, options, io.Discard, io.Discard); err == nil {
+			t.Fatal("conflicting modes accepted")
+		}
 	}
 }

@@ -84,7 +84,7 @@ func TestDashboardForgetRetainsCheckpointAndRestoresOnRegister(t *testing.T) {
 	before := dashboardTree(t, dir)
 	var out bytes.Buffer
 	registryBefore := dashboardTree(t, filepath.Join(root, "installation"))
-	if err := dashboardCommand(context.Background(), []string{"remove", "--run", j.ID[:3]}, &out); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+	if err := dashboardCommand(context.Background(), []string{"forget", "--run", j.ID[:3]}, &out); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("ambiguous remove: %v", err)
 	}
 	assertDashboardReadOnly(t, filepath.Join(root, "installation"), marker, registryBefore)

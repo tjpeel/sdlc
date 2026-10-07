@@ -91,13 +91,16 @@ def outcome(args, error=None):
     print('CLI: installed through Homebrew' if installed else 'CLI: installation did not complete', file=stream)
     if error:
         guarded = 'runtime replacement would prevent resuming' in str(error)
-        print('Runtime: kept to protect saved work' if guarded else 'Runtime: preparation did not complete' if installed and not args.cli_only else 'Runtime: not updated', file=stream)
+        partial_source = 'runtime updated, but source Dockerfile was not written' in str(error)
+        print('Runtime: updated; source Dockerfile was not written' if partial_source else 'Runtime: kept to protect saved work' if guarded else 'Runtime: preparation did not complete' if installed and not args.cli_only else 'Runtime: not updated', file=stream)
         print(styled('Problem: ' + plain_text(str(error)), '1;31', stream), file=stream)
         if guarded:
-            print(styled('Next: sdlc update --cli-only', '1;36', stream), file=stream)
+            print(styled('Next: sdlc update --sdlc-only', '1;36', stream), file=stream)
             print('Complete the saved work before replacing the runtime.', file=stream)
     else:
-        print('Runtime: kept (--cli-only)' if args.cli_only else 'Runtime: prepared', file=stream)
+        print('Runtime: kept (--sdlc-only)' if args.cli_only else 'Runtime: prepared', file=stream)
+        if args.update_dockerfile:
+            print('Dockerfile: selected source pins updated; review and commit the change to share with CI.', file=stream)
 
 
 def command(args, *, cwd=None, capture=False, env=None):
@@ -300,6 +303,8 @@ def prepare_package(source, state, brew, env, version, revision, count):
 
 
 def install(args):
+    if args.update_dockerfile and (args.source.is_symlink() or not args.source.is_dir()):
+        raise InstallError('--update-dockerfile source checkout must be a real directory without symlinks.')
     source, version, revision, count = snapshot_identity(args.source)
     brew = shutil.which('brew')
     if brew is None:
@@ -308,8 +313,11 @@ def install(args):
     print(f'Homebrew: {FORMULA}\nSource: {source}\nSnapshot: {version} ({revision})', flush=True)
     if args.dry_run:
         print('Would refresh the local formula/checksum and install or upgrade the committed snapshot.')
-        print('Runtime: unchanged (--cli-only)' if args.cli_only else
+        print('Runtime: unchanged (--sdlc-only)' if args.cli_only else
+              'Runtime: update agent tools; retain other dependency pins' if args.agent_tools else
               'Runtime: refresh dependencies' if args.dependencies else 'Runtime: rebuild with source pins')
+        if args.update_dockerfile:
+            print('Dockerfile: update only the four agent-tool pins in the selected source checkout after runtime validation; review and commit to share with CI')
         return
     command([sys.executable, str(source / 'scripts/check_sensitive.py'), '--worktree'], cwd=source)
     # Keep generated paths, source archives and coordination state private.
@@ -379,12 +387,16 @@ def install(args):
             command([brew, 'link', FORMULA], env=env)
         args._cli_installed = True
         if not args.cli_only:
-            runtime_source = candidate.resolve().parent.parent / 'libexec/source'
+            runtime_source = source if args.update_dockerfile else candidate.resolve().parent.parent / 'libexec/source'
             runtime_args = [str(candidate), 'runtime', 'build', '--source', str(runtime_source), '--source-pins']
-            if args.dependencies:
+            if args.dependencies or args.agent_tools:
                 if not (state / 'runtime.json').exists():
                     runtime_command(runtime_args, env)
                 runtime_args = [str(candidate), 'runtime', 'update', '--source', str(runtime_source)]
+            if args.agent_tools:
+                runtime_args.append('--agent-tools')
+            if args.update_dockerfile:
+                runtime_args.append('--update-dockerfile')
             runtime_command(runtime_args, env)
 
 
@@ -396,10 +408,14 @@ def main(argv=None):
     parser.add_argument('--source', type=Path, default=ROOT)
     parser.add_argument('--state-dir', type=Path, default=default_state)
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument('--cli-only', action='store_true', help='Keep the existing runtime unchanged.')
+    modes.add_argument('--sdlc-only', '--cli-only', dest='cli_only', action='store_true', help='Keep the existing runtime unchanged.')
+    modes.add_argument('--agent-tools', action='store_true', help='Update agent tools and retain other runtime pins.')
     modes.add_argument('--dependencies', action='store_true', help='Refresh public runtime dependencies.')
+    parser.add_argument('--update-dockerfile', action='store_true', help='With --agent-tools, save selected pins to the source checkout Dockerfile.')
     parser.add_argument('--dry-run', action='store_true', help='Preview without builds, writes or network access.')
     args = parser.parse_args(argv)
+    if args.update_dockerfile and not args.agent_tools:
+        parser.error('--update-dockerfile requires --agent-tools')
     try:
         install(args)
     except (InstallError, OSError, ValueError, subprocess.SubprocessError) as error:

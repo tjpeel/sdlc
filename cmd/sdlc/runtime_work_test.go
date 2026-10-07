@@ -27,7 +27,7 @@ func TestRuntimeGuardPreservesStoppedHumanWorkAndAllowsReadyStandalone(t *testin
 	guard := runtimeSavedWorkGuard(os.Getenv("SDLC_STATE_DIR"), j.Plan.Root)
 	previous := runtimeimage.State{ImageID: image, Source: j.Plan.Root}
 	err := guard(context.Background(), previous)
-	if err == nil || !strings.Contains(err.Error(), j.ID) || !strings.Contains(err.Error(), "--cli-only") {
+	if err == nil || !strings.Contains(err.Error(), j.ID) || !strings.Contains(err.Error(), "--sdlc-only") {
 		t.Fatal("pending run did not protect runtime", err)
 	}
 	j.State = "ready"

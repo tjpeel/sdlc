@@ -191,9 +191,29 @@ summary, export to an existing owned mode-0700 directory outside Git:
 sdlc dashboard export --run RUN_ID --to /PRIVATE/PATH/run-reports
 ```
 
-The report is private and is not a resumable backup. `dashboard forget` removes
-only the dashboard index entry; it retains the saved work. Do not run it merely
-to make a failure disappear.
+`dashboard remove` is the recommended spelling; `dashboard forget` remains an alias.
+Both hide registry entries and retain saved files.
+
+The report is private and is not a resumable backup. `dashboard remove --run ID`
+hides only the registry entry; saved work remains and can still block an update.
+Do not run it merely to make a failure disappear. `dashboard remove --all` (also `forget --all`) previews
+clearing stopped registrations across the installation; `--scope project`
+narrows it, `--yes` clears them and `--dry-run` explicitly previews.
+
+`storage purge --run ID|--all [--yes|--dry-run]` deletes saved files.
+It previews permanent deletion of stopped saved runs from the current Git
+repository, including unregistered runs. `--yes` authorises deletion. Affected
+feature series checkpoints are also removed; report their abandonment from the
+preview. Tickets and specs remain. Live runs or series refuse removal, and
+`--all` excludes archived references and credentials.
+
+`work archive --reference TASK-123 [--dry-run]` moves the entire reference tree
+to a unique directory under `.sdlc/work/.archive/` and removes its run registrations.
+This reversible local move needs no `--yes`, retains complete evidence and frees
+the source name for fresh scoping. Live runs or series refuse archiving.
+Archived work is excluded from active discovery, resume and runtime guards;
+a later update may replace its image. Do not promise later resumability or
+describe it as a portable backup.
 
 For a feature, report each recorded ticket state and PR link. A completed
 non-watch invocation can leave children waiting for dependencies or human

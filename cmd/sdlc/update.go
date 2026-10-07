@@ -25,7 +25,10 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 	flags.SetOutput(diagnostics)
 	source := flags.String("source", "", "SDLC checkout (defaults to the saved installation source)")
 	binDir := flags.String("bin-dir", "", "existing PATH directory (defaults to the managed installed executable)")
-	cliOnly := flags.Bool("cli-only", false, "install the CLI and keep the selected runtime")
+	cliOnly := flags.Bool("sdlc-only", false, "install only the host SDLC command and keep the selected runtime")
+	flags.BoolVar(cliOnly, "cli-only", false, "compatibility alias for --sdlc-only")
+	agentTools := flags.Bool("agent-tools", false, "update Codex, Claude Code, skills and agents while retaining other runtime pins")
+	updateDockerfile := flags.Bool("update-dockerfile", false, "with --agent-tools, save the four selected pins to the source Dockerfile")
 	dependencies := flags.Bool("dependencies", false, "refresh public dependencies instead of using the checkout's pins")
 	dryRun := flags.Bool("dry-run", false, "show the local installation plan without building, fetching or writing")
 	pull := flags.Bool("pull", false, "fast-forward a clean source checkout before installing")
@@ -35,8 +38,17 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 		}
 		return err
 	}
-	if flags.NArg() != 0 || (*cliOnly && *dependencies) {
-		return fmt.Errorf("update accepts named options; --cli-only and --dependencies cannot be combined")
+	if flags.NArg() != 0 || (*cliOnly && (*dependencies || *agentTools)) || (*dependencies && *agentTools) {
+		return fmt.Errorf("update accepts named options; --sdlc-only, --agent-tools and --dependencies cannot be combined")
+	}
+	if *updateDockerfile && *source != "" {
+		info, err := os.Lstat(*source)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("--update-dockerfile source checkout must be a real directory without symlinks")
+		}
+	}
+	if *updateDockerfile && !*agentTools {
+		return fmt.Errorf("--update-dockerfile requires --agent-tools")
 	}
 	manager, err := runtimeimage.New(output, diagnostics)
 	if err != nil {
@@ -51,7 +63,7 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 			if *binDir != "" {
 				return fmt.Errorf("Homebrew owns the installed CLI destination; omit --bin-dir")
 			}
-			return updateHomebrew(ctx, manager.Directory, *source, *cliOnly, *dependencies, *dryRun, *pull, output, diagnostics)
+			return updateHomebrew(ctx, manager.Directory, *source, *cliOnly, *dependencies, *agentTools, *updateDockerfile, *dryRun, *pull, output, diagnostics)
 		}
 	}
 	root, err := updateSource(ctx, manager.Directory, *source)
@@ -65,7 +77,7 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 			return err
 		}
 	}
-	options := install.Options{CLIOnly: *cliOnly, Dependencies: *dependencies, DryRun: true, StateDirectory: manager.Directory}
+	options := install.Options{CLIOnly: *cliOnly, Dependencies: *dependencies, AgentTools: *agentTools, UpdateDockerfile: *updateDockerfile, DryRun: true, StateDirectory: manager.Directory}
 	// Validate destination ownership and PATH before a requested source pull.
 	// The real installation rechecks both after building the candidate.
 	preview := io.Discard
@@ -97,7 +109,13 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 	}
 	installerArgs := []string{"run", "./cmd/sdlc-install", "--source", root, "--bin-dir", bin}
 	if *cliOnly {
-		installerArgs = append(installerArgs, "--cli-only")
+		installerArgs = append(installerArgs, "--sdlc-only")
+	}
+	if *agentTools {
+		installerArgs = append(installerArgs, "--agent-tools")
+	}
+	if *updateDockerfile {
+		installerArgs = append(installerArgs, "--update-dockerfile")
 	}
 	if *dependencies {
 		installerArgs = append(installerArgs, "--dependencies")
@@ -116,7 +134,7 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 	return nil
 }
 
-func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnly, dependencies, dryRun, pull bool, output, diagnostics io.Writer) error {
+func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnly, dependencies, agentTools, updateDockerfile, dryRun, pull bool, output, diagnostics io.Writer) error {
 	root := explicitSource
 	if root == "" {
 		data, err := viewReadFile(filepath.Join(stateDir, "homebrew.json"), 16384, true)
@@ -145,12 +163,17 @@ func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnl
 		fmt.Fprintf(output, "Homebrew: %s\nSource: %s\n", homebrew.Formula, root)
 		fmt.Fprintln(output, "Dry run: refresh the committed snapshot, local formula and checksum; brew upgrade "+homebrew.Formula)
 		if cliOnly {
-			fmt.Fprintln(output, "Runtime: unchanged (--cli-only)")
+			fmt.Fprintln(output, "Runtime: unchanged (--sdlc-only)")
+		} else if agentTools {
+			fmt.Fprintln(output, "Runtime: update agent tools; retain other dependency pins")
 		} else if dependencies {
 			fmt.Fprintln(output, "Runtime: refresh public dependencies using the installed package source")
 		} else {
 			fmt.Fprintln(output, "Runtime: rebuild from the installed package with source-pins")
 		}
+	}
+	if dryRun && updateDockerfile {
+		fmt.Fprintln(output, "Dockerfile: update only the four agent-tool pins in the selected source checkout after runtime validation; review and commit the change to share with CI")
 	}
 	if pull {
 		identity, err := project.InspectIdentity(ctx, root)
@@ -172,7 +195,13 @@ func updateHomebrew(ctx context.Context, stateDir, explicitSource string, cliOnl
 	}
 	args := []string{installer, "--source", root, "--state-dir", stateDir}
 	if cliOnly {
-		args = append(args, "--cli-only")
+		args = append(args, "--sdlc-only")
+	}
+	if agentTools {
+		args = append(args, "--agent-tools")
+	}
+	if updateDockerfile {
+		args = append(args, "--update-dockerfile")
 	}
 	if dependencies {
 		args = append(args, "--dependencies")

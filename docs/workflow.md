@@ -181,9 +181,32 @@ from output activity, displays attention reasons and retains unavailable records
 Overviews show ten runs per page, with completed work below attention items and
 active work. Use `--page N`, or n/p followed by Enter in a live terminal, to page
 history. Select details with `--run RUN_ID`, optionally adding `--logs` for a bounded
-private tail. `dashboard forget --run RUN_ID` removes only the registration after
-checking controller ownership. Saved work has no automatic expiry. Private
-`dashboard export` reports and full backup guidance are in [run history](run-history.md).
+private tail.
+
+`dashboard remove` is the recommended spelling; `dashboard forget` remains an alias.
+Both hide registry entries and retain saved files.
+
+`dashboard remove --run RUN_ID` hides only the registration after
+checking controller ownership. Saved files remain and can still block updates.
+`dashboard remove --all` previews clearing stopped registrations across the
+installation; use `--scope project` to narrow it and `--yes` to clear them.
+`--dry-run` explicitly previews.
+
+`storage purge --run RUN_ID` or `storage purge --all` previews permanent
+deletion of stopped saved runs in the current repository, including unregistered
+runs. `--yes` deletes them. Affected feature series checkpoints are also removed,
+and the preview reports their abandonment. Tickets and specs remain. Live runs
+or series refuse removal; archived references and credentials are excluded.
+
+`work archive --reference TASK-123 [--dry-run]` moves the whole reference tree to
+a unique directory under `.sdlc/work/.archive/`, removes its run registrations
+and frees the source name for fresh scoping. It retains all evidence and refuses
+live runs or series. This reversible local move needs no `--yes`. Archives are
+excluded from active discovery, resume and runtime guards; their image may later
+be replaced, so this is not a portable backup or a promise of resumability.
+
+Saved work has no automatic expiry. Private `dashboard export` reports and full
+backup guidance are in [run history](run-history.md).
 Optional local macOS notifications use `--notify desktop --sound` on the run or
 watching dashboard. Dashboard alerts also cover stale controllers; delivery
 failure cannot stop ticket execution. Usage fields are optional native measurements; aggregate counters never

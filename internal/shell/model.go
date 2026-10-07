@@ -393,6 +393,9 @@ func (m *Model) submit() tea.Cmd {
 		if len(args) == 1 && m.reference != "" {
 			args = append(args, "--reference", m.reference)
 		}
+		if len(args) >= 2 && args[1] == "archive" && m.reference != "" && !hasOptionValue(args, "reference") {
+			args = append(args, "--reference", m.reference)
+		}
 	case "attention":
 		args = append([]string{"dashboard", "--attention"}, args[1:]...)
 		m.monitor = true
@@ -418,6 +421,20 @@ func (m *Model) submit() tea.Cmd {
 		return cmd
 	case "dashboard":
 		if c, ok := m.command(args); ok && c.Native {
+			for i, arg := range args {
+				if arg == "--scope=all" {
+					args[i] = "--scope=installation"
+				} else if i > 0 && arg == "all" && args[i-1] == "--scope" {
+					args[i] = "installation"
+				}
+			}
+			if len(args) > 1 && (args[1] == "remove" || args[1] == "forget") && !hasOptionValue(args, "scope") {
+				scope := m.scope
+				if scope == "all" {
+					scope = "installation"
+				}
+				args = append(args, "--scope", scope)
+			}
 			break
 		}
 		m.monitor = true

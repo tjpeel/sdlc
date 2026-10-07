@@ -81,7 +81,7 @@ func discover(root string) ([]string, [][]string, error) {
 var ticketName = regexp.MustCompile(`^[0-9]+-[^/]+\.md$`)
 
 func validWorkReference(reference string) bool {
-	return utf8.ValidString(reference) && reference != "" && reference != "." && reference != ".." &&
+	return utf8.ValidString(reference) && reference != "" && reference != "." && reference != ".." && !strings.EqualFold(reference, ".archive") &&
 		!strings.ContainsAny(reference, "/\\") && !hasControl(reference)
 }
 
@@ -96,6 +96,9 @@ func tickets(root string) ([]string, error) {
 		return nil, errors.New("cannot inspect local work directory")
 	}
 	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), ".archive") {
+			continue
+		}
 		ref := filepath.Join(work, entry.Name())
 		if err := directoryOrMissing(ref); err != nil {
 			return nil, err

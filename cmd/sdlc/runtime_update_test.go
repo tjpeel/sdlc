@@ -21,6 +21,8 @@ import (
 )
 
 type updateFixture struct {
+	buildFailure   bool
+	sourceEdit     bool
 	state          runtimeimage.State
 	options        runtimeimage.BuildOptions
 	builds         int
@@ -43,6 +45,9 @@ func (fixture *updateFixture) PackageUpdates(_ context.Context, state runtimeima
 
 func (fixture *updateFixture) BuildWithOptions(ctx context.Context, source string, options runtimeimage.BuildOptions) (runtimeimage.State, error) {
 	fixture.builds++
+	if fixture.buildFailure {
+		return runtimeimage.State{}, errors.New("disposable build failure")
+	}
 	fixture.options = options
 	if !options.Refresh || options.Pins == nil || options.ExpectedImageID != fixture.state.ImageID {
 		return runtimeimage.State{}, errors.New("update omitted fresh-build or stale-plan protection")
@@ -92,6 +97,10 @@ func (fixture *updateFixture) BuildWithOptions(ctx context.Context, source strin
 	candidate.BuildRecipe = string(recipe)
 	if err := options.ValidateCandidate(ctx, candidate); err != nil {
 		return runtimeimage.State{}, err
+	}
+	if fixture.sourceEdit {
+		data, _ := os.ReadFile(filepath.Join(source, "runtime", "Dockerfile"))
+		os.WriteFile(filepath.Join(source, "runtime", "Dockerfile"), append(data, []byte("# local edit during build\n")...), 0600)
 	}
 	fixture.state = candidate
 	return candidate, nil
@@ -268,5 +277,74 @@ func TestRuntimeRecipeRejectsLinkedAndOversizedInputs(t *testing.T) {
 	}
 	if _, err := readRuntimeRecipe(manager.state.Source); err == nil {
 		t.Fatal("oversized recipe accepted")
+	}
+}
+
+func TestAgentToolsDockerfileWriteFollowsValidatedRuntime(t *testing.T) {
+	for _, scenario := range []string{"dry-run", "success", "already-current", "build-failure", "local-edit"} {
+		t.Run(scenario, func(t *testing.T) {
+			manager := newUpdateFixture(t)
+			source := runGitFixture(t)
+			os.Mkdir(filepath.Join(source, "runtime"), 0700)
+			original, _ := os.ReadFile(filepath.Join(manager.state.Source, "runtime", "Dockerfile"))
+			target := filepath.Join(source, "runtime", "Dockerfile")
+			if err := os.WriteFile(target, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			manager.state.Source = source
+			if scenario == "already-current" {
+				for index, dependency := range manager.state.Inventory.Dependencies {
+					switch dependency.Source {
+					case "@openai/codex":
+						manager.state.Inventory.Dependencies[index].Version = "0.159.4"
+					case "@anthropic-ai/claude-code":
+						manager.state.Inventory.Dependencies[index].Version = "2.1.288"
+					case "tjpeel/skills", "tjpeel/agents":
+						manager.state.Inventory.Dependencies[index].Version = strings.Repeat("a", 40)
+					}
+				}
+			}
+			manager.buildFailure = scenario == "build-failure"
+			manager.sourceEdit = scenario == "local-edit"
+			oldID := manager.state.ImageID
+			var output bytes.Buffer
+			err := runtimeUpdateWithSourcePolicy(context.Background(), manager, runtimeupdates.Checker{Client: updateHTTP(false)}, source, scenario == "dry-run", true, true, &output)
+			after, _ := os.ReadFile(target)
+			switch scenario {
+			case "dry-run":
+				if err != nil || manager.builds != 0 || !bytes.Equal(original, after) || !strings.Contains(output.String(), "Dockerfile: ARG CODEX_VERSION=") {
+					t.Fatal(err, output.String())
+				}
+			case "build-failure":
+				if err == nil || manager.state.ImageID != oldID || !bytes.Equal(original, after) {
+					t.Fatal("failed build changed source/runtime", err)
+				}
+			case "local-edit":
+				if err == nil || !strings.Contains(err.Error(), "runtime updated, but source Dockerfile was not written") || manager.state.ImageID == oldID || !bytes.Contains(after, []byte("# local edit during build")) {
+					t.Fatal("partial result lost source edit or runtime", err)
+				}
+			case "success", "already-current":
+				if err != nil || manager.state.ImageID == oldID || !strings.Contains(output.String(), "Review and commit") {
+					t.Fatal(err, output.String())
+				}
+				for _, key := range []string{"CODEX_VERSION", "CLAUDE_VERSION", "SKILLS_REVISION", "AGENTS_REVISION"} {
+					if !bytes.Contains(after, []byte("ARG "+key+"="+manager.options.Pins.Arguments[key])) {
+						t.Fatal("source differs from runtime plan", key)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDockerfileFlagRequiresTargetedModeAndCheckout(t *testing.T) {
+	for _, args := range [][]string{{"update", "--update-dockerfile"}, {"update", "--agent-tools", "--update-dockerfile"}, {"build", "--update-dockerfile"}} {
+		if err := runtimeCommand(context.Background(), args, io.Discard, io.Discard); err == nil {
+			t.Fatal("invalid Dockerfile flag combination accepted", args)
+		}
+	}
+	manager := newUpdateFixture(t)
+	if err := runtimeUpdateWithSourcePolicy(context.Background(), manager, runtimeupdates.Checker{Client: updateHTTP(false)}, manager.state.Source, false, true, true, io.Discard); err == nil || !strings.Contains(err.Error(), "checkout") || manager.builds != 0 {
+		t.Fatal("package/noncheckout source accepted", err)
 	}
 }

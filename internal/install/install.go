@@ -53,10 +53,12 @@ func samePath(left, right string) bool {
 
 // Options controls whether installation also prepares the managed runtime.
 type Options struct {
-	CLIOnly        bool
-	Dependencies   bool
-	DryRun         bool
-	StateDirectory string
+	CLIOnly          bool
+	Dependencies     bool
+	AgentTools       bool
+	UpdateDockerfile bool
+	DryRun           bool
+	StateDirectory   string
 }
 
 // Build retains the original CLI-only installation API.
@@ -66,10 +68,19 @@ func Build(ctx context.Context, source, binDir string, stdout, stderr io.Writer)
 
 // BuildWithOptions prepares the runtime with the candidate before replacing the host command.
 func BuildWithOptions(ctx context.Context, source, binDir string, options Options, stdout, stderr io.Writer) (string, error) {
-	if options.CLIOnly && options.Dependencies {
-		return "", fmt.Errorf("--cli-only and --dependencies are mutually exclusive")
+	if (options.CLIOnly && (options.Dependencies || options.AgentTools)) || (options.Dependencies && options.AgentTools) {
+		return "", fmt.Errorf("--sdlc-only, --agent-tools and --dependencies are mutually exclusive")
 	}
 
+	if options.UpdateDockerfile && !options.AgentTools {
+		return "", fmt.Errorf("--update-dockerfile requires --agent-tools")
+	}
+	if options.UpdateDockerfile {
+		info, err := os.Lstat(source)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("--update-dockerfile source checkout must be a real directory without symlinks")
+		}
+	}
 	root, err := ValidateSource(source)
 	if err != nil {
 		return "", fmt.Errorf("source directory: %w", err)
@@ -123,7 +134,7 @@ func BuildWithOptions(ctx context.Context, source, binDir string, options Option
 		return "", err
 	}
 	runtimeSteps := [][]string{{"runtime", "build", "--source", root, "--source-pins"}}
-	if options.Dependencies {
+	if options.Dependencies || options.AgentTools {
 		info, err := os.Lstat(filepath.Join(stateDirectory, "runtime.json"))
 		if err == nil {
 			if !info.Mode().IsRegular() {
@@ -133,15 +144,27 @@ func BuildWithOptions(ctx context.Context, source, binDir string, options Option
 		} else if !os.IsNotExist(err) {
 			return "", err
 		}
-		runtimeSteps = append(runtimeSteps, []string{"runtime", "update", "--source", root})
+		updateArgs := []string{"runtime", "update", "--source", root}
+		if options.AgentTools {
+			updateArgs = append(updateArgs, "--agent-tools")
+		}
+		if options.UpdateDockerfile {
+			updateArgs = append(updateArgs, "--update-dockerfile")
+		}
+		runtimeSteps = append(runtimeSteps, updateArgs)
 	}
 	fmt.Fprintf(stdout, "Source: %s\nExecutable: %s\n", root, destination)
 	if options.CLIOnly {
-		fmt.Fprintln(stdout, "Runtime: unchanged (--cli-only)")
+		fmt.Fprintln(stdout, "Runtime: unchanged (--sdlc-only)")
+	} else if options.AgentTools {
+		fmt.Fprintln(stdout, "Runtime: update agent tools; preserve other pins; bootstrap with source pins if missing")
 	} else if options.Dependencies {
 		fmt.Fprintln(stdout, "Runtime: refresh dependencies; bootstrap with source pins if missing")
 	} else {
 		fmt.Fprintln(stdout, "Runtime: rebuild with source pins")
+	}
+	if options.UpdateDockerfile {
+		fmt.Fprintln(stdout, "Dockerfile: update only the four agent-tool pins in the source checkout after runtime validation; review and commit the change to share with CI")
 	}
 	if options.DryRun {
 		fmt.Fprintln(stdout, "Dry run: build and validate a native candidate")

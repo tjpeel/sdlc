@@ -49,7 +49,7 @@ func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, 
 				roots[view.Root] = true
 			}
 			if !view.Available && !view.Preparation {
-				return fmt.Errorf("cannot verify saved run %s; resolve its saved state before replacing the runtime; use sdlc update --cli-only", view.ID)
+				return fmt.Errorf("cannot verify saved run %s; resolve its saved state before replacing the runtime; use sdlc update --sdlc-only", view.ID)
 			}
 			if view.Journal != nil && view.Journal.ImageID == previous.ImageID && (view.State != "ready" || view.Live) {
 				blocked["run "+view.ID] = true
@@ -83,11 +83,11 @@ func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, 
 				if !required && errors.Is(err, os.ErrNotExist) {
 					continue
 				}
-				return fmt.Errorf("cannot verify saved work root %s: %w; use sdlc update --cli-only", root, err)
+				return fmt.Errorf("cannot verify saved work root %s: %w; use sdlc update --sdlc-only", root, err)
 			}
 			root = canonical
 			if err := scanRuntimeWork(ctx, root, previous.ImageID, blocked); err != nil {
-				return fmt.Errorf("cannot verify saved work in %s: %w; use sdlc update --cli-only", root, err)
+				return fmt.Errorf("cannot verify saved work in %s: %w; use sdlc update --sdlc-only", root, err)
 			}
 		}
 		if len(blocked) != 0 {
@@ -96,7 +96,7 @@ func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, 
 				ids = append(ids, id)
 			}
 			sort.Strings(ids)
-			return fmt.Errorf("runtime replacement would prevent resuming %s; complete this saved work first, or use sdlc update --cli-only", strings.Join(ids, ", "))
+			return fmt.Errorf("runtime replacement would prevent resuming %s; complete this saved work first, or use sdlc update --sdlc-only. Hiding dashboard entries retains these checkpoints. To retire saved work, run sdlc work archive --reference REFERENCE in its repository, or preview sdlc storage purge --all", strings.Join(ids, ", "))
 		}
 		return nil
 	}
@@ -159,6 +159,9 @@ func scanRuntimeWork(ctx context.Context, root, image string, blocked map[string
 	ids := regexp.MustCompile(`^[0-9a-f]{24}$`)
 	checkpoints := 0
 	for _, ref := range refs {
+		if strings.EqualFold(filepath.Base(ref), ".archive") {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}

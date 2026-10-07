@@ -14,6 +14,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/githubprofile"
 	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/homebrew"
+	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/providerauth"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimeupdates"
@@ -49,6 +50,8 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	var dryRun bool
 	var all bool
 	var sourcePins bool
+	var agentTools bool
+	var updateDockerfile bool
 	flags.StringVar(&name, "name", "", "select a separate named runtime (default: shared local image)")
 	if args[0] == "build" || args[0] == "update" {
 		flags.StringVar(&source, "source", "", "SDLC source (uses bundled Homebrew source or saved source when omitted)")
@@ -57,6 +60,8 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
 		}
 		if args[0] == "update" {
+			flags.BoolVar(&updateDockerfile, "update-dockerfile", false, "with --agent-tools, save selected pins in the explicit source checkout")
+			flags.BoolVar(&agentTools, "agent-tools", false, "update only Codex, Claude Code, skills and agents; retain other pins")
 			flags.BoolVar(&dryRun, "dry-run", false, "check public releases and preview the update without pulling images or rebuilding")
 		}
 	} else {
@@ -78,6 +83,9 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 			return err
 		}
 	}
+	if updateDockerfile && (!agentTools || source == "") {
+		return fmt.Errorf("--update-dockerfile requires --agent-tools and an explicit --source checkout")
+	}
 	manager, err := runtimeimage.NewNamed(output, diagnostics, name)
 	if err != nil {
 		return err
@@ -95,7 +103,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		if name != "" {
 			return fmt.Errorf("named runtimes use runtime build --name NAME; runtime update manages the default runtime")
 		}
-		return runtimeUpdate(ctx, manager, runtimeupdates.New(), source, dryRun, output)
+		return runtimeUpdateWithSourcePolicy(ctx, manager, runtimeupdates.New(), source, dryRun, agentTools, updateDockerfile, output)
 	}
 	policy := "retain private dependency pins for the same source"
 	if sourcePins {
@@ -232,6 +240,17 @@ type runtimeUpdateManager interface {
 }
 
 func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker runtimeupdates.Checker, source string, dryRun bool, output io.Writer) error {
+	return runtimeUpdateWithPolicy(ctx, manager, checker, source, dryRun, false, output)
+}
+
+func runtimeUpdateWithPolicy(ctx context.Context, manager runtimeUpdateManager, checker runtimeupdates.Checker, source string, dryRun, scoped bool, output io.Writer) error {
+	return runtimeUpdateWithSourcePolicy(ctx, manager, checker, source, dryRun, scoped, false, output)
+}
+
+func runtimeUpdateWithSourcePolicy(ctx context.Context, manager runtimeUpdateManager, checker runtimeupdates.Checker, source string, dryRun, scoped, updateDockerfile bool, output io.Writer) error {
+	if updateDockerfile && (!scoped || source == "") {
+		return fmt.Errorf("--update-dockerfile requires --agent-tools and an explicit --source checkout")
+	}
 	state, err := manager.Status(ctx)
 	if err != nil {
 		return err
@@ -251,17 +270,37 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 			return fmt.Errorf("cannot resolve runtime source")
 		}
 	}
+	if updateDockerfile {
+		sourceInfo, statErr := os.Lstat(source)
+		if statErr != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("--update-dockerfile source checkout must be a real directory without symlinks")
+		}
+		identity, err := project.InspectIdentity(ctx, source)
+		canonical, pathErr := filepath.EvalSymlinks(source)
+		if err != nil || pathErr != nil || identity.Root != canonical {
+			return fmt.Errorf("--update-dockerfile requires the actual SDLC source checkout; installed package archives cannot be edited")
+		}
+	}
 	recipe, err := readRuntimeRecipe(source)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(output, "Checking public releases and preparing dependency updates (45-second limit)..."); err != nil {
+	message := "Checking public releases and preparing dependency updates (45-second limit)..."
+	if scoped {
+		message = "Checking agent-tool releases; retaining other dependency pins (45-second limit)..."
+	}
+	if _, err := fmt.Fprintln(output, message); err != nil {
 		return err
 	}
 	checkContext, cancel := context.WithTimeout(ctx, 45*time.Second)
-	plan, err := checker.Plan(checkContext, state, recipe, func(ctx context.Context) ([]runtimeimage.PackageUpdate, error) {
-		return manager.PackageUpdates(ctx, state)
-	})
+	var plan runtimeupdates.Plan
+	if scoped {
+		plan, err = checker.PlanAgentTools(checkContext, state, recipe)
+	} else {
+		plan, err = checker.Plan(checkContext, state, recipe, func(ctx context.Context) ([]runtimeimage.PackageUpdate, error) {
+			return manager.PackageUpdates(ctx, state)
+		})
+	}
 	cancel()
 	if err != nil {
 		return fmt.Errorf("runtime update plan failed; the selected runtime is unchanged: %w", err)
@@ -269,8 +308,27 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 	if err := plan.Print(output); err != nil {
 		return err
 	}
+	var sourceUpdate *runtimeupdates.DockerfileUpdate
+	if updateDockerfile {
+		sourceUpdate, err = runtimeupdates.PrepareAgentToolDockerfile(source, recipe, plan.Pins)
+		if err != nil {
+			return fmt.Errorf("Dockerfile update preparation failed; runtime unchanged: %w", err)
+		}
+	}
 	if dryRun {
-		_, err := fmt.Fprintln(output, "Preview complete; no images pulled, pins saved or runtime rebuilt. Apply with sdlc runtime update.")
+		if updateDockerfile {
+			for _, argument := range []string{"CODEX_VERSION", "CLAUDE_VERSION", "SKILLS_REVISION", "AGENTS_REVISION"} {
+				fmt.Fprintf(output, "Dockerfile: ARG %s=%s\n", argument, plan.Pins.Arguments[argument])
+			}
+		}
+		command := "sdlc runtime update"
+		if scoped {
+			command += " --agent-tools"
+			if updateDockerfile {
+				command += " --update-dockerfile --source " + source
+			}
+		}
+		_, err := fmt.Fprintln(output, "Preview complete; no images pulled, pins saved or runtime rebuilt. Apply with "+command+".")
 		return err
 	}
 	if _, err := fmt.Fprintln(output, "Rebuilding a fresh runtime with the selected versions. Login volumes and signing profiles stay in their existing storage."); err != nil {
@@ -285,6 +343,12 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 		Pins:           &plan.Pins, Refresh: true, ExpectedImageID: state.ImageID,
 		ValidatePrevious: runtimeSavedWorkGuardFromEnvironment(source),
 		ValidateCandidate: func(ctx context.Context, candidate runtimeimage.State) error {
+			if scoped {
+				// BuildWithOptions verifies the complete pinned inventory, including
+				// unchanged direct dependencies. This mode makes no Debian or
+				// .NET runtime update promises.
+				return nil
+			}
 			if err := validateRuntimePacks(candidate, plan.ExpectedRuntimes); err != nil {
 				return err
 			}
@@ -306,11 +370,20 @@ func runtimeUpdate(ctx context.Context, manager runtimeUpdateManager, checker ru
 	if err != nil {
 		return err
 	}
+	if sourceUpdate != nil {
+		if err := sourceUpdate.Apply(); err != nil {
+			return fmt.Errorf("runtime updated, but source Dockerfile was not written: %w; review the source and retry --agent-tools --update-dockerfile", err)
+		}
+		fmt.Fprintln(output, "Source Dockerfile agent-tool pins updated. Review and commit this source change to share it with CI.")
+	}
 	if err := printRuntime(output, candidate); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(output, "Updated runtime selected. Checking its installed dependency inventory..."); err != nil {
 		return err
+	}
+	if scoped {
+		return runtimeStatus(ctx, manager, checker, true, false, output)
 	}
 	// Keep unresolved parent-controlled dependencies and metadata errors visible.
 	// A post-selection metadata failure does not undo a validated installation.

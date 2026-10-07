@@ -16,7 +16,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/textview"
 )
 
-const storageUsage = "Usage: sdlc storage [status] [--older-than DAYS] [--json]\nRead-only scan of the current project's .sdlc directory.\nShows logical regular-file bytes, categories and retained run ages.\n--older-than filters run rows; directory/category totals always cover the full scan.\nNo files are removed or run controllers changed."
+const storageUsage = "Usage: sdlc storage [status] [--older-than DAYS] [--json]\n       sdlc storage purge (--run RUN_ID | --all) [--yes | --dry-run]\nRead-only scan of the current project's .sdlc directory.\nShows logical regular-file bytes, categories and retained run ages.\n--older-than filters run rows; directory/category totals always cover the full scan.\nNo files are removed or run controllers changed."
 
 func storageBytes(size int64) string {
 	if size < 1024 {
@@ -32,6 +32,9 @@ func storageBytes(size int64) string {
 	return fmt.Sprintf("%d B", size)
 }
 func storageCommand(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "purge" {
+		return storagePurgeCommand(ctx, args[1:], out)
+	}
 	if len(args) > 0 && args[0] == "status" {
 		args = args[1:]
 	}

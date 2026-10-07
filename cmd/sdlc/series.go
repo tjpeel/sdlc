@@ -221,13 +221,6 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if state.Version == 0 {
 		state = workseries.State{Version: 1, Plan: plan, Results: map[string]workseries.Result{}}
 	}
-	directory, err = workseries.Directory(work.Root, options.reference, true)
-	if err != nil {
-		return err
-	}
-	if err := observeLaunch(ctx, terminallaunch.RunIdentity{Reference: options.reference, Directory: directory}); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	writer := &seriesWriter{w: output}
@@ -241,6 +234,13 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		return err
 	}
 	defer lease.Close()
+	directory, err = workseries.Directory(work.Root, options.reference, true)
+	if err != nil {
+		return err
+	}
+	if err := observeLaunch(ctx, terminallaunch.RunIdentity{Reference: options.reference, Directory: directory}); err != nil {
+		return err
+	}
 	driver := &seriesDriver{runtime: runtime, options: options, directory: directory, output: writer, plan: plan}
 	runner := workseries.Runner{Driver: driver, Output: writer, Parallel: options.parallel, Watch: options.watch, PollInterval: 15 * time.Second}
 	runner.Initialize = func(ctx context.Context, checkpoint *workseries.State) error {

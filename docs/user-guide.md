@@ -84,7 +84,7 @@ sdlc runtime status --offline
 This creates a local `local/sdlc` tap and installs a checksum-pinned archive of
 the checkout's current commit, then prepares the runtime. The tap and archive
 remain on the host. Commit local changes before updating; unsigned local
-commits are sufficient for installation. Add `--cli-only` to migrate an existing
+commits are sufficient for installation. Add `--sdlc-only` to migrate an existing
 CLI while preserving its runtime. Keep accounts and work on the same state
 directory and Docker engine.
 
@@ -116,16 +116,32 @@ Subsequent updates work from any directory:
 sdlc update --dry-run
 sdlc update
 sdlc update --pull
+sdlc update --agent-tools
+sdlc update --agent-tools --update-dockerfile
 sdlc update --dependencies
-sdlc update --cli-only
+sdlc update --sdlc-only
 ```
 
 `update` installs current local source and its runtime pins. With Homebrew, it
 refreshes the archive and formula from the current commit before upgrading the
 CLI. `--pull` first fast-forwards a clean checkout; omit it for committed local
 changes. `--dependencies` resolves newer public dependencies instead of
-resetting to source pins. `--cli-only` installs the executable and keeps the runtime, including paused work.
-The two pin policies are alternatives. The dry-run stays offline and changes nothing. A dry-run with
+resetting to source pins. `--agent-tools` refreshes Codex, Claude, skills and agents,
+retaining the other dependency pins. It still rebuilds the runtime and checks saved-work protection.
+`--sdlc-only` updates the host SDLC program and shell while keeping the entire runtime,
+including provider CLIs, catalogues and paused work. `--cli-only` remains a compatibility alias.
+Default `update` rebuilds the source baseline; `runtime status` only inspects it.
+Local refresh selections stay private unless `--agent-tools --update-dockerfile`
+is selected. That option writes exactly `CODEX_VERSION`, `CLAUDE_VERSION`,
+`SKILLS_REVISION` and `AGENTS_REVISION` in the selected source Dockerfile after
+successful runtime selection, including an already-current result. Other pins
+and text remain. It requires `--agent-tools` and makes no Git commit or push;
+CI uses the source change after a reviewed commit reaches its checkout.
+If the runtime updates but the source write fails, the command reports the
+partial result. Dry-run writes no source files.
+
+`--agent-tools`, `--dependencies` and `--sdlc-only` are mutually exclusive.
+The outer update dry-run stays offline and changes nothing. A dry-run with
 `--pull` describes current local source; remote changes are checked only during execution.
 
 Source and destination are recorded privately. Use `--source /PATH/TO/SDLC_SOURCE`
@@ -158,9 +174,12 @@ build context excludes host credentials, local account profiles, private work an
 The one-shot installer has already built this image. Rebuild it separately with `sdlc runtime build`;
 that command retains selected local dependency pins. Add `--source-pins` to use the checkout's defaults.
 Runtime replacement checks known saved projects for resumable runs and incomplete feature series. Finish
-that work before replacing its recorded runtime, or install just the CLI with `sdlc update --cli-only`.
+that work before replacing its recorded runtime, or install just the CLI with `sdlc update --sdlc-only`.
 Registered, catalogued, current and source project roots are checked; forgotten external roots cannot
 be discovered. Keep projects registered while they contain unfinished work.
+Forgetting a dashboard entry leaves this saved state in place. Use `storage purge`
+to delete stopped saved runs or `work archive` to retain a complete reference outside
+active work. Archived references are excluded from the guard.
 
 Offline status checks the recorded local runtime and inventory. Ordinary status also checks public upstream
 update metadata; it does not update anything or prove provider, GitHub or vault access. `--all` includes
@@ -172,11 +191,17 @@ When no run or session holds the runtime lease, preview and apply updates:
 ```sh
 sdlc runtime update --dry-run
 sdlc runtime update
+sdlc runtime update --agent-tools
+sdlc runtime update --agent-tools --update-dockerfile --source /PATH/TO/SDLC_SOURCE
 ```
 
 This dry-run contacts public release sources. The executing update resolves exact pins, rebuilds and selects
-the candidate only after validation. Failed updates retain the previous selected runtime. Pins stay in private
-installation state; source pins and account caches remain available. Later `runtime build` commands can use
+the candidate only after validation. Failed runtime builds retain the previous selected runtime. Pins stay in private
+installation state by default; source pins and account caches remain available.
+Direct `runtime update --agent-tools --update-dockerfile` requires explicit
+`--source` to select the source checkout for its four pin writes. Ordinary
+rebuilds can refresh unpinned Debian packages, so retaining tool pins does not
+guarantee an identical image. Later `runtime build` commands can use
 the saved source location; use `--source /PATH/TO/SDLC_SOURCE` if it moves. Reinstalling the host CLI and
 rebuilding the image are separate operations.
 
@@ -692,7 +717,7 @@ stopped run, export a private checkpoint report:
 install -d -m 700 /PATH/TO/PRIVATE_REPORT_DIRECTORY
 sdlc dashboard export --run RECORDED_RUN_ID \
   --to /PATH/TO/PRIVATE_REPORT_DIRECTORY
-sdlc dashboard forget --run RECORDED_RUN_ID
+sdlc dashboard remove --run RECORDED_RUN_ID
 ```
 
 The report directory must already exist outside Git checkouts, be owned mode `0700`, and have no symlink path.
@@ -701,10 +726,41 @@ hashes, check commands/evidence, PR/CI details and latest outcome. They omit raw
 explicit credential fields, source and private input contents. Still inspect them before sharing: work details and
 command/model summaries can be sensitive.
 
-`forget` (`remove` is an alias) deletes only that run's registry JSON. All journals, logs, inputs, captured
-workspaces, native sessions and lock files remain. Active controllers cannot be forgotten, even with stale
-heartbeat. Missing directories or unsafe metadata require repair first. Resuming registers the retained run
-again. A checkpoint report cannot resume it.
+`dashboard remove --run` (also `forget --run`) hides only that run's registry entry. Journals, logs, inputs,
+workspaces, native sessions and lock files remain, and saved work can still
+block an update. Active controllers cannot be forgotten, even with a stale
+heartbeat. Resuming registers the run again. `dashboard remove --all` (also `forget --all`) previews clearing
+stopped registrations across the installation; add `--scope project` to limit
+it to this repository and `--yes` to clear them. `--dry-run` explicitly previews.
+
+`dashboard remove` is the recommended spelling; `dashboard forget` remains an alias.
+Both accept `--run ID` or `--all`, `--scope project|installation`, and
+`--yes|--dry-run`. Single-run removal remains immediate unless `--dry-run` is
+selected; bulk removal previews unless `--yes` is selected.
+
+Use `storage purge --run ID` or
+`storage purge --all` to preview permanent deletion of stopped saved runs
+in the current Git repository, including runs absent from the dashboard.
+Add `--yes` to delete or `--dry-run` for an explicit preview. Affected feature
+series checkpoints are also deleted, and the preview reports the abandonment.
+Ticket and specification files remain. Live runs or series refuse removal;
+`--all` excludes archived references and credentials. A checkpoint report
+cannot resume a deleted run.
+
+To keep a complete reference locally while freeing its name for fresh scoping:
+
+```sh
+sdlc work archive --reference TASK-123 --dry-run
+sdlc work archive --reference TASK-123
+```
+
+This moves the whole `.sdlc/work/TASK-123` tree into a unique directory under
+`.sdlc/work/.archive/` and removes its run registrations. Live runs or series
+refuse archiving. The reversible move needs no `--yes` and retains tickets,
+specifications, saved runs and evidence. Archived references are excluded from
+active discovery, resume and runtime guards. A later update may replace their
+runtime image, so archiving does not guarantee later resumability and is not a
+portable backup.
 
 For investigation or restoration, back up the **entire stopped run directory**:
 
