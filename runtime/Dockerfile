@@ -15,7 +15,7 @@ ARG GH_VERSION=2.102.0
 ARG CLAUDE_VERSION=2.1.287
 ARG DOTNET_VERSION=10.0.401
 ARG LOCAL_SKILLS=0
-ARG SKILLS_REVISION=cb1fa123bfea578de51f567aafc66096a8f65ebf
+ARG SKILLS_REVISION=23cb55c2fef4d715e24ab94c13f333d94918c5c3
 ARG AGENTS_REVISION=ca463638c94e3dc44f51420554692636fa5fe0d0
 # An installation update fills these exact versions in its private build recipe.
 # Source builds retain the versions supplied by the pinned Node/Docker images.
