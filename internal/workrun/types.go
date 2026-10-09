@@ -133,14 +133,15 @@ type Finding struct {
 }
 
 type Outcome struct {
-	Status      string    `json:"status"`
-	Summary     string    `json:"summary"`
-	Questions   []string  `json:"questions"`
-	Findings    []Finding `json:"findings"`
-	LocalReview bool      `json:"local_review"`
-	Limitations []string  `json:"limitations"`
-	PRTitle     string    `json:"pr_title"`
-	PRBody      string    `json:"pr_body"`
+	VerificationRequests []VerificationRequest `json:"verification_requests,omitempty"`
+	Status               string                `json:"status"`
+	Summary              string                `json:"summary"`
+	Questions            []string              `json:"questions"`
+	Findings             []Finding             `json:"findings"`
+	LocalReview          bool                  `json:"local_review"`
+	Limitations          []string              `json:"limitations"`
+	PRTitle              string                `json:"pr_title"`
+	PRBody               string                `json:"pr_body"`
 }
 
 type Session struct {
@@ -197,34 +198,37 @@ type Publisher interface {
 }
 
 type Journal struct {
-	InputRecoveries    []InputRecovery       `json:"input_recoveries,omitempty"`
-	PendingInputs      *PendingInputRecovery `json:"pending_inputs,omitempty"`
-	Timings            Timings               `json:"timings"`
-	Version            int                   `json:"version"`
-	ID                 string                `json:"id"`
-	Plan               Plan                  `json:"plan"`
-	State              string                `json:"state"`
-	Workspace          string                `json:"workspace"`
-	SessionID          string                `json:"session_id"`
-	ReportedModel      string                `json:"reported_model,omitempty"`
-	Publication        Publication           `json:"publication"`
-	ImageID            string                `json:"image_id"`
-	Evidence           CheckEvidence         `json:"evidence"`
-	Outcome            Outcome               `json:"outcome"`
-	Rounds             int                   `json:"rounds"`
-	Attempt            int                   `json:"attempt"`
-	CheckAttempt       int                   `json:"check_attempt"`
-	Instructions       string                `json:"instructions"`
-	ResumeState        string                `json:"resume_state,omitempty"`
-	PendingRole        string                `json:"pending_role,omitempty"`
-	Feedback           string                `json:"feedback,omitempty"`
-	MissingChecksSince time.Time             `json:"missing_checks_since,omitempty"`
-	StopReason         string                `json:"stop_reason,omitempty"`
-	CI                 CIResult              `json:"ci"`
-	Reconciliation     *Reconciliation       `json:"reconciliation,omitempty"`
-	RestackAudit       []RestackBoundary     `json:"restack_audit,omitempty"`
-	StartedAt          time.Time             `json:"started_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
+	InputRecoveries           []InputRecovery       `json:"input_recoveries,omitempty"`
+	PendingInputs             *PendingInputRecovery `json:"pending_inputs,omitempty"`
+	Timings                   Timings               `json:"timings"`
+	Version                   int                   `json:"version"`
+	ID                        string                `json:"id"`
+	Plan                      Plan                  `json:"plan"`
+	State                     string                `json:"state"`
+	Workspace                 string                `json:"workspace"`
+	SessionID                 string                `json:"session_id"`
+	ReportedModel             string                `json:"reported_model,omitempty"`
+	Publication               Publication           `json:"publication"`
+	ImageID                   string                `json:"image_id"`
+	VerificationFeedbackKey   string                `json:"verification_feedback_key,omitempty"`
+	VerificationFeedbackCount int                   `json:"verification_feedback_count,omitempty"`
+	Verification              []VerificationResult  `json:"additional_verification,omitempty"`
+	Evidence                  CheckEvidence         `json:"evidence"`
+	Outcome                   Outcome               `json:"outcome"`
+	Rounds                    int                   `json:"rounds"`
+	Attempt                   int                   `json:"attempt"`
+	CheckAttempt              int                   `json:"check_attempt"`
+	Instructions              string                `json:"instructions"`
+	ResumeState               string                `json:"resume_state,omitempty"`
+	PendingRole               string                `json:"pending_role,omitempty"`
+	Feedback                  string                `json:"feedback,omitempty"`
+	MissingChecksSince        time.Time             `json:"missing_checks_since,omitempty"`
+	StopReason                string                `json:"stop_reason,omitempty"`
+	CI                        CIResult              `json:"ci"`
+	Reconciliation            *Reconciliation       `json:"reconciliation,omitempty"`
+	RestackAudit              []RestackBoundary     `json:"restack_audit,omitempty"`
+	StartedAt                 time.Time             `json:"started_at"`
+	UpdatedAt                 time.Time             `json:"updated_at"`
 }
 
 // Timings are observed controller intervals. They exclude time between

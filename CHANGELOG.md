@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.12 - 2026-10-09
+
+### Added
+
+- Execute structured requests for additional verification in isolated check workers. Baseline comparisons retain candidate tests, restore selected original source files and require the expected assertion failures before returning evidence to the implementation session.
+
+### Fixed
+
+- Keep additional verification requests outstanding until satisfied, cache evidence by request and exact candidate, and stop repeated requests that make no progress. Temporary runtime failures remain retryable; passing project checks cannot substitute for newly requested work.
+
 ## 0.1.0-beta.11 - 2026-10-09
 
 ### Fixed

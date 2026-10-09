@@ -78,7 +78,7 @@ func checkProcessArguments(command []string) []string {
 // Build the test copy from HEAD, excluding ignored outputs and local Git state.
 // Raw blobs bypass export-ignore/export-subst; symlinks and submodules are rejected.
 // All committed paths and optional input paths are checked before writing.
-const copyCheckWorkspace = `import os, pathlib, shutil, subprocess
+const copyCheckWorkspace = `import os, pathlib, shutil, subprocess, json, sys
 source_root = '/source'
 git = ['git', '--no-replace-objects', '-c', 'safe.directory='+source_root, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', source_root]
 env = {'PATH':os.environ['PATH'], 'HOME':'/tmp', 'GIT_CONFIG_NOSYSTEM':'1', 'GIT_CONFIG_GLOBAL':'/dev/null'}
@@ -94,6 +94,23 @@ for entry in entries.split(b'\0'):
  data = subprocess.check_output(git+['cat-file', 'blob', oid.decode('ascii')], env=env)
  destination.write_bytes(data)
  destination.chmod(0o755 if mode == b'100755' else 0o644)
+if len(sys.argv) > 1:
+    baseline = json.loads(sys.argv[1])
+    revision = baseline['revision']
+    if len(revision) not in (40,64) or any(c not in '0123456789abcdef' for c in revision): raise ValueError('unsafe baseline revision')
+    for raw_path in baseline['paths']:
+        path = pathlib.PurePosixPath(raw_path)
+        if path.is_absolute() or str(path) != raw_path or any(p in ('.git','..') for p in path.parts): raise ValueError('unsafe baseline path')
+        destination = pathlib.Path('/workspace')/path
+        if not destination.is_file() or destination.is_symlink(): raise ValueError('baseline target is not regular source')
+        if os.path.lexists(pathlib.Path('/inputs')/path): raise ValueError('baseline overlaps frozen input')
+        entries = subprocess.check_output(git+['ls-tree', '-z', revision, '--', raw_path], env=env).split(b'\0')
+        if len(entries) != 2 or not entries[0]: raise ValueError('missing baseline source')
+        metadata, entry_path = entries[0].split(b'\t',1)
+        mode, kind, oid = metadata.split(b' ')
+        if os.fsdecode(entry_path) != raw_path or mode not in (b'100644',b'100755') or kind != b'blob': raise ValueError('unsafe baseline source')
+        destination.write_bytes(subprocess.check_output(git+['cat-file','blob',oid.decode('ascii')],env=env))
+        destination.chmod(0o755 if mode == b'100755' else 0o644)
 if os.path.isdir('/inputs'):
  for root, dirs, files in os.walk('/inputs', followlinks=False):
   for name in dirs+files:
@@ -110,7 +127,33 @@ for root, dirs, files in os.walk('/workspace', followlinks=False):
  for name in dirs+files: os.chown(os.path.join(root,name), 1000, 1000, follow_symlinks=False)
 `
 
-func (checker DockerChecker) Check(ctx context.Context, workspace string, commands [][]string, output io.Writer) (result error) {
+func (checker DockerChecker) Check(ctx context.Context, workspace string, commands [][]string, output io.Writer) error {
+	return checker.check(ctx, workspace, commands, output, nil)
+}
+func (checker DockerChecker) Verify(ctx context.Context, workspace string, request VerificationRequest, output io.Writer) error {
+	if err := validateVerificationRequests([]VerificationRequest{request}, nil); err != nil {
+		return err
+	}
+	if output == nil {
+		output = io.Discard
+	}
+	if _, err := io.WriteString(output, "Additional verification candidate phase\n"); err != nil {
+		return err
+	}
+	if err := checker.check(ctx, workspace, request.Commands, output, nil); err != nil {
+		return &VerificationFailure{Phase: "candidate", Err: err}
+	}
+	if request.Baseline != nil {
+		if _, err := io.WriteString(output, "Additional verification baseline phase\n"); err != nil {
+			return err
+		}
+		if err := checker.check(ctx, workspace, request.Commands, output, request.Baseline); err != nil {
+			return &VerificationFailure{Phase: "baseline", Err: err}
+		}
+	}
+	return nil
+}
+func (checker DockerChecker) check(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline) (result error) {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -231,9 +274,16 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 	cleanups = append(cleanups, []string{"rm", "--force", name + "-copy"})
 	copyArgs := checkContainerEnvironment([]string{"run", "--name", name + "-copy", "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly", "--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace"})
 	copyArgs = append(copyArgs, "--entrypoint", "python3", state.ImageID, "-c", copyCheckWorkspace)
+	if baseline != nil {
+		data, _ := json.Marshal(baseline)
+		copyArgs = append(copyArgs, string(data))
+	}
 	if inputs != "" {
 		// Insert the input bind before the image/entrypoint arguments.
 		position := len(copyArgs) - 5
+		if baseline != nil {
+			position--
+		}
 		copyArgs = append(copyArgs[:position], append([]string{"--mount", "type=bind,src=" + inputs + ",dst=/inputs,readonly"}, copyArgs[position:]...)...)
 	}
 	if err = call(copyArgs...); err != nil {
@@ -303,7 +353,8 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 		args = append(args, "--entrypoint", "/usr/bin/env", state.ImageID)
 		args = append(args, checkProcessArguments(command)...)
 		diagnostic := &formatterDiagnostic{approved: approvedPaths}
-		commandOutput := io.MultiWriter(output, diagnostic)
+		matcher := newFailureMatcher(baseline)
+		commandOutput := io.MultiWriter(output, diagnostic, matcher)
 		if err = runner.Run(ctx, commandOutput, args...); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -336,11 +387,31 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 				}
 				return fmt.Errorf("repository check %d exited with status %d: Docker daemon unavailable; inspect the private check log and resolve the Docker endpoint or isolated test-daemon setup before resuming", i+1, status.ExitCode)
 			}
-			return &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths, compiler: diagnostic.compiler}
+			if baseline != nil && i == len(commands)-1 && status.ExitCode == baseline.ExpectedExitCode && matcher.complete() && diagnostic.compiler == nil && !diagnostic.styleIssues && !diagnostic.dockerUnavailable {
+				return nil
+			}
+			failure := &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths, compiler: diagnostic.compiler}
+			if baseline != nil {
+				reason := "earlier baseline command failed; only the final command may fail"
+				if i == len(commands)-1 {
+					reason = fmt.Sprintf("baseline final command exited %d; expected exit %d with all literal markers", status.ExitCode, baseline.ExpectedExitCode)
+					if status.ExitCode == baseline.ExpectedExitCode && !matcher.complete() {
+						reason = "baseline final command omitted required literal markers"
+					}
+					if diagnostic.compiler != nil || diagnostic.styleIssues {
+						reason = "baseline compiler or formatter failure cannot satisfy a regression assertion"
+					}
+				}
+				return &baselineMismatch{Reason: reason, Err: failure}
+			}
+			return failure
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+	}
+	if baseline != nil {
+		return &baselineMismatch{Reason: "baseline final command unexpectedly passed", Err: ErrCheckFailed}
 	}
 	return nil
 }

@@ -213,6 +213,9 @@ func (writer *eventWriter) finish(role string) error {
 			return fmt.Errorf("provider handoff is missing required field %s", key)
 		}
 	}
+	if value, ok := fields["verification_requests"]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return fmt.Errorf("verification_requests must be an array")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(writer.final))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&writer.result.Outcome) != nil || decoder.Decode(new(any)) != io.EOF {
@@ -222,6 +225,12 @@ func (writer *eventWriter) finish(role string) error {
 }
 
 func validateOutcome(outcome Outcome, role string) error {
+	if err := validateVerificationRequests(outcome.VerificationRequests, nil); err != nil {
+		return err
+	}
+	if (role != "implementation" || outcome.Status != "checks_requested") && len(outcome.VerificationRequests) > 0 {
+		return fmt.Errorf("additional verification requests require implementation checks_requested")
+	}
 	if outcome.Summary == "" || outcome.Questions == nil || outcome.Findings == nil || outcome.Limitations == nil {
 		return fmt.Errorf("provider handoff is incomplete")
 	}
@@ -266,4 +275,4 @@ func safeRelative(path string) bool {
 	return true
 }
 
-const outcomeSchema = `{"type":"object","additionalProperties":false,"required":["status","summary","questions","findings","local_review","limitations","pr_title","pr_body"],"properties":{"status":{"type":"string","enum":["implemented","checks_requested","reviewed","waiting_for_human","blocked","failed"],"description":"Use implemented or reviewed only when that role is complete with no unresolved questions or limitations. Actionable review findings may remain for the implementer to repair."},"summary":{"type":"string","description":"Describe work, evidence and ordinary scope boundaries here, distinguishing controller verification from checks you ran yourself."},"questions":{"type":"array","items":{"type":"string"}},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["priority","path","line","scenario","recommendation"],"properties":{"priority":{"type":"string","enum":["P0","P1","P2","P3"]},"path":{"type":"string"},"line":{"type":"integer"},"scenario":{"type":"string"},"recommendation":{"type":"string"}}}},"local_review":{"type":"boolean"},"limitations":{"type":"array","description":"Only unresolved obstacles that prevent completing this role. Normal scope or isolation boundaries already covered by supplied verification evidence belong in summary. Return an empty array when complete; never omit a genuine missing requirement, tool, required review or verification gap.","items":{"type":"string"}},"pr_title":{"type":"string"},"pr_body":{"type":"string"}}}`
+const outcomeSchema = `{"type":"object","additionalProperties":false,"required":["status","summary","questions","findings","local_review","limitations","pr_title","pr_body","verification_requests"],"properties":{"status":{"type":"string","enum":["implemented","checks_requested","reviewed","waiting_for_human","blocked","failed"],"description":"Use implemented or reviewed only when that role is complete with no unresolved questions or limitations. Actionable review findings may remain for the implementer to repair."},"summary":{"type":"string","description":"Describe work, evidence and ordinary scope boundaries here, distinguishing controller verification from checks you ran yourself."},"questions":{"type":"array","items":{"type":"string"}},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["priority","path","line","scenario","recommendation"],"properties":{"priority":{"type":"string","enum":["P0","P1","P2","P3"]},"path":{"type":"string"},"line":{"type":"integer"},"scenario":{"type":"string"},"recommendation":{"type":"string"}}}},"local_review":{"type":"boolean"},"limitations":{"type":"array","description":"Only unresolved obstacles that prevent completing this role. Normal scope or isolation boundaries already covered by supplied verification evidence belong in summary. Return an empty array when complete; never omit a genuine missing requirement, tool, required review or verification gap.","items":{"type":"string"}},"pr_title":{"type":"string"},"pr_body":{"type":"string"},"verification_requests":{"type":"array","maxItems":16,"description":"Machine work for the controller, not human questions. Return [] when unused. Generic commands must pass. A baseline runs the same commands against candidate then a fresh candidate copy with only named original production blobs restored from captured StartingSHA or SourceSHA; final command must fail with the expected code and literal markers. Example: id regression, purpose prove new test catches old behavior, commands [[\"go\",\"test\",\"./internal/example\"]], baseline revision captured source SHA, paths [\"internal/example/example.go\"], expected_exit_code 1, failure_contains [\"TestRegression\"].","items":{"type":"object","additionalProperties":false,"required":["id","purpose","commands","baseline"],"properties":{"id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"},"purpose":{"type":"string","maxLength":1024},"commands":{"type":"array","items":{"type":"array","items":{"type":"string"}}},"baseline":{"anyOf":[{"type":"object","additionalProperties":false,"required":["revision","paths","expected_exit_code","failure_contains"],"properties":{"revision":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"expected_exit_code":{"type":"integer","minimum":1,"maximum":255},"failure_contains":{"type":"array","items":{"type":"string"}}}},{"type":"null"}]}}}}}}`

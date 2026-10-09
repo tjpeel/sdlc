@@ -101,6 +101,19 @@ func Load(directory string) (Journal, error) {
 	if filepath.Clean(journal.Workspace) != filepath.Join(directory, "workspace") {
 		return Journal{}, fmt.Errorf("run journal points outside its captured workspace")
 	}
+	requests := make([]VerificationRequest, 0, len(journal.Verification))
+	for _, result := range journal.Verification {
+		requests = append(requests, result.Request)
+		if len(result.Key) > 64 || len(result.Log) > 256 || len(result.Diagnostic) > 4096 {
+			return Journal{}, fmt.Errorf("invalid additional verification evidence")
+		}
+	}
+	if err := validateVerificationRequests(requests, &journal.Plan); err != nil {
+		return Journal{}, err
+	}
+	if err := validateVerificationRequests(journal.Outcome.VerificationRequests, &journal.Plan); err != nil {
+		return Journal{}, err
+	}
 	if err := ValidateModel(journal.Plan.Roles.Implementation); err != nil {
 		return Journal{}, err
 	}

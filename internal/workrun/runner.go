@@ -244,6 +244,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "failed", err.Error())
 			}
 			journal.Outcome = result.Outcome
+			if err := mergeVerification(journal, result.Outcome.VerificationRequests); err != nil {
+				return runner.stop(directory, journal, "blocked", err.Error())
+			}
 			journal.Feedback = ""
 			switch result.Outcome.Status {
 			case "waiting_for_human":
@@ -270,10 +273,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if !revision.Clean {
 				return runner.stop(directory, journal, "blocked", "commit the candidate changes before requesting isolated verification")
 			}
+			if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
+				return runner.stop(directory, journal, "blocked", err.Error())
+			}
 			if journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed {
-				if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
-					return runner.stop(directory, journal, "blocked", err.Error())
-				}
 				journal.CheckAttempt++
 				if err := runner.save(directory, journal); err != nil {
 					return err
@@ -312,9 +315,81 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					continue
 				}
 			}
+			repaired := false
+			for i := range journal.Verification {
+				evidence := &journal.Verification[i]
+				key := verificationKey(journal, evidence.Request, revision.Head, revision.Tree)
+				if evidence.Key == key && evidence.Passed {
+					continue
+				}
+				if evidence.Key == key && !evidence.Passed {
+					return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" still fails on the unchanged candidate; change the candidate or request before resuming")
+				}
+				checker, ok := runner.Checker.(VerificationChecker)
+				if !ok {
+					return runner.stop(directory, journal, "blocked", "selected check runtime does not support additional verification")
+				}
+				journal.CheckAttempt++
+				if err := runner.save(directory, journal); err != nil {
+					return err
+				}
+				name := fmt.Sprintf("verification-%s-%d.log", evidence.Request.ID, journal.CheckAttempt)
+				log, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if err != nil {
+					return err
+				}
+				checkStarted := time.Now()
+				checkOutput := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "checks", Stage: journal.State, Attempt: journal.CheckAttempt}, false)
+				checkErr := checker.Verify(ctx, journal.Workspace, evidence.Request, io.MultiWriter(log, runner.rawOutput, checkOutput))
+				progressErr := checkOutput.Finish()
+				journal.Timings.ChecksMS += time.Since(checkStarted).Milliseconds()
+				var diagnosticLogErr error
+				if checkErr != nil {
+					_, diagnosticLogErr = fmt.Fprintf(log, "\nAdditional verification failure: %v\n", checkErr)
+				}
+				closeErr := errors.Join(diagnosticLogErr, log.Close())
+				if progressErr != nil {
+					return errors.Join(checkErr, progressErr, closeErr)
+				}
+				evidence.Key, evidence.Head, evidence.Tree, evidence.Log, evidence.Passed = key, revision.Head, revision.Tree, name, checkErr == nil && closeErr == nil
+				// Operational failures do not establish semantic failure evidence;
+				// allow the unchanged candidate to retry after infrastructure recovery.
+				if closeErr != nil || (checkErr != nil && !errors.Is(checkErr, ErrCheckFailed)) {
+					evidence.Key = ""
+				}
+				evidence.Diagnostic = ""
+				if closeErr != nil {
+					return runner.stop(directory, journal, "blocked", "cannot retain additional verification evidence")
+				}
+				if checkErr != nil {
+					// Detailed process output stays in the private log. Repair feedback is bounded controller metadata.
+					evidence.Diagnostic = verificationDiagnostic(evidence.Request, revision.Tree, checkErr)
+					if !errors.Is(checkErr, ErrCheckFailed) {
+						return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" could not complete; inspect its private log")
+					}
+					journal.Feedback = verificationFeedback(journal)
+					if err := runner.transition(directory, journal, "repairing"); err != nil {
+						return err
+					}
+					repaired = true
+					break
+				}
+			}
+			if repaired {
+				continue
+			}
 			if journal.Outcome.Status == "checks_requested" {
-				data, _ := json.Marshal(journal.Evidence)
-				journal.Feedback = "Controller verification evidence: " + string(data) + ". Complete local code review and PR metadata using tjpeel-pr-draft. If the tree changes, request new checks."
+				key := verificationFeedbackKey(journal, revision.Head, revision.Tree)
+				if journal.VerificationFeedbackKey == key {
+					journal.VerificationFeedbackCount++
+				} else {
+					journal.VerificationFeedbackKey = key
+					journal.VerificationFeedbackCount = 1
+				}
+				if journal.VerificationFeedbackCount > 2 {
+					return runner.stop(directory, journal, "blocked", "verification evidence was already supplied for this unchanged candidate; submit a new structured verification request or complete local review before resuming")
+				}
+				journal.Feedback = verificationFeedback(journal) + ". Submit verification_requests for additional machine work, or complete local review and PR metadata using tjpeel-pr-draft. Use waiting_for_human only for genuine human questions."
 				if err := runner.transition(directory, journal, "implementing"); err != nil {
 					return err
 				}
@@ -327,8 +402,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "publishing":
+			if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
+				return runner.stop(directory, journal, "blocked", err.Error())
+			}
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
-			if err != nil || !revision.Clean || !journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head {
+			if err != nil || !revision.Clean || !journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head || !verificationCurrent(journal, revision.Head, revision.Tree) {
 				return runner.stop(directory, journal, "blocked", "source changed after verification; rerun checks before publishing")
 			}
 			path := filepath.Join(directory, "source.bundle")
@@ -599,18 +677,22 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 func (runner Runner) prompt(journal Journal, role string) string {
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
 	contextDiscipline += "For authorised supplementary repository inspection, reuse an existing selected checkout or clone beneath /workspace/.sdlc/repositories/ and exclude that directory locally with Git info/exclude. Preserve the checkout and record its revision for later inspection. Do not clone repositories into /tmp. Inspection does not authorise modifying or publishing a companion repository; follow the selected ticket delivery boundary.\n"
+	if role == "implementation" {
+		contextDiscipline += "Additional verification is already authorised machine work: submit verification_requests with stable id, purpose and bounded argv commands, rather than asking the human to run tests. Generic requests use baseline:null. To demonstrate a regression, supply baseline with one exact captured StartingSHA " + journal.Plan.StartingSHA + " or SourceSHA " + journal.Plan.SourceSHA + ", named original production paths, current candidate test commands, expected_exit_code and literal assertion failure_contains markers. The candidate commands must pass; the same commands run in a fresh candidate copy retaining new tests with only the named original source restored, and the final command must fail as specified. Return [] when unused; unresolved requests persist. Genuine specification or product questions still require waiting_for_human.\n"
+	}
 	if role == "implementation" && journal.SessionID != "" {
 		identity, _ := json.Marshal(struct {
 			Reference string `json:"reference"`
 			Ticket    string `json:"ticket"`
 		}{journal.Plan.Reference, journal.Plan.Ticket})
-		return "Continue the original tjpeel-engineering-implement session for " + string(identity) + ". Retain the original eligibility, pinned subagent policy, ownership and whole-ticket local review gates. The controller still owns isolated checks, signing, PR publication and CI. Commit candidate changes before status checks_requested; do not run tests, dependency installation or repository scripts in this authenticated worker. Use only current controller verification evidence for an unchanged tree. Return implemented only after passing checks, complete local review and current tjpeel-pr-draft metadata; stop for human questions, missing inputs and provider access/usage/policy limits. Return the supplied JSON schema.\n" + contextDiscipline + "New controller feedback:\n" + journal.Feedback
+		return "Continue the original tjpeel-engineering-implement session for " + string(identity) + ". Retain the original eligibility, pinned subagent policy, ownership and whole-ticket local review gates. The controller still owns isolated checks, signing, PR publication and CI. Commit candidate changes before status checks_requested; do not run tests, dependency installation or repository scripts in this authenticated worker. Use only current controller verification evidence for an unchanged tree. Return implemented only after passing checks, complete local review and current tjpeel-pr-draft metadata; stop for human questions, missing inputs and provider access/usage/policy limits. Return the supplied JSON schema. For additional machine verification submit verification_requests (stable id, purpose, argv commands; optional captured-source baseline), not a human question. Return [] when unused.\n" + contextDiscipline + "New controller feedback:\n" + journal.Feedback
 	}
 	packet, _ := json.MarshalIndent(struct {
-		Plan        Plan          `json:"plan"`
-		Publication Publication   `json:"publication"`
-		Evidence    CheckEvidence `json:"verification"`
-	}{journal.Plan, journal.Publication, journal.Evidence}, "", "  ")
+		Plan        Plan                 `json:"plan"`
+		Publication Publication          `json:"publication"`
+		Evidence    CheckEvidence        `json:"verification"`
+		Additional  []VerificationResult `json:"additional_verification"`
+	}{journal.Plan, journal.Publication, journal.Evidence, journal.Verification}, "", "  ")
 	// Shared instructions are already supplied once through the native global
 	// instruction file. Do not duplicate their body in the conversation.
 	shared := "Follow the native global shared instructions.\n" + contextDiscipline + "Selected launch context:\n" + string(packet) + "\n\n"

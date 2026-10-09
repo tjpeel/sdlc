@@ -558,7 +558,10 @@ branches unless you have a reason to supply `--branch`. It freezes the image, mo
 name/email, account/repository IDs and signing identity before provider work.
 
 The implementation makes candidate commits. The controller checks the committed candidate in an isolated
-worker, then returns evidence to the same implementation session for whole-ticket review. The trusted
+worker, then returns evidence to the same implementation session for whole-ticket review. Additional
+verification, including showing that new tests fail against selected original source files, uses structured
+requests to the controller. Passing project checks do not replace that additional work; see the
+[delivery workflow](workflow.md#implemented-one-selected-ticket). The trusted
 publisher recreates delivered commits with the frozen Git identity and approved SSH key, preserving the tested
 tree, and publishes a **draft** PR. Current-head CI must pass before fresh independent review. Actionable
 findings return to the original implementation session; repairs repeat checks, signed publication, CI and a

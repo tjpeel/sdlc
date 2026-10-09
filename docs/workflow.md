@@ -88,7 +88,20 @@ The delivery sequence is:
    commits and requests controller checks through a structured handoff.
 2. The controller runs configured check argument arrays against a disposable copy
    of the committed tree. Passing evidence resumes the exact original native
-   implementation session. Changed trees need fresh checks.
+   implementation session. The implementation can submit structured
+   `verification_requests` for additional machine work without asking the user
+   to run it. Generic requests supply argument arrays; regression requests also
+   name original production files and an exact captured source revision. The
+   controller runs the commands against the candidate, then against a separate
+   copy retaining candidate tests with only those original files restored. The
+   candidate must pass; the final baseline command must return the specified
+   nonzero exit and literal assertion markers. Setup, compiler, formatter and
+   runtime failures cannot satisfy that comparison.
+   Requests remain outstanding across turns and resume. Publication requires
+   passing project checks and all additional requests for the exact candidate.
+   Unchanged requests reuse completed evidence; temporary runtime failures can
+   retry after recovery. Changed trees or requests need fresh checks. A third
+   request for identical evidence without progress blocks with a diagnostic.
 3. After local review and `tjpeel-pr-draft` metadata, the trusted Docker publisher
    imports the candidate bundle into controlled Git metadata. It requires passing
    evidence for the exact candidate head/tree, signs every delivered commit with
