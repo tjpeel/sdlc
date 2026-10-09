@@ -7,6 +7,19 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.13 - 2026-10-09
+
+### Added
+
+- Share one persistent test daemon across new Docker-enabled runs, retaining image layers and build cache. Scoped Docker API sockets allow parallel check sessions to use identical Compose projects, container and network names, and published TCP or UDP ports.
+- Reuse required host-cached images by immutable identity and committed source templates by Git tree. Read source blobs through a single Git batch process and keep frozen inputs and writable build state separate from cached templates.
+
+### Changed
+
+- Clean up each session's resources and recover orphaned checks after controller crashes while retaining cached images and live sessions. Saved runs keep their original disposable-daemon mode and frozen image pin.
+- Shared checks use the classic Engine build API and controller cleanup for Testcontainers. Rebuild the runtime after upgrading; the Docker check cache guide describes supported operations and cache lifetime.
+- Validate Docker request field casing, canonical bind paths, image provenance and build networks; override inherited controller labels. Shared builds reject deferred instructions, `ADD` and archive links, and keep private intermediate images out of session API access.
+
 ## 0.1.0-beta.12 - 2026-10-09
 
 ### Added

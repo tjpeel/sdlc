@@ -365,6 +365,7 @@ func publisherRequestForContainer(request PublisherRequest) PublisherRequest {
 	request.Plan.Checks = nil
 	request.Plan.SigningImage = ""
 	request.Plan.DaemonImage = ""
+	request.Plan.DaemonMode = ""
 	request.Plan.SigningProfile = ""
 	return request
 }

@@ -4,7 +4,9 @@ COPY source/go.mod ./go.mod
 COPY source/cmd/ ./cmd/
 COPY source/internal/ ./internal/
 RUN CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
-    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/sdlc-publisher ./cmd/sdlc-publisher
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/sdlc-publisher ./cmd/sdlc-publisher \
+    && CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/sdlc-test-proxy ./cmd/sdlc-test-proxy
 
 FROM docker:29.8.2-cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68b1457ead25c35c AS docker-tools
 
@@ -153,6 +155,7 @@ RUN chmod 0755 /usr/local/bin/sdlc-* /usr/local/bin/ssh-sign-file \
     && printf '%s\n' 'if [ -r /run/sdlc/environment ]; then . /run/sdlc/environment; fi' \
        > /etc/profile.d/sdlc.sh
 
+COPY --from=publisher-build /out/sdlc-test-proxy /usr/local/bin/sdlc-test-proxy
 ENV HOME=/home/node CODEX_HOME=/home/node/.codex CLAUDE_CONFIG_DIR=/home/node/.claude \
     DOTNET_ROOT=/opt/dotnet PATH=/opt/dotnet:$PATH \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1

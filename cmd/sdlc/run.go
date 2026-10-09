@@ -71,6 +71,7 @@ type runOptions struct {
 	frozenInputs                          bool
 	frozenInputHashes                     map[string]string
 	frozenSigningImage, frozenDaemonImage string
+	frozenDaemonMode                      string
 	supplied                              map[string]bool
 }
 
@@ -479,6 +480,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		if options.frozenSigningImage != "" {
 			journal.Plan.SigningImage, journal.Plan.DaemonImage = options.frozenSigningImage, options.frozenDaemonImage
+			journal.Plan.DaemonMode = options.frozenDaemonMode
 			if err := journal.Plan.ValidateSidecarImages(); err != nil {
 				return err
 			}
@@ -559,7 +561,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	if err := printRunPlan(output, journal, false); err != nil {
 		return err
 	}
-	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests, DaemonImage: journal.Plan.DaemonImage, UseDefaultDaemonImage: journal.Plan.DaemonImage == ""}
+	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests, DaemonImage: journal.Plan.DaemonImage, DaemonMode: journal.Plan.DaemonMode, UseDefaultDaemonImage: journal.Plan.DaemonImage == ""}
 	if len(journal.Plan.CheckInputs) > 0 {
 		checker.InputDirectory = filepath.Join(directory, "check-inputs")
 	}
@@ -643,6 +645,9 @@ func freezeSidecarImages(plan *workrun.Plan, state runtimeimage.State) error {
 		daemonImage = state.DependencyPins.DaemonImage
 	}
 	plan.SigningImage, plan.DaemonImage = signingImage, daemonImage
+	if plan.DockerTests && daemonImage != "" {
+		plan.DaemonMode = workrun.SharedTestDaemon
+	}
 	return plan.ValidateSidecarImages()
 }
 
@@ -663,6 +668,7 @@ func freezeRuntimeImages(ctx context.Context, plan *workrun.Plan, state runtimei
 			return fmt.Errorf("cannot prepare pinned repository check daemon: %w", err)
 		}
 		selected.DaemonImage = image
+		selected.DaemonMode = workrun.SharedTestDaemon
 	}
 	*plan = selected
 	return nil

@@ -31,8 +31,9 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 	return command.Run()
 }
 
-// DockerChecker gives checks a disposable copy. DockerTests explicitly enables
-// a dedicated privileged daemon for trusted integration checks. Privileged
+// DockerChecker gives checks an independent writable source copy. DockerTests
+// enables a privileged test daemon; the frozen mode selects shared or legacy
+// disposable storage. Privileged
 // containers are not a security boundary against hostile code.
 type DockerChecker struct {
 	Runtime        runtimeimage.Manager
@@ -40,6 +41,7 @@ type DockerChecker struct {
 	InputDirectory string
 	ImageID        string
 	DockerTests    bool
+	DaemonMode     string
 	DaemonImage    string
 	// Old journals have no daemon pin. Preserve their original default even
 	// when the installation now has different dependency pins.
@@ -82,18 +84,42 @@ const copyCheckWorkspace = `import os, pathlib, shutil, subprocess, json, sys
 source_root = '/source'
 git = ['git', '--no-replace-objects', '-c', 'safe.directory='+source_root, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', source_root]
 env = {'PATH':os.environ['PATH'], 'HOME':'/tmp', 'GIT_CONFIG_NOSYSTEM':'1', 'GIT_CONFIG_GLOBAL':'/dev/null'}
-entries = subprocess.check_output(git+['ls-tree', '-r', '-z', 'HEAD'], env=env)
-for entry in entries.split(b'\0'):
- if not entry: continue
- metadata, raw_path = entry.split(b'\t', 1)
- mode, kind, oid = metadata.split(b' ')
- path = pathlib.PurePosixPath(os.fsdecode(raw_path))
- if path.is_absolute() or '..' in path.parts or '.git' in path.parts or mode not in (b'100644', b'100755') or kind != b'blob': raise ValueError('unsafe committed tree entry')
- destination = pathlib.Path('/workspace')/path
- destination.parent.mkdir(parents=True, exist_ok=True)
- data = subprocess.check_output(git+['cat-file', 'blob', oid.decode('ascii')], env=env)
- destination.write_bytes(data)
- destination.chmod(0o755 if mode == b'100755' else 0o644)
+work_root = pathlib.Path(os.environ.get('SDLC_CHECK_WORKSPACE','/workspace'))
+work_root.mkdir(parents=True,exist_ok=True)
+tree = subprocess.check_output(git+['rev-parse','HEAD^{tree}'],env=env).decode().strip()
+if len(tree) not in (40,64) or any(c not in '0123456789abcdef' for c in tree): raise ValueError('unsafe tree identity')
+if os.environ.get('SDLC_CHECK_TREE',tree)!=tree: raise ValueError('check source changed during preparation')
+template_root = os.environ.get('SDLC_CHECK_TEMPLATES')
+template = pathlib.Path(template_root)/(tree+'-v1') if template_root else None
+batch = subprocess.Popen(git+['cat-file','--batch'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,env=env)
+def blob(oid):
+ batch.stdin.write(oid+b'\n'); batch.stdin.flush()
+ fields=batch.stdout.readline().split()
+ if len(fields)!=3 or fields[0]!=oid or fields[1]!=b'blob': raise ValueError('invalid source blob')
+ size=int(fields[2]); data=batch.stdout.read(size)
+ if len(data)!=size or batch.stdout.read(1)!=b'\n': raise ValueError('incomplete source blob')
+ return data
+if not template or not (template/'.complete').is_file():
+ target = template/'files' if template else work_root
+ target.mkdir(parents=True,exist_ok=True)
+ entries = subprocess.check_output(git+['ls-tree', '-r', '-z', 'HEAD'], env=env)
+ for entry in entries.split(b'\0'):
+  if not entry: continue
+  metadata, raw_path = entry.split(b'\t', 1)
+  mode, kind, oid = metadata.split(b' ')
+  path = pathlib.PurePosixPath(os.fsdecode(raw_path))
+  if path.is_absolute() or '..' in path.parts or '.git' in path.parts or mode not in (b'100644', b'100755') or kind != b'blob': raise ValueError('unsafe committed tree entry')
+  destination = target/path
+  destination.parent.mkdir(parents=True, exist_ok=True)
+  destination.write_bytes(blob(oid))
+  destination.chmod(0o755 if mode == b'100755' else 0o644)
+ if template: (template/'.complete').write_text(tree)
+ print('Source template created' if template else 'Source snapshot copied',flush=True)
+elif template:
+ if (template/'.complete').read_text()!=tree: raise ValueError('invalid source cache marker')
+ print('Source template reused',flush=True)
+if template:
+ subprocess.run(['cp','-a','--reflink=auto',str(template/'files')+'/.',str(work_root)],check=True,env=env)
 if len(sys.argv) > 1:
     baseline = json.loads(sys.argv[1])
     revision = baseline['revision']
@@ -101,7 +127,7 @@ if len(sys.argv) > 1:
     for raw_path in baseline['paths']:
         path = pathlib.PurePosixPath(raw_path)
         if path.is_absolute() or str(path) != raw_path or any(p in ('.git','..') for p in path.parts): raise ValueError('unsafe baseline path')
-        destination = pathlib.Path('/workspace')/path
+        destination = work_root/path
         if not destination.is_file() or destination.is_symlink(): raise ValueError('baseline target is not regular source')
         if os.path.lexists(pathlib.Path('/inputs')/path): raise ValueError('baseline overlaps frozen input')
         entries = subprocess.check_output(git+['ls-tree', '-z', revision, '--', raw_path], env=env).split(b'\0')
@@ -109,20 +135,22 @@ if len(sys.argv) > 1:
         metadata, entry_path = entries[0].split(b'\t',1)
         mode, kind, oid = metadata.split(b' ')
         if os.fsdecode(entry_path) != raw_path or mode not in (b'100644',b'100755') or kind != b'blob': raise ValueError('unsafe baseline source')
-        destination.write_bytes(subprocess.check_output(git+['cat-file','blob',oid.decode('ascii')],env=env))
+        destination.write_bytes(blob(oid))
         destination.chmod(0o755 if mode == b'100755' else 0o644)
+batch.stdin.close(); batch.stdout.close()
+if batch.wait()!=0: raise ValueError('source batch failed')
 if os.path.isdir('/inputs'):
  for root, dirs, files in os.walk('/inputs', followlinks=False):
   for name in dirs+files:
    source = pathlib.Path(root)/name
    relative = source.relative_to('/inputs')
    if '.git' in relative.parts or source.is_symlink(): raise ValueError('unsafe check input')
-   destination = pathlib.Path('/workspace')/relative
+   destination = work_root/relative
    if any(p.is_symlink() for p in [destination, *destination.parents]): raise ValueError('input traverses symlink')
    if source.is_dir(): destination.mkdir(parents=True, exist_ok=True)
    elif source.is_file(): destination.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source,destination)
    else: raise ValueError('unsupported check input')
-for root, dirs, files in os.walk('/workspace', followlinks=False):
+for root, dirs, files in os.walk(work_root, followlinks=False):
  os.chown(root, 1000, 1000)
  for name in dirs+files: os.chown(os.path.join(root,name), 1000, 1000, follow_symlinks=False)
 `
@@ -156,6 +184,12 @@ func (checker DockerChecker) Verify(ctx context.Context, workspace string, reque
 func (checker DockerChecker) check(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline) (result error) {
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if checker.DaemonMode != "" && checker.DaemonMode != SharedTestDaemon {
+		return errors.New("unsupported repository check daemon mode")
+	}
+	if checker.DaemonMode == SharedTestDaemon && !checker.DockerTests {
+		return errors.New("shared daemon mode requires Docker checks")
 	}
 	daemonImage := checker.DaemonImage
 	if daemonImage != "" {
@@ -234,6 +268,9 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 		return err
 	}
 	name := "sdlc-check-" + hex.EncodeToString(token[:])
+	if checker.DockerTests && checker.DaemonMode == SharedTestDaemon {
+		return checker.checkShared(ctx, workspace, inputs, commands, output, baseline, name, state, daemonImage)
+	}
 	volumes := []string{name + "-workspace"}
 	if checker.DockerTests {
 		volumes = append(volumes, name+"-socket", name+"-data")
@@ -327,6 +364,20 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 			return err
 		}
 	}
+	workerNetwork := "bridge"
+	if checker.DockerTests {
+		workerNetwork = "container:" + name + "-daemon"
+	}
+	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, workerNetwork, "type=volume,src="+volumes[0]+",dst=/workspace", func() string {
+		if checker.DockerTests {
+			return "type=volume,src=" + volumes[1] + ",dst=/run/sdlc"
+		}
+		return ""
+	}(), nil, func(worker string) { cleanups = append(cleanups, []string{"rm", "--force", worker}) })
+}
+
+func (checker DockerChecker) executeChecks(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name, imageID, workerNetwork, workspaceMount, socketMount string, prefix []string, onWorker func(string)) error {
+	var err error
 	runner := checker.Runner
 	if runner == nil {
 		runner = localCheckRunner{}
@@ -337,21 +388,24 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 	approvedPaths := diagnosticSourcePaths(ctx, workspace)
 	for i, command := range commands {
 		worker := fmt.Sprintf("%s-worker-%d", name, i)
-		cleanups = append(cleanups, []string{"rm", "--force", worker})
+		onWorker(worker)
 		if err = json.NewEncoder(output).Encode(command); err != nil {
 			return err
 		}
-		workerNetwork := "bridge"
+		args := []string{"run", "--name", worker, "--pull", "never", "--network", workerNetwork, "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "1024", "--memory", "4g", "--cpus", "4", "--workdir", "/workspace", "--tmpfs", "/tmp:rw,nosuid,nodev,size=2g,mode=1777", "--tmpfs", "/tmp/check-home:rw,nosuid,nodev,size=2g,uid=1000,gid=1000,mode=0700", "--mount", workspaceMount, "--env", "HOME=/tmp/check-home", "--env", "CODEX_HOME=/tmp/check-home/.codex", "--env", "CLAUDE_CONFIG_DIR=/tmp/check-home/.claude", "--env", "DOCKER_CONFIG=/tmp/check-home/.docker", "--env", "DOTNET_CLI_HOME=/tmp/check-home", "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1"}
 		if checker.DockerTests {
-			workerNetwork = "container:" + name + "-daemon"
-		}
-		args := []string{"run", "--name", worker, "--pull", "never", "--network", workerNetwork, "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "1024", "--memory", "4g", "--cpus", "4", "--workdir", "/workspace", "--tmpfs", "/tmp:rw,nosuid,nodev,size=2g,mode=1777", "--tmpfs", "/tmp/check-home:rw,nosuid,nodev,size=2g,uid=1000,gid=1000,mode=0700", "--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace", "--env", "HOME=/tmp/check-home", "--env", "CODEX_HOME=/tmp/check-home/.codex", "--env", "CLAUDE_CONFIG_DIR=/tmp/check-home/.claude", "--env", "DOCKER_CONFIG=/tmp/check-home/.docker", "--env", "DOTNET_CLI_HOME=/tmp/check-home", "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1"}
-		if checker.DockerTests {
-			args = append(args, "--mount", "type=volume,src="+volumes[1]+",dst=/run/sdlc", "--env", "DOCKER_HOST=unix://"+checkSocket, "--env", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "--env", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="+checkSocket)
+			args = append(args, "--mount", socketMount, "--env", "DOCKER_HOST=unix://"+checkSocket, "--env", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "--env", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="+checkSocket)
+			if checker.DaemonMode == SharedTestDaemon {
+				args = append(args, "--env", "DOCKER_BUILDKIT=0", "--env", "COMPOSE_BAKE=false", "--env", "COMPOSE_DOCKER_CLI_BUILD=0", "--env", "TESTCONTAINERS_RYUK_DISABLED=true")
+			}
 		}
 		args = checkContainerEnvironment(args)
-		args = append(args, "--entrypoint", "/usr/bin/env", state.ImageID)
+		if checker.DaemonMode == SharedTestDaemon {
+			args = append(args, "--label", testOwnerLabel+"="+name)
+		}
+		args = append(args, "--entrypoint", "/usr/bin/env", imageID)
 		args = append(args, checkProcessArguments(command)...)
+		args = append(prefix, args...)
 		diagnostic := &formatterDiagnostic{approved: approvedPaths}
 		matcher := newFailureMatcher(baseline)
 		commandOutput := io.MultiWriter(output, diagnostic, matcher)
@@ -359,7 +413,7 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			metadata, inspectErr := checker.Runtime.Docker.Output(ctx, "inspect", "--format", "{{json .State}}", worker)
+			metadata, inspectErr := checker.Runtime.Docker.Output(ctx, append(prefix, "inspect", "--format", "{{json .State}}", worker)...)
 			if inspectErr != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()

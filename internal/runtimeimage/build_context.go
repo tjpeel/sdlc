@@ -103,7 +103,7 @@ func buildContext(source string) (directory string, cleanup func(), err error) {
 	if _, err = copyFile("go.mod", "source/go.mod"); err != nil {
 		return "", cleanup, err
 	}
-	pending := []string{"cmd/sdlc-publisher"}
+	pending := []string{"cmd/sdlc-publisher", "cmd/sdlc-test-proxy"}
 	visited := map[string]bool{}
 	for len(pending) > 0 {
 		pkg := pending[0]

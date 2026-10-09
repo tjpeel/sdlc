@@ -63,7 +63,7 @@ func F() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != len(runtimeAssets)+5 {
+	if count != len(runtimeAssets)+6 {
 		t.Fatal("unexpected context files", count)
 	}
 	cleanup()

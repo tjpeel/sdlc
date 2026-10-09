@@ -35,6 +35,21 @@ go vet ./...
 go build ./cmd/...
 ```
 
+Validate shared Docker checks with two separate controller processes, fixed
+Compose names and ports, crash recovery and warm cache reuse:
+
+```sh
+SDLC_OFFLINE_SHARED_DOCKER_TESTS=1 go test -count=1 -v ./internal/workrun \
+  -run '^TestOfflineSharedDockerChecks$'
+SDLC_OFFLINE_PROXY_TESTS=1 go test -race -count=1 ./internal/testproxy
+```
+
+Add `SDLC_SHARED_DOTNET_TESTS=1` to the first command to include the public .NET,
+Mongo, bridge-network and localhost fixture. These tests use temporary images,
+daemons and generated input files. They do not connect provider accounts. Set
+`SDLC_SHARED_DOCKER_EVIDENCE` to a private temporary directory to retain fixture
+logs. See the [cache guide](docker-check-cache.md) for supported Engine operations.
+
 Use uncached tests because installer checks build and run an external executable.
 For Python, runtime helpers or safeguards:
 

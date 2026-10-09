@@ -4,6 +4,7 @@ package workrun
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -62,6 +63,7 @@ type Plan struct {
 	DockerTests         bool                 `json:"docker_tests"`
 	SigningImage        string               `json:"signing_image,omitempty"`
 	DaemonImage         string               `json:"daemon_image,omitempty"`
+	DaemonMode          string               `json:"daemon_mode,omitempty"`
 	Roles               Roles                `json:"roles"`
 	PRTitle             string               `json:"pr_title,omitempty"`
 	PRBody              string               `json:"pr_body,omitempty"`
@@ -108,6 +110,12 @@ type Reconciliation struct {
 // ValidateSidecarImages accepts absent pins for journals written before runtime
 // sidecars were selected per installation. Callers retain the historical defaults.
 func (plan Plan) ValidateSidecarImages() error {
+	if plan.DaemonMode != "" && plan.DaemonMode != SharedTestDaemon {
+		return fmt.Errorf("unsupported repository check daemon mode")
+	}
+	if plan.DaemonMode == SharedTestDaemon && (!plan.DockerTests || plan.DaemonImage == "") {
+		return fmt.Errorf("shared Docker checks require an exact daemon pin")
+	}
 	if err := plan.Headroom.Validate(); err != nil {
 		return err
 	}

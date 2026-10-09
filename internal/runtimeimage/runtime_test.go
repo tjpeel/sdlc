@@ -161,7 +161,7 @@ func fixture(t *testing.T) (Manager, *fakeDocker, string) {
 			t.Fatal(err)
 		}
 	}
-	for name, content := range map[string]string{"go.mod": "module github.com/tjpeel/sdlc\n\ngo 1.24.0\n", "cmd/sdlc-publisher/main.go": "package main\nfunc main() {}\n"} {
+	for name, content := range map[string]string{"go.mod": "module github.com/tjpeel/sdlc\n\ngo 1.24.0\n", "cmd/sdlc-publisher/main.go": "package main\nfunc main() {}\n", "cmd/sdlc-test-proxy/main.go": "package main\nfunc main() {}\n"} {
 		path := filepath.Join(root, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)

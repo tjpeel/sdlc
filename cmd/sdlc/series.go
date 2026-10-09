@@ -53,6 +53,7 @@ type seriesSettings struct {
 	DockerTests               bool
 	Instructions              string
 	SigningImage, DaemonImage string
+	DaemonMode                string
 }
 
 type seriesWriter struct {
@@ -449,6 +450,7 @@ func freezeSelectedSeriesSettings(ctx context.Context, runtime runtimeimage.Mana
 		return seriesSettings{}, err
 	}
 	settings.SigningImage, settings.DaemonImage = sidecars.SigningImage, sidecars.DaemonImage
+	settings.DaemonMode = sidecars.DaemonMode
 	paths := append([]string{project.ConfigPath}, options.inputs...)
 	paths = append(paths, settings.Config.InputFiles...)
 	for _, ticket := range plan.Tickets {
@@ -503,7 +505,7 @@ func loadSeriesSettings(data []byte) (seriesSettings, error) {
 			return settings, fmt.Errorf("invalid private feature models")
 		}
 	}
-	if settings.SigningImage == "" || (settings.DockerTests && settings.DaemonImage == "") || (workrun.Plan{SigningImage: settings.SigningImage, DaemonImage: settings.DaemonImage}).ValidateSidecarImages() != nil {
+	if settings.SigningImage == "" || (settings.DockerTests && settings.DaemonImage == "") || (workrun.Plan{SigningImage: settings.SigningImage, DaemonImage: settings.DaemonImage, DaemonMode: settings.DaemonMode, DockerTests: settings.DockerTests}).ValidateSidecarImages() != nil {
 		return settings, fmt.Errorf("invalid private feature sidecar images")
 	}
 	if err := settings.Headroom.Validate(); err != nil {
@@ -736,7 +738,7 @@ func (d *seriesDriver) loadRun(ticket string, result workseries.Result) (string,
 		return "", journal, err
 	}
 	roles, exists := d.settings.Roles[ticket]
-	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
+	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Plan.DaemonMode != d.settings.DaemonMode || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
 		return "", journal, fmt.Errorf("saved ticket run differs from frozen feature settings")
 	}
 	for _, input := range journal.Plan.CheckInputs {
@@ -806,6 +808,7 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	options.frozenInstructions = &d.settings.Instructions
 	options.frozenInputHashes = d.settings.InputHashes
 	options.frozenSigningImage, options.frozenDaemonImage = d.settings.SigningImage, d.settings.DaemonImage
+	options.frozenDaemonMode = d.settings.DaemonMode
 	directory, inspectErr := workrun.RunDirectory(d.plan.Root, d.plan.Reference, ticket.File, previous.RunID, false)
 	if inspectErr == nil {
 		if _, err := os.Lstat(filepath.Join(directory, "journal.json")); err == nil {

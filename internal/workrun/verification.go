@@ -142,7 +142,8 @@ func verificationKey(j *Journal, request VerificationRequest, head, tree string)
 		Commands          [][]string
 		Docker            bool
 		Daemon            string
-	}{request, head, tree, j.ImageID, j.Plan.CheckInputs, j.Plan.Checks, j.Plan.DockerTests, j.Plan.DaemonImage})
+		DaemonMode        string `json:",omitempty"`
+	}{request, head, tree, j.ImageID, j.Plan.CheckInputs, j.Plan.Checks, j.Plan.DockerTests, j.Plan.DaemonImage, j.Plan.DaemonMode})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }

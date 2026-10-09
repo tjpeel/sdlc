@@ -17,7 +17,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.12`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.13`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Ticket and feature runs retain [usage metrics](docs/usage-metrics.md) across
 attempts and resumes. Read them with `sdlc usage --since 7d --json`.
@@ -309,8 +309,13 @@ The remaining risks are:
 
 Ticket checks receive their own disposable source copy. With `--docker-tests`
 or the project setting `"docker_tests": true`,
-they also receive a separate privileged Docker-in-Docker daemon, never the host
-socket. Privileged Docker is suitable only for trusted integration checks and
+new runs use a persistent privileged Docker-in-Docker test daemon with scoped
+session sockets. Concurrent checks can reuse cached images while using the same
+names and published ports. Required host-cached images and committed source
+templates are reused; each run keeps its own writable source and resources.
+Saved runs keep their original daemon mode. See the
+[Docker check cache guide](docs/docker-check-cache.md) for runtime rebuilding,
+compatibility and cache lifetime. Privileged Docker is suitable only for trusted integration checks and
 is not a boundary against hostile code. The authenticated provider still has a
 shell: instructions to leave dependency installation and tests to the check
 worker cannot prevent it from running repository code and exposing its cache.
