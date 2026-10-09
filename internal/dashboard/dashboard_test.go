@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/tjpeel/sdlc/internal/runstatus"
+	"github.com/tjpeel/sdlc/internal/runusage"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
@@ -103,6 +104,78 @@ func TestListDistinguishesQuietLiveControllerFromStaleHeartbeat(t *testing.T) {
 		if strings.Contains(line, "stale-run") && !strings.Contains(line, "stale") {
 			t.Fatalf("stale controller mislabeled: %s", line)
 		}
+	}
+}
+
+func TestLastOutputColumnAlignsAcrossSecondDigitBoundary(t *testing.T) {
+	outputAt := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	v := runstatus.View{ID: "0123456789ab", Available: true, Live: true, State: "implementing", Root: "/example/project", Ticket: "01-example.md", Provider: "codex", StartedAt: outputAt, LastActivityAt: outputAt}
+	for _, seconds := range []int{9, 10} {
+		var output bytes.Buffer
+		if err := List(&output, []runstatus.View{v}, outputAt.Add(time.Duration(seconds)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		var header, row string
+		for _, line := range strings.Split(output.String(), "\n") {
+			if strings.Contains(line, "PROVIDER") {
+				header = line
+			}
+			if strings.Contains(line, v.ID) {
+				row = line
+			}
+		}
+		column := strings.Index(header, "LAST OUTPUT")
+		value := fmt.Sprintf("%ds", seconds)
+		if column < 0 || strings.Index(row, value) != column || !strings.Contains(row, value+" ago") {
+			t.Fatalf("last output is misaligned at %d seconds:\n%s\n%s", seconds, header, row)
+		}
+	}
+}
+
+func TestStoppedOutputAndElapsedRemainFixedAcrossRefreshes(t *testing.T) {
+	started := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	stopped := started.Add(305634 * time.Millisecond)
+	v := runstatus.View{ID: "stopped-run", Available: true, Stopped: true, State: "ready", Root: "/example/project", LastActivityAt: stopped.Add(-time.Second), StartedAt: started, UpdatedAt: stopped, Activity: runstatus.Snapshot{StoppedAt: stopped, Stopped: true}}
+	for _, legacy := range []bool{false, true} {
+		if legacy {
+			v.Activity.StoppedAt = time.Time{}
+		}
+		var originalRow string
+		for _, now := range []time.Time{stopped.Add(time.Minute), stopped.Add(24 * time.Hour)} {
+			var output bytes.Buffer
+			if err := List(&output, []runstatus.View{v}, now); err != nil {
+				t.Fatal(err)
+			}
+			var row string
+			for _, line := range strings.Split(output.String(), "\n") {
+				if strings.Contains(line, v.ID) {
+					row = line
+				}
+			}
+			if originalRow != "" && originalRow != row {
+				t.Fatalf("stopped output changed with refresh time:\n%s\n%s", originalRow, row)
+			}
+			if !strings.Contains(row, "02 Jan 12:05:04") || !strings.Contains(output.String(), "elapsed 5m 6s") {
+				t.Fatalf("recorded output time or whole-second duration missing: %s", output.String())
+			}
+			originalRow = row
+		}
+	}
+}
+
+func TestDashboardDurationsUseWholeSeconds(t *testing.T) {
+	v := runstatus.View{Journal: &workrun.Journal{Timings: workrun.Timings{Version: 1, ControllerMS: 311768, ChecksMS: 2961}}, Metrics: &runusage.Summary{Attempts: 2, ElapsedMS: 305634, Groups: []runusage.Group{{ElapsedMS: 305634}}}}
+	var output bytes.Buffer
+	if err := Detail(&output, v, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"provider elapsed 5m 6s", "| elapsed 5m 6s", "Observed controller time: 5m 12s | check worker time: 3s | CI polling wait: 0s"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("human duration missing %q: %s", want, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "5.634s") || strings.Contains(output.String(), "11.768s") {
+		t.Fatal("raw millisecond duration reached dashboard")
 	}
 }
 
@@ -304,8 +377,8 @@ func TestDetailShowsContextPercentageOnlyForReportedMatchingWindow(t *testing.T)
 		want       string
 		percentage bool
 	}{
-		{name: "no telemetry", want: "Context: unknown"},
-		{name: "native aggregate is not context", usage: runstatus.Usage{ModelMatches: true, Aggregate: &runstatus.TokenUsage{InputTokens: &aggregate}}, want: "Context: unknown | Native totals: input 5000, cached unknown, output unknown"},
+		{name: "no telemetry", want: "Context: not reported"},
+		{name: "native aggregate is not context", usage: runstatus.Usage{ModelMatches: true, Aggregate: &runstatus.TokenUsage{InputTokens: &aggregate}}, want: "Context: not reported | Native totals: input 5000, cached unknown, output unknown"},
 		{name: "context without reported window", usage: runstatus.Usage{ModelMatches: true, Context: &runstatus.ContextUsage{Tokens: &tokens}}, want: "Context: 200 tokens"},
 		{name: "reported model differs", usage: runstatus.Usage{ModelMatches: false, Context: &runstatus.ContextUsage{Tokens: &tokens, Window: &window}}, want: "Context: 200 tokens"},
 		{name: "zero window", usage: runstatus.Usage{ModelMatches: true, Context: &runstatus.ContextUsage{Tokens: &tokens, Window: &zero}}, want: "Context: 200 tokens"},

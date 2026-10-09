@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.11 - 2026-10-09
+
+### Fixed
+
+- Align dashboard provider and last-output columns. Label output age explicitly for live controllers and show fixed timestamps for stopped or stale controllers, so refreshes do not imply new job activity.
+- Display dashboard durations in whole seconds and retain a fixed elapsed duration for stopped runs without a recorded stop timestamp. Label absent native context telemetry as not reported; cumulative token totals remain separate.
+
 ## 0.1.0-beta.10 - 2026-10-09
 
 ### Added

@@ -42,6 +42,14 @@ separately. Provider-attempt elapsed time includes setup and queueing; it is not
 active inference time. Time between controller invocations is excluded from these
 controller intervals. Older journals have no recorded timing intervals.
 
+The dashboard rounds displayed durations to whole seconds; JSON retains the
+recorded milliseconds. Its run elapsed duration spans the first controller start
+to the latest stop, including gaps between invocations. Provider elapsed sums
+the recorded provider-attempt intervals, so these values can differ.
+The `LAST OUTPUT` column shows time since output for live controllers and a fixed
+recorded timestamp for stopped or stale controllers. Overview timestamps use the
+time zone shown in the dashboard heading; details include the UTC offset.
+
 ## Counter meanings
 
 - Codex input includes cached input. Cache reads are a subset; reasoning output
@@ -60,6 +68,10 @@ controller intervals. Older journals have no recorded timing intervals.
 - Aggregate session tokens are not current context occupancy. Only explicit
   native context observations establish a peak, window or percentage. Events the
   native client does not emit remain unobserved.
+
+`Context: not reported` means the native client supplied no current prompt/context
+size. It does not mean zero usage. The cumulative native token totals shown next
+to it cannot establish current context occupancy or a context percentage.
 
 Native dollar estimates describe API-equivalent cost. They do not measure a
 subscription bill, remaining allowance or time until a cap. Claude quota events

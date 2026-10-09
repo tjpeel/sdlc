@@ -55,6 +55,37 @@ func age(now, then time.Time) string {
 	return fmt.Sprintf("%dh%02dm", int(duration.Hours()), int(duration.Minutes())%60)
 }
 
+func durationText(duration time.Duration) string {
+	if duration < 0 {
+		duration = 0
+	}
+	seconds := int64(duration.Round(time.Second) / time.Second)
+	if seconds >= 3600 {
+		return fmt.Sprintf("%dh %dm %ds", seconds/3600, seconds/60%60, seconds%60)
+	}
+	if seconds >= 60 {
+		return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
+func activityTime(now, then time.Time, live bool) string {
+	if then.IsZero() {
+		return "not recorded"
+	}
+	if live {
+		return age(now, then) + " ago"
+	}
+	return then.In(now.Location()).Format(time.RFC3339)
+}
+
+func lastOutput(v runstatus.View, now time.Time) string {
+	if !v.Live && !v.LastActivityAt.IsZero() {
+		return v.LastActivityAt.In(now.Location()).Format("02 Jan 15:04:05")
+	}
+	return activityTime(now, v.LastActivityAt, v.Live)
+}
+
 func controller(v runstatus.View) string {
 	if !v.Available {
 		return "unknown"
@@ -193,7 +224,7 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 			attention++
 		}
 	}
-	if _, err := fmt.Fprintf(output, "SDLC  %s  |  %d runs  %d live  %d need attention\n\n", now.Format("15:04:05"), len(views), live, attention); err != nil {
+	if _, err := fmt.Fprintf(output, "SDLC  %s  |  %d runs  %d live  %d need attention\n\n", now.Format("15:04:05 MST"), len(views), live, attention); err != nil {
 		return err
 	}
 	if len(views) == 0 {
@@ -203,7 +234,8 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 	if _, err := fmt.Fprintf(output, "Page %d/%d  |  showing %d–%d of %d (up to %d per page)\n\n", page.Page, page.Pages, (page.Page-1)*PageSize+1, (page.Page-1)*PageSize+len(rows), page.Total, PageSize); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(output, "%-4s %-12s %-17s %-21s %-19s %-8s %-7s %-7s\n", "", "RUN", "REPOSITORY", "TICKET", "STAGE", "CONTROL", "PROVIDER", "ACTIVITY"); err != nil {
+	const rowFormat = "%-4s %-12s %-17s %-21s %-19s %-8s %-8s %s\n"
+	if _, err := fmt.Fprintf(output, rowFormat, "", "RUN", "REPOSITORY", "TICKET", "STAGE", "CONTROL", "PROVIDER", "LAST OUTPUT"); err != nil {
 		return err
 	}
 	lastCategory := ""
@@ -227,7 +259,7 @@ func ListPage(output io.Writer, views []runstatus.View, now time.Time, requested
 		if v.Live && v.Activity.WaitReason != "" {
 			stage = "queued: " + stage
 		}
-		if _, err := fmt.Fprintf(output, "%-4s %-12s %-17s %-21s %-19s %-8s %-7s %-7s\n", mark, id, clip(filepath.Base(v.Root), 17), clip(filepath.Base(v.Ticket), 21), clip(stage, 19), controller(v), clip(v.Provider, 7), age(now, v.LastActivityAt)); err != nil {
+		if _, err := fmt.Fprintf(output, rowFormat, mark, id, clip(filepath.Base(v.Root), 17), clip(filepath.Base(v.Ticket), 21), clip(stage, 19), controller(v), clip(v.Provider, 8), lastOutput(v, now)); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(output, "     %s | %s / %s | elapsed %s\n", clip(v.Reference, 40), clip(v.Model, 40), clip(v.Effort, 12), elapsed(v, now)); err != nil {
@@ -304,10 +336,19 @@ func InputAction(v runstatus.View) string {
 }
 
 func elapsed(v runstatus.View, now time.Time) string {
-	if v.Stopped && !v.Activity.StoppedAt.IsZero() {
-		now = v.Activity.StoppedAt
+	if v.StartedAt.IsZero() {
+		return "unknown"
 	}
-	return age(now, v.StartedAt)
+	if v.Stopped {
+		if !v.Activity.StoppedAt.IsZero() {
+			now = v.Activity.StoppedAt
+		} else if !v.UpdatedAt.IsZero() {
+			now = v.UpdatedAt
+		} else {
+			return "unknown"
+		}
+	}
+	return durationText(now.Sub(v.StartedAt))
 }
 
 func Reason(v runstatus.View) string {
@@ -348,7 +389,7 @@ func tokenCount(value *int64) string {
 }
 
 func usageSummary(usage runstatus.Usage) string {
-	context := "Context: unknown"
+	context := "Context: not reported"
 	if usage.Context != nil && usage.Context.Tokens != nil {
 		context = "Context: " + tokenCount(usage.Context.Tokens) + " tokens"
 		if usage.ModelMatches && usage.Context.Window != nil && *usage.Context.Window > 0 {
@@ -362,7 +403,7 @@ func usageSummary(usage runstatus.Usage) string {
 }
 
 func metricsSummary(s runusage.Summary) string {
-	return fmt.Sprintf("Recorded usage: %d attempts, %d incomplete, %d missing | provider elapsed %s (includes setup and queue)", s.Attempts, s.Incomplete, s.Missing, time.Duration(s.ElapsedMS)*time.Millisecond)
+	return fmt.Sprintf("Recorded usage: %d attempts, %d incomplete, %d missing | provider elapsed %s (includes setup and queue)", s.Attempts, s.Incomplete, s.Missing, durationText(time.Duration(s.ElapsedMS)*time.Millisecond))
 }
 
 // WriteUsageSignals labels provider capacity as a last observation rather than
@@ -414,7 +455,7 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 		fmt.Fprintf(&text, "Missing file? %s (inspect requirements and attach missing files offline)\n", inputs)
 	}
 	fmt.Fprintln(&text, textview.Heading("Run details"))
-	fmt.Fprintf(&text, "Run: %s\nRepository: %s\nTicket: %s / %s\nStage: %s | controller: %s | elapsed: %s\nRole: %s | model: %s / %s / %s\nLast output: %s ago | heartbeat: %s ago\n", v.ID, v.Root, v.Reference, filepath.Base(v.Ticket), v.State, controller(v), elapsed(v, now), v.Role, v.Provider, v.Model, v.Effort, age(now, v.LastActivityAt), age(now, v.HeartbeatAt))
+	fmt.Fprintf(&text, "Run: %s\nRepository: %s\nTicket: %s / %s\nStage: %s | controller: %s | elapsed: %s\nRole: %s | model: %s / %s / %s\nLast output: %s | heartbeat: %s\n", v.ID, v.Root, v.Reference, filepath.Base(v.Ticket), v.State, controller(v), elapsed(v, now), v.Role, v.Provider, v.Model, v.Effort, activityTime(now, v.LastActivityAt, v.Live), activityTime(now, v.HeartbeatAt, v.Live))
 	fmt.Fprintln(&text, usageSummary(v.Activity.Usage))
 	if v.MetricsError != "" {
 		fmt.Fprintln(&text, "Recorded usage: "+v.MetricsError)
@@ -425,7 +466,7 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 			fmt.Fprintf(&text, "  %s %s (%s, %s): input %s, cache read %s, output %s | measured %d/%d attempts | elapsed %s\n",
 				group.Provider, group.Model, group.Role, group.OptimizerMode,
 				tokenCount(group.Tokens.InputTokens), tokenCount(group.Tokens.CachedInputTokens), tokenCount(group.Tokens.OutputTokens),
-				group.MeasuredAttempts, group.Attempts, time.Duration(group.ElapsedMS)*time.Millisecond)
+				group.MeasuredAttempts, group.Attempts, durationText(time.Duration(group.ElapsedMS)*time.Millisecond))
 			WriteUsageSignals(&text, group)
 		}
 	}
@@ -446,7 +487,7 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 		}
 		fmt.Fprintf(&text, "Local checks: %s | sessions: %d | repair rounds: %d\n", checks, j.Attempt, j.Rounds)
 		if j.Timings.Recorded() != nil {
-			fmt.Fprintf(&text, "Observed controller time: %s | check worker time: %s | CI polling wait: %s\n", time.Duration(j.Timings.ControllerMS)*time.Millisecond, time.Duration(j.Timings.ChecksMS)*time.Millisecond, time.Duration(j.Timings.CIWaitMS)*time.Millisecond)
+			fmt.Fprintf(&text, "Observed controller time: %s | check worker time: %s | CI polling wait: %s\n", durationText(time.Duration(j.Timings.ControllerMS)*time.Millisecond), durationText(time.Duration(j.Timings.ChecksMS)*time.Millisecond), durationText(time.Duration(j.Timings.CIWaitMS)*time.Millisecond))
 		}
 	}
 	for _, finding := range v.Findings {
