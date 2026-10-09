@@ -257,8 +257,14 @@ must acknowledge startup before monitoring can show an actual run.
 The iTerm2 adapter requires explicit terminal setup. In iTerm2, enable its
 Python API in Settings, then run `/terminal setup` (or `sdlc terminal setup`).
 This harmless handshake creates no tab or job and can request the initial macOS
-Automation permission. `/terminal status` reads local setup evidence. Start
-rechecks Automation permission without requesting it; if permission is missing,
+Automation permission. `/terminal status` reads local setup evidence. Run
+review shows missing or stale bridge setup before launch. After `/terminal setup`,
+repeat the `/run` command to review the plan again, then press Ctrl+S (or use
+`/start` in plain mode). If setup is unavailable, requesting Start still provides
+a manual handoff command for a separate terminal; no run starts when the receipt
+reports `unavailable`.
+
+Start rechecks Automation permission without requesting it; if permission is missing,
 return to explicit setup. SDLC uses iTerm's own `it2run` utility and unmodified
 Python API without copying API cookies into the shell or saved state.
 The adapter verifies the app's code signature, bundle identifier and publisher

@@ -116,8 +116,12 @@ func TestStructuredPlansAndShellPreviewAreOffline(t *testing.T) {
 		t.Fatalf("%s", output.String())
 	}
 	adapter := &shellAdapter{plans: map[string]string{}}
-	if _, err := adapter.read(context.Background(), root, append([]string{"run"}, runArgs("--repo", "example/project")...)); err != nil {
+	preview, err := adapter.read(context.Background(), root, append([]string{"run"}, runArgs("--repo", "example/project")...))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(preview, "/terminal setup") || !strings.Contains(preview, "Python API") || !strings.Contains(preview, "manual command") {
+		t.Fatalf("missing terminal setup guidance before Start: %s", preview)
 	}
 	if _, err := adapter.launch(context.Background(), root, append([]string{"run"}, args...)); err == nil || !strings.Contains(err.Error(), "preview only") {
 		t.Fatalf("dry-run launch: %v", err)

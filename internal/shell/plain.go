@@ -241,7 +241,8 @@ func RunPlain(ctx context.Context, c Config) error {
 		if m.readEcho != "" {
 			fmt.Fprintln(c.Output, m.readEcho)
 		}
-		fmt.Fprintln(c.Output, strings.ReplaceAll(m.body, "Ctrl+S starts; Esc cancels.", "/start confirms; /cancel cancels."))
+		body := strings.ReplaceAll(m.body, "Ctrl+S requests start; Esc cancels.", "/start requests start; /cancel cancels.")
+		fmt.Fprintln(c.Output, strings.ReplaceAll(body, "Ctrl+S can still provide a manual command", "/start can still provide a manual command"))
 		if m.progressView {
 			if m.progressDone {
 				fmt.Fprintln(c.Output, "Controller stopped; tail caught up. /answer RUN_ID or /resume RUN_ID remains available.")

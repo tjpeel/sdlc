@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.8 - 2026-10-09
+
+### Fixed
+
+- Explain missing iTerm2 background terminal setup during shell run review, before Start. Show the Python API prerequisite, setup command and manual fallback.
+- Display readable launch status and manual handoff instructions in the shell. An unavailable terminal reports that no run started; an uncertain launch keeps monitoring its receipt.
+
 ## 0.1.0-beta.7 - 2026-10-07
 
 This release records the completed changes since the beta.6 progress delivery,

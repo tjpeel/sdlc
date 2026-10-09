@@ -621,9 +621,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			m.cancel = nil
 		}
+		display := msg.text
+		if msg.kind == "launch" || msg.kind == "run-action" {
+			display = formatLaunchReceipt(msg.text)
+		}
 		if msg.err != nil {
 			m.lastError = true
-			m.body = "Error: " + safe(msg.err.Error()) + "\n" + safe(msg.text)
+			m.body = "Error: " + safe(msg.err.Error()) + "\n" + safe(display)
 			m.monitor = false
 			if msg.kind == "dashboard" && m.launchNotice != "" {
 				m.body = m.launchNotice + "\n\n" + m.body
@@ -654,7 +658,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.branch = msg.branch
 			m.dirty = msg.dirty
 		}
-		m.body = safe(msg.text)
+		m.body = safe(display)
 		if msg.kind == "dashboard" && m.launchNotice != "" {
 			m.body = m.launchNotice + "\n\n" + m.body
 		}
@@ -683,7 +687,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.suggestions = nil
 		case "run-action":
-			m.launchNotice = safe(msg.text)
+			m.launchNotice = safe(display)
 			m.action = nil
 			m.draft = nil
 			m.cursor = 0
@@ -694,14 +698,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "plan":
 			if !hasOption(msg.args, "dry-run") {
 				m.review = msg.args
-				m.body += "\n\nReview this plan. Ctrl+S starts; Esc cancels. Nothing has started."
+				m.body += "\n\nReview this plan. Ctrl+S requests start; Esc cancels. Nothing has started."
 			}
 		case "project":
 			m.root = msg.root
 			m.reference = ""
 			m.body = "Selected project: " + safe(inlineSafe(filepath.Base(m.root))) + ". Existing runs keep their recorded project."
 		case "launch":
-			m.launchNotice = safe(msg.text)
+			m.launchNotice = safe(display)
 			m.review = nil
 			m.body += "\n\nBackground terminal request submitted. Keep its controller terminal open."
 			m.monitor = true
@@ -1102,11 +1106,37 @@ func optionPosition(args []string, position int) bool {
 	return false
 }
 
-func launchMayHaveStarted(text string) bool {
-	var receipt struct {
-		ID    string `json:"id"`
-		State string `json:"state"`
+type launchReceipt struct {
+	ID            string   `json:"id"`
+	State         string   `json:"state"`
+	RunIDs        []string `json:"run_ids"`
+	ManualCommand string   `json:"manual_command"`
+}
+
+func formatLaunchReceipt(text string) string {
+	var receipt launchReceipt
+	if json.Unmarshal([]byte(text), &receipt) != nil || receipt.ID == "" {
+		return text
 	}
+	var output strings.Builder
+	fmt.Fprintf(&output, "Launch %s: %s", receipt.ID, receipt.State)
+	if receipt.State == "unavailable" {
+		output.WriteString("\nNo run started.")
+	}
+	if len(receipt.RunIDs) > 0 {
+		fmt.Fprintf(&output, "\nRun IDs: %s", strings.Join(receipt.RunIDs, ", "))
+	}
+	if receipt.State == "unknown" {
+		fmt.Fprintf(&output, "\nStartup is unconfirmed. Check /launch --id %s before retrying.", receipt.ID)
+	}
+	if receipt.ManualCommand != "" {
+		fmt.Fprintf(&output, "\n\nManual handoff for a separate terminal:\n%s", receipt.ManualCommand)
+	}
+	return output.String()
+}
+
+func launchMayHaveStarted(text string) bool {
+	var receipt launchReceipt
 	if json.Unmarshal([]byte(text), &receipt) != nil || receipt.ID == "" {
 		return false
 	}

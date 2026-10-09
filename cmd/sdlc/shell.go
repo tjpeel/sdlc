@@ -286,6 +286,16 @@ func (a *shellAdapter) read(ctx context.Context, root string, args []string) (st
 		if err := json.Indent(&pretty, plan, "", "  "); err != nil {
 			return "", err
 		}
+		state, statusErr := shellStateDirectory()
+		var status terminallaunch.TerminalReadiness
+		if statusErr == nil {
+			status, statusErr = terminallaunch.TerminalStatus(filepath.Join(state, "terminal"))
+		}
+		if statusErr != nil {
+			fmt.Fprintf(&pretty, "\n\nBackground terminal readiness could not be checked: %s\nUse /terminal status to inspect setup before requesting Start.", statusErr)
+		} else if !status.Ready {
+			fmt.Fprintf(&pretty, "\n\nBackground terminal setup required.\n%s\nRun /terminal setup, then repeat this /run command to review and start.\nCtrl+S can still provide a manual command for a separate terminal.", status.Message)
+		}
 		return pretty.String(), nil
 	}
 	if args[0] == "version" && len(args) == 1 {

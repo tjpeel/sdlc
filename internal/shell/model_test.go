@@ -334,8 +334,10 @@ func TestLongestCommandChoosesNativeMutation(t *testing.T) {
 func TestPlainPlanStartAndCancellation(t *testing.T) {
 	launched := 0
 	var out bytes.Buffer
-	err := RunPlain(context.Background(), Config{Root: "/example", Input: strings.NewReader("/run --ticket one.md\n/cancel\n/start\n/run --ticket one.md\n/start\n/exit\n"), Output: &out, Read: func(context.Context, string, []string) (string, error) { return "plan", nil }, Launch: func(context.Context, string, []string) (string, error) { launched++; return "accepted", nil }})
-	if err != nil || launched != 1 || !strings.Contains(out.String(), "No reviewed launch") {
+	err := RunPlain(context.Background(), Config{Root: "/example", Input: strings.NewReader("/run --ticket one.md\n/cancel\n/start\n/run --ticket one.md\n/start\n/exit\n"), Output: &out, Read: func(context.Context, string, []string) (string, error) {
+		return "plan\nCtrl+S can still provide a manual command for a separate terminal.", nil
+	}, Launch: func(context.Context, string, []string) (string, error) { launched++; return "accepted", nil }})
+	if err != nil || launched != 1 || !strings.Contains(out.String(), "No reviewed launch") || !strings.Contains(out.String(), "/start can still provide a manual command") || strings.Contains(out.String(), "Ctrl+S") {
 		t.Fatalf("launches=%d err=%v output=%s", launched, err, out.String())
 	}
 }
@@ -457,12 +459,12 @@ func TestLongDraftCaretRemainsVisible(t *testing.T) {
 }
 func TestLaunchFailureKeepsReviewedDraftAndManualReceipt(t *testing.T) {
 	m := NewModel(context.Background(), Config{Launch: func(context.Context, string, []string) (string, error) {
-		return "MANUAL: sdlc run --reference DEMO-42", fmt.Errorf("background terminal unavailable")
+		return `{"id":"example-launch","state":"unavailable","manual_command":"'sdlc' launch execute --id example-launch"}`, fmt.Errorf("background terminal unavailable")
 	}})
 	m.review = []string{"run", "--reference", "DEMO-42"}
 	cmd := m.start()
 	m.Update(cmd())
-	if m.busy || len(m.review) == 0 || !strings.Contains(m.body, "MANUAL:") {
+	if m.busy || m.monitor || len(m.review) == 0 || !strings.Contains(m.body, "Launch example-launch: unavailable") || !strings.Contains(m.body, "No run started.") || !strings.Contains(m.body, "'sdlc' launch execute --id example-launch") || strings.Contains(m.body, `"manual_command"`) {
 		t.Fatalf("failed launch lost review: %#v %q", m.review, m.body)
 	}
 }
@@ -505,6 +507,9 @@ func TestAmbiguousLaunchErrorStillMonitorsReceipt(t *testing.T) {
 	m.Update(m.start()())
 	if !m.monitor || len(m.review) != 0 || !strings.Contains(m.launchNotice, "manual instruction") {
 		t.Fatal("ambiguous dispatched launch became retryable failure")
+	}
+	if !strings.Contains(m.launchNotice, "Launch example-launch: unknown") || strings.Contains(m.launchNotice, `"manual_command"`) || strings.Contains(m.launchNotice, "No run started.") {
+		t.Fatalf("uncertain receipt was not rendered safely: %s", m.launchNotice)
 	}
 }
 func TestPromptAndPastedDraftCannotEmitTerminalControls(t *testing.T) {
