@@ -144,6 +144,7 @@ func TestDockerFormatterFailureFeedsSameImplementationSession(t *testing.T) {
 
 func TestDockerCompoundCheckFormatterEvidence(t *testing.T) {
 	checker, _, _, _ := checkFixture(t)
+	checker.DockerTests = false
 	workspace, _ := sourceFixture(t)
 	for _, path := range []string{"src/example.js", "src/other.js"} {
 		sourceWrite(t, workspace, path, "example\n")
@@ -154,7 +155,7 @@ func TestDockerCompoundCheckFormatterEvidence(t *testing.T) {
 		}
 	}
 	commands := [][]string{{"sh", "-c", "set -eu; npm ci; npm run format:check; npm run lint; npm run test:unit"}}
-	checker.Runner = &failingFormatterRunner{failAt: 1, output: "added 10 packages\nprivate-token=disposable-secret\n\n> example@1.0.0 format:check\n> prettier --check .\n\nChecking formatting...\n[warn] src/example.js\n[warn] src/other.js\n[warn] /host/private-input.js\n[warn] .env\n[warn] src/example.js private suffix\n[warn] Code style issues found in 2 files. Run Prettier with --write to fix.\n"}
+	checker.Runner = &failingFormatterRunner{failAt: 1, output: "added 10 packages\nprivate-token=disposable-secret\n\n> example@1.0.0 format:check\n> prettier --check .\n\nChecking formatting...\n[warn] src/example.js\n[warn] src/other.js\n[warn] /host/private-input.js\n[warn] .env\n[warn] src/example.js private suffix\n[warn] Code style issues found in 2 files. Run Prettier with --write to fix.\nCannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n"}
 	var log bytes.Buffer
 	err := checker.Check(context.Background(), workspace, commands, &log)
 	var failure *CheckFailure
@@ -187,8 +188,78 @@ func TestDockerCompoundCheckFormatterEvidence(t *testing.T) {
 	}
 }
 
+func TestDockerDaemonFailureStopsWithoutCodeRepair(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "integration disabled", true: "integration enabled"}[enabled], func(t *testing.T) {
+			checker, _, _, _ := checkFixture(t)
+			checker.DockerTests = enabled
+			workspace, _ := sourceFixture(t)
+			commands := [][]string{{"node", "--test", "example.test.js"}, {"sh", "-c", "docker compose up --build -d --wait"}}
+			message := "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory"
+			if enabled {
+				message = "Cannot connect to the Docker daemon at unix:///run/sdlc/docker.sock. Is the docker daemon running?"
+			}
+			checker.Runner = &failingFormatterRunner{failAt: 2, output: "private-token=disposable-secret\n" + message + "\n" + message}
+			var log bytes.Buffer
+			checkErr := checker.Check(context.Background(), workspace, commands, &log)
+			if checkErr == nil || errors.Is(checkErr, ErrCheckFailed) {
+				t.Fatalf("Docker setup failure requested code repair: %v", checkErr)
+			}
+			if !strings.Contains(checkErr.Error(), "Docker daemon unavailable") || !strings.Contains(log.String(), message) || !strings.Contains(log.String(), "disposable-secret") {
+				t.Fatal("missing safe diagnostic or private evidence", checkErr)
+			}
+			if !enabled && !strings.Contains(checkErr.Error(), "new run with --docker-tests") {
+				t.Fatal("missing recovery for frozen disabled setting", checkErr)
+			}
+			if enabled && strings.Contains(checkErr.Error(), "new run") {
+				t.Fatal("enabled integration incorrectly requires a new run", checkErr)
+			}
+			if strings.Contains(checkErr.Error(), "disposable-secret") || strings.Contains(checkErr.Error(), "docker.sock") {
+				t.Fatal("raw log crossed diagnostic boundary", checkErr)
+			}
+			dir, journal := testRun(t)
+			journal.Plan.Checks, journal.Plan.DockerTests = commands, enabled
+			p := &fakeProvider{outcomes: []Outcome{testOutcome("checks_requested")}}
+			r := fakeRunner(p, &fakeChecker{err: checkErr}, &fakePublisher{}, &fakeRepository{})
+			if err := r.Run(context.Background(), dir, journal, ""); !errors.Is(err, ErrStopped) {
+				t.Fatal(err)
+			}
+			if len(p.calls) != 1 || journal.State != "blocked" || journal.ResumeState != "checking" || journal.Rounds != 0 || journal.Evidence.Passed || journal.Evidence.Log != "checks-1.log" {
+				t.Fatalf("setup failure consumed a repair round or lost its checkpoint: %+v", journal)
+			}
+		})
+	}
+}
+
+func TestDockerDaemonDiagnosticRejectsUnrecognisedOrUnsafeLines(t *testing.T) {
+	message := "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+	for _, line := range []string{
+		"private prefix " + message,
+		message + " private suffix",
+		"Cannot connect to the Docker daemon at unix:///host/private.sock. Is the docker daemon running?",
+		"\x1b]0;private-token\x07" + message,
+		message + "\x00",
+	} {
+		d := &formatterDiagnostic{}
+		d.Write([]byte(line + "\n"))
+		d.finish()
+		if d.dockerUnavailable {
+			t.Fatalf("unrecognised Docker diagnostic admitted: %q", line)
+		}
+	}
+	d := &formatterDiagnostic{}
+	for _, b := range []byte("\x1b[31m" + message + "\x1b[0m\r\n") {
+		d.Write([]byte{b})
+	}
+	d.finish()
+	if !d.dockerUnavailable {
+		t.Fatal("ordinary coloured Docker diagnostic rejected")
+	}
+}
+
 func TestDockerCompilerErrorBeyondLargeBuildOutputSurvivesTeardown(t *testing.T) {
 	checker, _, _, _ := checkFixture(t)
+	checker.DockerTests = false
 	workspace, _ := sourceFixture(t)
 	path := "tests/Example.Tests/SampleTests.cs"
 	sourceWrite(t, workspace, path, "class SampleTests {}\n")
@@ -206,7 +277,7 @@ func TestDockerCompilerErrorBeyondLargeBuildOutputSurvivesTeardown(t *testing.T)
 	invalid := "#32 9.357 /host/private-input.cs(2,1): error CS0104: private-input-secret\n"
 	duplicate := "10.11 /src/" + path + "(1051,9): error CS0104: duplicate-private-secret\n"
 	later := "/workspace/" + path + "(2000,1): error CS1002: later-private-secret\n"
-	teardown := strings.Repeat("Container example Removed private-teardown-secret\n", 2000)
+	teardown := strings.Repeat("Container example Removed private-teardown-secret\n", 2000) + "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n"
 	checker.Runner = &failingFormatterRunner{failAt: 2, output: noise + invalid + first + duplicate + later + teardown}
 	var log bytes.Buffer
 	checkErr := checker.Check(context.Background(), workspace, commands, &log)

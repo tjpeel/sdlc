@@ -51,12 +51,13 @@ func diagnosticSourcePaths(ctx context.Context, workspace string) map[string]boo
 // Only fixed diagnostic metadata and exact committed file names may cross into
 // repair feedback. This is deliberately not a general purpose log redactor.
 type formatterDiagnostic struct {
-	approved    map[string]bool
-	line        []byte
-	dropping    bool
-	styleIssues bool
-	paths       []string
-	compiler    *compilerDiagnostic
+	approved          map[string]bool
+	line              []byte
+	dropping          bool
+	styleIssues       bool
+	paths             []string
+	compiler          *compilerDiagnostic
+	dockerUnavailable bool
 }
 
 func (d *formatterDiagnostic) Write(p []byte) (int, error) {
@@ -83,6 +84,9 @@ func (d *formatterDiagnostic) consume() {
 	line, safe := formatterLine(d.line)
 	if !safe {
 		return
+	}
+	if dockerDaemonUnavailable(line) {
+		d.dockerUnavailable = true
 	}
 	if d.compiler == nil {
 		d.compiler = parseCompilerDiagnostic(line, d.approved)
@@ -111,6 +115,21 @@ func (d *formatterDiagnostic) consume() {
 		}
 	}
 	d.paths = append(d.paths, path)
+}
+
+// Recognise only fixed Docker diagnostics for the default or isolated socket.
+// Endpoint values and arbitrary log text stay in the private check log.
+func dockerDaemonUnavailable(line string) bool {
+	for _, socket := range []string{"/var/run/docker.sock", checkSocket} {
+		if line == "Cannot connect to the Docker daemon at unix://"+socket+". Is the docker daemon running?" {
+			return true
+		}
+		prefix := "failed to connect to the docker API at unix://" + socket + "; check if the path is correct and if the daemon is running: dial unix " + socket + ": connect: "
+		if reason, ok := strings.CutPrefix(line, prefix); ok && (reason == "no such file or directory" || reason == "connection refused") {
+			return true
+		}
+	}
+	return false
 }
 
 type compilerDiagnostic struct {

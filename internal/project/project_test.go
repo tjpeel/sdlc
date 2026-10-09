@@ -64,14 +64,14 @@ func TestInitializeNestedAndRepeat(t *testing.T) {
 	if r.Branch != "main" || r.Head == "" || !r.Dirty || !r.ConfigCreated || len(r.Config.Checks) != 2 {
 		t.Fatalf("unexpected result: %+v", r)
 	}
-	config := `{"version":1,"checks":[["custom","test"]],"input_files":["README.md"]}`
+	config := `{"version":1,"checks":[["custom","test"]],"input_files":["README.md"],"docker_tests":true}`
 	write(t, root, ConfigPath, config)
 	write(t, root, ".sdlc/work/example/tickets/01-example.md", "private contents never read")
 	before, _ := os.ReadFile(filepath.Join(root, ".git/info/exclude"))
 	r = initAt(t, root)
 	after, _ := os.ReadFile(filepath.Join(root, ".git/info/exclude"))
 	settings, _ := os.ReadFile(filepath.Join(root, ConfigPath))
-	if r.ConfigCreated || string(settings) != config || string(before) != string(after) || len(r.Tickets) != 1 || r.Config.Checks[0][0] != "custom" {
+	if r.ConfigCreated || string(settings) != config || string(before) != string(after) || len(r.Tickets) != 1 || r.Config.Checks[0][0] != "custom" || !r.Config.DockerTests {
 		t.Fatalf("preservation failed: %+v", r)
 	}
 }
@@ -193,6 +193,7 @@ func TestConfigValidation(t *testing.T) {
 		`{"version":1,"checks":[],"input_files":["example:input"]}`,
 		`{"version":1,"checks":[],"input_files":[]} {}`,
 		`{"version":1,"checks":[],"input_files":[],"unknown":true}`,
+		`{"version":1,"checks":[],"input_files":[],"docker_tests":"true"}`,
 	} {
 		c := Config{Version: 1, Checks: [][]string{}, InputFiles: []string{}}
 		if decodeConfig([]byte(data), &c) == nil {

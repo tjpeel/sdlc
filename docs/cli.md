@@ -371,7 +371,7 @@ metadata and ambiguous selection fail even during dry-run.
 | `--github-profile` | Select a registered account/key pair for an unbound repository; omission uses saved repository selection or a unique owner pair or sole configured pair. A conflicting saved selection fails. |
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
-| `--docker-tests` | Enable the separate privileged integration-test daemon. |
+| `--docker-tests` | Override the project `docker_tests` default; enable the separate privileged integration-test daemon. Use `--docker-tests=false` to disable it for a new run. |
 | `--timeout` | `2h` per controller invocation; accepts `1m` through `24h`. |
 | `--resume` | Continue a recorded run ID with its original settings. |
 | `--answer-file` | Bounded nonempty UTF-8 human answer, only with `--resume`. |
@@ -480,10 +480,19 @@ untracked files stay out of the provider workspace unless selected with
 out of these files; SDLC's path checks do not identify every secret in file
 contents. Check workers receive no provider cache, signing keys, GitHub token,
 SSH agent or host Docker socket. They have network access for dependencies.
-`--docker-tests` explicitly starts a separate privileged Docker-in-Docker daemon,
+Set `"docker_tests": true` in `.sdlc/project.json` to enable Docker integration
+checks by default for new ticket and feature runs. An absent setting defaults to
+false. `--docker-tests` and `--docker-tests=false` override that preference for a
+new run. Resuming a saved run or feature retains its recorded setting.
+
+Enabling Docker tests starts a separate privileged Docker-in-Docker daemon,
 job network and disposable volumes. This mode is for trusted integration checks;
 privileged containers do not isolate hostile code from the engine host. Cleanup
-errors stop delivery.
+errors stop delivery. Recognised missing-daemon diagnostics stop checks as an
+operational failure without spending a provider repair turn. The private check
+log remains available. A run recorded without Docker tests needs a new run with
+them enabled; its frozen setting cannot change on resume. Compiler or formatter
+failures still request source repair when a later Docker cleanup also fails.
 
 The provider has shell access to its authenticated workspace. Its instructions
 prohibit dependency installation, scripts and tests there, but that is not an

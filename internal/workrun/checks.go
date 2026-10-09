@@ -326,6 +326,16 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 				return fmt.Errorf("repository check %d did not complete successfully: %w", i+1, err)
 			}
 			diagnostic.finish()
+			// An unavailable Docker daemon is a check setup failure. Do not
+			// spend provider repair turns on it or enable privileges implicitly.
+			// A compiler/formatter failure followed by a Docker cleanup error
+			// still needs the original source repair.
+			if diagnostic.dockerUnavailable && diagnostic.compiler == nil && !diagnostic.styleIssues {
+				if !checker.DockerTests {
+					return fmt.Errorf("repository check %d exited with status %d: Docker daemon unavailable; start a new run with --docker-tests; resume preserves the recorded Docker setting. Private check log retained", i+1, status.ExitCode)
+				}
+				return fmt.Errorf("repository check %d exited with status %d: Docker daemon unavailable; inspect the private check log and resolve the Docker endpoint or isolated test-daemon setup before resuming", i+1, status.ExitCode)
+			}
 			return &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths, compiler: diagnostic.compiler}
 		}
 		if ctx.Err() != nil {

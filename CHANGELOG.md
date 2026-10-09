@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.10 - 2026-10-09
+
+### Added
+
+- Set `"docker_tests": true` in project settings to enable the isolated privileged test daemon by default for new ticket and feature runs. Explicit `--docker-tests` or `--docker-tests=false` overrides the project default; saved runs keep their recorded setting.
+
+### Fixed
+
+- Stop with a Docker setup diagnostic when repository checks cannot reach their test daemon, instead of spending a provider repair turn and requesting an answer about missing logs. Retain private check evidence and explain when a new run with Docker tests is needed. Compiler and formatting errors remain available for repair when Docker cleanup also fails.
+
 ## 0.1.0-beta.9 - 2026-10-09
 
 ### Fixed

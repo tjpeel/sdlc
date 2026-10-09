@@ -166,6 +166,44 @@ func TestFeatureResumePreviewUsesFrozenSelections(t *testing.T) {
 	}
 }
 
+func TestResumeKeepsRecordedDockerTestsWhenProjectDefaultChanges(t *testing.T) {
+	driver, run := featureAdoptionFixture(t, "blocked")
+	settings, err := json.Marshal(driver.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := workseries.Directory(driver.plan.Root, driver.plan.Reference, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := workseries.State{Version: 1, Plan: driver.plan, Settings: settings, Results: map[string]workseries.Result{"01-selected.md": run}}
+	if err := workseries.Save(series, &state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(driver.plan.Root, ".sdlc/project.json"), []byte(`{"version":1,"checks":[["go","test","./..."]],"input_files":["README.md"],"docker_tests":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"--reference", "TASK-1", "--all"},
+		runArgs("--resume", run.RunID),
+	} {
+		data, err := offlinePlan(context.Background(), args, driver.plan.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			DockerTests bool         `json:"docker_tests"`
+			Plan        workrun.Plan `json:"plan"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.DockerTests || result.Plan.DockerTests {
+			t.Fatalf("resume enabled a privileged daemon from changed project defaults: %s", data)
+		}
+	}
+}
+
 func TestHeadroomControllerArgumentBoundary(t *testing.T) {
 	args := []string{"--reference", "TASK-1", "--all", "--headroom", "--json", "--json", "--terminal", "background"}
 	want := []string{"--reference", "TASK-1", "--all", "--headroom", "--json"}

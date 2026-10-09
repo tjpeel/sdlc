@@ -96,7 +96,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.resume, "resume", "", "recorded run ID or unique prefix of at least three characters")
 	flags.StringVar(&options.answerFile, "answer-file", "", "human answer to recorded questions")
 	flags.Var(&options.inputs, "input", "exact additional requirements input; repeatable")
-	flags.BoolVar(&options.dockerTests, "docker-tests", false, "enable privileged Docker integration-test daemon")
+	flags.BoolVar(&options.dockerTests, "docker-tests", false, "override project docker_tests; enable privileged Docker integration-test daemon")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "print selection without Docker, login checks or execution")
 	flags.BoolVar(&options.jsonOutput, "json", false, "structured offline plan or terminal launch receipt")
 	flags.StringVar(&options.terminalMode, "terminal", "", "background: open an independent run terminal without activation")
@@ -333,6 +333,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		launch, err := launchInput(ctx, current, options.reference, ticket, options.inputs)
 		if err != nil {
 			return err
+		}
+		// Feature controllers supply their already-resolved frozen selection.
+		// Only a fresh standalone run inherits the current project default.
+		if options.frozenConfig == nil && !options.supplied["docker-tests"] {
+			options.dockerTests = launch.Config.DockerTests
 		}
 		if !options.dryRun {
 			if err := workrun.ValidateSourceHistory(ctx, launch.Root); err != nil {

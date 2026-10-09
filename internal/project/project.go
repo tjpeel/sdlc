@@ -24,9 +24,10 @@ const ConfigPath = ".sdlc/project.json"
 const maximumSize = 64 * 1024
 
 type Config struct {
-	Version    int        `json:"version"`
-	Checks     [][]string `json:"checks"`
-	InputFiles []string   `json:"input_files"`
+	Version     int        `json:"version"`
+	Checks      [][]string `json:"checks"`
+	InputFiles  []string   `json:"input_files"`
+	DockerTests bool       `json:"docker_tests,omitempty"`
 }
 type Remote struct{ Name, Identity string }
 type Result struct {

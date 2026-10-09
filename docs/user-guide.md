@@ -471,7 +471,8 @@ fixture's settings illustrate one supported topology:
     ["dotnet", "test", "tests/Smoke.UnitTests/Smoke.UnitTests.csproj"],
     ["python3", "scripts/integration.py"]
   ],
-  "input_files": [".env"]
+  "input_files": [".env"],
+  "docker_tests": true
 }
 ```
 
@@ -480,7 +481,10 @@ contents and copies them only into the check workspace; later host changes do no
 select them with `--input`, which exposes requirements to providers. Files already tracked in source remain
 visible to providers. Use disposable test configuration, never production credentials.
 
-Compose/service checks need `run --docker-tests`. Each run gets its own test daemon, network and volumes;
+Compose/service checks need the Docker test daemon. Set `"docker_tests": true` in `.sdlc/project.json`
+once to enable it for new ticket and feature runs, or pass `run --docker-tests` for one launch. The default
+is false when the setting is absent. Explicit `--docker-tests=false` disables it for a new run. Saved runs
+and features preserve their recorded selection. Each run gets its own test daemon, network and volumes;
 matching internal service ports can coexist without publishing host ports. Configure required services,
 readiness and relative mounts inside that topology. External host files are not supplied automatically. This
 privileged mode is for trusted tests. The [public .NET fixture](../examples/dotnet-smoke/README.md) shows
@@ -533,8 +537,8 @@ pairing. This dry-run is offline: it makes no model, GitHub or vault request and
 register a dashboard run. Missing pairing produces a warning, while malformed/changed metadata and ambiguous
 selection fail. Dry-run cannot prove account/model access or check success.
 
-When ready, run the same command without `--dry-run`. Add `--docker-tests` to both preview and launch when the
-configured checks require Docker integration:
+When ready, run the same command without `--dry-run`. When configured checks need Docker integration, enable
+the project default or add `--docker-tests` to both preview and launch:
 
 ```sh
 sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-feature.md \
@@ -703,6 +707,20 @@ implementation session. It accepts only reference, ticket, resume ID, answer fil
 notification options. Do not supply new provider/profile/model/input flags to change the run. Existing older
 frozen journals retain their legacy same-name signer route. Changed identities, missing pinned images, moved
 bases or external PR changes need deliberate reconciliation; SDLC does not fall back to host credentials.
+
+A missing Docker daemon in the check worker stops the controller as `blocked`, retaining the private check
+log without requesting a code repair. If the run recorded Docker tests as disabled, enable the project
+default and start a new run, or supply `--docker-tests` on the new command. To start a new single-ticket run
+under the same reference, omit `--resume`:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-feature.md --docker-tests
+```
+
+The old run can stay paused. A new run needs no answer and starts a new implementation session from its
+selected base; it does not reuse the old workspace. Repeating `--all` under the same reference resumes its
+saved feature instead. To retain the old feature and start a fresh one under that reference, archive the
+complete reference, then recreate its tickets and requirements without the old `runs` or `series` directories.
 
 The timeout is per controller invocation: default `2h`, accepted range `1m`–`24h`. Cancellation or timeout
 retains a checkpoint. Fix the cause and resume the same ID; starting a new run is not a way to bypass a

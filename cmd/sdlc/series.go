@@ -211,6 +211,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			roles := selections.Roles[ticket.File]
 			fmt.Fprintf(output, "%s: implementation %s/%s (%s); review %s/%s (%s).\n", ticket.File, roles.Implementation.Provider, roles.Implementation.Name, roles.Implementation.Effort, roles.Review.Provider, roles.Review.Name, roles.Review.Effort)
 		}
+		fmt.Fprintf(output, "Docker integration-test daemon: %t.\n", selections.DockerTests)
 		fmt.Fprintf(output, "Headroom: %s; checks: %v; check inputs: %v; additional inputs: %v.\n", seriesHeadroomMode(selections.Headroom), selections.Config.Checks, selections.Config.InputFiles, selections.Inputs)
 		fmt.Fprintln(output, "Offline feature plan only; ticket content, account access and live PR state are checked during execution.")
 		return nil
@@ -363,6 +364,9 @@ func selectSeriesSettings(ctx context.Context, directory string, plan workseries
 		settings.Config = launch.Config
 		settings.TicketInputs[ticket.File] = launch.Inputs
 	}
+	if !options.supplied["docker-tests"] {
+		settings.DockerTests = settings.Config.DockerTests
+	}
 	settings.InputHashes = map[string]string{}
 	paths := append([]string{project.ConfigPath}, settings.Config.InputFiles...)
 	for _, ticket := range plan.Tickets {
@@ -440,7 +444,7 @@ func freezeSelectedSeriesSettings(ctx context.Context, runtime runtimeimage.Mana
 		return seriesSettings{}, err
 	}
 	settings.Instructions = string(shared)
-	sidecars := workrun.Plan{DockerTests: options.dockerTests}
+	sidecars := workrun.Plan{DockerTests: settings.DockerTests}
 	if err := freezeRuntimeImages(ctx, &sidecars, state, runtime, runtimeupdates.ResolveDefaultDaemonImage); err != nil {
 		return seriesSettings{}, err
 	}

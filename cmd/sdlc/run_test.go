@@ -21,6 +21,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/filelock"
 	"github.com/tjpeel/sdlc/internal/githubprofile"
+	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimepins"
@@ -402,6 +403,90 @@ func TestRunDryRunIsOfflineAndPreservesProviderRoles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNewRunInheritsProjectDockerTestsUnlessOverridden(t *testing.T) {
+	for _, feature := range []bool{false, true} {
+		for _, selection := range []string{"default", "enabled", "disabled"} {
+			t.Run(fmt.Sprintf("feature=%t/%s", feature, selection), func(t *testing.T) {
+				root := runGitFixture(t)
+				marker := forbidConnectedRunCommands(t, root)
+				config := []byte(`{"version":1,"checks":[["docker","compose","up","--wait"]],"input_files":[],"docker_tests":true}`)
+				if selection == "enabled" {
+					config = bytes.Replace(config, []byte(`"docker_tests":true`), []byte(`"docker_tests":false`), 1)
+				}
+				path := filepath.Join(root, ".sdlc/project.json")
+				if err := os.WriteFile(path, config, 0600); err != nil {
+					t.Fatal(err)
+				}
+				args := runArgs("--repo", "example/project", "--dry-run", "--json")
+				if feature {
+					args = []string{"--reference", "TASK-1", "--all", "--dry-run", "--json"}
+				}
+				if selection == "enabled" {
+					args = append(args, "--docker-tests")
+				} else if selection == "disabled" {
+					args = append(args, "--docker-tests=false")
+				}
+				var output bytes.Buffer
+				if err := runCommand(context.Background(), args, &output); err != nil {
+					t.Fatal(err)
+				}
+				var result struct {
+					Plan        workrun.Plan `json:"plan"`
+					DockerTests bool         `json:"docker_tests"`
+				}
+				if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+					t.Fatal(err)
+				}
+				got := result.Plan.DockerTests
+				if feature {
+					got = result.DockerTests
+				}
+				if got != (selection != "disabled") {
+					t.Fatalf("project default or explicit override lost: %s", output.String())
+				}
+				if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, config) {
+					t.Fatal("preview rewrote project settings", err)
+				}
+				for _, path := range []string{marker, filepath.Join(root, ".sdlc/work/TASK-1/runs"), filepath.Join(root, ".sdlc/work/TASK-1/series")} {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatal("offline plan launched work or wrote a checkpoint", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestFeatureTicketUsesFrozenDockerTestsOverride(t *testing.T) {
+	root := runGitFixture(t)
+	config := []byte(`{"version":1,"checks":[["go","test","./..."]],"input_files":["README.md"],"docker_tests":true}`)
+	if err := os.WriteFile(filepath.Join(root, ".sdlc/project.json"), config, 0600); err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := project.ParseConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := parseRunOptions(runArgs("--repo", "example/project", "--dry-run", "--json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.frozenConfig, options.dockerTests = &frozen, false
+	var output bytes.Buffer
+	if err := runSelectedCommand(context.Background(), options, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Plan workrun.Plan `json:"plan"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Plan.DockerTests {
+		t.Fatal("feature ticket ignored its frozen override and enabled privileged checks")
 	}
 }
 func TestRunDryRunRejectsMissingOrUnsafeExplicitInputs(t *testing.T) {
