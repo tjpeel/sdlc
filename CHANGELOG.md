@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.9 - 2026-10-09
+
+### Fixed
+
+- Preserve the originating shell's PATH when starting a background run controller, so custom terminal commands can find Docker and other installed tools. Capture only PATH in the private launch receipt; older receipts retain their existing behaviour.
+
 ## 0.1.0-beta.8 - 2026-10-09
 
 ### Fixed

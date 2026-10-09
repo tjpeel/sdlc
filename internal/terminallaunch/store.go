@@ -34,6 +34,8 @@ type Request struct {
 	Executable  string   `json:"executable"`
 	Args        []string `json:"args"`
 	PreviewHash string   `json:"preview_hash,omitempty"`
+	// Nil preserves the helper environment for receipts written by older builds.
+	SearchPath *string `json:"search_path,omitempty"`
 }
 
 type Receipt struct {
@@ -396,6 +398,9 @@ func (s *Store) locked(ctx context.Context, id string, operation func(string) er
 }
 
 func validateRequest(r Request) error {
+	if r.SearchPath != nil && (len(*r.SearchPath) > 64*1024 || strings.IndexByte(*r.SearchPath, 0) >= 0) {
+		return fmt.Errorf("launch search path is too large or contains NUL")
+	}
 	if r.PreviewHash != "" {
 		if len(r.PreviewHash) != 64 {
 			return fmt.Errorf("preview hash must be lowercase SHA-256")

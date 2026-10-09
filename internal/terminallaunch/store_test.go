@@ -345,6 +345,29 @@ func TestAdapterFlagsAndNULRejected(t *testing.T) {
 	}
 }
 
+func TestLaunchSearchPathValidation(t *testing.T) {
+	for _, path := range []string{"nul\x00value", strings.Repeat("x", 64*1024+1)} {
+		s, r := fixture(t)
+		r.SearchPath = &path
+		if _, err := s.Launch(context.Background(), r, nil); err == nil {
+			t.Fatal("invalid search path accepted")
+		}
+		if _, err := os.Stat(s.Directory); !os.IsNotExist(err) {
+			t.Fatal("invalid path created launch state", err)
+		}
+	}
+	s, r := fixture(t)
+	empty := ""
+	r.SearchPath = &empty
+	if _, err := s.Launch(context.Background(), r, nil); !errors.Is(err, ErrUnsupported) {
+		t.Fatal("empty captured path rejected", err)
+	}
+	got, err := s.Consume(r.ID)
+	if err != nil || got.SearchPath == nil || *got.SearchPath != "" {
+		t.Fatal("explicit empty path was not preserved", err)
+	}
+}
+
 func TestLiteralInputFlagsAreNotAdapterOptions(t *testing.T) {
 	s, r := fixture(t)
 	r.Args = []string{"run", "--input", "--json", "--input", "--terminal", "--reference", "DEMO-42"}

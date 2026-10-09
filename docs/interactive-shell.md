@@ -250,8 +250,11 @@ mode uses `/start` and `/cancel`. An explicit `--dry-run` remains preview only.
 Changed plan evidence requires another review.
 
 Start requests an independent native iTerm2 tab through a one-use private launch
-receipt. The existing `sdlc run` controller owns execution in that terminal;
-the shell observes its receipt, registered run IDs and output. The controller
+receipt. The existing `sdlc run` controller owns execution in that terminal.
+The receipt captures the originating shell's PATH and the controller restores it
+before validating the plan or starting work. Other environment variables are not
+copied from the originating shell.
+The shell observes its receipt, registered run IDs and output. The controller
 must acknowledge startup before monitoring can show an actual run.
 
 The iTerm2 adapter requires explicit terminal setup. In iTerm2, enable its

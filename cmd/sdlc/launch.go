@@ -148,7 +148,8 @@ func launchPreparedRun(ctx context.Context, root string, args []string, previewH
 	if err != nil {
 		return err
 	}
-	receipt, launchErr := store.Launch(ctx, terminallaunch.Request{ID: id, Root: root, Executable: executable, Args: append([]string{"run"}, args...), PreviewHash: previewHash}, backend)
+	path := os.Getenv("PATH")
+	receipt, launchErr := store.Launch(ctx, terminallaunch.Request{ID: id, Root: root, Executable: executable, Args: append([]string{"run"}, args...), PreviewHash: previewHash, SearchPath: &path}, backend)
 	if receipt.ID != "" {
 		if structured {
 			err = json.NewEncoder(output).Encode(receipt)
@@ -205,6 +206,9 @@ func launchCommand(ctx context.Context, args []string, output io.Writer) error {
 	// This is the dedicated terminal helper process, never the shell process.
 	if err = os.Chdir(request.Root); err == nil {
 		err = os.Setenv("SDLC_STATE_DIR", filepath.Dir(store.Directory))
+	}
+	if err == nil && request.SearchPath != nil {
+		err = os.Setenv("PATH", *request.SearchPath)
 	}
 	if err == nil && request.PreviewHash != "" {
 		var plan []byte
