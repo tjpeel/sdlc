@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -337,6 +338,7 @@ func TestLocalSkillsSourceBuildPreservesBlankOptionalDockerfileDefaults(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	recipe = regexp.MustCompile(`(?m)^ARG (NPM_VERSION|YARN_VERSION|COMPOSE_VERSION|BUILDX_VERSION)=.*$`).ReplaceAll(recipe, []byte("ARG ${1}="))
 	sourceFile(t, source, "runtime/Dockerfile", string(recipe))
 	skills, revision := skillsFixture(t)
 	inventory := testInventory()

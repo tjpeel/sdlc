@@ -10,21 +10,21 @@ RUN CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
 
 FROM docker:29.8.2-cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68b1457ead25c35c AS docker-tools
 
-FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
+FROM node:24.21.0-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
 
 ARG CODEX_VERSION=0.162.1
 ARG GH_VERSION=2.102.0
 ARG CLAUDE_VERSION=2.1.296
 ARG DOTNET_VERSION=10.0.401
 ARG LOCAL_SKILLS=0
-ARG SKILLS_REVISION=4391dd15899aec2c733adc056056de9407402a34
+ARG SKILLS_REVISION=764f050488e76416a1ec77b5d2b760af1c9dd157
 ARG AGENTS_REVISION=ca463638c94e3dc44f51420554692636fa5fe0d0
-# An installation update fills these exact versions in its private build recipe.
-# Source builds retain the versions supplied by the pinned Node/Docker images.
-ARG NPM_VERSION=
-ARG YARN_VERSION=
-ARG COMPOSE_VERSION=
-ARG BUILDX_VERSION=
+# An installation update can override these defaults in its private build recipe.
+# Source builds use the explicit auxiliary tool versions below.
+ARG NPM_VERSION=11.19.0
+ARG YARN_VERSION=1.22.22
+ARG COMPOSE_VERSION=5.5.1
+ARG BUILDX_VERSION=0.37.2
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \

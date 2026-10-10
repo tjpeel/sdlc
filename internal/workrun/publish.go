@@ -452,9 +452,8 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 	if err != nil || !strings.HasPrefix(confirmed, parent+"\t") {
 		return Publication{}, fmt.Errorf("remote branch publication was not confirmed")
 	}
-	body := plan.PRBody + fmt.Sprintf("\n\nWork reference: %s\n\nConfigured repository checks passed for tree %s. Independent review is coordinated by SDLC.\n", plan.Reference, workerTree)
 	bodyPath := filepath.Join(directory, "pr-body.md")
-	if err := os.WriteFile(bodyPath, []byte(body), 0600); err != nil {
+	if err := os.WriteFile(bodyPath, []byte(plan.PRBody), 0600); err != nil {
 		return Publication{}, err
 	}
 	title := plan.PRTitle

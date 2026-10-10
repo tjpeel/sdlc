@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.16 - 2026-10-10
+
+### Fixed
+
+- Publish the drafted PR description without appending internal verification hashes or orchestration details. Work references remain in PR titles, and publication integrity checks still apply.
+- Refresh PR drafting guidance to favour completed behaviour, compact visual explanations and relevant evidence beyond routine CI. Retain the current runtime tool versions in source pins.
+
 ## 0.1.0-beta.15 - 2026-10-10
 
 ### Added

@@ -123,6 +123,7 @@ type publicationFake struct {
 	signing, pushes, creates int
 	verifying                int
 	failVerification         bool
+	bodies                   []string
 }
 
 const testSigned = "4444444444444444444444444444444444444444"
@@ -142,6 +143,7 @@ func (f *publicationFake) command(_ context.Context, name string, args ...string
 			}
 			return response(`[]`)
 		case args[0] == "pr" && args[1] == "create":
+			f.recordBody(args)
 			f.creates++
 			f.exists = true
 			if !strings.Contains(strings.Join(args, " "), "--draft") {
@@ -153,6 +155,7 @@ func (f *publicationFake) command(_ context.Context, name string, args ...string
 			}
 			return response("")
 		case args[0] == "pr" && args[1] == "edit":
+			f.recordBody(args)
 			return response("")
 		case args[0] == "pr" && args[1] == "view":
 			return response(`{"number":1,"url":"https://github.com/example/project/pull/1","baseRefOid":"` + f.plan.BaseSHA + `","headRefOid":"` + f.remote + `"}`)
@@ -234,10 +237,25 @@ func (f *publicationFake) command(_ context.Context, name string, args ...string
 	f.t.Fatalf("unexpected publication command: %s %v", name, args)
 	return nil, errors.New("unexpected command")
 }
+
+func (f *publicationFake) recordBody(args []string) {
+	f.t.Helper()
+	for i, arg := range args {
+		if arg == "--body-file" && i+1 < len(args) {
+			body, err := os.ReadFile(args[i+1])
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			f.bodies = append(f.bodies, string(body))
+			return
+		}
+	}
+}
+
 func TestPublicationReconcilesLostCreateResponseWithoutDuplicatePushOrPR(t *testing.T) {
 	dir, j := testRun(t)
 	j.Plan.PRTitle = "TASK-1 selected work"
-	j.Plan.PRBody = "Implements TASK-1."
+	j.Plan.PRBody = "## What\n\nKeep known outcomes when some results are missing.\n\n| Input | Result |\n| --- | --- |\n| Known and unknown | Known |\n"
 	f := &publicationFake{t: t, plan: j.Plan, directory: dir, lostCreateResponse: true}
 	pub := GitHubPublisher{Command: f.command}
 	if _, err := pub.Publish(context.Background(), j.Plan, j.Workspace, dir, Publication{}, nil); err == nil {
@@ -249,6 +267,14 @@ func TestPublicationReconcilesLostCreateResponseWithoutDuplicatePushOrPR(t *test
 	}
 	if result.HeadSHA != testSigned || f.signing != 1 || f.verifying != 2 || f.pushes != 1 || f.creates != 1 {
 		t.Fatalf("duplicate effects: %+v signing=%d pushes=%d creates=%d", result, f.signing, f.pushes, f.creates)
+	}
+	if len(f.bodies) != 2 {
+		t.Fatalf("expected a body for create and edit, got %d", len(f.bodies))
+	}
+	for _, body := range f.bodies {
+		if body != j.Plan.PRBody {
+			t.Fatalf("published description differs from the draft: %q", body)
+		}
 	}
 }
 func TestPublicationSigningFailureCannotPush(t *testing.T) {
