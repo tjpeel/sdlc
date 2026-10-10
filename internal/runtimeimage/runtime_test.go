@@ -226,6 +226,29 @@ func TestFailedBuildOrProbePreservesPriorRuntime(t *testing.T) {
 	}
 }
 
+func TestBuildCanRetainPreviousDefaultImage(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		t.Run(fmt.Sprint(keep), func(t *testing.T) {
+			manager, docker, root := fixture(t)
+			docker.current = oldImage
+			if err := manager.save(State{Version: 1, Source: root, Engine: "test-engine", ImageID: oldImage}); err != nil {
+				t.Fatal(err)
+			}
+			state, err := manager.BuildWithOptions(context.Background(), root, BuildOptions{KeepPreviousImage: keep})
+			if err != nil || state.ImageID != newImage || docker.current != newImage {
+				t.Fatal("replacement runtime was not selected", err)
+			}
+			removed := false
+			for _, image := range docker.removed {
+				removed = removed || image == oldImage
+			}
+			if removed == keep {
+				t.Fatalf("previous image retention incorrect: keep=%t, removed=%v", keep, docker.removed)
+			}
+		})
+	}
+}
+
 func TestPreflightBlocksUnsupportedEnginesAndDependentContainers(t *testing.T) {
 	for _, cause := range []string{"remote", "windows-containers", "dependent-container", "lock"} {
 		t.Run(cause, func(t *testing.T) {
@@ -244,8 +267,10 @@ func TestPreflightBlocksUnsupportedEnginesAndDependentContainers(t *testing.T) {
 				}
 				defer lock.Close()
 			}
-			if _, err := manager.Build(context.Background(), root); err == nil || docker.builds != 0 {
-				t.Fatal("failed preflight started a build", err)
+			for _, keep := range []bool{false, true} {
+				if _, err := manager.BuildWithOptions(context.Background(), root, BuildOptions{KeepPreviousImage: keep}); err == nil || docker.builds != 0 {
+					t.Fatal("failed preflight started a build", err)
+				}
 			}
 		})
 	}

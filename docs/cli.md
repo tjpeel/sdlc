@@ -907,6 +907,19 @@ Archived references are excluded. Use `storage purge` to delete stopped saved
 runs or `work archive` to retain a complete reference outside active work; hiding
 a dashboard entry with `forget` does not release the guard.
 
+To replace the runtime while leaving stopped work where it is, use:
+
+```sh
+sdlc runtime build --source /PATH/TO/SDLC_SOURCE --force
+```
+
+`--force` reports the affected runs and features, retains their files and the
+previous runtime image, and replaces the selected runtime. Saved checkpoints
+keep their recorded runtime identity and cannot resume against the replacement.
+This option does not bypass active controllers, dependent containers, invalid
+checkpoint data or engine validation. It applies only to `runtime build`;
+ordinary builds and runtime updates retain the saved-work guard.
+
 ### Where version pins live
 
 | Selection | Stored in | How it changes |

@@ -46,6 +46,9 @@ type BuildOptions struct {
 	// SourceRevision supplies verified archive provenance when no Git checkout exists.
 	// A checkout's own revision takes priority.
 	SourceRevision string
+	// KeepPreviousImage retains the superseded default image after a successful
+	// build. Leases, engine validation and container checks still apply.
+	KeepPreviousImage bool
 	// ValidatePrevious runs under the writer lock before Docker operations.
 	ValidatePrevious  func(context.Context, State) error
 	Pins              *runtimepins.Pins
@@ -465,7 +468,7 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if err := manager.save(state); err != nil {
 		return State{}, errors.Join(fmt.Errorf("cannot save runtime state: %w", err), manager.restoreSharedTag(oldID))
 	}
-	if manager.Name == "" && oldID != "" && oldID != id {
+	if manager.Name == "" && !options.KeepPreviousImage && oldID != "" && oldID != id {
 		if _, err := manager.Docker.Output(ctx, "image", "rm", oldID); err != nil {
 			return state, fmt.Errorf("new runtime is ready, but superseded image cleanup failed: %w", err)
 		}

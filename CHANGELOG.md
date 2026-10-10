@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.15 - 2026-10-10
+
+### Added
+
+- Allow `runtime build --force` to replace the runtime while retaining stopped work, its checkpoints and the previous image. Saved work remains tied to its recorded runtime and cannot resume against the replacement. Active controllers, dependent containers and invalid checkpoint data still block replacement.
+
 ## 0.1.0-beta.14 - 2026-10-10
 
 ### Added

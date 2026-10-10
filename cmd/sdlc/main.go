@@ -86,7 +86,7 @@ func main() {
 		return
 	}
 	if len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "help")) {
-		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
+		fmt.Println("Usage: sdlc --version | runtime build [--source SDLC_DIRECTORY] [--force] | runtime status [--offline] [--all] [--github-profile NAME] | runtime update [--dry-run] [--source SDLC_DIRECTORY]")
 		fmt.Println("       sdlc shell [--plain] (interactive slash commands; opt-in)")
 		fmt.Println("       sdlc update [--pull] [--source SDLC_DIRECTORY] [--sdlc-only | --agent-tools [--update-dockerfile] | --dependencies] [--dry-run]")
 		fmt.Println("       sdlc terminal setup|status [--json] (explicit iTerm2 background-tab setup)")

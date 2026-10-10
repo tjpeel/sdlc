@@ -50,6 +50,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	var dryRun bool
 	var all bool
 	var sourcePins bool
+	var force bool
 	var agentTools bool
 	var updateDockerfile bool
 	flags.StringVar(&name, "name", "", "select a separate named runtime (default: shared local image)")
@@ -58,6 +59,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		if args[0] == "build" {
 			flags.StringVar(&skillsSource, "skills-source", "", "clean committed local skills Git catalogue (requires --name)")
 			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
+			flags.BoolVar(&force, "force", false, "replace runtime despite stopped saved work; retain its files and previous image")
 		}
 		if args[0] == "update" {
 			flags.BoolVar(&updateDockerfile, "update-dockerfile", false, "with --agent-tools, save selected pins in the explicit source checkout")
@@ -114,7 +116,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if err != nil {
 		return err
 	}
-	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SkillsSource: skillsSource, SourcePins: sourcePins, SourceRevision: revision, ValidatePrevious: runtimeSavedWorkGuard(manager.Directory, source)})
+	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SkillsSource: skillsSource, SourcePins: sourcePins, SourceRevision: revision, KeepPreviousImage: force, ValidatePrevious: runtimeBuildSavedWorkGuard(manager.Directory, source, force, output)})
 	if err != nil {
 		return err
 	}

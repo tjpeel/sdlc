@@ -289,6 +289,11 @@ stop protocol is introduced.
 
 ## Versions and delivery
 
+`/runtime build --source /PATH/TO/SDLC_SOURCE --force` replaces the selected
+runtime while retaining stopped work and its previous image. The command lists
+affected work; its checkpoints remain tied to their original runtime. Active
+controllers and container checks still prevent replacement.
+
 `sdlc --version` retains the short executable identity. `sdlc version --details
 --json` supplies the overview without Docker or provider calls. Pass
 `--source /PATH/TO/SDLC_SOURCE` to select the application source independently

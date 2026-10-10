@@ -45,4 +45,6 @@ To rebuild a local variant, pass `--skills-source` explicitly again. To switch
 that named variant back to the source Dockerfile's remote catalogue pins, use
 `runtime build --name NAME --source-pins`. `runtime update` manages the default
 runtime; named variants use `runtime build`. Existing container and saved-work
-build guards still apply.
+build guards still apply. `runtime build --force` permits replacement despite
+stopped saved work, retaining its files and previous image. It does not migrate
+checkpoints or bypass active controllers and container checks.

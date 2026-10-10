@@ -28,6 +28,27 @@ func runtimeSavedWorkGuardFromEnvironment(source string) func(context.Context, r
 	}
 }
 
+type runtimeSavedWorkError struct {
+	ids []string
+}
+
+func (err *runtimeSavedWorkError) Error() string {
+	return fmt.Sprintf("runtime replacement would prevent resuming %s; complete this saved work first, or use sdlc update --sdlc-only. Use sdlc runtime build --force to replace the runtime while retaining saved work and the previous image; saved work cannot resume against the replacement runtime. Hiding dashboard entries retains these checkpoints. To retire saved work, run sdlc work archive --reference REFERENCE in its repository, or preview sdlc storage purge --all", strings.Join(err.ids, ", "))
+}
+
+func runtimeBuildSavedWorkGuard(stateDirectory, source string, force bool, output io.Writer) func(context.Context, runtimeimage.State) error {
+	guard := runtimeSavedWorkGuard(stateDirectory, source)
+	return func(ctx context.Context, previous runtimeimage.State) error {
+		err := guard(ctx, previous)
+		var saved *runtimeSavedWorkError
+		if !force || !errors.As(err, &saved) {
+			return err
+		}
+		_, err = fmt.Fprintf(output, "Continuing with --force despite stopped saved work: %s. Saved files and the previous image will be retained; this work cannot resume against the replacement runtime.\n", strings.Join(saved.ids, ", "))
+		return err
+	}
+}
+
 // Only known roots can be inspected: registry, project catalogue, source and cwd.
 // The runtime writer lock excludes new connected runs while this check executes.
 func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, runtimeimage.State) error {
@@ -51,8 +72,13 @@ func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, 
 			if !view.Available && !view.Preparation {
 				return fmt.Errorf("cannot verify saved run %s; resolve its saved state before replacing the runtime; use sdlc update --sdlc-only", view.ID)
 			}
-			if view.Journal != nil && view.Journal.ImageID == previous.ImageID && (view.State != "ready" || view.Live) {
-				blocked["run "+view.ID] = true
+			if view.Journal != nil && view.Journal.ImageID == previous.ImageID {
+				if view.Live {
+					return fmt.Errorf("cannot replace runtime while run %s has an active controller", view.ID)
+				}
+				if view.State != "ready" {
+					blocked["run "+view.ID] = true
+				}
 			}
 		}
 		projects, err := projectList(ctx)
@@ -96,7 +122,7 @@ func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, 
 				ids = append(ids, id)
 			}
 			sort.Strings(ids)
-			return fmt.Errorf("runtime replacement would prevent resuming %s; complete this saved work first, or use sdlc update --sdlc-only. Hiding dashboard entries retains these checkpoints. To retire saved work, run sdlc work archive --reference REFERENCE in its repository, or preview sdlc storage purge --all", strings.Join(ids, ", "))
+			return &runtimeSavedWorkError{ids: ids}
 		}
 		return nil
 	}
@@ -221,16 +247,15 @@ func scanRuntimeWork(ctx context.Context, root, image string, blocked map[string
 					return fmt.Errorf("saved run identity does not match its directory")
 				}
 				if journal.ImageID == image {
+					lock, err := probeRunController(run)
+					if err != nil {
+						return fmt.Errorf("cannot verify stopped controller for run %s: %w", journal.ID, err)
+					}
+					if lock != nil {
+						lock.Close()
+					}
 					if journal.State != "ready" {
 						blocked["run "+journal.ID] = true
-					} else {
-						lock, err := probeRunController(run)
-						if err != nil {
-							blocked["run "+journal.ID] = true
-						}
-						if lock != nil {
-							lock.Close()
-						}
 					}
 				}
 			}

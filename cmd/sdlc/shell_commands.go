@@ -62,7 +62,7 @@ func shellCommands() []shell.Command {
 		command("signing configure", "Setup", "Import an explicitly selected private signing profile", "/signing configure --file PRIVATE_PROFILE [--profile NAME]", true, "profile file replace"),
 		command("signing status", "Setup", "Inspect signing readiness using the existing CLI", "/signing status [--profile NAME] [--verify]", true, "profile verify show-config"),
 		command("signing verify", "Setup", "Explicitly verify configured signing authority", "/signing verify [--profile NAME]", true, "profile"),
-		command("runtime build", "Setup", "Rebuild using installed pins, or select checkout pins with --source-pins", "/runtime build [--name NAME] [--source SDLC_SOURCE] [--source-pins] [--skills-source SKILLS_SOURCE]", true, "name source source-pins skills-source"),
+		command("runtime build", "Setup", "Rebuild using installed pins; --force retains stopped work and its previous image", "/runtime build [--name NAME] [--source SDLC_SOURCE] [--source-pins] [--skills-source SKILLS_SOURCE] [--force]", true, "name source source-pins skills-source force"),
 		command("runtime headroom build", "Setup", "Build the separate pinned compression proxy", "/runtime headroom build", true, ""),
 		command("runtime headroom status", "Setup", "Inspect the local Headroom image", "/runtime headroom status", true, ""),
 		command("runtime status", "Setup", "Explicit runtime check; --offline avoids upstream updates", "/runtime status [--name NAME] [--offline] [--all]", true, "name offline all github-profile"),

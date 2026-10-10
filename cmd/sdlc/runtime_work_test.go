@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -63,6 +65,9 @@ func TestRuntimeGuardFindsForgottenRunsAndRejectsCorruptJournals(t *testing.T) {
 	if err := guard(context.Background(), runtimeimage.State{ImageID: image}); err == nil || !strings.Contains(err.Error(), "invalid checkpoint") {
 		t.Fatal("corrupt saved run was ignored", err)
 	}
+	if err := runtimeBuildSavedWorkGuard(os.Getenv("SDLC_STATE_DIR"), j.Plan.Root, true, &bytes.Buffer{})(context.Background(), runtimeimage.State{ImageID: image}); err == nil || !strings.Contains(err.Error(), "invalid checkpoint") {
+		t.Fatal("force ignored a corrupt saved run", err)
+	}
 }
 
 func TestRuntimeGuardProtectsPreparedAndUnmergedFeatures(t *testing.T) {
@@ -97,6 +102,17 @@ func TestRuntimeGuardProtectsPreparedAndUnmergedFeatures(t *testing.T) {
 		} else if err == nil || !strings.Contains(err.Error(), "feature TASK-1") {
 			t.Fatal("incomplete feature did not protect runtime", mode, err)
 		}
+		before := dashboardTree(t, filepath.Join(driver.plan.Root, ".sdlc", "work"))
+		var output bytes.Buffer
+		if err := runtimeBuildSavedWorkGuard(os.Getenv("SDLC_STATE_DIR"), driver.plan.Root, true, &output)(context.Background(), previous); err != nil {
+			t.Fatal("force refused stopped feature", err)
+		}
+		if (mode != "merged") != strings.Contains(output.String(), "feature TASK-1") {
+			t.Fatal("force did not identify affected stopped work", output.String())
+		}
+		if !reflect.DeepEqual(before, dashboardTree(t, filepath.Join(driver.plan.Root, ".sdlc", "work"))) {
+			t.Fatal("force changed saved feature files")
+		}
 	}
 }
 
@@ -119,6 +135,115 @@ func TestRuntimeGuardProtectsLiveForgottenReadyRun(t *testing.T) {
 	guard := runtimeSavedWorkGuard(os.Getenv("SDLC_STATE_DIR"), j.Plan.Root)
 	if err := guard(context.Background(), runtimeimage.State{ImageID: image}); err == nil || !strings.Contains(err.Error(), j.ID) {
 		t.Fatal("live forgotten run was not protected", err)
+	}
+	if err := runtimeBuildSavedWorkGuard(os.Getenv("SDLC_STATE_DIR"), j.Plan.Root, true, &bytes.Buffer{})(context.Background(), runtimeimage.State{ImageID: image}); err == nil || !strings.Contains(err.Error(), j.ID) {
+		t.Fatal("force ignored a live forgotten controller", err)
+	}
+}
+
+func TestRuntimeBuildForceReplacesDefaultWithoutChangingSavedFeature(t *testing.T) {
+	driver, _ := featureAdoptionFixture(t, "ready")
+	settings, err := json.Marshal(driver.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := workseries.Directory(driver.plan.Root, driver.plan.Reference, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workseries.Save(directory, &workseries.State{Version: 1, Plan: driver.plan, Settings: settings, Results: map[string]workseries.Result{}}); err != nil {
+		t.Fatal(err)
+	}
+	marker := forbidConnectedRunCommands(t, driver.plan.Root)
+	bin := filepath.Dir(marker)
+	oldImage, newImage := driver.settings.ImageID, "sha256:"+strings.Repeat("b", 64)
+	t.Setenv("SDLC_TEST_OLD_IMAGE", oldImage)
+	t.Setenv("SDLC_TEST_NEW_IMAGE", newImage)
+	t.Setenv("SDLC_UPDATE_PROJECT_ROOT", driver.plan.Root)
+	t.Setenv("DOCKER_HOST", "")
+	t.Setenv("DOCKER_CONTEXT", "")
+	script := `#!/bin/sh
+set -eu
+directory="$(dirname "$0")"
+for argument do last="$argument"; done
+case "$1" in
+  context) printf '"unix:///tmp/offline-runtime.sock"\n' ;;
+  info) printf '{"id":"offline-engine","os":"linux"}\n' ;;
+  ps) ;;
+  build) printf built > "$directory/built" ;;
+  run)
+    if [ "$last" = /opt/sdlc/runtime-inventory.json ]; then cat "$directory/inventory.json";
+    else printf 'offline tool versions\n'; fi ;;
+  image)
+    case "$2" in
+      inspect)
+        case "$last" in
+          sdlc:build-*) printf '%s\n' "$SDLC_TEST_NEW_IMAGE" ;;
+          sdlc:local) cat "$directory/current-image" ;;
+          *) exit 98 ;;
+        esac ;;
+      tag) printf '%s\n' "$3" > "$directory/current-image" ;;
+      rm) printf '%s\n' "$3" >> "$directory/removed-images" ;;
+      *) exit 98 ;;
+    esac ;;
+  *) exit 98 ;;
+esac
+`
+	inventory, err := json.Marshal(statusInventory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{"docker": []byte(script), "current-image": []byte(oldImage + "\n"), "inventory.json": inventory} {
+		if err := os.WriteFile(filepath.Join(bin, name), data, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, file, _, _ := runtime.Caller(0)
+	source, err := filepath.EvalSymlinks(filepath.Join(filepath.Dir(file), "../.."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := json.Marshal(runtimeimage.State{Version: 1, Source: source, Engine: "offline-engine", ImageID: oldImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDirectory := os.Getenv("SDLC_STATE_DIR")
+	if err := os.MkdirAll(stateDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDirectory, "runtime.json"), previous, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := dashboardTree(t, filepath.Join(driver.plan.Root, ".sdlc", "work"))
+	var output bytes.Buffer
+	args := []string{"build", "--source", source}
+	if err := runtimeCommand(context.Background(), args, &output, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "feature TASK-1") {
+		t.Fatal("ordinary build failed to protect stopped feature", err)
+	}
+	if _, err := os.Stat(filepath.Join(bin, "built")); !os.IsNotExist(err) {
+		t.Fatal("ordinary build reached Docker build", err)
+	}
+	output.Reset()
+	if err := runtimeCommand(context.Background(), append(args, "--force"), &output, &bytes.Buffer{}); err != nil {
+		t.Fatal("forced build failed", err, output.String())
+	}
+	var selected runtimeimage.State
+	data, err := os.ReadFile(filepath.Join(stateDirectory, "runtime.json"))
+	if err != nil || json.Unmarshal(data, &selected) != nil || selected.ImageID != newImage {
+		t.Fatal("forced build did not record replacement runtime", err)
+	}
+	removed, err := os.ReadFile(filepath.Join(bin, "removed-images"))
+	if err != nil || strings.Contains(string(removed), oldImage) {
+		t.Fatal("forced build removed previous image", err, string(removed))
+	}
+	if !strings.Contains(output.String(), "feature TASK-1") || !strings.Contains(output.String(), "cannot resume against the replacement runtime") {
+		t.Fatal("forced build omitted affected feature and resume consequence", output.String())
+	}
+	if !reflect.DeepEqual(before, dashboardTree(t, filepath.Join(driver.plan.Root, ".sdlc", "work"))) {
+		t.Fatal("forced build changed saved feature files")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("forced build invoked connected provider")
 	}
 }
 
