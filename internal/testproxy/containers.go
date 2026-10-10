@@ -244,6 +244,10 @@ func (p *Proxy) createContainer(r *http.Request) error {
 	}
 	body["Image"] = image
 	imageConfig := object(metadata["Config"])
+	mounts, err = p.nugetMounts(body, imageConfig, mounts, occupied)
+	if err != nil {
+		return err
+	}
 	volumes := object(body["Volumes"])
 	for target := range object(imageConfig["Volumes"]) {
 		volumes[target] = map[string]any{}
@@ -255,6 +259,7 @@ func (p *Proxy) createContainer(r *http.Request) error {
 				return err
 			}
 			mounts = append(mounts, map[string]any{"Type": "volume", "Source": name, "Target": target})
+			occupied[target] = true
 		}
 	}
 	body["Volumes"] = map[string]any{}

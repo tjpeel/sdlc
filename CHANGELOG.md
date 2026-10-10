@@ -7,6 +7,18 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.14 - 2026-10-10
+
+### Added
+
+- Reuse validated NuGet package archives across Docker check sessions, seed them from the host package cache, and give each session its own writable package and scratch directories. Nested SDK containers receive the same session cache.
+- Record native event reception intervals in private attempt metrics and usage JSON. Include agent-tool start and completion in progress logs without their arguments or results.
+
+### Fixed
+
+- Preserve the check worker's private home between commands, so tool restore and package restore remain available to later formatting and build commands. Candidate and baseline phases keep independent homes and build outputs.
+- Describe the check worker's source, Git, package and tool boundaries in implementation prompts to avoid repeated verification setup repairs.
+
 ## 0.1.0-beta.13 - 2026-10-09
 
 ### Added

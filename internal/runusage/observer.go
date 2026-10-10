@@ -65,9 +65,12 @@ type ContextUsage struct {
 // The Claude 2.1.287 CLI may omit contextWindow: no window or percentage is
 // inferred from model names, aggregate usage, or a provider's advertised limit.
 type Observer struct {
-	mu                                 sync.Mutex
-	provider, requested, nativeSession string
-	usage                              Usage
+	mu                                             sync.Mutex
+	provider, requested, nativeSession             string
+	usage                                          Usage
+	now                                            func() time.Time
+	startedAt, receivedAt, lastEventAt, finishedAt time.Time
+	timing                                         EventTiming
 
 	line       []byte
 	dropping   bool
@@ -188,6 +191,9 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 	}
 	if json.Unmarshal(line, &event) != nil {
 		return
+	}
+	if event.Type != "" {
+		o.observeEvent()
 	}
 	if len(event.Parent) != 0 && !bytes.Equal(bytes.TrimSpace(event.Parent), []byte("null")) {
 		return
@@ -364,17 +370,19 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 
 // NewObserver reads native JSONL only; it never changes the provider lifecycle.
 func NewObserver(provider, requested string) *Observer {
-	return &Observer{provider: provider, requested: requested}
+	return &Observer{provider: provider, requested: requested, now: time.Now, startedAt: time.Now()}
 }
 func (o *Observer) Write(data []byte) (int, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.receivedAt = o.now()
 	o.feed(data, o.provider, o.requested, &o.usage)
 	return len(data), nil
 }
 func (o *Observer) Consume(line []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.receivedAt = o.now()
 	o.consume(line, o.provider, o.requested, &o.usage)
 }
 func (o *Observer) Finish() {
@@ -386,6 +394,7 @@ func (o *Observer) Finish() {
 	clear(o.line)
 	o.line = nil
 	o.dropping = false
+	o.finishedAt = o.now()
 	if o.usage.Completeness == "" {
 		if o.usage.Context != nil || o.usage.Aggregate != nil {
 			o.usage.Completeness = "partial"

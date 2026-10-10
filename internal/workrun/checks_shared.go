@@ -27,6 +27,9 @@ const testRecipeLabel = "io.sdlc.test-recipe"
 type sharedChecks struct {
 	checker                             DockerChecker
 	name, directory, recipe, workVolume string
+	imageID                             string
+	output                              io.Writer
+	promote                             bool
 }
 
 func newSharedChecks(checker DockerChecker, state runtimeimage.State, image string) (*sharedChecks, error) {
@@ -44,7 +47,7 @@ func newSharedChecks(checker DockerChecker, state runtimeimage.State, image stri
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
 	}
-	return &sharedChecks{checker: checker, name: name, directory: directory, recipe: hex.EncodeToString(recipe[:]), workVolume: name + "-work"}, nil
+	return &sharedChecks{checker: checker, name: name, directory: directory, recipe: hex.EncodeToString(recipe[:]), workVolume: name + "-work", imageID: state.ImageID}, nil
 }
 
 func (s *sharedChecks) host(ctx context.Context, args ...string) ([]byte, error) {
@@ -291,6 +294,12 @@ func (s *sharedChecks) cleanup(ctx context.Context, name string) error {
 			}
 		}
 	}
+	// Workers and nested containers have stopped. An orphan is discarded, never promoted.
+	if s.promote {
+		if err := s.promoteNuget(ctx, name); err != nil {
+			return err
+		}
+	}
 	// Keep immutable cache tags even when Compose did not remove local build tags.
 	data, err := s.inner(ctx, "image", "ls", "-q", "--filter", "label="+testproxy.SessionLabel+"="+name)
 	if err != nil {
@@ -324,7 +333,7 @@ func (s *sharedChecks) cleanup(ctx context.Context, name string) error {
 			}
 		}
 	}
-	if _, err := s.host(ctx, "exec", s.name, "rm", "-rf", "/sdlc/workspaces/"+name, "/sdlc/sockets/"+name); err != nil {
+	if _, err := s.host(ctx, "exec", s.name, "rm", "-rf", "/sdlc/workspaces/"+name, "/sdlc/sockets/"+name, "/sdlc/homes/"+name, "/sdlc/nuget-sessions/"+name); err != nil {
 		return err
 	}
 	return os.Remove(filepath.Join(s.directory, name+".session"))
@@ -362,6 +371,19 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	if err = s.seed(ctx, state.ImageID, output); err != nil {
 		return err
 	}
+	s.output = output
+	cacheSupported, err := s.nugetCapability(ctx, name)
+	if err != nil {
+		return err
+	}
+	if cacheSupported {
+		if err = s.prepareNuget(ctx, name, workspace, output); err != nil {
+			return err
+		}
+		s.promote = true
+	} else {
+		fmt.Fprintln(output, "Frozen runtime lacks NuGet cache sharing; private HOME persists across commands. Upgrade the runtime for new runs to enable persistent and nested-container cache reuse.")
+	}
 	root, socket := "/sdlc/workspaces/"+name, "/sdlc/sockets/"+name
 	if _, err = s.host(ctx, "exec", s.name, "mkdir", "-p", root, socket); err != nil {
 		return err
@@ -384,7 +406,7 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	if err != nil {
 		return err
 	}
-	copyArgs := checkContainerEnvironment([]string{"run", "--name", name + "-copy", "--label", testOwnerLabel + "=" + name, "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly", "--mount", "type=volume,src=" + s.workVolume + ",dst=/sdlc", "--env", "SDLC_CHECK_WORKSPACE=" + root, "--env", "SDLC_CHECK_TEMPLATES=/sdlc/templates"})
+	copyArgs := checkContainerEnvironment([]string{"run", "--name", name + "-copy", "--label", testOwnerLabel + "=" + name, "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly", "--mount", "type=volume,src=" + s.workVolume + ",dst=/sdlc", "--env", "SDLC_CHECK_WORKSPACE=" + root, "--env", "SDLC_CHECK_TEMPLATES=/sdlc/templates", "--env", "SDLC_CHECK_HOME=/sdlc/homes/" + name})
 	copyArgs = append(copyArgs, "--env", "SDLC_CHECK_TREE="+key)
 	if inputs != "" {
 		copyArgs = append(copyArgs, "--mount", "type=bind,src="+inputs+",dst=/inputs,readonly")
@@ -424,6 +446,9 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	}
 	proxyArgs := checkContainerEnvironment([]string{"run", "-d", "--name", name + "-proxy", "--label", testOwnerLabel + "=" + name, "--pull", "never", "--user", "0:1000", "--network", name + "-default", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + checkSocket + ",dst=/sdlc/daemon/docker.sock", "--mount", "type=bind,src=" + root + ",dst=/workspace,readonly", "--mount", "type=bind,src=" + socket + ",dst=/run/sdlc", "--entrypoint", "/usr/local/bin/sdlc-test-proxy"})
 	proxyArgs = append(proxyArgs, state.ImageID, "--session", name, "--workspace", root, "--socket-source", socket+"/docker.sock")
+	if cacheSupported {
+		proxyArgs = append(proxyArgs, "--nuget-cache", "/sdlc/nuget-sessions/"+name)
+	}
 	if _, err = s.inner(ctx, proxyArgs...); err != nil {
 		return err
 	}
@@ -441,7 +466,11 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 		}
 	}
 	fmt.Fprintln(output, "Shared Docker image/build cache ready; check session isolated")
-	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, "container:"+name+"-proxy", "type=bind,src="+root+",dst=/workspace", "type=bind,src="+socket+",dst=/run/sdlc", s.prefix(), func(string) {})
+	homeMounts := []string{"type=bind,src=/sdlc/homes/" + name + ",dst=/tmp/check-home"}
+	if cacheSupported {
+		homeMounts = append(homeMounts, "type=bind,src=/sdlc/nuget-sessions/"+name+"/packages,dst=/tmp/check-home/.nuget/packages", "type=bind,src=/sdlc/nuget-sessions/"+name+"/scratch,dst=/tmp/check-home/.nuget/scratch")
+	}
+	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, "container:"+name+"-proxy", "type=bind,src="+root+",dst=/workspace", homeMounts, "type=bind,src="+socket+",dst=/run/sdlc", s.prefix(), func(string) {})
 }
 
 // Resolve only the selected project's declarative image references. The helper

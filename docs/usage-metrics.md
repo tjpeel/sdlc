@@ -50,6 +50,17 @@ The `LAST OUTPUT` column shows time since output for live controllers and a fixe
 recorded timestamp for stopped or stale controllers. Overview timestamps use the
 time zone shown in the dashboard heading; details include the UTC offset.
 
+New attempt records and `sdlc usage --json` also report native event reception
+timing: time to the first JSONL event, the longest interval between events, and
+silence after the last event. Group summaries retain the largest measured
+interval and recorded/missing attempt counts. No event contents or arguments
+enter these numeric records. These intervals can include setup, tool execution,
+agent waits and buffered output; they do not establish provider queue or model
+compute time. Agent-tool start/completion messages in the private progress log
+help distinguish reported delegation waits. Only parsed native events count;
+malformed or oversized lines do not contribute timing. Older records have no
+such timing.
+
 ## Counter meanings
 
 - Codex input includes cached input. Cache reads are a subset; reasoning output

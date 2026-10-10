@@ -51,6 +51,9 @@ func TestSessionRetainsUsageAfterResumeFailureAndCancellation(t *testing.T) {
 		t.Fatalf("final records not retained: %+v %v", summary, err)
 	}
 	for _, group := range summary.Groups {
+		if group.EventTiming == nil || group.EventTiming.RecordedAttempts != 1 || group.EventTiming.Events != 2 {
+			t.Fatalf("session reception timing not retained: %+v", group.EventTiming)
+		}
 		if group.Role == "repair" && (group.Tokens.InputTokens == nil || *group.Tokens.InputTokens != 50) {
 			t.Fatalf("resume cumulative counters counted twice: %+v", group)
 		}

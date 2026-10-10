@@ -650,6 +650,8 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	defer func() {
 		observer.Finish()
 		attempt.Usage = observer.Snapshot()
+		timing := observer.Timing()
+		attempt.EventTiming = &timing
 		attempt.ClientVersion = attempt.Usage.ClientVersion
 		attempt.SessionID = observer.SessionID()
 		attempt.HeadroomStats = result.HeadroomStats
@@ -677,6 +679,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 func (runner Runner) prompt(journal Journal, role string) string {
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
 	contextDiscipline += "For authorised supplementary repository inspection, reuse an existing selected checkout or clone beneath /workspace/.sdlc/repositories/ and exclude that directory locally with Git info/exclude. Preserve the checkout and record its revision for later inspection. Do not clone repositories into /tmp. Inspection does not authorise modifying or publishing a companion repository; follow the selected ticket delivery boundary.\n"
+	contextDiscipline += "Check-worker contract: each verification request receives a fresh committed source copy at /workspace without .git metadata. Commands within that request share source outputs and a private HOME; candidate and baseline phases are separate. Restore required tools and dependencies explicitly. Package reuse does not preserve bin/obj or prove the current candidate passed. Avoid Git commands in checks; use file checksums to prove formatting preserved source bytes. Dockerfile build caches are separate from worker package caches. Use the selected repository's SDK/tool environment and supported test filters for focused regression proofs; retain the configured full checks. Consume a delegate's bounded findings without repeating its entire investigation unless independent validation needs it.\n"
 	if role == "implementation" {
 		contextDiscipline += "Additional verification is already authorised machine work: submit verification_requests with stable id, purpose and bounded argv commands, rather than asking the human to run tests. Generic requests use baseline:null. To demonstrate a regression, supply baseline with one exact captured StartingSHA " + journal.Plan.StartingSHA + " or SourceSHA " + journal.Plan.SourceSHA + ", named original production paths, current candidate test commands, expected_exit_code and literal assertion failure_contains markers. The candidate commands must pass; the same commands run in a fresh candidate copy retaining new tests with only the named original source restored, and the final command must fail as specified. Return [] when unused; unresolved requests persist. Genuine specification or product questions still require waiting_for_human.\n"
 	}

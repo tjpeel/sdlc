@@ -733,4 +733,9 @@ func TestRunnerCompactRepairPromptContainsOnlyNewFeedbackAndIdentity(t *testing.
 	if !strings.Contains(prompt, "unchanged tree") || !strings.Contains(prompt, "human questions") || !strings.Contains(prompt, "provider access/usage/policy limits") {
 		t.Fatal("compact repair omitted verification or hard-stop gates")
 	}
+	for _, boundary := range []string{"without .git metadata", "private HOME", "candidate and baseline phases are separate", "file checksums", "configured full checks"} {
+		if !strings.Contains(prompt, boundary) {
+			t.Fatalf("repair prompt omitted check-worker boundary %q", boundary)
+		}
+	}
 }

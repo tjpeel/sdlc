@@ -106,6 +106,17 @@ func nativeTexts(line []byte) []string {
 		var item map[string]json.RawMessage
 		json.Unmarshal(e["item"], &item)
 		typ := str(item, "type")
+		if typ == "collab_tool_call" {
+			tool := str(item, "tool")
+			switch tool {
+			case "spawn", "spawn_agent", "wait", "wait_agent", "send_message", "list_agents", "resume_agent", "close_agent":
+				state := "completed"
+				if kind == "item.started" {
+					state = "started"
+				}
+				return []string{"Agent tool " + state + ": " + tool}
+			}
+		}
 		if kind == "item.started" {
 			if typ == "command_execution" {
 				return []string{"Command: " + str(item, "command")}

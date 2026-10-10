@@ -225,7 +225,7 @@ func TestDockerChecksUseDedicatedDaemonAndUnchangedArgv(t *testing.T) {
 				t.Fatalf("Docker injection override missing: %s", key)
 			}
 		}
-		for _, expected := range []string{"--user 1000:1000", "--read-only", "--cap-drop ALL", "no-new-privileges", "--network container:sdlc-check-", "DOCKER_HOST=unix:///run/sdlc/docker.sock", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "type=volume", "size=2g", "HTTP_PROXY=", "GH_TOKEN=", "SSH_AUTH_SOCK="} {
+		for _, expected := range []string{"--user 1000:1000", "--read-only", "--cap-drop ALL", "no-new-privileges", "--network container:sdlc-check-", "DOCKER_HOST=unix:///run/sdlc/docker.sock", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "type=volume", "size=2g", "HTTP_PROXY=", "GH_TOKEN=", "SSH_AUTH_SOCK=", "NUGET_PACKAGES=/tmp/check-home/.nuget/packages", "NUGET_SCRATCH=/tmp/check-home/.nuget/scratch", "-home,dst=/tmp/check-home"} {
 			if !strings.Contains(joined, expected) {
 				t.Fatalf("missing worker restriction: %s", expected)
 			}
@@ -366,7 +366,7 @@ func TestDockerChecksStopAndCleanOnFailureAndCancellation(t *testing.T) {
 					networks++
 				}
 			}
-			if removed != 3 || volumes != 3 || networks != 1 || docker.cleanupCancelled {
+			if removed != 3 || volumes != 4 || networks != 1 || docker.cleanupCancelled {
 				t.Fatal("cleanup incomplete or used cancelled context")
 			}
 		})
@@ -508,8 +508,8 @@ func TestDockerChecksDefaultHasNoPrivilegedDaemonOrSocket(t *testing.T) {
 			volumes++
 		}
 	}
-	if volumes != 1 {
-		t.Fatal("default checks did not use only isolated workspace storage")
+	if volumes != 2 {
+		t.Fatal("default checks did not use isolated workspace and HOME storage")
 	}
 	worker := strings.Join(runner.calls[0], " ")
 	if !strings.Contains(worker, "--network bridge") || !strings.Contains(worker, "--user 1000:1000") {

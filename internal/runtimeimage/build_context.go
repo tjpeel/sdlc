@@ -21,6 +21,7 @@ var publisherEmbeds = map[string]bool{
 	"internal/providerauth/container.py": true,
 	"internal/providerauth/headless.py":  true,
 	"internal/instructions/default.md":   true,
+	"internal/workrun/cache/nuget.py":    true,
 }
 
 const maximumBuildFile = 2 * 1024 * 1024

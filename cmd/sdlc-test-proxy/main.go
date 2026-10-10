@@ -22,6 +22,7 @@ func main() {
 	flags.StringVar(&config.Socket, "daemon-socket", "/sdlc/daemon/docker.sock", "controller daemon socket")
 	flags.StringVar(&config.Workspace, "workspace", "", "daemon workspace")
 	flags.StringVar(&config.SocketSource, "socket-source", "", "session socket in daemon")
+	flags.StringVar(&config.NugetCache, "nuget-cache", "", "controller-owned session NuGet cache")
 	flags.Parse(os.Args[1:])
 	if config.ProxyID == "" {
 		config.ProxyID, _ = os.Hostname()

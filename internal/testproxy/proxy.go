@@ -33,6 +33,7 @@ var objectID = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 type Config struct {
 	Session, Socket, ProxyID, Workspace, SocketSource string
 	LocalWorkspace                                    string
+	NugetCache                                        string
 }
 
 type Proxy struct {
@@ -53,6 +54,9 @@ type Proxy struct {
 func New(config Config) (*Proxy, error) {
 	if !sessionPattern.MatchString(config.Session) || config.Socket == "" || !objectID.MatchString(config.ProxyID) || config.Workspace != "/sdlc/workspaces/"+config.Session || config.SocketSource != "/sdlc/sockets/"+config.Session+"/docker.sock" {
 		return nil, errors.New("invalid test proxy configuration")
+	}
+	if config.NugetCache != "" && config.NugetCache != "/sdlc/nuget-sessions/"+config.Session {
+		return nil, errors.New("NuGet cache belongs to another session")
 	}
 	if config.LocalWorkspace == "" {
 		config.LocalWorkspace = "/workspace"
@@ -261,7 +265,7 @@ func validateRequestFields(body map[string]any) error {
 		}
 		return nil
 	}
-	if err := check(body, "HostConfig", "NetworkingConfig", "Image", "Labels", "Volumes", "ExposedPorts", "Name", "Driver", "DriverOpts", "Options", "IPAM", "Container", "EndpointConfig", "Privileged"); err != nil {
+	if err := check(body, "Env", "HostConfig", "NetworkingConfig", "Image", "Labels", "Volumes", "ExposedPorts", "Name", "Driver", "DriverOpts", "Options", "IPAM", "Container", "EndpointConfig", "Privileged"); err != nil {
 		return err
 	}
 	host := object(body["HostConfig"])

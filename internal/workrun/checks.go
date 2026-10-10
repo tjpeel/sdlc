@@ -46,6 +46,8 @@ type DockerChecker struct {
 	// Old journals have no daemon pin. Preserve their original default even
 	// when the installation now has different dependency pins.
 	UseDefaultDaemonImage bool
+	// Tests may select disposable package data without scanning the real host cache.
+	nugetSeedDirectory string
 }
 
 // ErrCheckFailed identifies a completed check with a nonzero exit status.
@@ -86,6 +88,11 @@ git = ['git', '--no-replace-objects', '-c', 'safe.directory='+source_root, '-c',
 env = {'PATH':os.environ['PATH'], 'HOME':'/tmp', 'GIT_CONFIG_NOSYSTEM':'1', 'GIT_CONFIG_GLOBAL':'/dev/null'}
 work_root = pathlib.Path(os.environ.get('SDLC_CHECK_WORKSPACE','/workspace'))
 work_root.mkdir(parents=True,exist_ok=True)
+if os.environ.get('SDLC_CHECK_HOME'):
+ home_root = pathlib.Path(os.environ['SDLC_CHECK_HOME'])
+ home_root.mkdir(parents=True,exist_ok=True)
+ home_root.chmod(0o700)
+ os.chown(home_root,1000,1000)
 tree = subprocess.check_output(git+['rev-parse','HEAD^{tree}'],env=env).decode().strip()
 if len(tree) not in (40,64) or any(c not in '0123456789abcdef' for c in tree): raise ValueError('unsafe tree identity')
 if os.environ.get('SDLC_CHECK_TREE',tree)!=tree: raise ValueError('check source changed during preparation')
@@ -271,7 +278,7 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 	if checker.DockerTests && checker.DaemonMode == SharedTestDaemon {
 		return checker.checkShared(ctx, workspace, inputs, commands, output, baseline, name, state, daemonImage)
 	}
-	volumes := []string{name + "-workspace"}
+	volumes := []string{name + "-workspace", name + "-home"}
 	if checker.DockerTests {
 		volumes = append(volumes, name+"-socket", name+"-data")
 	}
@@ -310,6 +317,7 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 	// successfully started a container before returning an error.
 	cleanups = append(cleanups, []string{"rm", "--force", name + "-copy"})
 	copyArgs := checkContainerEnvironment([]string{"run", "--name", name + "-copy", "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly", "--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace"})
+	copyArgs = append(copyArgs, "--mount", "type=volume,src="+name+"-home,dst=/check-home", "--env", "SDLC_CHECK_HOME=/check-home")
 	copyArgs = append(copyArgs, "--entrypoint", "python3", state.ImageID, "-c", copyCheckWorkspace)
 	if baseline != nil {
 		data, _ := json.Marshal(baseline)
@@ -335,7 +343,7 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 			daemonPull = "missing"
 		}
 		daemonArgs := checkContainerEnvironment([]string{"run", "--detach", "--name", name + "-daemon", "--pull", daemonPull, "--privileged", "--network", name,
-			"--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace", "--mount", "type=volume,src=" + volumes[1] + ",dst=/run/sdlc", "--mount", "type=volume,src=" + volumes[2] + ",dst=/var/lib/docker",
+			"--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace", "--mount", "type=volume,src=" + volumes[2] + ",dst=/run/sdlc", "--mount", "type=volume,src=" + volumes[3] + ",dst=/var/lib/docker",
 			"--env", "DOCKER_TLS_CERTDIR="})
 		// VFS cannot snapshot build layers containing Unix sockets, including
 		// sockets left by .NET build services. Pin the classic OverlayFS backend
@@ -368,15 +376,15 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 	if checker.DockerTests {
 		workerNetwork = "container:" + name + "-daemon"
 	}
-	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, workerNetwork, "type=volume,src="+volumes[0]+",dst=/workspace", func() string {
+	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, workerNetwork, "type=volume,src="+volumes[0]+",dst=/workspace", []string{"type=volume,src=" + name + "-home,dst=/tmp/check-home"}, func() string {
 		if checker.DockerTests {
-			return "type=volume,src=" + volumes[1] + ",dst=/run/sdlc"
+			return "type=volume,src=" + volumes[2] + ",dst=/run/sdlc"
 		}
 		return ""
 	}(), nil, func(worker string) { cleanups = append(cleanups, []string{"rm", "--force", worker}) })
 }
 
-func (checker DockerChecker) executeChecks(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name, imageID, workerNetwork, workspaceMount, socketMount string, prefix []string, onWorker func(string)) error {
+func (checker DockerChecker) executeChecks(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name, imageID, workerNetwork, workspaceMount string, homeMounts []string, socketMount string, prefix []string, onWorker func(string)) error {
 	var err error
 	runner := checker.Runner
 	if runner == nil {
@@ -392,7 +400,10 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 		if err = json.NewEncoder(output).Encode(command); err != nil {
 			return err
 		}
-		args := []string{"run", "--name", worker, "--pull", "never", "--network", workerNetwork, "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "1024", "--memory", "4g", "--cpus", "4", "--workdir", "/workspace", "--tmpfs", "/tmp:rw,nosuid,nodev,size=2g,mode=1777", "--tmpfs", "/tmp/check-home:rw,nosuid,nodev,size=2g,uid=1000,gid=1000,mode=0700", "--mount", workspaceMount, "--env", "HOME=/tmp/check-home", "--env", "CODEX_HOME=/tmp/check-home/.codex", "--env", "CLAUDE_CONFIG_DIR=/tmp/check-home/.claude", "--env", "DOCKER_CONFIG=/tmp/check-home/.docker", "--env", "DOTNET_CLI_HOME=/tmp/check-home", "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1"}
+		args := []string{"run", "--name", worker, "--pull", "never", "--network", workerNetwork, "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "1024", "--memory", "4g", "--cpus", "4", "--workdir", "/workspace", "--tmpfs", "/tmp:rw,nosuid,nodev,size=2g,mode=1777", "--mount", workspaceMount, "--env", "HOME=/tmp/check-home", "--env", "CODEX_HOME=/tmp/check-home/.codex", "--env", "CLAUDE_CONFIG_DIR=/tmp/check-home/.claude", "--env", "DOCKER_CONFIG=/tmp/check-home/.docker", "--env", "DOTNET_CLI_HOME=/tmp/check-home", "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "--env", "NUGET_PACKAGES=/tmp/check-home/.nuget/packages", "--env", "NUGET_SCRATCH=/tmp/check-home/.nuget/scratch"}
+		for _, mount := range homeMounts {
+			args = append(args, "--mount", mount)
+		}
 		if checker.DockerTests {
 			args = append(args, "--mount", socketMount, "--env", "DOCKER_HOST=unix://"+checkSocket, "--env", "TESTCONTAINERS_HOST_OVERRIDE=localhost", "--env", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="+checkSocket)
 			if checker.DaemonMode == SharedTestDaemon {

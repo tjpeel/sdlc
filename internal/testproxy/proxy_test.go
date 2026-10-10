@@ -37,6 +37,7 @@ type engineProbe struct {
 // that behaviour at this boundary rather than validating only decoded maps.
 type engineContainerConfig struct {
 	Image, Hostname string
+	Env             []string
 	Labels          map[string]string
 	HostConfig      struct {
 		Privileged  bool
@@ -645,5 +646,59 @@ func TestHexadecimalResourceNamesRemainAccessible(t *testing.T) {
 	p.client.Transport, p.reverse.Transport = transport, transport
 	if w := requestProxy(t, p, "GET", "/containers/"+name+"/json", nil); w.Code != 200 {
 		t.Fatalf("scoped UUID name could not be inspected: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNestedContainersUsePrivateNugetCacheAndRejectForeignBinds(t *testing.T) {
+	p, engine := proxyFixture(t, exampleSession)
+	p.config.NugetCache = "/sdlc/nuget-sessions/" + exampleSession
+	w := requestProxy(t, p, "POST", "/containers/create", map[string]any{"Image": "public:1"})
+	if w.Code != 201 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	body := engine.bodies[0]
+	env := array(body["Env"])
+	if len(engine.typedCreates[0].Env) != 2 {
+		t.Fatal("Docker did not decode cache environment", engine.typedCreates[0].Env)
+	}
+	if len(env) != 2 || env[0] != "NUGET_PACKAGES=/tmp/check-home/.nuget/packages" || env[1] != "NUGET_SCRATCH=/tmp/check-home/.nuget/scratch" {
+		t.Fatal(env)
+	}
+	mounts := array(object(body["HostConfig"])["Mounts"])
+	found := map[string]string{}
+	for _, raw := range mounts {
+		mount := object(raw)
+		found[stringValue(mount["Target"])] = stringValue(mount["Source"])
+	}
+	for _, directory := range []string{"packages", "scratch"} {
+		if found["/tmp/check-home/.nuget/"+directory] != p.config.NugetCache+"/"+directory {
+			t.Fatal(found)
+		}
+	}
+	w = requestProxy(t, p, "POST", "/containers/create", map[string]any{"Image": "public:1", "env": []string{"NUGET_PACKAGES=/foreign"}})
+	if w.Code != 403 {
+		t.Fatal("alternate environment spelling bypassed cache policy", w.Code)
+	}
+	for _, source := range []string{p.config.NugetCache + "/packages", "/sdlc/nuget-sessions/sdlc-check-bbbbbbbbbbbbbbbbbbbbbbbb/packages", "/sdlc/nuget/packages"} {
+		w = requestProxy(t, p, "POST", "/containers/create", map[string]any{"Image": "public:1", "HostConfig": map[string]any{"Binds": []string{source + ":/foreign"}}})
+		if w.Code != 403 {
+			t.Fatalf("foreign cache bind allowed: %s: %d", source, w.Code)
+		}
+	}
+}
+
+func TestNestedNugetWorkspaceOverrideAndOutsideOverride(t *testing.T) {
+	p, engine := proxyFixture(t, exampleSession)
+	p.config.NugetCache = "/sdlc/nuget-sessions/" + exampleSession
+	w := requestProxy(t, p, "POST", "/containers/create", map[string]any{"Image": "public:1", "Env": []string{"NUGET_PACKAGES=/workspace/packages", "NUGET_SCRATCH=/workspace/scratch"}, "HostConfig": map[string]any{"Binds": []string{"/workspace:/workspace"}}})
+	if w.Code != 201 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(array(object(engine.bodies[0]["HostConfig"])["Mounts"])) != 1 {
+		t.Fatal("workspace override received default cache mounts")
+	}
+	w = requestProxy(t, p, "POST", "/containers/create", map[string]any{"Image": "public:1", "Env": []string{"NUGET_PACKAGES=/root/.nuget/packages"}})
+	if w.Code != 403 {
+		t.Fatal("outside workspace override accepted", w.Code)
 	}
 }

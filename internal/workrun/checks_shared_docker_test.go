@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +36,7 @@ func TestSharedCheckChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checker := DockerChecker{Runtime: manager, ImageID: state.ImageID, DockerTests: true, DaemonImage: state.DependencyPins.DaemonImage, DaemonMode: SharedTestDaemon}
+	checker := DockerChecker{Runtime: manager, ImageID: state.ImageID, DockerTests: true, DaemonImage: state.DependencyPins.DaemonImage, DaemonMode: SharedTestDaemon, nugetSeedDirectory: filepath.Join(config.Directory, "empty-host-nuget")}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	script := strings.ReplaceAll(sharedComposeCheck, "__MARKER__", fmt.Sprintf("%q", config.Marker))
@@ -103,7 +105,7 @@ func TestOfflineSharedDockerChecks(t *testing.T) {
 	if evidence := os.Getenv("SDLC_SHARED_DOCKER_EVIDENCE"); evidence != "" {
 		t.Cleanup(func() {
 			os.MkdirAll(evidence, 0700)
-			for _, name := range []string{"first.log", "second.log", "warm.log", "dotnet.log", "security.log"} {
+			for _, name := range []string{"first.log", "second.log", "warm.log", "dotnet.log", "dotnet-warm.log", "security.log"} {
 				if data, err := os.ReadFile(filepath.Join(root, name)); err == nil {
 					os.WriteFile(filepath.Join(evidence, name), data, 0600)
 				}
@@ -143,7 +145,7 @@ func TestOfflineSharedDockerChecks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "runtime."+manager.Name+".json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	checker := DockerChecker{Runtime: manager, DockerTests: true, DaemonImage: state.DependencyPins.DaemonImage, DaemonMode: SharedTestDaemon}
+	checker := DockerChecker{Runtime: manager, DockerTests: true, DaemonImage: state.DependencyPins.DaemonImage, DaemonMode: SharedTestDaemon, nugetSeedDirectory: filepath.Join(root, "empty-host-nuget")}
 	s, err := newSharedChecks(checker, state, checker.DaemonImage)
 	if err != nil {
 		t.Fatal(err)
@@ -176,6 +178,7 @@ func TestOfflineSharedDockerChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	exerciseOfflineNugetCache(t, ctx, checker, state.ImageID, root)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -366,9 +369,160 @@ subprocess.run(['dotnet','build','Smoke.slnx','--disable-build-servers','-m:1','
 subprocess.run(['dotnet','test','tests/Smoke.UnitTests/Smoke.UnitTests.csproj','--no-build','--no-restore'],check=True)
 subprocess.run(['python3','scripts/integration.py'],check=True)
 print('SHARED_DOTNET_PASSED',flush=True)`
-		if err := checker.Check(ctx, dotnetSource, [][]string{{"python3", "-c", script}}, file); err != nil {
+		if err := checker.Check(ctx, dotnetSource, [][]string{{"dotnet", "restore", "Smoke.slnx"}, {"python3", "-c", script}}, file); err != nil {
 			t.Fatalf("shared .NET check: %v; diagnostics retained with other fixture logs", err)
+		}
+		cold, err := os.ReadFile(filepath.Join(root, "dotnet.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !regexp.MustCompile(`NuGet seed: [1-9][0-9]* added`).Match(cold) {
+			t.Fatal("real SDK packages were not promoted into the persistent seed; inspect dotnet.log")
+		}
+		warmFile, err := os.Create(filepath.Join(root, "dotnet-warm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer warmFile.Close()
+		// Fresh committed workspace: no prior obj/bin state and no package source.
+		warm := `import pathlib,subprocess
+pathlib.Path('/workspace/empty-feed').mkdir()
+subprocess.run(['dotnet','restore','Smoke.slnx','--source','/workspace/empty-feed','--no-http-cache'],check=True)
+subprocess.run(['dotnet','build','Smoke.slnx','--no-restore','--disable-build-servers','-m:1','-p:UseSharedCompilation=false'],check=True)
+subprocess.run(['dotnet','test','tests/Smoke.UnitTests/Smoke.UnitTests.csproj','--no-build','--no-restore'],check=True)
+print('SHARED_REAL_NUGET_WARM_EMPTY_SOURCE_PASSED',flush=True)`
+		if err := checker.Check(ctx, dotnetSource, [][]string{{"python3", "-c", warm}}, warmFile); err != nil {
+			t.Fatalf("real SDK warm package restore without a source: %v; inspect dotnet-warm.log", err)
 		}
 	}
 	t.Logf("Parallel controller processes, fixed names/ports, host network, crash recovery and warm reuse passed. Evidence: %s", root)
 }
+
+// Real SDK restores/builds use a disposable package with a compiled source
+// dependency. Lost HOME in the second worker produces a compiler error. No
+// credential or real host package data enters this fixture.
+func exerciseOfflineNugetCache(t *testing.T, ctx context.Context, checker DockerChecker, image, root string) {
+	t.Helper()
+	source := filepath.Join(root, "nuget-source")
+	host := filepath.Join(root, "nuget-host")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	generator := exec.CommandContext(ctx, "python3", "-c", `import pathlib,zipfile,hashlib,base64,json,sys
+root=pathlib.Path(sys.argv[1]);p=root/'example.package'/'1.0.0';p.mkdir(parents=True)
+files={'example.package.nuspec':b'<package><metadata><id>Example.Package</id><version>1.0.0</version><authors>Example</authors><description>Disposable offline package</description></metadata></package>', 'build/Example.Package.props':b'<Project><ItemGroup><Compile Include="$(MSBuildThisFileDirectory)Package.cs" /></ItemGroup></Project>', 'build/Package.cs':b'namespace Example.Package; public static class Marker { public const string Value="OFFLINE_PACKAGE_COMPILED"; }'}
+a=p/'example.package.1.0.0.nupkg'
+with zipfile.ZipFile(a,'w') as z:
+ for name,data in files.items():
+  z.writestr(name,data);f=p/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_bytes(data)
+h=base64.b64encode(hashlib.sha512(a.read_bytes()).digest()).decode();pathlib.Path(str(a)+'.sha512').write_text(h);(p/'.nupkg.metadata').write_text(json.dumps({'version':2,'contentHash':h,'source':'https://example.invalid/fake-private-feed'}))`, host)
+	if output, err := generator.CombinedOutput(); err != nil {
+		t.Fatalf("create disposable package: %v: %s", err, output)
+	}
+	files := map[string]string{
+		"NuGet.Config":     "<configuration><packageSources><clear /></packageSources></configuration>",
+		"App/App.csproj":   "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup><ItemGroup><PackageReference Include=\"Example.Package\" Version=\"1.0.0\" /></ItemGroup></Project>",
+		"App/Program.cs":   "System.Console.WriteLine(Example.Package.Marker.Value);\n",
+		"Tool/Tool.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><PackAsTool>true</PackAsTool><ToolCommandName>example-tool</ToolCommandName><PackageId>Example.Tool</PackageId><Version>1.0.0</Version></PropertyGroup></Project>",
+		"Tool/Program.cs":  "System.Console.WriteLine(\"OFFLINE_TOOL_HOME_PRESERVED\");\n",
+	}
+	for name, data := range files {
+		path := filepath.Join(source, name)
+		os.MkdirAll(filepath.Dir(path), 0700)
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "--initial-branch=main", "--template="}, {"add", "."}, {"-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit", "-m", "Create disposable NuGet fixture"}} {
+		if _, err := isolatedGit(ctx, source, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checker.nugetSeedDirectory = host
+	setup := `import pathlib,subprocess,os
+subprocess.run(['dotnet','restore','App/App.csproj','--configfile','NuGet.Config'],check=True)
+subprocess.run(['dotnet','restore','Tool/Tool.csproj','--configfile','NuGet.Config'],check=True)
+subprocess.run(['dotnet','pack','Tool/Tool.csproj','--no-restore','-o','/workspace/feed'],check=True)
+subprocess.run(['dotnet','tool','install','--global','Example.Tool','--version','1.0.0','--add-source','/workspace/feed','--configfile','/workspace/NuGet.Config'],check=True)
+pathlib.Path(os.environ['NUGET_SCRATCH'],'session-marker').write_text('private-session')`
+	build := `import pathlib,subprocess,os,errno
+assert pathlib.Path(os.environ['NUGET_SCRATCH'],'session-marker').read_text()=='private-session'
+subprocess.run(['dotnet','build','App/App.csproj','--no-restore','--disable-build-servers','-p:UseSharedCompilation=false'],check=True)
+assert subprocess.check_output([os.environ['HOME']+'/.dotnet/tools/example-tool']).strip()==b'OFFLINE_TOOL_HOME_PRESERVED'
+assert subprocess.check_output(['dotnet','run','--project','App/App.csproj','--no-build','--no-restore']).strip()==b'OFFLINE_PACKAGE_COMPILED'
+home=pathlib.Path(os.environ['HOME'])
+try: (home/'.nuget').rename(home/'.nuget-moved')
+except OSError as e: assert e.errno==errno.EBUSY
+else: (home/'.nuget').symlink_to('/sdlc/nuget/packages')
+subprocess.run(['docker','run','--rm','--network','none','--entrypoint','python3',__IMAGE__,'-c',"import pathlib,os;pathlib.Path(os.environ['NUGET_PACKAGES'],'isolation-marker').write_text('session-only')"],check=True)
+subprocess.run(['docker','run','--rm','--network','none','--mount','type=bind,src=/workspace,dst=/workspace','--workdir','/workspace','--entrypoint','dotnet',__IMAGE__,'build','App/App.csproj','--no-restore','--disable-build-servers','-p:UseSharedCompilation=false'],check=True)
+print('NUGET_SPLIT_COMMANDS_TOOL_AND_NESTED_PASSED',flush=True)`
+	build = strings.ReplaceAll(build, "__IMAGE__", fmt.Sprintf("%q", image))
+	selected, err := checker.Runtime.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newSharedChecks(checker, selected, checker.DaemonImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspectRoots := checkCacheOutput(func(data []byte) (int, error) {
+		if strings.Contains(string(data), "Shared Docker image/build cache ready") {
+			metadata, err := session.host(ctx, "exec", session.name, "sh", "-c", `stat -c '%u:%g:%a' /sdlc/nuget-sessions; for directory in /sdlc/nuget-sessions/*; do if test -d "$directory"; then stat -c '%u:%g:%a' "$directory"; fi; done`)
+			if err != nil {
+				return 0, fmt.Errorf("inspect protected NuGet roots: %w", err)
+			}
+			rows := strings.Fields(string(metadata))
+			if len(rows) < 2 {
+				return 0, fmt.Errorf("private cache root missing: %s", metadata)
+			}
+			for i, row := range rows {
+				parts := strings.Split(row, ":")
+				if len(parts) != 3 || parts[0] != "0" || parts[1] != "0" {
+					return 0, fmt.Errorf("cache source ancestor is not controller-owned: %s", row)
+				}
+				mode, err := strconv.ParseUint(parts[2], 8, 32)
+				if err != nil || mode&0022 != 0 || (i > 0 && mode != 0700) {
+					return 0, fmt.Errorf("cache source ancestor is writable or unprotected: %s", row)
+				}
+			}
+		}
+		return len(data), nil
+	})
+	type outcome struct {
+		log string
+		err error
+	}
+	results := make(chan outcome, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			var out bytes.Buffer
+			err := checker.Check(ctx, source, [][]string{{"python3", "-c", setup}, {"python3", "-c", build}}, io.MultiWriter(&out, inspectRoots))
+			results <- outcome{out.String(), err}
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("parallel private NuGet session: %v\n%s", result.err, result.log)
+		}
+		t.Log(result.log)
+	}
+	if _, err = session.host(ctx, "exec", session.name, "test", "!", "-e", "/sdlc/nuget/packages/isolation-marker"); err != nil {
+		t.Fatal("nested cache mount escaped into persistent seed", err)
+	}
+	checker.nugetSeedDirectory = filepath.Join(root, "empty-host-nuget")
+	warm := `import subprocess
+subprocess.run(['dotnet','restore','App/App.csproj','--configfile','NuGet.Config'],check=True)
+subprocess.run(['dotnet','build','App/App.csproj','--no-restore','--disable-build-servers','-p:UseSharedCompilation=false'],check=True)
+print('NUGET_WARM_NO_SOURCE_PASSED',flush=True)`
+	var out bytes.Buffer
+	if err := checker.Check(ctx, source, [][]string{{"python3", "-c", warm}}, &out); err != nil {
+		t.Fatalf("warm seed with no host cache or package source: %v\n%s", err, out.String())
+	}
+	t.Log(out.String())
+}
+
+type checkCacheOutput func([]byte) (int, error)
+
+func (writer checkCacheOutput) Write(data []byte) (int, error) { return writer(data) }

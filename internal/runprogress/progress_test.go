@@ -132,6 +132,8 @@ func TestFormatAndNativeSummaries(t *testing.T) {
 		{`{"type":"user","message":{"content":[{"type":"tool_result","content":"Tool result"}]}}`, "Tool result"},
 		{`{"type":"result","result":"Complete"}`, "Complete"},
 		{`{"type":"stream_event","event":{"delta":{"text":"repeat"}}}`, ""},
+		{`{"type":"item.started","item":{"type":"collab_tool_call","tool":"wait","prompt":"private-argument","receiver_thread_ids":["private-id"]}}`, "Agent tool started: wait"},
+		{`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"private-id":{"message":"private-result"}}}}`, "Agent tool completed: wait"},
 	} {
 		if got := strings.Join(Summarize("codex", []byte(tc.line)), "|"); got != tc.want {
 			t.Fatalf("%s: %s", tc.line, got)

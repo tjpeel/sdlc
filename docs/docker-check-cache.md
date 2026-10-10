@@ -6,7 +6,11 @@ when their frozen daemon pins agree. The daemon owns its image store exclusively
 SDLC refuses another container using that data volume, a different daemon pin,
 unexpected mounts or a changed daemon command.
 
-Rebuild the runtime after upgrading the CLI so it contains `sdlc-test-proxy`.
+Rebuild the runtime for new runs so its `sdlc-test-proxy` supports NuGet cache
+sharing. SDLC probes capability once per immutable runtime image. Saved runs
+with older frozen proxies keep private HOME across commands, while persistent
+NuGet reuse and automatic nested cache mounts remain unavailable. Their logs
+explain the fallback; upgrading the CLI does not change a saved runtime pin.
 Previously saved runs retain their recorded mode: an absent `daemon_mode` means
 the original disposable daemon. Resuming those runs does not migrate them.
 
@@ -29,10 +33,62 @@ read through one batch process rather than starting Git for each file. Existing
 passing check evidence for an unchanged candidate remains reusable under the
 controller's existing verification rules.
 
-Host package-manager caches and previous mutable build directories are not
-imported. Reusing those safely needs package-specific concurrency and provenance
-rules; an old `obj`, `bin` or dependency directory cannot establish that checks
-ran against the current candidate.
+Every check phase has a private HOME that lasts across its commands. A restore,
+local tool installation and later build therefore see the same package and tool
+state. Candidate and baseline phases have separate homes. Legacy disposable
+checks receive the same session lifetime, without persistent package reuse.
+
+Shared sessions also receive private NuGet packages and scratch directories.
+The controller retains an immutable package seed in its Linux work volume and
+copies it into each session using reflinks where supported. It owns the source
+ancestors and exposes only package/scratch mount roots to workers. A writable
+HOME cannot redirect those sources into another session or the persistent seed.
+Nested Docker run containers receive the same package and scratch mounts through
+the scoped proxy. Explicit `NUGET_PACKAGES` and `NUGET_SCRATCH` overrides may stay
+within the session workspace. Arbitrary cache binds remain unavailable. These
+mounts are for running containers; Dockerfile restores reuse ordinary image
+layers and do not automatically receive session package mounts.
+
+For the initial seed, SDLC reads committed `.csproj`, `.props` and tool-manifest
+blobs to select package IDs and explicit versions. It follows dependencies from
+validated cached nuspecs, importing at most 64 changed packages and 128 MiB of
+archives per session. The host source is only `~/.nuget/packages`; no wider HOME,
+NuGet configuration, feed URLs from cache markers or authentication state is
+copied. Fingerprints avoid revalidating unchanged host packages, while a seed
+epoch makes host import resume after the persistent volume is reset. Private
+check logs record import counts, rejected packages and elapsed time. If host
+`python3` is unavailable, host import is skipped with a log message; runtime-side
+package reuse, ordinary restores and cleanup promotion continue.
+
+An imported or newly promoted package must have a complete extraction marker,
+a matching SHA-512 archive hash, the expected nuspec ID/version and complete,
+matching extracted payloads. Links, unsafe archive paths and oversized payloads
+are rejected. The controller reconstructs files from the checked archive and
+writes a fresh marker without the original feed URL. Signed packages may use a
+NuGet content hash that differs from the complete archive SHA-512. The original
+marker content hash is preserved as package metadata; the archive sidecar still
+checks every archive byte, and extracted payloads and package identity must
+match. This does not verify a signature or independently establish the signed
+package content hash. The original authorized
+package archive remains package data; its own nuspec and signature bytes are
+retained. At cleanup, after workers
+and nested containers stop, valid new packages are promoted under a kernel
+lease. The first valid ID/version wins; conflicting later archive bytes are
+reported and skipped, and never overwrite the seed. A protected manifest of
+the initial copy records archive inode, size and timestamps; unchanged copies
+are skipped during cleanup without rehashing their archives. Crash recovery discards an
+orphan session cache rather than promoting it.
+
+This validates package consistency, not publisher signatures or registry
+provenance. Use the persistent seed for trusted local projects and package data;
+a project can produce its own internally consistent package. Previous `obj`,
+`bin` and mutable build directories are never imported.
+
+NuGet's [cache guidance](https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders)
+requires processes sharing global packages to share the scratch location used
+for filesystem locks. Direct workers and nested containers in one session use
+the same packages and scratch. Concurrent sessions have independent copies and
+scratch directories, so they do not write a shared global package tree.
 
 ## Parallel sessions
 
@@ -45,7 +101,7 @@ therefore reaches only its session's published services.
 
 Only the controller and proxy can access the shared daemon socket. Session
 cleanup stops its workers and proxy before removing its test containers,
-networks, volumes and writable workspace. Immutable image cache references and
+networks, volumes, writable workspace, HOME and private NuGet cache. Immutable image cache references and
 source templates remain. Kernel leases and private session records allow the
 next controller to recover an orphan left by a crashed controller while keeping
 live sessions running.
@@ -89,7 +145,7 @@ reuse or downgrade an existing data store. If the frozen daemon pin changes,
 stop SDLC Docker checks before removing the corresponding idle test daemon and
 its volumes. Identify them through the `io.sdlc.test-owner` label; each daemon
 owns `<daemon>-data`, `<daemon>-work` and `<daemon>-socket`. Removing these volumes
-also removes retained images, build cache and source templates. Do not remove a
+also removes retained images, build cache, source templates and the NuGet seed. Do not remove a
 daemon while its check sessions are active, or mount its data volume in a second
 daemon.
 

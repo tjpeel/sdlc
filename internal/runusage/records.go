@@ -53,6 +53,7 @@ type Attempt struct {
 	HeadroomStats *headroom.Stats `json:"headroom_stats,omitempty"`
 	ClientVersion string          `json:"client_version,omitempty"`
 	Usage         Usage           `json:"usage"`
+	EventTiming   *EventTiming    `json:"native_event_timing,omitempty"`
 }
 
 type Group struct {
@@ -72,6 +73,7 @@ type Group struct {
 	ElapsedMS         int64                 `json:"elapsed_ms"`
 	Tokens            TokenUsage            `json:"tokens"`
 	ProxyStats        *ProxyStats           `json:"proxy_stats,omitempty"`
+	EventTiming       *EventTimingSummary   `json:"native_event_timing,omitempty"`
 }
 type Summary struct {
 	Version         int     `json:"version"`
@@ -201,6 +203,19 @@ func validateAttempt(a Attempt) error {
 	}
 	if err := validateUsage(a.Usage); err != nil {
 		return err
+	}
+	if value := a.EventTiming; value != nil {
+		if value.Events < 0 || value.Events > maxTokenCount || value.LongestGapMS < 0 || value.LongestGapMS > maxTokenCount {
+			return fmt.Errorf("invalid native event timing")
+		}
+		for _, n := range []*int64{value.FirstEventMS, value.FinalSilenceMS} {
+			if n != nil && (*n < 0 || *n > maxTokenCount) {
+				return fmt.Errorf("invalid native event timing")
+			}
+		}
+		if (value.Events == 0 && (value.FirstEventMS != nil || value.FinalSilenceMS != nil || value.LongestGapMS != 0)) || (value.Events > 0 && (value.FirstEventMS == nil || value.FinalSilenceMS == nil)) {
+			return fmt.Errorf("native event timing lacks matching observations")
+		}
 	}
 	if len(a.Usage.Models) > 64 || len(a.Usage.RateLimits) > 5 {
 		return fmt.Errorf("metrics collection exceeds limit")
@@ -379,6 +394,10 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 			groups[key] = g
 		}
 		g.Attempts++
+		if g.EventTiming == nil {
+			g.EventTiming = &EventTimingSummary{}
+		}
+		g.EventTiming.add(a.EventTiming)
 		g.Compactions += a.Usage.Compactions
 		g.Retries += a.Usage.Retries
 		g.CompletedTurns += a.Usage.CompletedTurns
