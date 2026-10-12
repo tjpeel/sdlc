@@ -111,6 +111,29 @@ func (w *seriesWriter) Write(data []byte) (int, error) {
 
 func sameSeriesConfig(a, b project.Config) bool { return reflect.DeepEqual(a, b) }
 
+func unpreparedSeriesResult(result workseries.Result) bool {
+	return (result.State == "prepared" || result.State == "running" || result.State == "blocked") &&
+		result.Directory == "" && result.Branch == "" && result.HeadSHA == "" && result.MergeSHA == "" && result.URL == "" && result.PRNumber == 0
+}
+
+func canRefreshSeriesPreparation(state workseries.State, settings seriesSettings) (bool, error) {
+	// Older clients froze empty checks before ticket preparation failed. Refresh
+	// only that configuration, and only while no retained run data exists.
+	if len(settings.Config.Checks) != 0 {
+		return false, nil
+	}
+	for _, result := range state.Results {
+		if !unpreparedSeriesResult(result) {
+			return false, nil
+		}
+	}
+	_, err := os.Lstat(filepath.Join(state.Plan.Root, ".sdlc", "work", state.Plan.Reference, "runs"))
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, err
+}
+
 func seriesBranches(ctx context.Context, plan workseries.Plan, config project.Config, saved map[string]workseries.Result) (map[string]string, error) {
 	branches := map[string]string{}
 	owners := map[string]string{}
@@ -118,20 +141,22 @@ func seriesBranches(ctx context.Context, plan workseries.Plan, config project.Co
 		branch := saved[ticket.File].Branch
 		if previous := saved[ticket.File]; branch == "" && previous.RunID != "" {
 			directory, err := workrun.RunDirectory(plan.Root, plan.Reference, ticket.File, previous.RunID, false)
-			if err != nil {
+			if err != nil && !(errors.Is(err, os.ErrNotExist) && unpreparedSeriesResult(previous)) {
 				return nil, err
 			}
-			if previous.Directory != "" && previous.Directory != directory {
-				return nil, fmt.Errorf("saved ticket run directory changed")
-			}
-			journal, err := workrun.Load(directory)
 			if err == nil {
-				if journal.Plan.Root != plan.Root || journal.Plan.Reference != plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket.File {
-					return nil, fmt.Errorf("saved ticket run does not match the selected work")
+				if previous.Directory != "" && previous.Directory != directory {
+					return nil, fmt.Errorf("saved ticket run directory changed")
 				}
-				branch = journal.Plan.Branch
-			} else if !os.IsNotExist(err) {
-				return nil, err
+				journal, err := workrun.Load(directory)
+				if err == nil {
+					if journal.Plan.Root != plan.Root || journal.Plan.Reference != plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket.File {
+						return nil, fmt.Errorf("saved ticket run does not match the selected work")
+					}
+					branch = journal.Plan.Branch
+				} else if !os.IsNotExist(err) {
+					return nil, err
+				}
 			}
 		}
 		if branch == "" {
@@ -195,6 +220,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		return fmt.Errorf("feature plan changed; restore the saved plan or use a new work reference")
 	}
 	var selections seriesSettings
+	refreshPreparation := false
 	if len(state.Settings) != 0 {
 		selections, err = loadSeriesSettings(state.Settings)
 		if err == nil {
@@ -202,6 +228,23 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		}
 		if err == nil {
 			err = (&seriesDriver{plan: plan, settings: selections}).validateSettings()
+		}
+		if err == nil {
+			refreshPreparation, err = canRefreshSeriesPreparation(state, selections)
+		}
+		if err == nil && refreshPreparation {
+			// Keep the selected providers, models and account pairing. Configuration
+			// and requirement hashes can be inspected again before any run exists.
+			previous := selections
+			options.provider, options.alternate, options.inputs = previous.Provider, previous.Alternate, selectedInputs(previous.Inputs)
+			options.repository, options.githubProfile = previous.Repository, previous.GitHubProfile
+			options.headroomMode = seriesHeadroomMode(previous.Headroom)
+			manager, managerErr := runtimeimage.New(io.Discard, io.Discard)
+			if managerErr != nil {
+				return managerErr
+			}
+			selections, err = selectSeriesSettings(ctx, manager.Directory, plan, options)
+			selections.Roles = previous.Roles
 		}
 	} else {
 		// Constructing the manager only selects a local settings directory.
@@ -220,6 +263,9 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		return err
 	}
 	if !options.jsonOutput {
+		if refreshPreparation {
+			fmt.Fprintln(output, "Previous feature stopped before ticket preparation; using current project settings.")
+		}
 		workseries.PrintPlan(output, plan)
 	}
 	if options.dryRun {
@@ -297,7 +343,20 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		if checkpoint.Plan.DefinitionSHA != plan.DefinitionSHA || checkpoint.Plan.Root != plan.Root {
 			return fmt.Errorf("feature checkpoint changed while acquiring ownership")
 		}
-		if len(checkpoint.Settings) == 0 {
+		if refreshPreparation {
+			previous, err := loadSeriesSettings(checkpoint.Settings)
+			if err != nil {
+				return err
+			}
+			allowed, err := canRefreshSeriesPreparation(*checkpoint, previous)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return fmt.Errorf("feature preparation changed; reload before running")
+			}
+		}
+		if len(checkpoint.Settings) == 0 || refreshPreparation {
 			settings, err := freezeSelectedSeriesSettings(ctx, runtime, plan, options, selections)
 			if err != nil {
 				return err

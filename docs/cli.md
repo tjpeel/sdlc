@@ -337,6 +337,14 @@ attention. The feature freezes its plan, models, accounts, runtime, common
 inputs and checks. Restore changed inputs or use a new reference; rerunning is
 not a way to replace those choices.
 
+Older clients could save an empty-check configuration and run IDs before ticket
+preparation failed. If no run directories exist and no result records prepared
+or published work, repeating the feature command uses the corrected project
+configuration while preserving selected providers, models and account pairing.
+`--dry-run` previews this recovery without changing the checkpoint. Execution
+freezes the corrected preparation under the feature lock. Once run data exists,
+the original settings remain frozen.
+
 After a parent squash merge or integration-base movement, the controller
 restacks only the ticket's own commits. It checks the recorded PR head and owned
 branch and uses an exact push lease. It re-signs, reruns isolated checks and CI,

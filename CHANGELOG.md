@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.27 - 2026-10-12
+
+### Fixed
+
+- Recover feature previews and retries from older empty-check preparation failures that recorded run IDs before creating run directories. When no run data exists, use the corrected project checks and Docker-test setting while preserving selected providers, models and account pairing. Preview leaves the saved checkpoint unchanged; execution freezes the corrected preparation under the feature lock. Prepared runs keep their frozen settings.
+
 ## 0.1.0-beta.26 - 2026-10-12
 
 ### Fixed

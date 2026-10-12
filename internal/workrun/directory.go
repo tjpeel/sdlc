@@ -90,7 +90,7 @@ func RunDirectory(root, reference, ticket, id string, create bool) (string, erro
 				return "", err
 			}
 		} else {
-			return "", fmt.Errorf("selected run directory is unavailable")
+			return "", fmt.Errorf("selected run directory is unavailable: %w", err)
 		}
 		if create && (part == "runs" || part == strings.TrimSuffix(ticket, ".md") || part == id) {
 			if err := os.Chmod(path, 0700); err != nil {

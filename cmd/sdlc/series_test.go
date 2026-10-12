@@ -656,6 +656,159 @@ func TestFeatureWithoutChecksStopsBeforeSavingCheckpoint(t *testing.T) {
 	}
 }
 
+func TestFeatureDryRunRecoversLegacyEmptyCheckPreparation(t *testing.T) {
+	for _, jsonOutput := range []bool{false, true} {
+		t.Run(fmt.Sprint("json=", jsonOutput), func(t *testing.T) {
+			driver, result := featureAdoptionFixture(t, "blocked")
+			root := driver.plan.Root
+			marker := forbidConnectedRunCommands(t, root)
+			if err := os.RemoveAll(filepath.Join(root, ".sdlc/work/TASK-1/runs")); err != nil {
+				t.Fatal(err)
+			}
+			driver.settings.Config.Checks = [][]string{}
+			oldConfig, err := json.Marshal(driver.settings.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, project.ConfigPath), oldConfig, 0600); err != nil {
+				t.Fatal(err)
+			}
+			driver.settings.InputHashes[project.ConfigPath], err = seriesInputHash(root, project.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roles := driver.settings.Roles["01-selected.md"]
+			roles.Implementation.Effort = "low"
+			driver.settings.Roles["01-selected.md"] = roles
+			settings, err := json.Marshal(driver.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.State, result.StopReason = "blocked", "no verification checks configured"
+			state := workseries.State{Version: 1, Plan: driver.plan, Results: map[string]workseries.Result{"01-selected.md": result}, Settings: settings}
+			directory, err := workseries.Directory(root, "TASK-1", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := workseries.Save(directory, &state); err != nil {
+				t.Fatal(err)
+			}
+			checkpoint := filepath.Join(directory, "journal.json")
+			before, err := os.ReadFile(checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := driver.settings.Config
+			current.Checks, current.DockerTests, current.BranchFormat = [][]string{{"go", "test", "./..."}}, true, "{reference}-prepared-{ticket}"
+			config, err := json.Marshal(current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, project.ConfigPath), config, 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--reference", "TASK-1", "--all", "--parallel", "2", "--dry-run"}
+			if jsonOutput {
+				args = append(args, "--json")
+			}
+			var output bytes.Buffer
+			if err := runCommand(context.Background(), args, &output); err != nil {
+				t.Fatal(err)
+			}
+			if jsonOutput {
+				var preview struct {
+					Checks      [][]string               `json:"checks"`
+					DockerTests bool                     `json:"docker_tests"`
+					Branches    map[string]string        `json:"branches"`
+					Roles       map[string]workrun.Roles `json:"roles"`
+				}
+				if err := json.Unmarshal(output.Bytes(), &preview); err != nil {
+					t.Fatal(err)
+				}
+				if len(preview.Checks) != 1 || strings.Join(preview.Checks[0], " ") != "go test ./..." || !preview.DockerTests || preview.Roles["01-selected.md"] != roles || !strings.HasPrefix(preview.Branches["01-selected.md"], "TASK-1-prepared-") {
+					t.Fatalf("preview did not use corrected preparation and preserve selected models: %+v", preview)
+				}
+			} else if !strings.Contains(output.String(), "go test ./...") || !strings.Contains(output.String(), "using current project settings") {
+				t.Fatalf("corrected preparation was not explained: %s", output.String())
+			}
+			after, err := os.ReadFile(checkpoint)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("preview changed saved feature state", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".sdlc/work/TASK-1/runs")); !os.IsNotExist(err) {
+				t.Fatal("preview created run directories", err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatal("preview contacted provider or Docker", err)
+			}
+		})
+	}
+}
+
+func TestFeatureDryRunKeepsPreparedSettings(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprint("missing=", missing), func(t *testing.T) {
+			driver, result := featureAdoptionFixture(t, "blocked")
+			marker := forbidConnectedRunCommands(t, driver.plan.Root)
+			driver.settings.Config.Checks = [][]string{}
+			settings, err := json.Marshal(driver.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.State = "blocked"
+			if missing {
+				result.Directory, err = workrun.RunDirectory(driver.plan.Root, "TASK-1", "01-selected.md", result.RunID, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.RemoveAll(filepath.Join(driver.plan.Root, ".sdlc/work/TASK-1/runs")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			state := workseries.State{Version: 1, Plan: driver.plan, Results: map[string]workseries.Result{"01-selected.md": result}, Settings: settings}
+			directory, err := workseries.Directory(driver.plan.Root, "TASK-1", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := workseries.Save(directory, &state); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(directory, "journal.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			err = runCommand(context.Background(), []string{"--reference", "TASK-1", "--all", "--dry-run", "--json"}, &output)
+			if missing {
+				if err == nil || !strings.Contains(err.Error(), "selected run directory is unavailable") {
+					t.Fatal("missing prepared run was treated as fresh preparation", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				var preview struct {
+					Checks   [][]string        `json:"checks"`
+					Branches map[string]string `json:"branches"`
+				}
+				if err := json.Unmarshal(output.Bytes(), &preview); err != nil {
+					t.Fatal(err)
+				}
+				if len(preview.Checks) != 0 || preview.Branches["01-selected.md"] != "work/example" {
+					t.Fatalf("retained run's frozen settings changed: %+v", preview)
+				}
+			}
+			after, err := os.ReadFile(filepath.Join(directory, "journal.json"))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("preview changed retained state", err)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatal("preview contacted provider or Docker", err)
+			}
+		})
+	}
+}
+
 func TestFeatureFreezesDistinctTicketRequirementSets(t *testing.T) {
 	root := runGitFixture(t)
 	forbidConnectedRunCommands(t, root)
