@@ -24,11 +24,12 @@ const ConfigPath = ".sdlc/project.json"
 const maximumSize = 64 * 1024
 
 type Config struct {
-	Version      int        `json:"version"`
-	Checks       [][]string `json:"checks"`
-	InputFiles   []string   `json:"input_files"`
-	DockerTests  bool       `json:"docker_tests,omitempty"`
-	BranchFormat string     `json:"branch_format,omitempty"`
+	NugetCache   *NugetCacheBudget `json:"nuget_cache,omitempty"`
+	Version      int               `json:"version"`
+	Checks       [][]string        `json:"checks"`
+	InputFiles   []string          `json:"input_files"`
+	DockerTests  bool              `json:"docker_tests,omitempty"`
+	BranchFormat string            `json:"branch_format,omitempty"`
 }
 type Remote struct{ Name, Identity string }
 type Result struct {
@@ -423,6 +424,9 @@ func decodeConfig(data []byte, c *Config) error {
 		}
 	}
 	if err := validateBranchFormat(c.BranchFormat); err != nil {
+		return err
+	}
+	if _, err := ResolveNugetCacheBudget(c.NugetCache); err != nil {
 		return err
 	}
 	*target = decoded

@@ -173,12 +173,12 @@ def reconstruct(target, data, digest, entries, content_hash):
     (target / '.nupkg.metadata').write_text(json.dumps({'version': 2, 'contentHash': content_hash, 'source': 'sdlc-package-cache'}))
 
 
-def project_packages(workspace):
+def project_packages(workspace, locked_packages=None):
     """Read committed dependency declarations; never execute project tooling."""
     command = ['git', '--no-replace-objects', '-c', 'safe.directory='+str(workspace), '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', str(workspace)]
     env = {'PATH': os.environ['PATH'], 'HOME': '/tmp', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'}
     tree = subprocess.check_output(command+['ls-tree', '-r', '-z', 'HEAD'], env=env)
-    selected = {}
+    declarations, locks = {}, {}
     batch = subprocess.Popen(command+['cat-file', '--batch'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
     try:
         for entry in tree.split(b'\0'):
@@ -189,13 +189,14 @@ def project_packages(workspace):
             name = os.fsdecode(path)
             if mode not in (b'100644', b'100755') or kind != b'blob':
                 continue
-            if not (name.endswith(('.csproj', '.props')) or name.endswith('/dotnet-tools.json') or name == 'dotnet-tools.json'):
+            leaf = pathlib.PurePosixPath(name).name
+            lock_file = leaf == 'packages.lock.json' or (leaf.startswith('packages.') and leaf.endswith('.lock.json'))
+            if not (lock_file or name.endswith(('.csproj', '.props')) or name.endswith('/dotnet-tools.json') or name == 'dotnet-tools.json'):
                 continue
             batch.stdin.write(oid+b'\n'); batch.stdin.flush()
             fields = batch.stdout.readline().split()
             size = int(fields[2])
             if size > 4*1024*1024:
-                # Drain the object without retaining an unbounded project blob.
                 remaining = size
                 while remaining:
                     remaining -= len(batch.stdout.read(min(remaining, 65536)))
@@ -205,23 +206,68 @@ def project_packages(workspace):
             if batch.stdout.read(1) != b'\n':
                 raise ValueError('incomplete dependency blob')
             try:
-                if name.endswith('.json'):
+                packages = {}
+                if lock_file:
+                    for target in json.loads(data).get('dependencies', {}).values():
+                        for identity, package in target.items():
+                            version = normalized_version(str(package.get('resolved', '')))
+                            if package.get('type') in ('Direct', 'Transitive') and SAFE.fullmatch(identity.lower()) and SAFE.fullmatch(version):
+                                packages.setdefault(identity.lower(), set()).add(version)
+                    locks[name] = packages
+                elif name.endswith('.json'):
                     for identity, tool in json.loads(data).get('tools', {}).items():
-                        selected.setdefault(identity.lower(), set()).add(str(tool.get('version', '')).lower())
+                        packages.setdefault(identity.lower(), set()).add(str(tool.get('version', '')))
+                    declarations[name] = packages
                 else:
                     for node in ET.fromstring(data).iter():
                         if node.tag.rsplit('}', 1)[-1] in ('PackageReference', 'PackageVersion'):
                             identity = node.get('Include') or node.get('Update')
+                            version = node.get('Version') or next((child.text or '' for child in node if child.tag.rsplit('}', 1)[-1] == 'Version'), '')
                             if identity:
-                                version = node.get('Version') or next((child.text or '' for child in node if child.tag.rsplit('}', 1)[-1] == 'Version'), '')
-                                selected.setdefault(identity.lower(), set()).add(normalized_version(version))
+                                packages.setdefault(identity.lower(), set()).add(normalized_version(version))
+                    declarations[name] = packages
             except (ValueError, ET.ParseError, AttributeError):
                 continue
     finally:
         batch.stdin.close(); batch.stdout.close()
         batch.wait()
+    selected, unlocked, central = {}, {}, {}
+    def merge(destination, packages):
+        for identity, versions in packages.items():
+            destination.setdefault(identity, set()).update(versions)
+    for packages in locks.values():
+        merge(selected, packages)
+    unlocked_projects = False
+    for name, packages in declarations.items():
+        if name.endswith('.props'):
+            merge(central, packages)
+        elif name.endswith('.csproj'):
+            path = pathlib.PurePosixPath(name)
+            project_lock = str(path.with_name('packages.'+path.stem+'.lock.json'))
+            default_lock = str(path.with_name('packages.lock.json'))
+            if project_lock not in locks and default_lock not in locks:
+                unlocked_projects = True
+                merge(unlocked, packages)
+        else:
+            merge(unlocked, packages)
+    # Central/imported versions supply fallback for unlocked project references.
+    # Do not let declarations override exact versions from fully locked projects.
+    for identity, versions in central.items():
+        if identity in unlocked:
+            if '' in unlocked[identity]:
+                unlocked[identity].discard('')
+                unlocked[identity].update(versions)
+        elif identity not in selected or unlocked_projects:
+            unlocked[identity] = set(versions)
+    merge(selected, unlocked)
+    if locked_packages is not None:
+        for packages in locks.values():
+            for identity, versions in packages.items():
+                fallback = unlocked.get(identity, set())
+                for version in versions:
+                    if version not in fallback and all(SAFE.fullmatch(v) for v in fallback):
+                        locked_packages.add(identity+'/'+version)
     return {identity: versions for identity, versions in selected.items() if SAFE.fullmatch(identity)}
-
 
 def dependencies(entries):
     for name, data in entries:
@@ -233,7 +279,9 @@ def dependencies(entries):
                         yield identity
 
 
-def export(source, destination, index_path, workspace=None, epoch=None):
+def export(source, destination, index_path, workspace=None, epoch=None, max_packages=64, max_bytes=128*1024*1024):
+    if not 1 <= max_packages <= 4096 or not 1 <= max_bytes <= 1024*1024*1024:
+        raise ValueError('NuGet import budget must be bounded and positive')
     started = time.monotonic()
     try:
         saved = json.loads(index_path.read_text())
@@ -242,10 +290,11 @@ def export(source, destination, index_path, workspace=None, epoch=None):
         index = {}
     # Tests without a project inspect only their disposable tree. Production
     # always supplies committed dependency declarations and a seed epoch.
-    selected = project_packages(workspace) if workspace else {p.name: set() for p in source.iterdir() if p.is_dir() and not p.is_symlink()}
+    locked_packages = set()
+    selected = project_packages(workspace, locked_packages) if workspace else {p.name: set() for p in source.iterdir() if p.is_dir() and not p.is_symlink()}
     queue = list(selected)
     visited = set()
-    count = size = rejected = processed = 0
+    count = size = rejected = processed = deferred = 0
     while queue:
         identity = queue.pop(0)
         if identity in visited or not SAFE.fullmatch(identity):
@@ -257,7 +306,7 @@ def export(source, destination, index_path, workspace=None, epoch=None):
         versions = selected.get(identity, set())
         candidates = [p for p in root.iterdir() if p.is_dir() and not p.is_symlink() and SAFE.fullmatch(p.name)]
         pinned = {version for version in versions if SAFE.fullmatch(version)}
-        if pinned:
+        if pinned and len(pinned) == len(versions):
             candidates = [p for p in candidates if p.name in pinned]
         candidates.sort(key=lambda p: (p.name not in versions, p.name))
         for package in candidates:
@@ -267,23 +316,31 @@ def export(source, destination, index_path, workspace=None, epoch=None):
                 st = archive.lstat()
                 fingerprint = [st.st_size, st.st_mtime_ns, st.st_ctime_ns]
                 previous = index.get(key, {})
-                if previous.get('fingerprint') == fingerprint:
-                    queue.extend(previous.get('dependencies', []))
+                if previous.get('fingerprint') == fingerprint and (previous.get('dependencies_resolved') or key in locked_packages):
+                    if key not in locked_packages:
+                        queue.extend(previous.get('dependencies', []))
                     continue
-                if processed >= 64 or size + min(st.st_size, LIMIT) > LIMIT:
+                if processed >= max_packages or size + min(st.st_size, LIMIT) > max_bytes:
+                    deferred += 1
                     continue
                 processed += 1
                 data, digest, entries, content_hash = valid(package)
+                materialized = len(data) + sum(len(payload) for _, payload in entries)
+                if size + materialized > max_bytes:
+                    deferred += 1
+                    continue
                 reconstruct(destination / key, data, digest, entries, content_hash)
                 deps = list(dependencies(entries))
-                queue.extend(deps)
-                index[key] = {'fingerprint': fingerprint, 'dependencies': deps}
+                if key not in locked_packages:
+                    queue.extend(deps)
+                index[key] = {'fingerprint': fingerprint, 'dependencies': deps, 'dependencies_resolved': True}
                 count += 1
-                size += len(data)
+                size += materialized
             except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError, RuntimeError):
                 rejected += 1
     (destination / 'index.json').write_text(json.dumps({'epoch': epoch, 'packages': index}))
     print('NuGet host seed: %d packages validated, %d rejected; %.3fs' % (count, rejected, time.monotonic()-started), flush=True)
+    print('NuGet import budget: %d/%d packages examined, %d/%d archive and payload bytes, %d deferred' % (processed, max_packages, size, max_bytes, deferred), flush=True)
 
 
 def fingerprint(path):
@@ -363,6 +420,6 @@ if __name__ == '__main__':
     action, *args = sys.argv[1:]
     paths = [pathlib.Path(arg) for arg in args[:4]]
     if action == 'export' and len(args) > 4:
-        export(*paths, epoch=args[4])
+        export(*paths, epoch=args[4], max_packages=int(args[5]) if len(args) > 5 else 64, max_bytes=int(args[6]) if len(args) > 6 else 128*1024*1024)
     else:
         {'export': export, 'prepare': prepare, 'promote': promote}[action](*paths)

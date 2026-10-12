@@ -49,16 +49,31 @@ within the session workspace. Arbitrary cache binds remain unavailable. These
 mounts are for running containers; Dockerfile restores reuse ordinary image
 layers and do not automatically receive session package mounts.
 
-For the initial seed, SDLC reads committed `.csproj`, `.props` and tool-manifest
-blobs to select package IDs and explicit versions. It follows dependencies from
-validated cached nuspecs, importing at most 64 changed packages and 128 MiB of
-archives per session. The host source is only `~/.nuget/packages`; no wider HOME,
-NuGet configuration, feed URLs from cache markers or authentication state is
-copied. Fingerprints avoid revalidating unchanged host packages, while a seed
-epoch makes host import resume after the persistent volume is reset. Private
-check logs record import counts, rejected packages and elapsed time. If host
-`python3` is unavailable, host import is skipped with a log message; runtime-side
-package reuse, ordinary restores and cleanup promotion continue.
+For the initial seed, SDLC reads committed `packages.lock.json` and
+`packages.<project>.lock.json` files for exact direct and transitive versions.
+Unlocked projects retain their `.csproj`, `.props` and tool-manifest fallback;
+validated cached nuspecs supply their dependencies. NuGet still performs the
+actual restore. Lockfiles belong in the project repository and can be generated
+with `dotnet restore --use-lock-file`; use locked mode in CI when appropriate.
+
+New runs import up to 512 changed packages and 256 MiB per check session,
+counting archive and expanded payload bytes. Configure `nuget_cache` in the
+project's `.sdlc/project.json`, for example:
+
+```json
+"nuget_cache": { "max_packages": 768, "max_bytes": 536870912 }
+```
+
+Omitted fields use defaults. Limits cannot exceed 4096 packages or 1 GiB and
+are frozen into each run. Older saved runs without this setting retain their
+64-package / 128 MiB budget. Deferred packages remain eligible for later import.
+The host source is only `~/.nuget/packages`; no wider HOME, NuGet configuration,
+feed URLs from cache markers or authentication state is copied. Fingerprints
+avoid revalidating unchanged host packages, while the seed epoch makes host
+import resume after the persistent volume is reset. Private check logs record
+import counts, rejected/deferred packages, byte accounting and elapsed time.
+If host `python3` is unavailable, host import is skipped with a log message;
+runtime-side reuse, ordinary restores and cleanup promotion continue.
 
 An imported or newly promoted package must have a complete extraction marker,
 a matching SHA-512 archive hash, the expected nuspec ID/version and complete,

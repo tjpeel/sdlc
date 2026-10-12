@@ -385,6 +385,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{RuntimeName: options.runtimeName, GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		budget, err := project.ResolveNugetCacheBudget(launch.Config.NugetCache)
+		if err != nil {
+			return err
+		}
+		journal.Plan.NugetCache = &budget
 		journal.Plan.Headroom, err = headroom.Selection(options.headroomMode)
 		if err != nil {
 			return err
@@ -566,7 +571,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	if err := printRunPlan(output, journal, false); err != nil {
 		return err
 	}
-	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests, DaemonImage: journal.Plan.DaemonImage, DaemonMode: journal.Plan.DaemonMode, UseDefaultDaemonImage: journal.Plan.DaemonImage == ""}
+	checker := workrun.DockerChecker{Runtime: runtime, ImageID: journal.ImageID, DockerTests: journal.Plan.DockerTests, DaemonImage: journal.Plan.DaemonImage, DaemonMode: journal.Plan.DaemonMode, UseDefaultDaemonImage: journal.Plan.DaemonImage == "", NugetCache: journal.Plan.NugetCache}
 	if len(journal.Plan.CheckInputs) > 0 {
 		checker.InputDirectory = filepath.Join(directory, "check-inputs")
 	}

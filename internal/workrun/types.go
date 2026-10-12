@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/headroom"
+	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
@@ -43,32 +44,33 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
-	PRMetadataPolicy    *PRMetadataPolicy    `json:"pr_metadata_policy,omitempty"`
-	RuntimeName         string               `json:"runtime_name,omitempty"`
-	Headroom            headroom.Config      `json:"headroom,omitzero"`
-	GitHubProfile       string               `json:"github_profile,omitempty"`
-	SigningProfile      string               `json:"signing_profile,omitempty"`
-	PublicationIdentity *PublicationIdentity `json:"publication_identity,omitempty"`
-	Root                string               `json:"root"`
-	Reference           string               `json:"reference"`
-	Ticket              string               `json:"ticket"`
-	StartingSHA         string               `json:"starting_sha"`
-	SourceSHA           string               `json:"source_sha"`
-	Branch              string               `json:"branch"`
-	Base                string               `json:"base"`
-	BaseSHA             string               `json:"base_sha"`
-	Repository          string               `json:"repository"`
-	Inputs              []Input              `json:"inputs"`
-	CheckInputs         []Input              `json:"check_inputs"`
-	Checks              [][]string           `json:"checks"`
-	DockerTests         bool                 `json:"docker_tests"`
-	SigningImage        string               `json:"signing_image,omitempty"`
-	DaemonImage         string               `json:"daemon_image,omitempty"`
-	DaemonMode          string               `json:"daemon_mode,omitempty"`
-	Roles               Roles                `json:"roles"`
-	PRTitle             string               `json:"pr_title,omitempty"`
-	PRBody              string               `json:"pr_body,omitempty"`
-	Restack             *RestackBoundary     `json:"restack,omitempty"`
+	NugetCache          *project.NugetCacheBudget `json:"nuget_cache,omitempty"`
+	PRMetadataPolicy    *PRMetadataPolicy         `json:"pr_metadata_policy,omitempty"`
+	RuntimeName         string                    `json:"runtime_name,omitempty"`
+	Headroom            headroom.Config           `json:"headroom,omitzero"`
+	GitHubProfile       string                    `json:"github_profile,omitempty"`
+	SigningProfile      string                    `json:"signing_profile,omitempty"`
+	PublicationIdentity *PublicationIdentity      `json:"publication_identity,omitempty"`
+	Root                string                    `json:"root"`
+	Reference           string                    `json:"reference"`
+	Ticket              string                    `json:"ticket"`
+	StartingSHA         string                    `json:"starting_sha"`
+	SourceSHA           string                    `json:"source_sha"`
+	Branch              string                    `json:"branch"`
+	Base                string                    `json:"base"`
+	BaseSHA             string                    `json:"base_sha"`
+	Repository          string                    `json:"repository"`
+	Inputs              []Input                   `json:"inputs"`
+	CheckInputs         []Input                   `json:"check_inputs"`
+	Checks              [][]string                `json:"checks"`
+	DockerTests         bool                      `json:"docker_tests"`
+	SigningImage        string                    `json:"signing_image,omitempty"`
+	DaemonImage         string                    `json:"daemon_image,omitempty"`
+	DaemonMode          string                    `json:"daemon_mode,omitempty"`
+	Roles               Roles                     `json:"roles"`
+	PRTitle             string                    `json:"pr_title,omitempty"`
+	PRBody              string                    `json:"pr_body,omitempty"`
+	Restack             *RestackBoundary          `json:"restack,omitempty"`
 }
 
 // RestackBoundary is the exact remote PR boundary which a restack may move.
@@ -111,6 +113,9 @@ type Reconciliation struct {
 // ValidateSidecarImages accepts absent pins for journals written before runtime
 // sidecars were selected per installation. Callers retain the historical defaults.
 func (plan Plan) ValidateSidecarImages() error {
+	if _, err := project.ResolveNugetCacheBudget(plan.NugetCache); err != nil {
+		return err
+	}
 	if plan.DaemonMode != "" && plan.DaemonMode != SharedTestDaemon {
 		return fmt.Errorf("unsupported repository check daemon mode")
 	}

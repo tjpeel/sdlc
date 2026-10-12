@@ -12,8 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/project"
 )
 
 //go:embed cache/nuget.py
@@ -42,7 +45,7 @@ func (s *sharedChecks) prepareNuget(ctx context.Context, name, workspace string,
 		return fmt.Errorf("identify NuGet seed: %w", err)
 	}
 	index := filepath.Join(s.directory, "nuget-host-index.json")
-	if err = exportNugetHost(ctx, s.checker.nugetSeedDirectory, staging, index, workspace, string(epoch), output); err != nil {
+	if err = exportNugetHost(ctx, s.checker.nugetSeedDirectory, staging, index, workspace, string(epoch), output, s.checker.NugetCache); err != nil {
 		return err
 	}
 	args := s.nugetHelper(name + "-nuget-prepare")
@@ -62,7 +65,16 @@ func (s *sharedChecks) prepareNuget(ctx context.Context, name, workspace string,
 	return os.WriteFile(index, data, 0600)
 }
 
-func exportNugetHost(ctx context.Context, seedDirectory, staging, index, workspace, epoch string, output io.Writer) error {
+func exportNugetHost(ctx context.Context, seedDirectory, staging, index, workspace, epoch string, output io.Writer, configured ...*project.NugetCacheBudget) error {
+	// Absent saved settings keep the original import budget.
+	budget := project.NugetCacheBudget{MaxPackages: 64, MaxBytes: 128 * 1024 * 1024}
+	if len(configured) > 0 && configured[0] != nil {
+		var err error
+		budget, err = project.ResolveNugetCacheBudget(configured[0])
+		if err != nil {
+			return err
+		}
+	}
 	python, err := exec.LookPath("python3")
 	if errors.Is(err, exec.ErrNotFound) {
 		if _, err = fmt.Fprintln(output, "NuGet host seed import unavailable: python3 is not installed; runtime package cache reuse continues."); err != nil {
@@ -81,7 +93,7 @@ func exportNugetHost(ctx context.Context, seedDirectory, staging, index, workspa
 		}
 		seedDirectory = filepath.Join(home, ".nuget", "packages")
 	}
-	exporter := exec.CommandContext(ctx, python, "-c", nugetCacheScript, "export", seedDirectory, staging, index, workspace, epoch)
+	exporter := exec.CommandContext(ctx, python, "-c", nugetCacheScript, "export", seedDirectory, staging, index, workspace, epoch, strconv.Itoa(budget.MaxPackages), strconv.FormatInt(budget.MaxBytes, 10))
 	exporter.Stdout = output
 	if err := exporter.Run(); err != nil {
 		return fmt.Errorf("validate NuGet host seed: %w", err)

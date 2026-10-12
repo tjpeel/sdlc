@@ -72,12 +72,17 @@ func isolatedGit(ctx context.Context, directory string, args ...string) (string,
 // Capture copies local source into a disposable checkout, preserving dirty
 // files in a separate unsigned baseline commit. It never changes source files.
 func Capture(ctx context.Context, launch project.LaunchResult, destination, branch, base, repository string, roles Roles) (plan Plan, err error) {
+	budget, err := project.ResolveNugetCacheBudget(launch.Config.NugetCache)
+	if err != nil {
+		return plan, err
+	}
 	for _, path := range launch.Config.InputFiles {
 		if forbiddenCheckInput(path) {
 			return plan, errors.New("configured check inputs must not use credential or account-state paths")
 		}
 	}
 	plan = Plan{Root: launch.Root, SourceSHA: launch.Head, Reference: launch.Reference, Ticket: launch.Ticket, Branch: branch, Base: base, Repository: repository, Checks: launch.Config.Checks, Roles: roles}
+	plan.NugetCache = &budget
 	if _, err = isolatedGit(ctx, launch.Root, "check-ref-format", "--branch", branch); err != nil {
 		return plan, err
 	}

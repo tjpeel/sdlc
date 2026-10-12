@@ -23,11 +23,11 @@ class PackageCacheTests(unittest.TestCase):
         self.seed = self.root / 'seed'
         self.index = self.root / 'index.json'
 
-    def package(self, name='example', extra=None):
-        root = self.host / name / '1.0.0'
+    def package(self, name='example', extra=None, version='1.0.0'):
+        root = self.host / name / version
         root.mkdir(parents=True)
-        archive = root / (name + '.1.0.0.nupkg')
-        entries = {name + '.nuspec': ('<package><metadata><id>' + name + '</id><version>1.0</version></metadata></package>').encode(), 'lib/net8.0/example.dll': b'disposable-package-data'}
+        archive = root / (name + '.' + version + '.nupkg')
+        entries = {name + '.nuspec': ('<package><metadata><id>' + name + '</id><version>' + version + '</version></metadata></package>').encode(), 'lib/net8.0/example.dll': b'disposable-package-data'}
         entries.update(extra or {})
         with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as z:
             for path, data in entries.items():
@@ -44,6 +44,104 @@ class PackageCacheTests(unittest.TestCase):
     def export(self):
         nuget.export(self.host, self.stage, self.index)
         self.index.write_bytes((self.stage / 'index.json').read_bytes())
+
+    def project(self, files):
+        project = self.root / 'project'
+        project.mkdir()
+        for name, data in files.items():
+            path = project / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(data)
+        env = {'PATH': __import__('os').environ['PATH'], 'HOME': str(self.root), 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'}
+        for args in [['init', '--initial-branch=main', '--template='], ['add', '.'], ['-c', 'user.name=Example User', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'Create disposable dependency fixture']]:
+            subprocess.run(['git', '-C', str(project), *args], env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return project
+
+    def test_lock_selects_exact_direct_and_transitive_versions(self):
+        nuspec = b'<package><metadata><id>example</id><version>1.0.0</version><dependencies><dependency id="unrelated" version="1.0.0"/></dependencies></metadata></package>'
+        self.package(extra={'example.nuspec': nuspec})
+        self.package(version='2.0.0')
+        self.package('transitive')
+        self.package('unrelated')
+        lock = {'version': 1, 'dependencies': {'net10.0': {'Example': {'type': 'Direct', 'resolved': '1.0.0'}, 'Transitive': {'type': 'Transitive', 'resolved': '1.0.0'}, 'LocalProject': {'type': 'Project'}}}}
+        project = self.project({'App.csproj': '<Project><ItemGroup><PackageReference Include="Example" Version="1.*"/></ItemGroup></Project>', 'packages.lock.json': json.dumps(lock)})
+        # Changes outside the committed lock must not alter selection.
+        (project / 'packages.lock.json').write_text('{}')
+        nuget.export(self.host, self.stage, self.index, project, 'locked', max_packages=512)
+        self.assertTrue((self.stage / 'example/1.0.0').is_dir())
+        self.assertTrue((self.stage / 'transitive/1.0.0').is_dir())
+        self.assertFalse((self.stage / 'example/2.0.0').exists())
+        self.assertFalse((self.stage / 'unrelated').exists())
+
+    def test_configured_budget_imports_more_than_legacy_limit(self):
+        for i in range(70):
+            self.package('package%03d' % i)
+        nuget.export(self.host, self.stage, self.index, max_packages=80)
+        self.assertEqual(sum(p.is_dir() for p in self.stage.iterdir()), 70)
+        limited = self.root / 'limited'; limited.mkdir()
+        nuget.export(self.host, limited, self.index, max_packages=3)
+        self.assertEqual(sum(p.is_dir() for p in limited.iterdir()), 3)
+
+    def test_mixed_projects_keep_unlocked_versions_and_dependencies(self):
+        self.package()
+        nuspec = b'<package><metadata><id>example</id><version>2.0.0</version><dependencies><dependency id="child" version="1.0.0"/></dependencies></metadata></package>'
+        self.package(version='2.0.0', extra={'example.nuspec': nuspec})
+        self.package('child')
+        lock = {'version': 1, 'dependencies': {'net10.0': {'Example': {'type': 'Direct', 'resolved': '1.0.0'}}}}
+        project = self.project({
+            'A/A.csproj': '<Project><ItemGroup><PackageReference Include="Example" Version="1.*"/></ItemGroup></Project>',
+            'A/packages.A.lock.json': json.dumps(lock),
+            'B/B.csproj': '<Project><ItemGroup><PackageReference Include="Example"/></ItemGroup></Project>',
+            'Directory.Packages.props': '<Project><ItemGroup><PackageVersion Include="Example" Version="2.0.0"/></ItemGroup></Project>',
+        })
+        nuget.export(self.host, self.stage, self.index, project, 'mixed')
+        self.assertTrue((self.stage / 'example/1.0.0').is_dir())
+        self.assertTrue((self.stage / 'example/2.0.0').is_dir())
+        self.assertTrue((self.stage / 'child/1.0.0').is_dir())
+
+    def test_lock_removal_keeps_dependencies_of_unchanged_indexed_packages(self):
+        nuspec = b'<package><metadata><id>example</id><version>1.0.0</version><dependencies><dependency id="child" version="1.0.0"/></dependencies></metadata></package>'
+        self.package(extra={'example.nuspec': nuspec})
+        self.package('child')
+        lock = {'version': 1, 'dependencies': {'net10.0': {'Example': {'type': 'Direct', 'resolved': '1.0.0'}}}}
+        project = self.project({'App.csproj': '<Project><ItemGroup><PackageReference Include="Example" Version="1.0.0"/></ItemGroup></Project>', 'packages.lock.json': json.dumps(lock)})
+        nuget.export(self.host, self.stage, self.index, project, 'same')
+        self.assertFalse((self.stage / 'child').exists())
+        self.index.write_bytes((self.stage / 'index.json').read_bytes())
+        subprocess.run(['git', '-C', str(project), 'rm', 'packages.lock.json'], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['git', '-C', str(project), '-c', 'user.name=Example User', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'Remove disposable lock'], check=True, stdout=subprocess.DEVNULL)
+        second = self.root / 'second'; second.mkdir()
+        nuget.export(self.host, second, self.index, project, 'same')
+        self.assertTrue((second / 'child/1.0.0').is_dir())
+
+    def test_mixed_locks_keep_floating_unlocked_fallback(self):
+        self.package()
+        self.package(version='2.0.0')
+        lock = {'version': 1, 'dependencies': {'net10.0': {'Example': {'type': 'Direct', 'resolved': '1.0.0'}}}}
+        project = self.project({
+            'A/A.csproj': '<Project><ItemGroup><PackageReference Include="Example" Version="1.*"/></ItemGroup></Project>',
+            'A/packages.lock.json': json.dumps(lock),
+            'B/B.csproj': '<Project><ItemGroup><PackageReference Include="Example" Version="2.*"/></ItemGroup></Project>',
+        })
+        nuget.export(self.host, self.stage, self.index, project, 'mixed-floating')
+        self.assertTrue((self.stage / 'example/1.0.0').is_dir())
+        self.assertTrue((self.stage / 'example/2.0.0').is_dir())
+
+    def test_byte_budget_includes_expanded_payloads_and_defers_for_retry(self):
+        package = self.package(extra={'lib/net8.0/large.dll': b'x' * 100000})
+        self.assertLess((package / 'example.1.0.0.nupkg').stat().st_size, 4096)
+        nuget.export(self.host, self.stage, self.index, max_bytes=4096)
+        self.assertFalse((self.stage / 'example').exists())
+        retry = self.root / 'retry'; retry.mkdir()
+        nuget.export(self.host, retry, self.index, max_bytes=200000)
+        self.assertEqual((retry / 'example/1.0.0/lib/net8.0/large.dll').read_bytes(), b'x' * 100000)
+
+    def test_invalid_budget_cannot_import_packages(self):
+        self.package()
+        for options in [{'max_packages': -1}, {'max_packages': 4097}, {'max_bytes': -1}, {'max_bytes': 1024*1024*1024+1}]:
+            with self.assertRaises(ValueError):
+                nuget.export(self.host, self.stage, self.index, **options)
+        self.assertEqual(list(self.stage.iterdir()), [])
 
     def test_import_reconstructs_only_package_data_and_reuses_unchanged_host_index(self):
         self.package()

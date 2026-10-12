@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
@@ -36,6 +37,7 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 // disposable storage. Privileged
 // containers are not a security boundary against hostile code.
 type DockerChecker struct {
+	NugetCache     *project.NugetCacheBudget
 	Runtime        runtimeimage.Manager
 	Runner         CheckCommandRunner
 	InputDirectory string

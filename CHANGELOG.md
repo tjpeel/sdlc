@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.19 - 2026-10-12
+
+### Changed
+
+- Seed NuGet caches from committed lockfiles, preserving exact direct and transitive versions alongside unlocked projects.
+- Let projects configure bounded host import budgets. New runs default to 512 packages and 256 MiB of archive and expanded payload bytes; older saved runs retain their previous limits.
+
 ## 0.1.0-beta.18 - 2026-10-12
 
 ### Fixed
