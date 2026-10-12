@@ -301,6 +301,10 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 	if err != nil {
 		return plan, err
 	}
+	plan.PRMetadataPolicy, err = capturePRMetadataPolicy(ctx, destination)
+	if err != nil {
+		return plan, err
+	}
 	complete = true
 	return plan, nil
 }

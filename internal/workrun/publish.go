@@ -196,6 +196,9 @@ func (publisher GitHubPublisher) git(ctx context.Context, directory string, args
 var githubRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspace, directory string, previous Publication, output io.Writer) (Publication, error) {
+	if err := ValidatePRMetadata(plan); err != nil {
+		return Publication{}, err
+	}
 	if !githubRepository.MatchString(plan.Repository) || !objectID.MatchString(plan.BaseSHA) {
 		return Publication{}, fmt.Errorf("publication requires an explicit GitHub repository and base revision")
 	}

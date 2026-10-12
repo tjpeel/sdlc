@@ -43,6 +43,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	PRMetadataPolicy    *PRMetadataPolicy    `json:"pr_metadata_policy,omitempty"`
 	RuntimeName         string               `json:"runtime_name,omitempty"`
 	Headroom            headroom.Config      `json:"headroom,omitzero"`
 	GitHubProfile       string               `json:"github_profile,omitempty"`
@@ -206,6 +207,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	PRMetadataCorrections     int                   `json:"pr_metadata_corrections,omitempty"`
 	InputRecoveries           []InputRecovery       `json:"input_recoveries,omitempty"`
 	PendingInputs             *PendingInputRecovery `json:"pending_inputs,omitempty"`
 	Timings                   Timings               `json:"timings"`

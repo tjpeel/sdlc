@@ -147,6 +147,9 @@ type DockerPublisher struct {
 }
 
 func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspace, directory string, previous Publication, output io.Writer) (Publication, error) {
+	if err := ValidatePRMetadata(plan); err != nil {
+		return Publication{}, err
+	}
 	journal, err := Load(directory)
 	if err != nil || !journal.Evidence.Passed || !objectID.MatchString(journal.Evidence.Tree) || !objectID.MatchString(journal.Evidence.Head) {
 		return Publication{}, fmt.Errorf("publication requires retained passing check evidence")

@@ -102,8 +102,15 @@ The delivery sequence is:
    Unchanged requests reuse completed evidence; temporary runtime failures can
    retry after recovery. Changed trees or requests need fresh checks. A third
    request for identical evidence without progress blocks with a diagnostic.
-3. After local review and `tjpeel-pr-draft` metadata, the trusted Docker publisher
-   imports the candidate bundle into controlled Git metadata. It requires passing
+3. After local review and `tjpeel-pr-draft` metadata, new runs validate the exact
+   reference in the title and an explicit body field, plus all seven description
+   headings in order with non-empty content. A default Markdown PR template in
+   the repository root, `docs/` or `.github/` supplies its own heading structure.
+   The contract is frozen at capture; older saved runs keep their original
+   policy. Invalid metadata returns bounded correction feedback to the same
+   implementation session without repeating checks for unchanged source.
+   The trusted Docker publisher imports the candidate bundle into controlled
+   Git metadata. It requires passing
    evidence for the exact candidate head/tree, signs every delivered commit with
    the frozen identity, verifies the approved key and checked tree, and rechecks
    account/repository IDs, base and remote head. An exact push

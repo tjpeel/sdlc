@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.18 - 2026-10-12
+
+### Fixed
+
+- Validate new runs' PR titles, reference fields and complete description headings before publication. Metadata corrections resume the original implementation session and reuse passing checks for unchanged source.
+- Freeze the default PR structure or a repository's default Markdown PR template at capture. Existing saved runs retain their original publication contract.
+
 ## 0.1.0-beta.17 - 2026-10-12
 
 ### Changed

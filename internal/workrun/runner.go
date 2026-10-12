@@ -398,10 +398,24 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if revision.Head == journal.Plan.StartingSHA {
 				return runner.stop(directory, journal, "blocked", "ticket produced no implementation commit")
 			}
+			if err := ValidatePRMetadata(journal.Plan); err != nil {
+				journal.PRMetadataCorrections++
+				if journal.PRMetadataCorrections > 2 {
+					return runner.stop(directory, journal, "blocked", "PR metadata still violates the frozen publication contract: "+err.Error())
+				}
+				journal.Feedback = "Correct only the PR metadata: " + err.Error() + ". Retain the unchanged committed source and passing controller evidence. Return implemented with corrected pr_title/pr_body and retained local review.\n" + prMetadataInstructions(journal.Plan)
+				if err := runner.transition(directory, journal, "implementing"); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := runner.transition(directory, journal, "publishing"); err != nil {
 				return err
 			}
 		case "publishing":
+			if err := ValidatePRMetadata(journal.Plan); err != nil {
+				return runner.stop(directory, journal, "blocked", "PR metadata violates the frozen publication contract: "+err.Error())
+			}
 			if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
@@ -682,6 +696,9 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	contextDiscipline += "Check-worker contract: each verification request receives a fresh committed source copy at /workspace without .git metadata. Commands within that request share source outputs and a private HOME; candidate and baseline phases are separate. Restore required tools and dependencies explicitly. Package reuse does not preserve bin/obj or prove the current candidate passed. Avoid Git commands in checks; use file checksums to prove formatting preserved source bytes. Dockerfile build caches are separate from worker package caches. Use the selected repository's SDK/tool environment and supported test filters for focused regression proofs; retain the configured full checks. Consume a delegate's bounded findings without repeating its entire investigation unless independent validation needs it.\n"
 	if role == "implementation" {
 		contextDiscipline += "Additional verification is already authorised machine work: submit verification_requests with stable id, purpose and bounded argv commands, rather than asking the human to run tests. Generic requests use baseline:null. To demonstrate a regression, supply baseline with one exact captured StartingSHA " + journal.Plan.StartingSHA + " or SourceSHA " + journal.Plan.SourceSHA + ", named original production paths, current candidate test commands, expected_exit_code and literal assertion failure_contains markers. The candidate commands must pass; the same commands run in a fresh candidate copy retaining new tests with only the named original source restored, and the final command must fail as specified. Return [] when unused; unresolved requests persist. Genuine specification or product questions still require waiting_for_human.\n"
+	}
+	if role == "implementation" {
+		contextDiscipline += prMetadataInstructions(journal.Plan)
 	}
 	if role == "implementation" && journal.SessionID != "" {
 		identity, _ := json.Marshal(struct {
