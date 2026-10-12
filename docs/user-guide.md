@@ -426,7 +426,8 @@ sdlc github status --verify
 ```
 
 `init` discovers local Git state, manifests and work paths, creates `.sdlc/work/`, and
-protects it with Git's local `info/exclude` rule. It also creates or validates `.sdlc/project.json`. It needs
+protects the whole `/.sdlc/` directory with Git's local `info/exclude` rule, including
+`.sdlc/project.json`. It also creates or validates that configuration. It needs
 no Docker/account login, runs no checks and makes no account selection. Private work must remain ignored and
 untracked; tracked/staged private paths cause failure. Adding an ignore rule does not remove earlier private
 content from Git history.
@@ -447,7 +448,9 @@ once to `github use` when no identity can be inferred; subsequent commands reuse
 
 ### Review checks without replacing the project's own configuration
 
-`.sdlc/project.json` is portable project configuration and can be committed after review. Keep account data,
+`.sdlc/project.json` is portable project configuration and is ignored by default.
+To share it after review, explicitly use `git add -f .sdlc/project.json`; already
+tracked settings remain tracked. Keep account data,
 vault references and private host paths out. Existing `package.json`, lockfiles, SDK selections and CI remain
 the project's authority; `init` may suggest checks from them but does not replace them. Repeated `init`
 preserves valid custom settings. Use `sdlc init --force` to repeat inspection and refresh checks and

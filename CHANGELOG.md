@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.26 - 2026-10-12
+
+### Fixed
+
+- Ignore the whole local `.sdlc` directory during initialization, including `project.json`, so new local settings do not appear as untracked source. Repeated initialization expands the previous work-only rule while preserving project settings and other excludes. Already tracked settings stay tracked; portable configuration can still be added explicitly after review.
+
 ## 0.1.0-beta.25 - 2026-10-12
 
 ### Added

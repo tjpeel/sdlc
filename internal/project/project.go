@@ -23,6 +23,7 @@ import (
 
 const ConfigPath = ".sdlc/project.json"
 const maximumSize = 64 * 1024
+const localIgnoreRule = "/.sdlc/"
 
 type Config struct {
 	NugetCache   *NugetCacheBudget `json:"nuget_cache,omitempty"`
@@ -236,7 +237,7 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 		return r, err
 	}
 	expectedExclude := append([]byte{}, data...)
-	rule := "/.sdlc/work/"
+	rule := localIgnoreRule
 	found := false
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSuffix(line, "\r") == rule {
@@ -252,9 +253,8 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 			return r, err
 		}
 	}
-	ignored, err := git(ctx, r.Root, "check-ignore", "--no-index", ".sdlc/work/")
-	if err != nil || strings.TrimSpace(ignored) != ".sdlc/work/" {
-		return r, errors.New("Git does not ignore .sdlc/work; check repository ignore rules")
+	if err = verifyLocalIgnore(ctx, r.Root); err != nil {
+		return r, err
 	}
 	for _, path := range []string{filepath.Join(r.Root, ".sdlc"), filepath.Join(r.Root, ".sdlc/work")} {
 		if err = directoryOrMissing(path); err != nil {
@@ -576,19 +576,25 @@ func verifyIgnoreCandidate(ctx context.Context, root string) error {
 		return errors.New("cannot prepare ignore-rule verification")
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.WriteString("/.sdlc/work/\n"); err != nil {
+	if _, err = f.WriteString(localIgnoreRule + "\n"); err != nil {
 		f.Close()
 		return errors.New("cannot prepare ignore-rule verification")
 	}
 	if err = f.Close(); err != nil {
 		return errors.New("cannot prepare ignore-rule verification")
 	}
-	output, err := git(ctx, root, "-c", "core.excludesFile="+f.Name(), "check-ignore", "--no-index", ".sdlc/work/")
+	return verifyLocalIgnore(ctx, root, "-c", "core.excludesFile="+f.Name())
+}
+
+func verifyLocalIgnore(ctx context.Context, root string, options ...string) error {
+	paths := []string{".sdlc/", ConfigPath, ".sdlc/work/"}
+	args := append(append([]string{}, options...), "check-ignore", "--no-index")
+	output, err := git(ctx, root, append(args, paths...)...)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err != nil || strings.TrimSpace(output) != ".sdlc/work/" {
-		return errors.New("repository ignore rules re-include .sdlc/work; remove that override before initialization")
+	if err != nil || strings.TrimSpace(output) != strings.Join(paths, "\n") {
+		return errors.New("repository ignore rules re-include local .sdlc files; remove that override before initialization")
 	}
 	return nil
 }

@@ -75,6 +75,43 @@ func TestInitializeNestedAndRepeat(t *testing.T) {
 		t.Fatalf("preservation failed: %+v", r)
 	}
 }
+
+func TestInitializeIgnoresWholeLocalStateDirectory(t *testing.T) {
+	root := repo(t)
+	write(t, root, "go.mod", "module example.invalid/project\n\ngo 1.25\n")
+	initAt(t, root)
+	write(t, root, ".sdlc/work/Example/tickets/01-example.md", "Disposable ticket")
+	write(t, root, ".sdlc/local-state.json", "{}")
+	for _, path := range []string{ConfigPath, ".sdlc/local-state.json", ".sdlc/work/Example/tickets/01-example.md"} {
+		if strings.TrimSpace(run(t, root, "check-ignore", "--no-index", path)) != path {
+			t.Fatalf("local state is not ignored: %s", path)
+		}
+	}
+	if status := run(t, root, "status", "--short", "--untracked-files=all"); strings.Contains(status, ".sdlc/") {
+		t.Fatalf("Git still reports local SDLC files: %s", status)
+	}
+}
+
+func TestInitializeExpandsLegacyIgnoreWithoutChangingSettings(t *testing.T) {
+	root := repo(t)
+	write(t, root, "go.mod", "module example.invalid/project\n\ngo 1.25\n")
+	initAt(t, root)
+	original, _ := os.ReadFile(filepath.Join(root, ConfigPath))
+	exclude := filepath.Join(root, ".git/info/exclude")
+	legacy := "/.sdlc/work/\n/custom-cache/\n"
+	if err := os.WriteFile(exclude, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	initAt(t, root)
+	updated, _ := os.ReadFile(exclude)
+	if !strings.HasPrefix(string(updated), legacy) || !strings.Contains(string(updated), "/.sdlc/\n") {
+		t.Fatalf("legacy excludes were not preserved and expanded: %s", updated)
+	}
+	settings, _ := os.ReadFile(filepath.Join(root, ConfigPath))
+	if string(settings) != string(original) {
+		t.Fatal("ignore migration changed project settings")
+	}
+}
 func TestDetachedUnbornAndNoRepository(t *testing.T) {
 	root := repo(t)
 	run(t, root, "checkout", "--detach")
@@ -138,7 +175,7 @@ func TestPreflightFailuresDoNotWrite(t *testing.T) {
 					t.Fatal(e)
 				}
 			case "ignore override":
-				write(t, root, ".gitignore", "!.sdlc/work/\n")
+				write(t, root, ".gitignore", "!.sdlc/\n!.sdlc/work/\n")
 			}
 			if _, e := Initialize(context.Background(), root); e == nil {
 				t.Fatal("expected preflight failure")
@@ -174,7 +211,7 @@ func TestLinkedWorktreeAndDiscovery(t *testing.T) {
 		t.Fatal("project command executed")
 	}
 	data, _ := os.ReadFile(filepath.Join(root, ".git/info/exclude"))
-	if !strings.Contains(string(data), "/.sdlc/work/\n") {
+	if !strings.Contains(string(data), "/.sdlc/\n") {
 		t.Fatal("linked worktree exclude missing")
 	}
 }

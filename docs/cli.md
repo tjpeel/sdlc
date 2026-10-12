@@ -137,9 +137,12 @@ deciding ticket readiness and blockers.
 Source-state inspection avoids Git content filters. It reports possible changes
 when file metadata differs or cannot be compared, even if contents are unchanged.
 
-The command creates `.sdlc/work/` and, when needed, adds `/.sdlc/work/` to Git's
+The command creates `.sdlc/work/` and, when needed, adds `/.sdlc/` to Git's
 local `info/exclude` file. It resolves that file through Git, including in linked
-worktrees, and preserves existing exclude rules. Private process inputs and run
+worktrees, and preserves existing exclude rules. The whole local SDLC directory,
+including `project.json`, is ignored by default. Repeated initialization adds the
+broader rule to existing work-only setups without changing project settings.
+Private process inputs and run
 output under this directory must be ignored and untracked. Initialization fails
 if they or case variants of their paths are tracked or staged, or if repository
 ignore rules prevent this protection. Remove private files from tracking deliberately before retrying;
@@ -171,8 +174,9 @@ only into the separate credential-free check worker. Use this for reviewed test
 configuration; it does not supply requirements to the provider. Files named
 explicitly by `--input` are provider-visible, even if also in `input_files`.
 Files already tracked in source remain visible as normal source. Keep credentials, account details, vault references
-and host paths out of these settings. This file can be committed if its contents
-are suitable for the project repository.
+and host paths out of these settings. To share reviewed portable configuration,
+explicitly add only this file with `git add -f .sdlc/project.json`. Already tracked
+settings remain tracked; ignore rules do not remove them from the index.
 
 For Compose checks that require an ignored root `.env`, explicitly configure
 `"input_files": [".env"]` and use `sdlc run --docker-tests`. SDLC freezes the file
