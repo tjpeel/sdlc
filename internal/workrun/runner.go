@@ -154,7 +154,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 
 	controllerStarted := time.Now()
-	journal.Timings.Version = 1
+	if journal.Timings.Version == 1 || (journal.Timings.Version == 0 && (journal.State != "prepared" || journal.Attempt > 0 || journal.CheckAttempt > 0 || journal.Publication.URL != "")) {
+		journal.Timings.Partial = true
+	}
+	journal.Timings.Version = 2
 	defer func() {
 		journal.Timings.ControllerMS += time.Since(controllerStarted).Milliseconds()
 		if err := runner.save(directory, journal); err != nil {
@@ -324,66 +327,8 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "ci":
-			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
-			journal.CI = checks
-			if err != nil {
-				return runner.stop(directory, journal, "blocked", err.Error())
-			}
-			if checks.Status != "missing" && !journal.MissingChecksSince.IsZero() {
-				journal.MissingChecksSince = time.Time{}
-				if err := runner.save(directory, journal); err != nil {
-					return err
-				}
-			}
-			if err := runner.save(directory, journal); err != nil {
+			if err := runner.checkCI(ctx, directory, journal); err != nil {
 				return err
-			}
-			wait := runner.PollInterval
-			if checks.Status == "missing" {
-				if journal.MissingChecksSince.IsZero() {
-					journal.MissingChecksSince = time.Now().UTC()
-					if err := runner.save(directory, journal); err != nil {
-						return err
-					}
-					fmt.Fprintln(runner.Output, "Waiting for CI checks to appear on the published PR.")
-				}
-				remaining := runner.MissingCheckGrace - time.Since(journal.MissingChecksSince)
-				if remaining <= 0 {
-					return runner.stop(directory, journal, "blocked", "PR has no reported CI checks after the startup grace; configure CI, then resume this run")
-				}
-				if remaining < wait {
-					wait = remaining
-				}
-			}
-			switch checks.Status {
-			case "pending", "missing":
-				waitStarted := time.Now()
-				timer := time.NewTimer(wait)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
-					return runner.stop(directory, journal, "blocked", "CI wait cancelled; published PR retained")
-				case <-timer.C:
-				}
-				journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
-				continue
-			case "failed":
-				journal.Rounds++
-				if journal.Rounds > runner.MaxRounds {
-					return runner.stop(directory, journal, "blocked", "required CI still fails after the repair bound")
-				}
-				journal.Feedback = "Required CI failed on the published revision. Use tjpeel-pr-monitor guidance for a bounded repair: " + checks.Details
-				if err := runner.transition(directory, journal, "repairing"); err != nil {
-					return err
-				}
-				continue
-			case "passed":
-				if err := runner.transition(directory, journal, "awaiting_reviewer"); err != nil {
-					return err
-				}
-			default:
-				return runner.stop(directory, journal, "blocked", "CI returned an unknown outcome")
 			}
 		case "awaiting_reviewer", "reviewing":
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)

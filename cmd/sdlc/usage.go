@@ -20,17 +20,18 @@ import (
 )
 
 type usageRow struct {
-	outcomeRecorded bool
-	checksRecorded  bool
-	Timings         *workrun.Timings  `json:"timings,omitempty"`
-	RunID           string            `json:"run_id"`
-	State           string            `json:"state"`
-	RepairRounds    int               `json:"repair_rounds"`
-	CheckAttempts   int               `json:"check_attempts"`
-	ChecksPassed    bool              `json:"checks_passed"`
-	ReviewFindings  int               `json:"review_findings"`
-	Metrics         *runusage.Summary `json:"metrics,omitempty"`
-	MetricsError    string            `json:"metrics_error,omitempty"`
+	RuntimeProvenance *workrun.RuntimeProvenance `json:"runtime_provenance"`
+	outcomeRecorded   bool
+	checksRecorded    bool
+	Timings           *workrun.Timings  `json:"timings,omitempty"`
+	RunID             string            `json:"run_id"`
+	State             string            `json:"state"`
+	RepairRounds      int               `json:"repair_rounds"`
+	CheckAttempts     int               `json:"check_attempts"`
+	ChecksPassed      bool              `json:"checks_passed"`
+	ReviewFindings    int               `json:"review_findings"`
+	Metrics           *runusage.Summary `json:"metrics,omitempty"`
+	MetricsError      string            `json:"metrics_error,omitempty"`
 }
 
 func usageDuration(value string) (time.Duration, error) {
@@ -124,6 +125,7 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 			row.outcomeRecorded = true
 			row.checksRecorded = view.Journal.Evidence.Tree != ""
 			row.Timings = view.Journal.Timings.Recorded()
+			row.RuntimeProvenance = view.Journal.Plan.RuntimeProvenance
 			row.RepairRounds = view.Journal.Rounds
 			row.CheckAttempts = view.Journal.CheckAttempt
 			row.ChecksPassed = view.Journal.Evidence.Passed
@@ -142,10 +144,10 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 			Runs      []usageRow `json:"runs"`
 		}{1, now, "Full recorded attempts of runs updated within --since; --run ignores age. Missing telemetry is unknown; dollar estimates do not measure subscription allowance.", rows})
 	}
-	return writeUsageRows(output, rows)
+	return writeUsageRows(output, rows, *run != "")
 }
 
-func writeUsageRows(output io.Writer, rows []usageRow) error {
+func writeUsageRows(output io.Writer, rows []usageRow, detailed ...bool) error {
 	fmt.Fprintln(output, textview.Heading("Recorded usage"))
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(output, "No registered runs in the selected period.")
@@ -165,8 +167,39 @@ func writeUsageRows(output io.Writer, rows []usageRow) error {
 			fmt.Fprintln(output, "Check result: "+result)
 		}
 		if row.Timings != nil {
-			fmt.Fprintf(output, " Observed controller %s; check worker %s; CI polling wait %s.\n", time.Duration(row.Timings.ControllerMS)*time.Millisecond, time.Duration(row.Timings.ChecksMS)*time.Millisecond, time.Duration(row.Timings.CIWaitMS)*time.Millisecond)
+			fmt.Fprintf(output, " Observed controller %s; checks %s; CI polling wait %s.\n", time.Duration(row.Timings.ControllerMS)*time.Millisecond, time.Duration(row.Timings.ChecksMS)*time.Millisecond, time.Duration(row.Timings.CIWaitMS)*time.Millisecond)
+			if row.Timings.Version >= 2 {
+				fmt.Fprintf(output, " CI wall time %s, including queries %s; %d command/cache operations recorded", time.Duration(row.Timings.CIWallMS)*time.Millisecond, time.Duration(row.Timings.CIQueryMS)*time.Millisecond, len(row.Timings.CheckOperations))
+				if row.Timings.Partial {
+					fmt.Fprint(output, " (partial history)")
+				}
+				fmt.Fprintln(output, ".")
+				if len(detailed) > 0 && detailed[0] {
+					for _, operation := range row.Timings.CheckOperations {
+						fmt.Fprintf(output, "  Check %d %s %s", operation.Attempt, operation.Phase, operation.Kind)
+						if operation.Command != 0 {
+							fmt.Fprintf(output, " %d", operation.Command)
+						}
+						fmt.Fprintf(output, ": %s\n", time.Duration(operation.DurationMS)*time.Millisecond)
+					}
+					if row.Timings.DroppedCheckOperations > 0 {
+						fmt.Fprintf(output, "  %d older operations omitted.\n", row.Timings.DroppedCheckOperations)
+					}
+				}
+			}
 		}
+		if row.RuntimeProvenance == nil {
+			fmt.Fprintln(output, " Frozen runtime provenance not recorded.")
+		} else {
+			showRevision := func(revision string) string {
+				if revision == "" {
+					return "unknown"
+				}
+				return dashboard.SafeText(revision)
+			}
+			fmt.Fprintf(output, " Frozen runtime source %s; skills %s; agents %s.\n", showRevision(row.RuntimeProvenance.SourceRevision), showRevision(row.RuntimeProvenance.SkillsRevision), showRevision(row.RuntimeProvenance.AgentsRevision))
+		}
+
 		if s := row.Metrics; s != nil {
 			if s.Attempts > 0 {
 				fmt.Fprintf(output, " Attempts %d; elapsed %s (setup/queue/execution).\n", s.Attempts, time.Duration(s.ElapsedMS)*time.Millisecond)

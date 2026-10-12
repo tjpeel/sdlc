@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // CandidatePhaseChecker keeps candidate build state for one controller phase.
@@ -61,6 +62,8 @@ func (checks *candidateChecks) Verify(ctx context.Context, workspace string, req
 
 func (checker DockerChecker) runCandidatePhase(ctx context.Context, workspace, inputs, mount, workPath, name, image string, execute candidateExecute, phase candidatePhase) error {
 	fingerprint := func() (string, error) {
+		started := time.Now()
+		defer checker.recordTiming("candidate_fingerprint", nil, 0, started)
 		args := checkContainerEnvironment([]string{"run", "--rm", "--name", name + "-fingerprint", "--label", testOwnerLabel + "=" + name, "--env", "SDLC_CHECK_WORKSPACE=" + workPath, "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", mount + ",readonly", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly"})
 		if inputs != "" {
 			args = append(args, "--mount", "type=bind,src="+inputs+",dst=/inputs,readonly")

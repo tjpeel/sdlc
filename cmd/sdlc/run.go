@@ -477,6 +477,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 		journal.ImageID = state.ImageID
+		journal.Plan.RuntimeProvenance = workrun.CaptureRuntimeProvenance(state)
 		if options.frozenHeadroom == nil {
 			journal.Plan.Headroom, err = headroom.Resolve(ctx, runtime.Docker, options.headroomMode)
 			if err != nil {

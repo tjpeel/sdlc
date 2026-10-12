@@ -13,6 +13,35 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
+func TestUsageShowsFrozenProvenanceAndDetailedTimingReadOnly(t *testing.T) {
+	root, marker, journals := dashboardFixture(t)
+	journal := journals[0]
+	journal.Plan.RuntimeProvenance = &workrun.RuntimeProvenance{SourceRevision: strings.Repeat("a", 40), SkillsRevision: strings.Repeat("b", 40), AgentsRevision: strings.Repeat("c", 40)}
+	journal.Timings = workrun.Timings{Version: 2, CIWallMS: 12, CIQueryMS: 7, CIWaitMS: 5, CheckOperations: []workrun.CheckTiming{{Kind: "command", Phase: "candidate", Attempt: 1, Command: 2, DurationMS: 35}}}
+	if err := workrun.Save(filepath.Dir(journal.Workspace), &journal); err != nil {
+		t.Fatal(err)
+	}
+	before := dashboardTree(t, root)
+	var output bytes.Buffer
+	if err := usageCommand(context.Background(), []string{"--json", "--run", journal.ID}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Runs []usageRow `json:"runs"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &document); err != nil || len(document.Runs) != 1 || document.Runs[0].RuntimeProvenance == nil || document.Runs[0].Timings == nil || document.Runs[0].RuntimeProvenance.SkillsRevision != journal.Plan.RuntimeProvenance.SkillsRevision || document.Runs[0].Timings.CIWallMS != 12 || len(document.Runs[0].Timings.CheckOperations) != 1 {
+		t.Fatal("frozen provenance or observations lost", err)
+	}
+	output.Reset()
+	if err := usageCommand(context.Background(), []string{"--run", journal.ID}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "CI wall time 12ms, including queries 7ms") || !strings.Contains(output.String(), "candidate command 2: 35ms") || !strings.Contains(output.String(), journal.Plan.RuntimeProvenance.SkillsRevision) {
+		t.Fatal("detailed timing/provenance display lost", output.String())
+	}
+	assertDashboardReadOnly(t, root, marker, before)
+}
+
 func TestUsageReportsDurableMetricsReadOnly(t *testing.T) {
 	root, marker, journals := dashboardFixture(t)
 	j := journals[0]

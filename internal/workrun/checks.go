@@ -37,6 +37,7 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 // disposable storage. Privileged
 // containers are not a security boundary against hostile code.
 type DockerChecker struct {
+	onTiming       func(CheckTiming)
 	workerSequence *int
 	NugetCache     *project.NugetCacheBudget
 	Runtime        runtimeimage.Manager
@@ -291,6 +292,8 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 	}
 	var cleanups [][]string
 	defer func() {
+		cleanupStarted := time.Now()
+		defer checker.recordTiming("cleanup", baseline, 0, cleanupStarted)
 		cleanup, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		var cleanupErrors error
@@ -338,7 +341,10 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 		}
 		copyArgs = append(copyArgs[:position], append([]string{"--mount", "type=bind,src=" + inputs + ",dst=/inputs,readonly"}, copyArgs[position:]...)...)
 	}
-	if err = call(copyArgs...); err != nil {
+	copyStarted := time.Now()
+	err = call(copyArgs...)
+	checker.recordTiming("source_copy", baseline, 0, copyStarted)
+	if err != nil {
 		return fmt.Errorf("copy repository check workspace: %w", err)
 	}
 	if checker.DockerTests {
@@ -440,7 +446,10 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 		diagnostic := &formatterDiagnostic{approved: approvedPaths}
 		matcher := newFailureMatcher(baseline)
 		commandOutput := io.MultiWriter(output, diagnostic, matcher)
-		if err = runner.Run(ctx, commandOutput, args...); err != nil {
+		commandStarted := time.Now()
+		err = runner.Run(ctx, commandOutput, args...)
+		checker.recordTiming("command", baseline, i+1, commandStarted)
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}

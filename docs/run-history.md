@@ -34,6 +34,33 @@ variables before executing the original command. This also supports libraries
 that interpret an empty proxy value as a configured URL. Docker integration
 checks retain their dedicated daemon connection.
 
+## Timing and runtime provenance
+
+`sdlc usage --run RECORDED_RUN_ID` shows command and cache operation durations,
+CI wall/query time and frozen runtime source, skill and agent catalogue revisions.
+Use `--json` for the recorded values. Dashboard JSON and private checkpoint
+exports include the same data. Unknown provenance stays unrecorded for old runs;
+inspection never substitutes current host skills or the current runtime.
+
+New runs capture provenance from the selected runtime descriptor and inventory,
+falling back to recorded dependency pins and the recorded build recipe. A local
+skills override recorded by the runtime takes precedence. Source-pin builds can
+supply their catalogue revisions through inventory or recipe even when they have
+no separate dependency descriptor. The `sources` fields name the evidence used.
+
+Timing version 2 records the whole candidate checking phase once. Individual
+`check_operations` identify the check attempt, candidate/baseline phase, kind,
+command number and elapsed milliseconds. Command duration includes worker
+startup. Operation intervals can overlap: cleanup includes NuGet promotion.
+Do not sum them to reconstruct total check time. At most 1024 recent operations
+are retained; an omitted-operation count records truncation.
+
+`ci_wall_ms` measures observed controller time in CI polling, including query,
+checkpoint and sleep time. `ci_query_ms` and `ci_wait_ms` separate query and sleep
+costs. These totals exclude time between controller invocations and do not
+represent GitHub's own job execution duration. Resumed histories that predate
+these measurements are marked `partial`; missing past intervals are not inferred.
+
 ## Keep a portable checkpoint report
 
 Export before removing a dashboard registration:

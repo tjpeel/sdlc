@@ -51,6 +51,8 @@ func TestOfflineCandidatePhase(t *testing.T) {
 	git("add", ".")
 	git("-c", "user.name=Example", "-c", "user.email=example@example.invalid", "commit", "-m", "Create disposable candidate")
 	checker := DockerChecker{Runtime: manager, ImageID: state.ImageID}
+	var observations []CheckTiming
+	checker.onTiming = func(observation CheckTiming) { observations = append(observations, observation) }
 	err = checker.WithCandidate(ctx, source, io.Discard, func(scoped Checker) error {
 		prepare := "import pathlib; (pathlib.Path.home()/'phase-tool').write_text('warm'); pathlib.Path('phase-build').write_text('warm')"
 		if err := scoped.Check(ctx, source, [][]string{{"python3", "-c", prepare}}, io.Discard); err != nil {
@@ -69,6 +71,20 @@ func TestOfflineCandidatePhase(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	commands, baselines, copies := 0, 0, 0
+	for _, observation := range observations {
+		if observation.Kind == "command" {
+			commands++
+			if observation.Phase == "baseline" {
+				baselines++
+			}
+		} else if observation.Kind == "source_copy" {
+			copies++
+		}
+	}
+	if commands != 5 || baselines != 1 || copies != 3 {
+		t.Fatal("actual command/baseline/copy timing records are incomplete", observations)
 	}
 }
 

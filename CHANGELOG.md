@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.22 - 2026-10-12
+
+### Added
+
+- Record command, source-copy, cache, fingerprint and cleanup durations alongside the complete candidate checking phase. CI wall time includes queries and controller polling; polling sleep remains separate.
+- Capture runtime source, skill and agent catalogue revisions for new runs from their frozen runtime evidence. Usage, dashboard JSON and checkpoint exports show this provenance; older runs retain unknown provenance, and resumed older runs mark timing history as partial.
+
 ## 0.1.0-beta.21 - 2026-10-12
 
 ### Changed

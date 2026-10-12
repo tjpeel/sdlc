@@ -21,6 +21,24 @@ func reportView() View {
 	return View{ID: id, Available: true, Journal: &j}
 }
 
+func TestReportUsesFrozenProvenanceAndExplicitUnknownLegacyValue(t *testing.T) {
+	view := reportView()
+	report, err := reportSnapshot(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(report)
+	if !strings.Contains(string(data), `"runtime_provenance":null`) {
+		t.Fatal("legacy provenance was inferred")
+	}
+	view.Journal.Plan.RuntimeProvenance = &workrun.RuntimeProvenance{SkillsRevision: strings.Repeat("d", 40)}
+	view.Journal.Timings = workrun.Timings{Version: 2, CIWallMS: 100, CheckOperations: []workrun.CheckTiming{{Kind: "command", Phase: "baseline", DurationMS: 20}}}
+	report, err = reportSnapshot(view)
+	if err != nil || report.RuntimeProvenance.SkillsRevision != strings.Repeat("d", 40) || report.Timings.CIWallMS != 100 || report.Timings.CheckOperations[0].Phase != "baseline" {
+		t.Fatal("frozen provenance/timing export lost", err)
+	}
+}
+
 func TestReportPreservesEvidenceAndExcludesRawCheckpointSecrets(t *testing.T) {
 	v := reportView()
 	report, err := reportSnapshot(v)

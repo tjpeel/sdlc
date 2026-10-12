@@ -13,6 +13,17 @@ import (
 )
 
 func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, journal *Journal, revision Revision) error {
+	firstAttempt := journal.CheckAttempt + 1
+	if timed, ok := runner.Checker.(TimingChecker); ok {
+		runner.Checker = timed.WithTimingObserver(func(observation CheckTiming) {
+			observation.Attempt = journal.CheckAttempt
+			if observation.Attempt < firstAttempt {
+				observation.Attempt = firstAttempt
+			}
+			journal.Timings.addCheckTiming(observation)
+		})
+	}
+
 	if journal.CandidatePhasePending {
 		// A previous controller did not checkpoint successful phase cleanup.
 		// Its evidence is provisional even if every command completed.
@@ -27,6 +38,10 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 		if evidence.Key != verificationKey(journal, evidence.Request, revision.Head, revision.Tree) {
 			pending = true
 		}
+	}
+	if pending {
+		phaseStarted := time.Now()
+		defer func() { journal.Timings.ChecksMS += time.Since(phaseStarted).Milliseconds() }()
 	}
 	if !supported || !pending {
 		if err := runner.checkCandidate(ctx, directory, journal, revision); err != nil {
@@ -85,7 +100,6 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 		if err != nil {
 			return err
 		}
-		checkStarted := time.Now()
 		checkOutput := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "checks", Stage: journal.State, Attempt: journal.CheckAttempt}, false)
 		checkErr := runner.Checker.Check(ctx, journal.Workspace, journal.Plan.Checks, io.MultiWriter(log, runner.rawOutput, checkOutput))
 		progressErr := checkOutput.Finish()
@@ -93,7 +107,6 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			log.Close()
 			return errors.Join(checkErr, progressErr)
 		}
-		journal.Timings.ChecksMS += time.Since(checkStarted).Milliseconds()
 		closeErr := log.Close()
 		journal.Evidence = CheckEvidence{Head: revision.Head, Tree: revision.Tree, Passed: checkErr == nil, Commands: journal.Plan.Checks, Log: filepath.Base(path)}
 		if closeErr != nil {
@@ -137,11 +150,9 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 		if err != nil {
 			return err
 		}
-		checkStarted := time.Now()
 		checkOutput := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "checks", Stage: journal.State, Attempt: journal.CheckAttempt}, false)
 		checkErr := checker.Verify(ctx, journal.Workspace, evidence.Request, io.MultiWriter(log, runner.rawOutput, checkOutput))
 		progressErr := checkOutput.Finish()
-		journal.Timings.ChecksMS += time.Since(checkStarted).Milliseconds()
 		var diagnosticLogErr error
 		if checkErr != nil {
 			_, diagnosticLogErr = fmt.Fprintf(log, "\nAdditional verification failure: %v\n", checkErr)

@@ -438,6 +438,13 @@ print('SHARED_REAL_NUGET_WARM_EMPTY_SOURCE_PASSED',flush=True)`
 // credential or real host package data enters this fixture.
 func exerciseOfflineNugetCache(t *testing.T, ctx context.Context, checker DockerChecker, image, root string) {
 	t.Helper()
+	observed := map[string]int{}
+	checker.onTiming = func(observation CheckTiming) {
+		if observation.Phase != "candidate" || observation.DurationMS < 0 {
+			t.Fatal("invalid shared cache timing", observation)
+		}
+		observed[observation.Kind]++
+	}
 	source := filepath.Join(root, "nuget-source")
 	host := filepath.Join(root, "nuget-host")
 	if err := os.MkdirAll(source, 0700); err != nil {
@@ -556,6 +563,11 @@ print('NUGET_WARM_NO_SOURCE_PASSED',flush=True)`
 		t.Fatalf("warm seed with no host cache or package source: %v\n%s", err, out.String())
 	}
 	t.Log(out.String())
+	for _, kind := range []string{"daemon_ready", "image_seed", "source_copy", "nuget_prepare", "nuget_promote", "command", "cleanup"} {
+		if observed[kind] == 0 {
+			t.Fatal("shared cache timing boundary was not exercised", kind)
+		}
+	}
 }
 
 type checkCacheOutput func([]byte) (int, error)

@@ -15,42 +15,43 @@ import (
 // Explicit projection avoids copying authentication metadata, prompts, session
 // identifiers, raw logs, private input bytes or the captured source workspace.
 type Report struct {
-	Timings       *workrun.Timings    `json:"timings,omitempty"`
-	Metrics       *runusage.Summary   `json:"metrics,omitempty"`
-	MetricsError  string              `json:"metrics_error,omitempty"`
-	Version       int                 `json:"version"`
-	ExportedAt    time.Time           `json:"exported_at"`
-	ID            string              `json:"id"`
-	State         string              `json:"state"`
-	StartedAt     time.Time           `json:"started_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
-	Repository    string              `json:"repository"`
-	Reference     string              `json:"reference"`
-	Ticket        string              `json:"ticket"`
-	Branch        string              `json:"branch"`
-	Base          string              `json:"base"`
-	StartingSHA   string              `json:"starting_sha"`
-	SourceSHA     string              `json:"source_sha"`
-	BaseSHA       string              `json:"base_sha"`
-	ImageID       string              `json:"image_id"`
-	Roles         workrun.Roles       `json:"roles"`
-	ReportedModel string              `json:"reported_model,omitempty"`
-	Inputs        []workrun.Input     `json:"inputs"`
-	CheckInputs   []workrun.Input     `json:"check_input_hashes"`
-	Checks        [][]string          `json:"checks"`
-	Evidence      ReportEvidence      `json:"evidence"`
-	Publication   workrun.Publication `json:"publication"`
-	CI            ReportCI            `json:"ci"`
-	Summary       string              `json:"summary"`
-	LocalReview   bool                `json:"local_review"`
-	Findings      []workrun.Finding   `json:"findings"`
-	Limitations   []string            `json:"limitations"`
-	Questions     []string            `json:"questions"`
-	StopReason    string              `json:"stop_reason,omitempty"`
-	Rounds        int                 `json:"repair_rounds"`
-	Attempts      int                 `json:"provider_attempts"`
-	CheckAttempts int                 `json:"check_attempts"`
-	Retention     string              `json:"retention"`
+	RuntimeProvenance *workrun.RuntimeProvenance `json:"runtime_provenance"`
+	Timings           *workrun.Timings           `json:"timings,omitempty"`
+	Metrics           *runusage.Summary          `json:"metrics,omitempty"`
+	MetricsError      string                     `json:"metrics_error,omitempty"`
+	Version           int                        `json:"version"`
+	ExportedAt        time.Time                  `json:"exported_at"`
+	ID                string                     `json:"id"`
+	State             string                     `json:"state"`
+	StartedAt         time.Time                  `json:"started_at"`
+	UpdatedAt         time.Time                  `json:"updated_at"`
+	Repository        string                     `json:"repository"`
+	Reference         string                     `json:"reference"`
+	Ticket            string                     `json:"ticket"`
+	Branch            string                     `json:"branch"`
+	Base              string                     `json:"base"`
+	StartingSHA       string                     `json:"starting_sha"`
+	SourceSHA         string                     `json:"source_sha"`
+	BaseSHA           string                     `json:"base_sha"`
+	ImageID           string                     `json:"image_id"`
+	Roles             workrun.Roles              `json:"roles"`
+	ReportedModel     string                     `json:"reported_model,omitempty"`
+	Inputs            []workrun.Input            `json:"inputs"`
+	CheckInputs       []workrun.Input            `json:"check_input_hashes"`
+	Checks            [][]string                 `json:"checks"`
+	Evidence          ReportEvidence             `json:"evidence"`
+	Publication       workrun.Publication        `json:"publication"`
+	CI                ReportCI                   `json:"ci"`
+	Summary           string                     `json:"summary"`
+	LocalReview       bool                       `json:"local_review"`
+	Findings          []workrun.Finding          `json:"findings"`
+	Limitations       []string                   `json:"limitations"`
+	Questions         []string                   `json:"questions"`
+	StopReason        string                     `json:"stop_reason,omitempty"`
+	Rounds            int                        `json:"repair_rounds"`
+	Attempts          int                        `json:"provider_attempts"`
+	CheckAttempts     int                        `json:"check_attempts"`
+	Retention         string                     `json:"retention"`
 }
 
 type ReportEvidence struct {
@@ -74,8 +75,9 @@ func reportSnapshot(v View) (Report, error) {
 		questions = j.Outcome.Questions
 	}
 	return Report{
-		Timings: j.Timings.Recorded(),
-		Metrics: v.Metrics, MetricsError: v.MetricsError,
+		Timings:           j.Timings.Recorded(),
+		RuntimeProvenance: j.Plan.RuntimeProvenance,
+		Metrics:           v.Metrics, MetricsError: v.MetricsError,
 		Version: 1, ExportedAt: time.Now().UTC(), ID: j.ID, State: j.State,
 		StartedAt: j.StartedAt, UpdatedAt: j.UpdatedAt,
 		Repository: j.Plan.Repository, Reference: j.Plan.Reference, Ticket: j.Plan.Ticket,

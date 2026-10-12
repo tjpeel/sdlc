@@ -44,6 +44,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	RuntimeProvenance   *RuntimeProvenance        `json:"runtime_provenance,omitempty"`
 	NugetCache          *project.NugetCacheBudget `json:"nuget_cache,omitempty"`
 	PRMetadataPolicy    *PRMetadataPolicy         `json:"pr_metadata_policy,omitempty"`
 	RuntimeName         string                    `json:"runtime_name,omitempty"`
@@ -250,14 +251,19 @@ type Journal struct {
 // Timings are observed controller intervals. They exclude time between
 // controller invocations; they are not active model-compute durations.
 type Timings struct {
-	Version      int   `json:"version"`
-	ControllerMS int64 `json:"controller_ms"`
-	ChecksMS     int64 `json:"checks_ms"`
-	CIWaitMS     int64 `json:"ci_wait_ms"`
+	Partial                bool          `json:"partial,omitempty"`
+	CIWallMS               int64         `json:"ci_wall_ms,omitempty"`
+	CIQueryMS              int64         `json:"ci_query_ms,omitempty"`
+	CheckOperations        []CheckTiming `json:"check_operations,omitempty"`
+	DroppedCheckOperations int           `json:"dropped_check_operations,omitempty"`
+	Version                int           `json:"version"`
+	ControllerMS           int64         `json:"controller_ms"`
+	ChecksMS               int64         `json:"checks_ms"`
+	CIWaitMS               int64         `json:"ci_wait_ms"`
 }
 
 func (t Timings) Recorded() *Timings {
-	if t.Version != 1 {
+	if t.Version != 1 && t.Version != 2 {
 		return nil
 	}
 	return &t

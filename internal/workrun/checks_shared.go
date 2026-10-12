@@ -25,6 +25,7 @@ const testOwnerLabel = "io.sdlc.test-owner"
 const testRecipeLabel = "io.sdlc.test-recipe"
 
 type sharedChecks struct {
+	baseline                            *VerificationBaseline
 	checker                             DockerChecker
 	name, directory, recipe, workVolume string
 	imageID                             string
@@ -347,7 +348,11 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	if err != nil {
 		return err
 	}
-	if err = s.ensure(ctx, daemonImage); err != nil {
+	s.baseline = baseline
+	daemonStarted := time.Now()
+	err = s.ensure(ctx, daemonImage)
+	checker.recordTiming("daemon_ready", baseline, 0, daemonStarted)
+	if err != nil {
 		return err
 	}
 	lease, err := s.lease(ctx, name)
@@ -359,6 +364,8 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 		return err
 	}
 	defer func() {
+		cleanupStarted := time.Now()
+		defer checker.recordTiming("cleanup", baseline, 0, cleanupStarted)
 		cleanup, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := s.cleanup(cleanup, name); err != nil {
@@ -368,7 +375,10 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 			result = errors.Join(result, fmt.Errorf("shared check cleanup failed: %w", err))
 		}
 	}()
-	if err = s.seed(ctx, state.ImageID, output); err != nil {
+	seedStarted := time.Now()
+	err = s.seed(ctx, state.ImageID, output)
+	checker.recordTiming("image_seed", baseline, 0, seedStarted)
+	if err != nil {
 		return err
 	}
 	s.output = output
@@ -377,7 +387,10 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 		return err
 	}
 	if cacheSupported {
-		if err = s.prepareNuget(ctx, name, workspace, output); err != nil {
+		nugetStarted := time.Now()
+		err = s.prepareNuget(ctx, name, workspace, output)
+		checker.recordTiming("nuget_prepare", baseline, 0, nugetStarted)
+		if err != nil {
 			return err
 		}
 		s.promote = true
@@ -418,6 +431,7 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	}
 	started := time.Now()
 	message, err := s.host(ctx, copyArgs...)
+	checker.recordTiming("source_copy", baseline, 0, started)
 	sourceLease.Close()
 	if err != nil {
 		return fmt.Errorf("copy cached source snapshot: %w", err)

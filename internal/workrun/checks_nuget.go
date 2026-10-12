@@ -106,6 +106,8 @@ func (s *sharedChecks) nugetHelper(name string) []string {
 }
 
 func (s *sharedChecks) promoteNuget(ctx context.Context, name string) error {
+	started := time.Now()
+	defer s.checker.recordTiming("nuget_promote", s.baseline, 0, started)
 	lock, err := s.lease(ctx, "nuget")
 	if err != nil {
 		return err
