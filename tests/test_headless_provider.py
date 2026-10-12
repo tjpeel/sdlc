@@ -26,12 +26,20 @@ def load(name, filename):
 native = load("headless_auth", "container.py")
 headless = load("headless_test", "headless.py")
 headless.native = native
+subscription = load("headless_subscription", "subscription.py")
+headless.subscription = subscription
 ID = "00000000-0000-4000-8000-000000000001"
 CODEX_WORKSPACE_TRUST = '[projects."/workspace"]\ntrust_level = "trusted"\n'
 
 
 class HeadlessTests(unittest.TestCase):
     def setUp(self):
+        capture = patch.object(subscription, 'capture')
+        self.capture = capture.start()
+        self.addCleanup(capture.stop)
+        boundary = patch.object(subscription, 'boundary')
+        boundary.start()
+        self.addCleanup(boundary.stop)
         previous = os.umask(0o077)
         self.addCleanup(os.umask, previous)
         storage = tempfile.TemporaryDirectory()
@@ -140,6 +148,21 @@ class HeadlessTests(unittest.TestCase):
         self.assertTrue((config / "native-transcript.jsonl").exists())
         self.assertEqual(native_config.read_text(), CODEX_WORKSPACE_TRUST)
         self.assertEqual(before.st_ino, native_config.stat().st_ino)
+
+    def test_quota_snapshots_bracket_native_work(self):
+        phases = []
+        self.capture.side_effect = lambda provider, phase, env: phases.append(phase)
+        self.run_client('codex', effect=lambda path: phases.append('native'))
+        self.assertEqual(phases, ['before', 'native', 'after'])
+
+    def test_quota_after_snapshot_survives_native_launch_failure(self):
+        phases = []
+        self.capture.side_effect = lambda provider, phase, env: phases.append(phase)
+        with patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(subprocess, 'Popen', side_effect=OSError('synthetic failure')), \
+                self.assertRaises(OSError):
+            headless.headless('codex', 'example-model', 'high', '', False, self.cache)
+        self.assertEqual(phases, ['before', 'after'])
 
     def test_codex_workspace_trust_rejects_other_config_shapes_before_client(self):
         for contents in (

@@ -17,6 +17,7 @@ const maxTokenCount int64 = 1_000_000_000_000
 // guarantee. Nil fields mean unknown. Aggregate counters are replaced, never
 // added across resumes, and cannot establish a current request's context size.
 type Usage struct {
+	Subscription      *SubscriptionUsage    `json:"subscription,omitempty"`
 	Aggregate         *TokenUsage           `json:"aggregate,omitempty"`
 	Context           *ContextUsage         `json:"context,omitempty"`
 	ClientVersion     string                `json:"client_version,omitempty"`
@@ -65,6 +66,8 @@ type ContextUsage struct {
 // The Claude 2.1.287 CLI may omit contextWindow: no window or percentage is
 // inferred from model names, aggregate usage, or a provider's advertised limit.
 type Observer struct {
+	nativeStarted                                  bool
+	subscriptionRevision                           uint64
 	mu                                             sync.Mutex
 	provider, requested, nativeSession             string
 	usage                                          Usage
@@ -165,6 +168,8 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 	var event struct {
 		ClientVersion string          `json:"claude_code_version"`
 		Type          string          `json:"type"`
+		Provider      string          `json:"provider"`
+		Phase         string          `json:"phase"`
 		Subtype       string          `json:"subtype"`
 		Model         string          `json:"model"`
 		SessionID     string          `json:"session_id"`
@@ -192,6 +197,22 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 	if json.Unmarshal(line, &event) != nil {
 		return
 	}
+	if event.Type == "sdlc.native_work_boundary" {
+		if event.Provider == provider {
+			if event.Phase == "start" && !o.nativeStarted {
+				o.startedAt, o.nativeStarted = o.receivedAt, true
+			} else if event.Phase == "end" && o.nativeStarted && o.finishedAt.IsZero() {
+				o.finishedAt = o.receivedAt
+			}
+		}
+		return
+	}
+	if event.Type == "sdlc.subscription_snapshot" {
+		if observeSubscription(line, provider, usage) {
+			o.subscriptionRevision++
+		}
+		return
+	}
 	if event.Type != "" {
 		o.observeEvent()
 	}
@@ -211,7 +232,8 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 		if id != "" && len(id) <= 256 {
 			hash := sha256.Sum256([]byte(id))
 			if o.sessionID != ([32]byte{}) && o.sessionID != hash {
-				*usage = Usage{}
+				subscription := usage.Subscription
+				*usage = Usage{Subscription: subscription}
 				o.messageID = [32]byte{}
 			}
 			o.sessionID = hash
@@ -394,7 +416,9 @@ func (o *Observer) Finish() {
 	clear(o.line)
 	o.line = nil
 	o.dropping = false
-	o.finishedAt = o.now()
+	if o.finishedAt.IsZero() {
+		o.finishedAt = o.now()
+	}
 	if o.usage.Completeness == "" {
 		if o.usage.Context != nil || o.usage.Aggregate != nil {
 			o.usage.Completeness = "partial"
@@ -403,7 +427,12 @@ func (o *Observer) Finish() {
 		}
 	}
 }
-func (o *Observer) Snapshot() Usage   { o.mu.Lock(); defer o.mu.Unlock(); return Clone(o.usage) }
+func (o *Observer) Snapshot() Usage { o.mu.Lock(); defer o.mu.Unlock(); return Clone(o.usage) }
+func (o *Observer) SubscriptionRevision() uint64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.subscriptionRevision
+}
 func (o *Observer) SessionID() string { o.mu.Lock(); defer o.mu.Unlock(); return o.nativeSession }
 func Clone(u Usage) Usage {
 	data, _ := json.Marshal(u)

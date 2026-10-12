@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.23 - 2026-10-12
+
+### Added
+
+- Capture Codex subscription percentage remaining before and after native work through the official App Server client, without model requests. Retain the baseline during execution and show account allowance changes in usage, dashboard details and checkpoint reports.
+- Keep percentage used unknown when snapshots are missing, quota windows reset or allowance increases. Quota probes do not contribute to native event reception timing.
+
 ## 0.1.0-beta.22 - 2026-10-12
 
 ### Added

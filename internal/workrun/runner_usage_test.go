@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/runusage"
 )
 
 type usageProvider struct {
+	quota     bool
 	directory string
 	input     int
 	err       error
@@ -26,12 +28,44 @@ func (p *usageProvider) Execute(_ context.Context, s Session, out, _ io.Writer) 
 	if err != nil || summary.Pending != 1 {
 		p.t.Fatalf("attempt start not durable: %+v %v", summary, err)
 	}
+	if p.quota {
+		fmt.Fprintln(out, quotaBoundary("before", 80))
+		saved, err := runusage.LoadSummary(p.directory, "run-one", 0)
+		if err != nil || saved.Subscriptions["codex"] == nil || saved.Subscriptions["codex"].Before == nil || saved.Subscriptions["codex"].After != nil {
+			p.t.Fatalf("baseline not durable before model work: %+v %v", saved.Subscriptions, err)
+		}
+	}
 	fmt.Fprintf(out, "{\"type\":\"thread.started\",\"thread_id\":%q}\n", testNative)
 	fmt.Fprintf(out, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":%d,\"cached_input_tokens\":%d,\"output_tokens\":%d}}", p.input, p.input/2, p.input/10)
+	if p.quota {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, quotaBoundary("after", 75))
+	}
 	if p.cancel != nil {
 		p.cancel()
 	}
 	return SessionResult{SessionID: testNative, ReportedModel: s.Model.Name}, p.err
+}
+
+func quotaBoundary(phase string, remaining int) string {
+	return fmt.Sprintf(`{"type":"sdlc.subscription_snapshot","provider":"codex","phase":%q,"snapshot":{"source":"codex.app_server.rate_limits","observed_at":%q,"status":"observed","windows":{"codex/primary":{"remaining_percent":%d,"resets_at":4102444800,"window_duration_mins":300}}}}`, phase, time.Now().UTC().Format(time.RFC3339Nano), remaining)
+}
+
+func TestQuotaBaselineAndFailureEndRemainDurable(t *testing.T) {
+	directory, journal := testRun(t)
+	provider := &usageProvider{directory: directory, input: 100, quota: true, t: t, err: errors.New("offline native failure")}
+	runner := Runner{Provider: provider, Output: io.Discard}
+	if _, err := runner.session(context.Background(), directory, journal, "implementation", journal.Workspace, ""); !errors.Is(err, provider.err) {
+		t.Fatal(err)
+	}
+	summary, err := runusage.LoadSummary(directory, journal.ID, journal.Attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := summary.Subscriptions["codex"].Windows["codex/primary"]
+	if summary.Failed != 1 || change.UsedPercentagePoints == nil || *change.UsedPercentagePoints != 5 {
+		t.Fatalf("failure erased capacity snapshots: %+v", summary)
+	}
 }
 
 func TestSessionRetainsUsageAfterResumeFailureAndCancellation(t *testing.T) {

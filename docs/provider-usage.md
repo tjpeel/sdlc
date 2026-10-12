@@ -20,6 +20,14 @@ outer isolation boundary; native approvals default to `never` and can be set to
 [container security guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
 No custom API client, credential broker or subscription sharing is involved.
 
+For quota snapshots, the same worker invokes `codex app-server` and its documented
+[`account/rateLimits/read`](https://learn.chatgpt.com/docs/app-server) method over
+local stdio before and after native model work. The official client owns the
+authenticated service request. SDLC sends no prompt, starts no thread or turn,
+does not decode credentials, and never consumes a quota-reset credit. The probe
+is bounded and optional; unavailable quota information does not restart work or
+change the selected account.
+
 Login does not authorise every later use of the account. Ticket runs are limited
 to the account owner's local single-user native CLI job, using trusted inputs.
 Review the chosen account, repository trust and execution mode against

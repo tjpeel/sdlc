@@ -87,8 +87,38 @@ to it cannot establish current context occupancy or a context percentage.
 Native dollar estimates describe API-equivalent cost. They do not measure a
 subscription bill, remaining allowance or time until a cap. Claude quota events
 can provide a last observed utilisation, status and reset time. They are timestamped
-observations, not live account polling. The current Codex execution stream does
-not emit account quota windows; those remain unknown.
+observations, not live account polling. The Codex execution stream does not emit
+account quota windows. New workers capture them separately through the official
+client's local App Server protocol.
+
+## Subscription percentages
+
+New Codex provider invocations capture percentage remaining immediately before
+native model work and after it exits, including ordinary failures. The worker
+uses its existing selected login and sends only initialization and
+`account/rateLimits/read` requests to the official `codex app-server` client.
+There is no model prompt or direct authenticated HTTP request. A four-second
+deadline limits each probe; unavailable or unsupported clients leave an explicit
+unknown result and do not prevent native work.
+
+Private attempt records retain both snapshots. The baseline is checkpointed
+as soon as received, before processing later model output. `sdlc usage`, its JSON
+output, dashboard details and checkpoint reports show the first baseline and
+last end snapshot for each provider across the selected run. Individual role
+groups retain their own boundaries. Reading these reports never polls accounts.
+Provider work timing excludes the probes when native boundary markers are
+available; older event streams retain their existing timing semantics.
+
+An allowance falling from 80% remaining to 75% remaining is **5 percentage points
+used**, not 6.25% of the original remaining balance. Changes are calculated only
+for the same metered bucket, window duration and reset time. A missing boundary,
+reset, expired window, clock reversal or increased allowance leaves usage unknown.
+Values have the provider's reporting precision; an unchanged percentage can
+coexist with real token use. The counters describe the account, so concurrent
+sessions can contribute to a change. Do not change login while a run is active.
+
+Older runs cannot recover a missed starting snapshot. Claude's native quota
+events remain last observations rather than paired preflight/end snapshots.
 
 ## Comparing Headroom
 

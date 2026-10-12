@@ -479,6 +479,10 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		return result, err
 	}
 	observer := runusage.NewObserver(model.Provider, model.Name)
+	metrics := &subscriptionRecorder{observer: observer, save: func(usage runusage.Usage) error {
+		attempt.Usage = usage
+		return runusage.SaveAttempt(directory, attempt)
+	}}
 	defer func() {
 		observer.Finish()
 		attempt.Usage = observer.Snapshot()
@@ -505,7 +509,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	nativeOutput := observedOutput{io.MultiWriter(events, runner.rawOutput), runner.OnNativeOutput}
 	return runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
 		Directory: nativeDirectory, Prompt: prompt, Schema: outcomeSchema, ResumeID: resume,
-		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom}, io.MultiWriter(nativeOutput, observer, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
+		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom}, io.MultiWriter(metrics, nativeOutput, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
 }
 
 func (runner Runner) prompt(journal Journal, role string) string {

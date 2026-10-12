@@ -201,6 +201,7 @@ func writeUsageRows(output io.Writer, rows []usageRow, detailed ...bool) error {
 		}
 
 		if s := row.Metrics; s != nil {
+			dashboard.WriteSubscriptions(output, s.Subscriptions)
 			if s.Attempts > 0 {
 				fmt.Fprintf(output, " Attempts %d; elapsed %s (setup/queue/execution).\n", s.Attempts, time.Duration(s.ElapsedMS)*time.Millisecond)
 			} else {

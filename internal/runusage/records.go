@@ -57,6 +57,7 @@ type Attempt struct {
 }
 
 type Group struct {
+	Subscription      *SubscriptionUsage    `json:"subscription,omitempty"`
 	Models            map[string]TokenUsage `json:"models,omitempty"`
 	PeakContextTokens *int64                `json:"peak_context_tokens,omitempty"`
 	Compactions       int64                 `json:"compactions,omitempty"`
@@ -76,19 +77,20 @@ type Group struct {
 	EventTiming       *EventTimingSummary   `json:"native_event_timing,omitempty"`
 }
 type Summary struct {
-	Version         int     `json:"version"`
-	RunID           string  `json:"run_id"`
-	Attempts        int     `json:"attempts"`
-	Completed       int     `json:"completed"`
-	Failed          int     `json:"failed"`
-	Aborted         int     `json:"aborted"`
-	Pending         int     `json:"pending"`
-	Missing         int     `json:"missing"`
-	UnknownBaseline int     `json:"unknown_baseline"`
-	Incomplete      int     `json:"incomplete"`
-	ElapsedMS       int64   `json:"elapsed_ms"`
-	ElapsedScope    string  `json:"elapsed_scope"`
-	Groups          []Group `json:"groups"`
+	Subscriptions   map[string]*SubscriptionUsage `json:"subscriptions,omitempty"`
+	Version         int                           `json:"version"`
+	RunID           string                        `json:"run_id"`
+	Attempts        int                           `json:"attempts"`
+	Completed       int                           `json:"completed"`
+	Failed          int                           `json:"failed"`
+	Aborted         int                           `json:"aborted"`
+	Pending         int                           `json:"pending"`
+	Missing         int                           `json:"missing"`
+	UnknownBaseline int                           `json:"unknown_baseline"`
+	Incomplete      int                           `json:"incomplete"`
+	ElapsedMS       int64                         `json:"elapsed_ms"`
+	ElapsedScope    string                        `json:"elapsed_scope"`
+	Groups          []Group                       `json:"groups"`
 }
 
 func checkDirectory(dir string, create bool) error {
@@ -203,6 +205,9 @@ func validateAttempt(a Attempt) error {
 	}
 	if err := validateUsage(a.Usage); err != nil {
 		return err
+	}
+	if a.Usage.Subscription != nil && a.Provider != "codex" {
+		return fmt.Errorf("subscription snapshot provider mismatch")
 	}
 	if value := a.EventTiming; value != nil {
 		if value.Events < 0 || value.Events > maxTokenCount || value.LongestGapMS < 0 || value.LongestGapMS > maxTokenCount {
@@ -376,6 +381,10 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 	baselines := map[string]TokenUsage{}
 	modelBaselines := map[string]map[string]TokenUsage{}
 	for _, a := range records {
+		if s.Subscriptions == nil {
+			s.Subscriptions = map[string]*SubscriptionUsage{}
+		}
+		mergeSubscription(s.Subscriptions, a.Provider, a.Usage.Subscription)
 		s.Attempts++
 		switch a.Outcome {
 		case "completed":
@@ -394,6 +403,7 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 			groups[key] = g
 		}
 		g.Attempts++
+		g.Subscription = combineSubscription(g.Subscription, a.Usage.Subscription)
 		if g.EventTiming == nil {
 			g.EventTiming = &EventTimingSummary{}
 		}
@@ -618,6 +628,9 @@ func addTokens(dst *TokenUsage, src TokenUsage, first bool) error {
 }
 
 func validateUsage(u Usage) error {
+	if err := validateSubscription(u.Subscription); err != nil {
+		return err
+	}
 	if (u.ClientVersion != "" && !clientVersion.MatchString(u.ClientVersion)) || (u.ReportedModel != "" && !safeModel(u.ReportedModel)) {
 		return fmt.Errorf("invalid native metadata")
 	}

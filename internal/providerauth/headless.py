@@ -331,7 +331,13 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
         apply_headroom_route(provider, command, env)
         auth_link(config, provider, directory)
         try:
-            return process(command, env)
+            subscription.capture(provider, 'before', env)
+            subscription.boundary(provider, 'start')
+            try:
+                return process(command, env)
+            finally:
+                subscription.boundary(provider, 'end')
+                subscription.capture(provider, 'after', env)
         finally:
             finish_auth(config, provider, directory)
 

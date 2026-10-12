@@ -414,6 +414,9 @@ func WriteUsageSignals(output io.Writer, group runusage.Group) {
 		fmt.Fprintf(output, "    Headroom estimates: requests %s, input %s, output %s, saved %s; observed %d, missing %d attempts.\n", tokenCount(stats.Requests), tokenCount(stats.InputTokens), tokenCount(stats.OutputTokens), tokenCount(stats.SavedTokens), stats.ObservedAttempts, stats.MissingAttempts)
 	}
 	if len(group.RateLimits) == 0 {
+		if group.Subscription != nil && (group.Subscription.Before != nil || group.Subscription.After != nil) {
+			return
+		}
 		fmt.Fprintln(output, "    Subscription capacity: unknown (no native quota event recorded).")
 		return
 	}
@@ -462,6 +465,7 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 	}
 	if v.Metrics != nil {
 		fmt.Fprintln(&text, metricsSummary(*v.Metrics))
+		WriteSubscriptions(&text, v.Metrics.Subscriptions)
 		for _, group := range v.Metrics.Groups {
 			fmt.Fprintf(&text, "  %s %s (%s, %s): input %s, cache read %s, output %s | measured %d/%d attempts | elapsed %s\n",
 				group.Provider, group.Model, group.Role, group.OptimizerMode,
