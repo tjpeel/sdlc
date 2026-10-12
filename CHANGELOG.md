@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.25 - 2026-10-12
+
+### Added
+
+- Prepare .NET restore, build and runner-specific test checks from required-check guidance, simple CI sequences or solution/project manifests. Documented Compose checks enable Docker tests and always tear services down after failures. Report incomplete or ambiguous inference for explicit configuration.
+- Add `sdlc init --force` to refresh inferred checks and Docker-test settings while preserving inputs, branch format, NuGet cache preferences and saved runs. Retain the previous configuration in a private ignored backup when settings change.
+
+### Fixed
+
+- Reject feature runs without verification checks before freezing settings, saving ticket checkpoints or contacting Docker and providers.
+
 ## 0.1.0-beta.24 - 2026-10-12
 
 ### Added

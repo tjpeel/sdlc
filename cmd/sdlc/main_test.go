@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/tjpeel/sdlc/internal/project"
 )
 
 func TestInitRejectsArgumentsBeforeWritingProjectSettings(t *testing.T) {
@@ -28,6 +31,32 @@ func TestInitRejectsArgumentsBeforeWritingProjectSettings(t *testing.T) {
 	}
 	if err := initCommand(context.Background(), []string{"--help"}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitForceRefreshesExistingSettingsThroughCLI(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.invalid/project\n\ngo 1.25\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := initCommand(context.Background(), []string{"--force"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Project checks refreshed") || !strings.Contains(output.String(), "Previous settings retained") || !strings.Contains(output.String(), `Check source: "go.mod"`) {
+		t.Fatal(output.String())
+	}
+	data, err := os.ReadFile(filepath.Join(root, project.ConfigPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config project.Config
+	if err := json.Unmarshal(data, &config); err != nil || !reflect.DeepEqual(config.Checks, [][]string{{"go", "test", "./..."}, {"go", "vet", "./..."}}) || !reflect.DeepEqual(config.InputFiles, []string{"README.md"}) {
+		t.Fatalf("force did not save expected checks and preserve inputs: %+v %v", config, err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("initialization contacted an external service")
 	}
 }
 

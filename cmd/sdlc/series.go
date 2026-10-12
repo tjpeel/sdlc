@@ -262,6 +262,9 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		fmt.Fprintln(output, "Offline feature plan only; ticket content, account access and live PR state are checked during execution.")
 		return nil
 	}
+	if len(selections.Config.Checks) == 0 {
+		return fmt.Errorf("no verification checks configured: run sdlc init --force or configure checks in .sdlc/project.json before starting a feature; no provider work started")
+	}
 	if inCI() {
 		return fmt.Errorf("account-authenticated features require a local single-user CLI job")
 	}

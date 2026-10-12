@@ -632,6 +632,30 @@ func TestFeaturePreflightsLaterLinkedInputBeforeConnecting(t *testing.T) {
 	}
 }
 
+func TestFeatureWithoutChecksStopsBeforeSavingCheckpoint(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".sdlc/project.json"), []byte(`{"version":1,"checks":[],"input_files":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := runCommand(context.Background(), []string{"--reference", "TASK-1", "--all", "--parallel", "2"}, &output)
+	if err == nil || !strings.Contains(err.Error(), "no verification checks configured") || !strings.Contains(err.Error(), "init --force") {
+		t.Fatalf("wrong preflight error: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("empty checks contacted a provider or Docker")
+	}
+	for _, path := range []string{"series", "runs"} {
+		if _, err := os.Stat(filepath.Join(root, ".sdlc/work/TASK-1", path)); !os.IsNotExist(err) {
+			t.Fatalf("empty configuration saved %s state", path)
+		}
+	}
+	if strings.Contains(output.String(), "selected run directory is unavailable") {
+		t.Fatal("preflight emitted a secondary run-directory error")
+	}
+}
+
 func TestFeatureFreezesDistinctTicketRequirementSets(t *testing.T) {
 	root := runGitFixture(t)
 	forbidConnectedRunCommands(t, root)

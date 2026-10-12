@@ -97,7 +97,7 @@ func main() {
 		fmt.Println("       sdlc github pair [--profile NAME] [--signing-profile NAME] | github list | github use [--profile NAME] | github status [--verify]")
 		fmt.Println("       sdlc signing setup|status|verify [--profile NAME] | signing configure --file PRIVATE_PROFILE [--profile NAME]")
 		fmt.Println("       sdlc instructions show | instructions set --file FILE | instructions reset")
-		fmt.Println("       sdlc init (from a project repository)")
+		fmt.Println("       sdlc init [--force] (inspect a project; force refreshes inferred checks)")
 		fmt.Println("       sdlc work --reference REFERENCE | --references [--json] (local ticket metadata)")
 		fmt.Println("       sdlc references [--json] | tickets REFERENCE [--json] (local ticket metadata)")
 		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
@@ -214,18 +214,23 @@ func main() {
 }
 
 func initCommand(ctx context.Context, args []string, output io.Writer) error {
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintln(output, "Usage: sdlc init\nRun from a project repository to discover local inputs and save project settings.")
+	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	force := flags.Bool("force", false, "refresh inferred checks and Docker-test settings; preserve other preferences and back up the previous configuration")
+	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
+		_, err = fmt.Fprintln(output, "Usage: sdlc init [--force]\nInspect local manifests, required-check guidance and CI without executing checks.\n--force refreshes inferred checks and Docker-test settings, backs up changed configuration, and preserves other preferences and saved runs.")
 		return err
+	} else if err != nil {
+		return fmt.Errorf("init accepts only --force; run it from the project repository")
 	}
-	if len(args) != 0 {
-		return fmt.Errorf("init accepts no arguments; run it from the project repository")
+	if flags.NArg() != 0 {
+		return fmt.Errorf("init accepts no positional arguments; run it from the project repository")
 	}
 	directory, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("cannot locate the current directory")
 	}
-	result, err := project.Initialize(ctx, directory)
+	result, err := project.InitializeWithOptions(ctx, directory, project.InitOptions{Force: *force})
 	if err != nil {
 		return err
 	}
@@ -283,8 +288,13 @@ func initCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if result.ConfigCreated {
 		fmt.Fprintf(&summary, "Project settings created: %s\n", project.ConfigPath)
+	} else if result.ConfigUpdated {
+		fmt.Fprintf(&summary, "Project checks refreshed: %s\nPrevious settings retained: %q\n", project.ConfigPath, result.ConfigBackup)
 	} else {
 		fmt.Fprintf(&summary, "Project settings preserved: %s\n", project.ConfigPath)
+	}
+	for _, source := range result.CheckSources {
+		fmt.Fprintf(&summary, "Check source: %q\n", source)
 	}
 	fmt.Fprintf(&summary, "Checks configured: %d; review project settings before execution.\n", len(result.Config.Checks))
 	fmt.Fprintln(&summary, "Private work inputs and run output are ignored and untracked.")

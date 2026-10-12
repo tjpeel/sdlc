@@ -158,6 +158,14 @@ Portable settings live in `.sdlc/project.json`:
 
 Each check is an argument array. The initial checks are suggestions based on
 detected project files; review and edit them for the project's requirements.
+.NET inspection prefers the complete Required checks section in `CONTRIBUTING.md`
+or `README.md`, then a simple CI sequence. Otherwise it derives restore, build and
+test commands from one solution or project, `global.json` and test-project metadata.
+VSTest and Microsoft Testing Platform use different arguments. Missing restores
+are added for the fresh check workspace; Compose sequences include an exit trap
+for teardown and enable `docker_tests`. The summary identifies the source files.
+Unsupported shell/setup context, conditional or custom test output paths and
+ambiguous targets require explicit configuration. Inspection executes no project commands.
 `input_files` starts empty. During a run, these exact relative files are copied
 only into the separate credential-free check worker. Use this for reviewed test
 configuration; it does not supply requirements to the provider. Files named
@@ -175,11 +183,18 @@ input, while service `env_file` supplies container environment. See the
 itself ignored and untracked and use settings for disposable test services.
 
 Repeated initialization validates and preserves existing settings, including
-custom checks, rather than replacing them with newly detected defaults. It
-rejects unsupported settings versions, invalid paths and unsafe filesystem links.
+custom checks. `sdlc init --force` repeats inspection and refreshes the `checks`
+and `docker_tests` fields. It preserves `input_files`, `branch_format`, NuGet cache
+preferences and saved runs. Before replacing changed settings it saves their exact
+previous bytes under the ignored `.sdlc/work/.archive/init-*/project.json` path,
+shown in the summary. If inspection cannot produce usable checks, existing settings
+are retained. Force can repair stale or invalid check arguments; the remaining
+preferences must still be valid. Forced initialization does not change frozen
+execution checkpoints. It rejects unsupported settings versions, invalid paths
+and unsafe filesystem links.
 No project checks run during initialization. It needs only local Git access;
 it does not fetch source, contact providers, bind an account profile or require
-Docker. `init` takes no arguments and remembers a unique GitHub origin identity locally,
+Docker. `init` accepts `--force` and remembers a unique GitHub origin identity locally,
 including SSH remote metadata. After initialization, use `sdlc github list` to inspect
 configured profiles and `sdlc github use` to check access and save repository selection outside the
 checkout; account setup does not write Git configuration. `sdlc run` captures source and starts ticket execution after GitHub and
@@ -475,7 +490,8 @@ The implementation requests checks on a clean committed candidate. SDLC executes
 without a host shell. Configure dependency installation as a check if required.
 No commands are guessed at run time. For .NET 10 `.slnx` repositories, choose
 commands that match the repository's `global.json`, SDK and VSTest or Microsoft
-Testing Platform configuration. Initialization does not generate .NET checks.
+Testing Platform configuration. `init` prepares supported .NET sequences locally;
+`init --force` refreshes them after repository guidance or manifests change.
 
 Configured `input_files` receive a separate copy in the check workspace. Their
 untracked files stay out of the provider workspace unless selected with

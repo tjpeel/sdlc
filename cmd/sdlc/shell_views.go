@@ -555,6 +555,7 @@ func onboardCommand(ctx context.Context, args []string, out io.Writer) error {
 				steps[1].State, steps[1].Category, steps[1].Reason = "configured; not executed", "unverified", fmt.Sprintf("%d check commands configured; results are not checked here.", len(cfg.Checks))
 			} else {
 				steps[1].Reason = "No check commands configured."
+				steps[1].Instruction = "Run sdlc init --force to inspect again, then review .sdlc/project.json; unresolved inference needs explicit checks."
 			}
 		} else {
 			steps[0].State, steps[0].Category, steps[0].Reason = "invalid; needs review", "problem", err.Error()

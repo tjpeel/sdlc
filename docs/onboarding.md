@@ -490,9 +490,10 @@ organisation access and terminal-independent supervision remain separate gates.
 The connected gates establish the supervised workflow. Both unattended Docker
 gates are also required before relying on the intended unattended solution.
 A small supervised real ticket can diagnose repository compatibility sooner.
-Run `sdlc init`; explicitly configure the repository's build, unit and integration
-commands, using passing existing baseline CI/tests as a starting point.
-Initialization does not infer .NET checks.
+Run `sdlc init` and review its inferred build, unit and integration commands
+against the repository's guidance and passing baseline CI/tests. Use
+`sdlc init --force` to refresh an existing configuration; incomplete inference
+still needs explicit checks. Initialization does not execute the checks.
 Use the repository's actual VSTest or Microsoft Testing Platform commands, not
 the fixture's test command by assumption.
 

@@ -425,7 +425,7 @@ sdlc github use --profile personal
 sdlc github status --verify
 ```
 
-`init` takes no arguments. It discovers local Git state, manifests and work paths, creates `.sdlc/work/`, and
+`init` discovers local Git state, manifests and work paths, creates `.sdlc/work/`, and
 protects it with Git's local `info/exclude` rule. It also creates or validates `.sdlc/project.json`. It needs
 no Docker/account login, runs no checks and makes no account selection. Private work must remain ignored and
 untracked; tracked/staged private paths cause failure. Adding an ignore rule does not remove earlier private
@@ -450,7 +450,10 @@ once to `github use` when no identity can be inferred; subsequent commands reuse
 `.sdlc/project.json` is portable project configuration and can be committed after review. Keep account data,
 vault references and private host paths out. Existing `package.json`, lockfiles, SDK selections and CI remain
 the project's authority; `init` may suggest checks from them but does not replace them. Repeated `init`
-preserves valid custom settings. Dependency installation must be an explicit check when required; the
+preserves valid custom settings. Use `sdlc init --force` to repeat inspection and refresh checks and
+Docker-test settings. It preserves inputs, branch format, NuGet cache preferences and saved runs,
+and backs up changed configuration under the ignored `.sdlc/work/.archive/` directory.
+Dependency installation must be an explicit check when required; the
 controller does not guess commands at run time.
 
 For npm, configure the repository's own commands, for example `["npm", "ci"]`, `["npm", "run", "test"]` and
@@ -458,8 +461,11 @@ For npm, configure the repository's own commands, for example `["npm", "ci"]`, `
 argument array, not a host shell string; checks run in order in a separate worker. There is no standalone
 `sdlc check`.
 
-.NET initialization does not infer checks. For a .NET 10 `.slnx` project, configure its actual solution/test
-paths and VSTest or Microsoft Testing Platform commands. The runtime's SDK must satisfy `global.json`; inspect
+.NET initialization reads required-check guidance, simple CI sequences and solution/test manifests
+to prepare restore, build and VSTest or Microsoft Testing Platform commands. It adds missing restore
+and guarantees teardown for supported Compose sequences. Review the identified source files and
+resolve any reported ambiguity; complex setup or custom test output paths need explicit checks.
+The runtime's SDK must satisfy `global.json`; inspect
 the installed image inventory rather than assuming that the host SDK is supplied to Docker. The public smoke
 fixture's settings illustrate one supported topology:
 

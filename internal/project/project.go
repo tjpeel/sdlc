@@ -2,6 +2,7 @@
 package project
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,10 +40,21 @@ type Result struct {
 	Tools, Tickets, Warnings []string
 	Config                   Config
 	ConfigCreated            bool
+	ConfigUpdated            bool
+	ConfigBackup             string
+	CheckSources             []string
 }
+
+type InitOptions struct{ Force bool }
 
 // Initialize inspects local files only; suggested checks are never executed.
 func Initialize(ctx context.Context, directory string) (Result, error) {
+	return InitializeWithOptions(ctx, directory, InitOptions{})
+}
+
+// InitializeWithOptions refreshes inferred checks only when explicitly forced.
+// Other project preferences and saved execution checkpoints are preserved.
+func InitializeWithOptions(ctx context.Context, directory string, options InitOptions) (Result, error) {
 	var r Result
 	if err := ctx.Err(); err != nil {
 		return r, err
@@ -100,6 +112,23 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 	r.Config.Version = 1
 	r.Config.InputFiles = []string{}
 	r.Config.BranchFormat = DefaultBranchFormat
+	dotnet, err := discoverDotnet(r.Root, r.Tools)
+	if err != nil {
+		return r, err
+	}
+	r.Config.Checks = append(r.Config.Checks, dotnet.checks...)
+	r.Config.DockerTests = dotnet.docker
+	r.CheckSources = dotnet.sources
+	r.Warnings = append(r.Warnings, dotnet.warnings...)
+	if len(r.Config.Checks) != 0 && len(r.CheckSources) == 0 {
+		for _, tool := range r.Tools {
+			if tool == "go.mod" || tool == "package.json" {
+				r.CheckSources = append(r.CheckSources, tool)
+			}
+		}
+	}
+	discovered := r.Config
+	var existingSettings []byte
 	exclude, err := git(ctx, r.Root, "rev-parse", "--git-path", "info/exclude")
 	if err != nil {
 		return r, err
@@ -111,6 +140,7 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 	exclude = filepath.Clean(exclude)
 	lockPath := filepath.Join(filepath.Dir(exclude), "sdlc-init.lock")
 	preflight := func() error {
+		r.Config = discovered
 		for _, path := range []string{filepath.Join(r.Root, ".sdlc"), filepath.Join(r.Root, ".sdlc/work"), filepath.Dir(exclude)} {
 			if e := directoryOrMissing(path); e != nil {
 				return e
@@ -143,7 +173,12 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 			return e
 		}
 		if existing != nil {
-			if e = decodeConfig(existing, &r.Config); e != nil {
+			if options.Force {
+				if len(discovered.Checks) == 0 || len(dotnet.checks) == 0 && len(dotnet.warnings) != 0 {
+					return errors.New("inspection found no usable checks; existing project settings retained; configure checks explicitly")
+				}
+			}
+			if e = decodeInitConfig(existing, &r.Config, discovered, options.Force); e != nil {
 				return e
 			}
 			for _, input := range r.Config.InputFiles {
@@ -155,6 +190,14 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 					return e
 				}
 			}
+		}
+		existingSettings = append([]byte(nil), existing...)
+		encoded, e := json.Marshal(r.Config)
+		if e != nil {
+			return e
+		}
+		if _, e = ParseConfig(encoded); e != nil {
+			return e
 		}
 		return nil
 	}
@@ -231,6 +274,21 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 		r.ConfigCreated = true
 	} else if err != nil {
 		return r, errors.New("cannot inspect project settings")
+	} else if options.Force {
+		data, _ = json.MarshalIndent(r.Config, "", "  ")
+		data = append(data, '\n')
+		if !bytes.Equal(data, existingSettings) {
+			r.ConfigBackup, err = backupInitSettings(r.Root, existingSettings)
+			if err != nil {
+				return r, err
+			}
+			if err = writeRegular(config, data, false, existingSettings); err != nil {
+				return r, err
+			}
+			r.ConfigUpdated = true
+		}
+	} else {
+		r.CheckSources = nil
 	}
 	if len(r.Remotes) == 0 {
 		r.Warnings = append(r.Warnings, "No Git remotes found.")
@@ -239,9 +297,47 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 		r.Warnings = append(r.Warnings, "No local ticket paths found.")
 	}
 	if len(r.Config.Checks) == 0 {
-		r.Warnings = append(r.Warnings, "No project checks configured; review project settings before launching work.")
+		r.Warnings = append(r.Warnings, "No project checks configured; run sdlc init --force to inspect again or configure checks before launching work.")
 	}
 	return r, nil
+}
+
+func backupInitSettings(root string, data []byte) (string, error) {
+	archive := filepath.Join(root, ".sdlc", "work", ".archive")
+	if err := directoryOrMissing(archive); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(archive, 0700); err != nil && !os.IsExist(err) {
+		return "", errors.New("cannot create private initialization backup directory")
+	}
+	directory, err := os.MkdirTemp(archive, "init-")
+	if err != nil {
+		return "", errors.New("cannot preserve previous project settings")
+	}
+	path := filepath.Join(directory, "project.json")
+	if err := writeRegular(path, data, true, nil); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func decodeInitConfig(data []byte, config *Config, discovered Config, force bool) error {
+	if !force {
+		return decodeConfig(data, config)
+	}
+	// Forced inspection replaces only generated fields, so stale or invalid check
+	// arguments do not prevent repair. All other preferences still pass validation.
+	var fields map[string]json.RawMessage
+	if !utf8.Valid(data) || json.Unmarshal(data, &fields) != nil || fields == nil {
+		return errors.New("project settings must contain valid version 1 JSON")
+	}
+	fields["checks"], _ = json.Marshal(discovered.Checks)
+	fields["docker_tests"], _ = json.Marshal(discovered.DockerTests)
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	return decodeConfig(encoded, config)
 }
 
 func git(ctx context.Context, directory string, args ...string) (string, error) {
@@ -336,7 +432,7 @@ func writeRegular(path string, data []byte, exclusive bool, expected []byte) err
 		return err
 	}
 	if !exclusive && string(original) != string(expected) {
-		return errors.New("Git excludes changed during initialization; retry to preserve edits")
+		return errors.New("project file changed during initialization; retry to preserve edits")
 	}
 	mode := os.FileMode(0600)
 	if statErr == nil {
@@ -370,17 +466,17 @@ func writeRegular(path string, data []byte, exclusive bool, expected []byte) err
 	}
 	current, currentErr := os.Lstat(path)
 	if statErr == nil && (currentErr != nil || !current.Mode().IsRegular() || !os.SameFile(before, current)) {
-		return errors.New("Git excludes changed during initialization")
+		return errors.New("project file changed during initialization")
 	}
 	if errors.Is(statErr, os.ErrNotExist) && !errors.Is(currentErr, os.ErrNotExist) {
-		return errors.New("Git excludes appeared during initialization; retry")
+		return errors.New("project file appeared during initialization; retry")
 	}
 	now, err := readOptional(path)
 	if err != nil || string(now) != string(original) {
-		return errors.New("Git excludes changed during initialization")
+		return errors.New("project file changed during initialization")
 	}
 	if err = os.Rename(f.Name(), path); err != nil {
-		return errors.New("cannot publish complete Git exclude file")
+		return errors.New("cannot publish complete project file")
 	}
 	return nil
 }

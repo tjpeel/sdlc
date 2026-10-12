@@ -48,7 +48,7 @@ func shellCommands() []shell.Command {
 		command("launch status", "Monitor", "Read one launch receipt without controlling its job", "/launch status --id UUID", false, "id json"),
 		command("terminal setup", "Setup", "Explicitly configure the official iTerm2 background-tab bridge", "/terminal setup", true, "json"),
 		command("terminal status", "Setup", "Read local background-terminal setup evidence", "/terminal status", false, "json"),
-		command("init", "Setup", "Review and save local project settings using the existing CLI", "/init", true, ""),
+		command("init", "Setup", "Inspect local project checks; force refreshes existing inferred settings", "/init [--force]", true, "force"),
 		command("update", "Setup", "Install SDLC; optionally refresh provider CLIs and catalogues and write their source pins", "/update [--pull] [--sdlc-only | --agent-tools [--update-dockerfile] | --dependencies] [--dry-run]", true, "source bin-dir pull sdlc-only cli-only agent-tools update-dockerfile dependencies dry-run"),
 		command("interactive", "Provider", "Temporarily hand the terminal to an official provider session", "/interactive [--provider codex|claude]", true, "provider approval permission-mode"),
 		command("auth login", "Setup", "Run the existing official login flow", "/auth login [--provider codex|claude] | --service github [--profile NAME]", true, "provider service profile"),

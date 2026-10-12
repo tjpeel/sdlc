@@ -139,10 +139,12 @@ one ticket does not authorise rewriting unrelated work.
 
 The initial target includes .NET 10 `.slnx` solutions with API or consumer code,
 unit tests and integration tests. Use the repository's reviewed check commands
-and orchestration. Initialization discovers `.slnx` files but does not generate
-.NET checks. Configure exact argument arrays in `.sdlc/project.json` that fit
+and orchestration. Initialization prepares supported .NET check sequences from
+required-check guidance, simple CI or manifests; `init --force` refreshes inferred
+checks while preserving other project preferences and saved runs. Review exact
+argument arrays in `.sdlc/project.json` that fit
 `global.json`, the SDK and the selected VSTest or Microsoft Testing Platform
-runner. Do not infer test separation from project names. See Microsoft's
+runner. Unsupported setup and ambiguous test output paths need explicit configuration. See Microsoft's
 [dotnet test guidance](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test).
 
 
