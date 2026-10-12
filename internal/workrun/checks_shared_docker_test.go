@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
+	"github.com/tjpeel/sdlc/internal/runtimepins"
 	"github.com/tjpeel/sdlc/internal/testproxy"
 )
 
@@ -27,7 +28,7 @@ func TestSharedCheckChild(t *testing.T) {
 	if selection == "" {
 		t.Skip("subprocess fixture")
 	}
-	var config struct{ Directory, Name, Workspace, Marker string }
+	var config struct{ Directory, Name, Workspace, Marker, DaemonImage string }
 	if json.Unmarshal([]byte(selection), &config) != nil {
 		t.Fatal("invalid child selection")
 	}
@@ -36,11 +37,19 @@ func TestSharedCheckChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checker := DockerChecker{Runtime: manager, ImageID: state.ImageID, DockerTests: true, DaemonImage: state.DependencyPins.DaemonImage, DaemonMode: SharedTestDaemon, nugetSeedDirectory: filepath.Join(config.Directory, "empty-host-nuget")}
+	checker := DockerChecker{Runtime: manager, ImageID: state.ImageID, DockerTests: true, DaemonImage: config.DaemonImage, DaemonMode: SharedTestDaemon, nugetSeedDirectory: filepath.Join(config.Directory, "empty-host-nuget")}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	script := strings.ReplaceAll(sharedComposeCheck, "__MARKER__", fmt.Sprintf("%q", config.Marker))
-	if err := checker.Check(ctx, config.Workspace, [][]string{{"python3", "-c", script}}, os.Stdout); err != nil {
+	err = checker.WithCandidate(ctx, config.Workspace, os.Stdout, func(scoped Checker) error {
+		prepare := "import pathlib; pathlib.Path('/workspace/phase-build').write_text('warm'); (pathlib.Path.home()/'phase-tool').write_text('warm')"
+		if err := scoped.Check(ctx, config.Workspace, [][]string{{"python3", "-c", prepare}}, os.Stdout); err != nil {
+			return err
+		}
+		request := VerificationRequest{ID: "compose", Purpose: "retain candidate build and HOME across separate requests", Commands: [][]string{{"python3", "-c", "import pathlib; assert pathlib.Path('/workspace/phase-build').read_text()=='warm'; assert (pathlib.Path.home()/'phase-tool').read_text()=='warm'\n" + script}}}
+		return scoped.(VerificationChecker).Verify(ctx, config.Workspace, request, os.Stdout)
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -98,8 +107,34 @@ func TestOfflineSharedDockerChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.DependencyPins == nil {
-		t.Fatal("fixture needs pinned daemon")
+	daemonImage := ""
+	if state.DependencyPins != nil {
+		daemonImage = state.DependencyPins.DaemonImage
+	} else {
+		pins, err := runtimepins.ReadDockerfile([]byte(state.BuildRecipe))
+		if err != nil {
+			t.Fatalf("fixture needs recorded daemon recipe: %v", err)
+		}
+		daemonImage = pins.DaemonImage
+	}
+	if runtimepins.ValidateDaemonImage(daemonImage) != nil {
+		// A source recipe may retain the legacy daemon tag. Freeze its locally
+		// cached public digest for this disposable fixture without changing
+		// the installed runtime descriptor or pulling through host auth.
+		data, err := base.Docker.Output(ctx, "image", "inspect", "--format", "{{json .RepoDigests}}", daemonImage)
+		var digests []string
+		if err != nil || json.Unmarshal(data, &digests) != nil || len(digests) == 0 {
+			t.Fatalf("fixture needs a locally cached public daemon digest: %v", err)
+		}
+		for _, reference := range digests {
+			if strings.HasPrefix(reference, "docker@sha256:") {
+				daemonImage += "@" + strings.SplitN(reference, "@", 2)[1]
+				break
+			}
+		}
+		if err := runtimepins.ValidateDaemonImage(daemonImage); err != nil {
+			t.Fatal(err)
+		}
 	}
 	root := realTemp(t)
 	if evidence := os.Getenv("SDLC_SHARED_DOCKER_EVIDENCE"); evidence != "" {
@@ -145,7 +180,7 @@ func TestOfflineSharedDockerChecks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "runtime."+manager.Name+".json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	checker := DockerChecker{Runtime: manager, DockerTests: true, DaemonImage: state.DependencyPins.DaemonImage, DaemonMode: SharedTestDaemon, nugetSeedDirectory: filepath.Join(root, "empty-host-nuget")}
+	checker := DockerChecker{Runtime: manager, DockerTests: true, DaemonImage: daemonImage, DaemonMode: SharedTestDaemon, nugetSeedDirectory: filepath.Join(root, "empty-host-nuget")}
 	s, err := newSharedChecks(checker, state, checker.DaemonImage)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +224,7 @@ func TestOfflineSharedDockerChecks(t *testing.T) {
 	}
 	start := func(marker string) child {
 		t.Helper()
-		selection, _ := json.Marshal(struct{ Directory, Name, Workspace, Marker string }{root, manager.Name, workspace, marker})
+		selection, _ := json.Marshal(struct{ Directory, Name, Workspace, Marker, DaemonImage string }{root, manager.Name, workspace, marker, daemonImage})
 		command := exec.CommandContext(ctx, executable, "-test.run=^TestSharedCheckChild$", "-test.v")
 		command.Env = append(os.Environ(), "SDLC_SHARED_CHECK_CHILD="+string(selection))
 		log := filepath.Join(root, marker+".log")

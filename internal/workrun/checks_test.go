@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,10 +27,19 @@ type checkDockerFake struct {
 	workerState      string
 	inspectFail      bool
 	daemonMissing    bool
+	fingerprints     []string
 }
 
 func (fake *checkDockerFake) Output(ctx context.Context, args ...string) ([]byte, error) {
 	fake.calls = append(fake.calls, append([]string(nil), args...))
+	if args[0] == "run" && slices.Contains(args, candidateFingerprint) {
+		digest := strings.Repeat("a", 64)
+		if len(fake.fingerprints) > 0 {
+			digest = fake.fingerprints[0]
+			fake.fingerprints = fake.fingerprints[1:]
+		}
+		return []byte(digest), nil
+	}
 	if fake.daemonMissing && args[0] == "run" && strings.Contains(strings.Join(args, " "), "--privileged") {
 		return nil, errors.New("pinned daemon is missing from the local image cache")
 	}

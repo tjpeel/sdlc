@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.20 - 2026-10-12
+
+### Changed
+
+- Reuse the candidate workspace and HOME across primary checks and additional verification within one controller phase. Baselines keep separate source and HOME.
+- Fall back to fresh check storage when a command changes tracked source or frozen inputs; retain separate request logs and clean up the shared candidate phase before publication.
+
 ## 0.1.0-beta.19 - 2026-10-12
 
 ### Changed

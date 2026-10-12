@@ -37,6 +37,7 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 // disposable storage. Privileged
 // containers are not a security boundary against hostile code.
 type DockerChecker struct {
+	workerSequence *int
 	NugetCache     *project.NugetCacheBudget
 	Runtime        runtimeimage.Manager
 	Runner         CheckCommandRunner
@@ -190,7 +191,11 @@ func (checker DockerChecker) Verify(ctx context.Context, workspace string, reque
 	}
 	return nil
 }
-func (checker DockerChecker) check(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline) (result error) {
+func (checker DockerChecker) check(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline) error {
+	return checker.checkPhase(ctx, workspace, commands, output, baseline, nil)
+}
+
+func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline, phase candidatePhase) (result error) {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -206,7 +211,7 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 			return err
 		}
 	}
-	if len(commands) == 0 {
+	if len(commands) == 0 && phase == nil {
 		return errors.New("repository checks are required")
 	}
 	for _, command := range commands {
@@ -278,7 +283,7 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 	}
 	name := "sdlc-check-" + hex.EncodeToString(token[:])
 	if checker.DockerTests && checker.DaemonMode == SharedTestDaemon {
-		return checker.checkShared(ctx, workspace, inputs, commands, output, baseline, name, state, daemonImage)
+		return checker.checkShared(ctx, workspace, inputs, commands, output, baseline, name, state, daemonImage, phase)
 	}
 	volumes := []string{name + "-workspace", name + "-home"}
 	if checker.DockerTests {
@@ -378,12 +383,20 @@ func (checker DockerChecker) check(ctx context.Context, workspace string, comman
 	if checker.DockerTests {
 		workerNetwork = "container:" + name + "-daemon"
 	}
-	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, workerNetwork, "type=volume,src="+volumes[0]+",dst=/workspace", []string{"type=volume,src=" + name + "-home,dst=/tmp/check-home"}, func() string {
-		if checker.DockerTests {
-			return "type=volume,src=" + volumes[2] + ",dst=/run/sdlc"
-		}
-		return ""
-	}(), nil, func(worker string) { cleanups = append(cleanups, []string{"rm", "--force", worker}) })
+	workspaceMount := "type=volume,src=" + volumes[0] + ",dst=/workspace"
+	execute := func(batch [][]string, batchOutput io.Writer) error {
+		return checker.executeChecks(ctx, workspace, batch, batchOutput, baseline, name, state.ImageID, workerNetwork, "type=volume,src="+volumes[0]+",dst=/workspace", []string{"type=volume,src=" + name + "-home,dst=/tmp/check-home"}, func() string {
+			if checker.DockerTests {
+				return "type=volume,src=" + volumes[2] + ",dst=/run/sdlc"
+			}
+			return ""
+		}(), nil, func(worker string) { cleanups = append(cleanups, []string{"rm", "--force", worker}) })
+	}
+	if phase != nil {
+		cleanups = append(cleanups, []string{"rm", "--force", name + "-fingerprint"})
+		return checker.runCandidatePhase(ctx, workspace, inputs, workspaceMount, "/workspace", name, state.ImageID, execute, phase)
+	}
+	return execute(commands, output)
 }
 
 func (checker DockerChecker) executeChecks(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name, imageID, workerNetwork, workspaceMount string, homeMounts []string, socketMount string, prefix []string, onWorker func(string)) error {
@@ -397,7 +410,12 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 	}
 	approvedPaths := diagnosticSourcePaths(ctx, workspace)
 	for i, command := range commands {
-		worker := fmt.Sprintf("%s-worker-%d", name, i)
+		number := i
+		if checker.workerSequence != nil {
+			number = *checker.workerSequence
+			*checker.workerSequence++
+		}
+		worker := fmt.Sprintf("%s-worker-%d", name, number)
 		onWorker(worker)
 		if err = json.NewEncoder(output).Encode(command); err != nil {
 			return err

@@ -233,6 +233,7 @@ type Journal struct {
 	Rounds                    int                   `json:"rounds"`
 	Attempt                   int                   `json:"attempt"`
 	CheckAttempt              int                   `json:"check_attempt"`
+	CandidatePhasePending     bool                  `json:"candidate_phase_pending,omitempty"`
 	Instructions              string                `json:"instructions"`
 	ResumeState               string                `json:"resume_state,omitempty"`
 	PendingRole               string                `json:"pending_role,omitempty"`

@@ -33,10 +33,18 @@ read through one batch process rather than starting Git for each file. Existing
 passing check evidence for an unchanged candidate remains reusable under the
 controller's existing verification rules.
 
-Every check phase has a private HOME that lasts across its commands. A restore,
-local tool installation and later build therefore see the same package and tool
-state. Candidate and baseline phases have separate homes. Legacy disposable
-checks receive the same session lifetime, without persistent package reuse.
+Primary candidate checks and additional candidate verification in one controller
+phase share a workspace and private HOME. A restore, local tool installation
+and later build therefore see the same package, tool and build state. Setup and
+cleanup have a private `candidate-phase-*.log`; each request retains its own
+check log and evidence. Candidate storage is cleaned before publication or repair.
+
+A fingerprint includes tracked source and frozen inputs while allowing untracked
+build outputs. If a check changes these inputs, later requests fall back to fresh
+storage. Baselines always use separate source and HOME. Legacy disposable checks
+receive the same candidate lifetime, without persistent package reuse. Resuming
+starts a new phase and retains existing passing evidence under the controller's
+usual revision and input checks.
 
 Shared sessions also receive private NuGet packages and scratch directories.
 The controller retains an immutable package seed in its Linux work volume and

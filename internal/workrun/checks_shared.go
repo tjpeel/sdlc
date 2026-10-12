@@ -339,7 +339,7 @@ func (s *sharedChecks) cleanup(ctx context.Context, name string) error {
 	return os.Remove(filepath.Join(s.directory, name+".session"))
 }
 
-func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name string, state runtimeimage.State, daemonImage string) (result error) {
+func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name string, state runtimeimage.State, daemonImage string, phase candidatePhase) (result error) {
 	if output == nil {
 		output = io.Discard
 	}
@@ -470,7 +470,14 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	if cacheSupported {
 		homeMounts = append(homeMounts, "type=bind,src=/sdlc/nuget-sessions/"+name+"/packages,dst=/tmp/check-home/.nuget/packages", "type=bind,src=/sdlc/nuget-sessions/"+name+"/scratch,dst=/tmp/check-home/.nuget/scratch")
 	}
-	return checker.executeChecks(ctx, workspace, commands, output, baseline, name, state.ImageID, "container:"+name+"-proxy", "type=bind,src="+root+",dst=/workspace", homeMounts, "type=bind,src="+socket+",dst=/run/sdlc", s.prefix(), func(string) {})
+	workspaceMount := "type=bind,src=" + root + ",dst=/workspace"
+	execute := func(batch [][]string, batchOutput io.Writer) error {
+		return checker.executeChecks(ctx, workspace, batch, batchOutput, baseline, name, state.ImageID, "container:"+name+"-proxy", workspaceMount, homeMounts, "type=bind,src="+socket+",dst=/run/sdlc", s.prefix(), func(string) {})
+	}
+	if phase != nil {
+		return checker.runCandidatePhase(ctx, workspace, inputs, "type=volume,src="+s.workVolume+",dst=/sdlc", root, name, state.ImageID, execute, phase)
+	}
+	return execute(commands, output)
 }
 
 // Resolve only the selected project's declarative image references. The helper
