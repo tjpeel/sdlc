@@ -1,6 +1,7 @@
 package workrun
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -68,5 +69,41 @@ func TestOfflineCandidatePhase(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOfflineDotnetCheckWorkers(t *testing.T) {
+	if os.Getenv("SDLC_OFFLINE_SHARED_DOCKER_TESTS") != "1" {
+		t.Skip("set SDLC_OFFLINE_SHARED_DOCKER_TESTS=1 for credential-free SDK checks")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	manager, err := runtimeimage.New(io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := realTemp(t)
+	for path, data := range map[string]string{
+		"App.csproj":   `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>`,
+		"Example.cs":   `public class Example { public int Count => 1; }`,
+		"NuGet.Config": `<configuration><packageSources><clear /></packageSources></configuration>`,
+	} {
+		if err := os.WriteFile(filepath.Join(source, path), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "--initial-branch=main", "--template="}, {"add", "."}, {"-c", "user.name=Example", "-c", "user.email=example@example.invalid", "commit", "-m", "Create disposable SDK fixture"}} {
+		if _, err := isolatedGit(ctx, source, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checker := DockerChecker{Runtime: manager}
+	var output bytes.Buffer
+	restore := "import os,subprocess; assert os.environ['DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE']=='true'; assert os.environ['DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK']=='true'; subprocess.run(['dotnet','restore','App.csproj','--configfile','NuGet.Config'],check=True)"
+	if err := checker.Check(ctx, source, [][]string{{"python3", "-c", restore}, {"dotnet", "build", "App.csproj", "--no-restore", "--disable-build-servers", "-p:UseSharedCompilation=false"}}, &output); err != nil {
+		t.Fatalf("SDK checks: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "Build succeeded") || strings.Contains(output.String(), "An issue was encountered verifying workloads") {
+		t.Fatalf("unexpected SDK check outcome: %s", output.String())
 	}
 }

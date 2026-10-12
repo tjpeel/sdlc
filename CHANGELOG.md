@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.21 - 2026-10-12
+
+### Changed
+
+- Disable workload update notifications and the first-run workload integrity check in credential-free .NET check workers.
+- Document runner-specific focused tests, fully qualified xUnit/MTP method filters and minimum expected test counts.
+
 ## 0.1.0-beta.20 - 2026-10-12
 
 ### Changed

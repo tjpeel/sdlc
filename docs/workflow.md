@@ -145,6 +145,37 @@ and orchestration. Initialization discovers `.slnx` files but does not generate
 runner. Do not infer test separation from project names. See Microsoft's
 [dotnet test guidance](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test).
 
+
+For an xUnit v3 project using the native .NET 10 Microsoft Testing Platform
+runner, a focused check can use the following argument array after the build:
+
+```json
+["dotnet", "test", "--project", "tests/Example.Tests/Example.Tests.csproj",
+ "--no-build", "--", "--filter-method",
+ "Example.Tests.CountTests.ReturnsCount", "--minimum-expected-tests", "1"]
+```
+
+`--filter-method` matches the fully qualified method name. Combining a class
+filter with only a short method name can select no tests. Check the result's
+executed test count; do not accept an empty selection as verification. With
+.NET 8/9 MTP integration, use the positional project form and the `--` separator.
+For VSTest, use its own `--filter` syntax, for example
+`FullyQualifiedName=Example.Tests.CountTests.ReturnsCount`. Consult the selected
+runner's `--help`, [Microsoft's runner guidance](https://learn.microsoft.com/en-us/dotnet/core/testing/unit-testing-with-dotnet-test)
+and [xUnit's MTP documentation](https://xunit.net/docs/getting-started/v3/microsoft-testing-platform).
+Use `--no-build` only when this candidate phase already produced the requested
+configuration and framework's build outputs.
+
+SDLC's fixed SDK check workers set
+`DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true` and
+`DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=true`. These control separate SDK activities;
+the latter skips the first-run workload check that can emit the workload
+verification warning. No workload update runs in the read-only worker. Projects
+requiring installed workloads need an appropriate runtime; they can explicitly
+override the integrity flag in their check command. Nested SDK containers use
+their own image/environment settings, so set these flags there when appropriate.
+See [Microsoft's environment-variable reference](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-environment-variables).
+
 Checks and dependency installation run in separate disposable workers without
 provider caches, host signing keys, SSH agents or GitHub publishing credentials.
 Configured `input_files` supply exact test configuration to those workers;
