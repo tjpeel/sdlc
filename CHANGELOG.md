@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.17 - 2026-10-12
+
+### Changed
+
+- Name new publication branches from the work reference and ticket description, preserving valid reference case and omitting ticket sequence numbers and run IDs. Project `branch_format` supports `{reference}` and `{ticket}`, defaulting to `{reference}-{ticket}`. Individual and feature previews show resolved names, duplicate feature branch names stop before execution, and resumed runs retain their recorded branches.
+
 ## 0.1.0-beta.16 - 2026-10-10
 
 ### Fixed

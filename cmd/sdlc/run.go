@@ -86,7 +86,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.runtimeName, "runtime", "", "named runtime for one ticket; resume uses the recorded selection")
 	flags.StringVar(&options.headroomMode, "headroom", "off", "provider route: off, passthrough or optimize (opt-in local Headroom)")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
-	flags.StringVar(&options.branch, "branch", "", "destination branch; defaults to a unique ticket branch")
+	flags.StringVar(&options.branch, "branch", "", "explicit destination branch; defaults to project branch_format")
 	flags.StringVar(&options.repository, "repo", "", "GitHub owner/repo; defaults to saved SDLC identity, then origin")
 	flags.StringVar(&options.model, "model", "", "implementation lead model")
 	flags.StringVar(&options.effort, "effort", "", "implementation lead reasoning effort")
@@ -375,7 +375,16 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 				return err
 			}
 		}
-		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{RuntimeName: options.runtimeName, GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: options.branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		branch := options.branch
+		if branch == "" {
+			branch, err = project.BranchName(ctx, work.Root, options.reference, ticket, launch.Config.BranchFormat)
+		} else {
+			err = project.ValidateBranchName(ctx, work.Root, branch)
+		}
+		if err != nil {
+			return err
+		}
+		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{RuntimeName: options.runtimeName, GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
 		journal.Plan.Headroom, err = headroom.Selection(options.headroomMode)
 		if err != nil {
 			return err
@@ -427,10 +436,6 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		if err != nil {
 			return err
-		}
-		branch := options.branch
-		if branch == "" {
-			branch = "work/" + branchPart(options.reference) + "/" + branchPart(strings.TrimSuffix(ticket, ".md")) + "-" + id[:8]
 		}
 		journal.Workspace = filepath.Join(directory, "workspace")
 		var plan workrun.Plan
@@ -765,18 +770,6 @@ func printSelectedPlan(output io.Writer, journal workrun.Journal, structured boo
 		Plan    workrun.Plan `json:"plan"`
 		Notice  string       `json:"notice"`
 	}{1, "ticket", true, journal.ID, journal.Plan, "Offline plan; authentication and model access have not been checked. Content hashes and source capture are established during execution."})
-}
-
-func branchPart(value string) string {
-	result := regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(value), "-")
-	result = strings.Trim(result, "-")
-	if len(result) > 64 {
-		result = strings.TrimRight(result[:64], "-")
-	}
-	if result == "" {
-		return "work"
-	}
-	return result
 }
 
 func inCI() bool {

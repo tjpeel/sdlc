@@ -466,6 +466,7 @@ fixture's settings illustrate one supported topology:
 ```json
 {
   "version": 1,
+  "branch_format": "{reference}-{ticket}",
   "checks": [
     ["dotnet", "build", "Smoke.slnx"],
     ["dotnet", "test", "tests/Smoke.UnitTests/Smoke.UnitTests.csproj"],
@@ -552,9 +553,13 @@ shows the requested models and efforts. `--model`, `--effort`, `--review-model` 
 new lead settings. They do not establish account entitlement or replace the image's subagent policies.
 Provider-reported model mismatches stop the run; missing model reports remain unverified.
 
-SDLC captures source, local changes and selected inputs into a separate workspace and creates a unique
-`work/...` publication branch. Use `--base` only for an approved different local base. Let it generate
-branches unless you have a reason to supply `--branch`. It freezes the image, models, input hashes, Git
+SDLC captures source, local changes and selected inputs into a separate workspace. New publication branches
+default to `<work-reference>-<ticket-description>`: `TASK-123` and `01-add-cache.md` produce
+`TASK-123-add-cache`. Valid reference case is preserved, and the filename's sequence number and `.md` are
+removed. An optional `branch_format` in `.sdlc/project.json` can use `{reference}` and `{ticket}`; the
+default is `{reference}-{ticket}`. Both individual and `--all` previews show the selected names.
+Feature plans reject duplicate branch names; existing runs keep their recorded names. Use `--base` only
+for an approved different local base and `--branch` for an explicit individual-run name. It freezes the image, models, input hashes, Git
 name/email, account/repository IDs and signing identity before provider work.
 
 The implementation makes candidate commits. The controller checks the committed candidate in an isolated

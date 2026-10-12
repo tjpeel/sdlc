@@ -111,6 +111,45 @@ func (w *seriesWriter) Write(data []byte) (int, error) {
 
 func sameSeriesConfig(a, b project.Config) bool { return reflect.DeepEqual(a, b) }
 
+func seriesBranches(ctx context.Context, plan workseries.Plan, config project.Config, saved map[string]workseries.Result) (map[string]string, error) {
+	branches := map[string]string{}
+	owners := map[string]string{}
+	for _, ticket := range plan.Tickets {
+		branch := saved[ticket.File].Branch
+		if previous := saved[ticket.File]; branch == "" && previous.RunID != "" {
+			directory, err := workrun.RunDirectory(plan.Root, plan.Reference, ticket.File, previous.RunID, false)
+			if err != nil {
+				return nil, err
+			}
+			if previous.Directory != "" && previous.Directory != directory {
+				return nil, fmt.Errorf("saved ticket run directory changed")
+			}
+			journal, err := workrun.Load(directory)
+			if err == nil {
+				if journal.Plan.Root != plan.Root || journal.Plan.Reference != plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket.File {
+					return nil, fmt.Errorf("saved ticket run does not match the selected work")
+				}
+				branch = journal.Plan.Branch
+			} else if !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
+		if branch == "" {
+			var err error
+			branch, err = project.BranchName(ctx, plan.Root, plan.Reference, ticket.File, config.BranchFormat)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if previous, exists := owners[branch]; exists {
+			return nil, fmt.Errorf("tickets %s and %s resolve to the same branch %s; give their filenames distinct descriptions", previous, ticket.File, branch)
+		}
+		owners[branch] = ticket.File
+		branches[ticket.File] = branch
+	}
+	return branches, nil
+}
+
 func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer) error {
 	current := options.root
 	var err error
@@ -176,6 +215,10 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if err != nil {
 		return err
 	}
+	branches, err := seriesBranches(ctx, plan, selections.Config, state.Results)
+	if err != nil {
+		return err
+	}
 	if !options.jsonOutput {
 		workseries.PrintPlan(output, plan)
 	}
@@ -189,6 +232,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 				Parallel      int                          `json:"parallel"`
 				Watch         bool                         `json:"watch"`
 				Roles         map[string]workrun.Roles     `json:"roles"`
+				Branches      map[string]string            `json:"branches"`
 				Checks        [][]string                   `json:"checks"`
 				CheckInputs   []string                     `json:"check_inputs"`
 				Inputs        []string                     `json:"inputs"`
@@ -199,7 +243,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 				InputHashes   map[string]string            `json:"input_hashes,omitempty"`
 				Saved         map[string]workseries.Result `json:"saved,omitempty"`
 				Notice        string                       `json:"notice"`
-			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
+			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
 		}
 		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
 		for _, ticket := range plan.Tickets {
@@ -208,6 +252,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			}
 		}
 		for _, ticket := range plan.Tickets {
+			fmt.Fprintf(output, "Branch %s: %s\n", ticket.File, branches[ticket.File])
 			fmt.Fprintf(output, "Requirement inputs for %s: %v\n", ticket.File, selections.ticketInputs(plan.Reference, ticket.File))
 			roles := selections.Roles[ticket.File]
 			fmt.Fprintf(output, "%s: implementation %s/%s (%s); review %s/%s (%s).\n", ticket.File, roles.Implementation.Provider, roles.Implementation.Name, roles.Implementation.Effort, roles.Review.Provider, roles.Review.Name, roles.Review.Effort)
@@ -797,7 +842,7 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	options.all, options.watch, options.alternate = false, false, false
 	options.featureOwned = true
 	options.root, options.reference, options.ticket, options.runID = d.plan.Root, d.plan.Reference, ticket.File, previous.RunID
-	options.base, options.branch, options.repository, options.githubProfile = target.Base, "", d.settings.Repository, d.settings.GitHubProfile
+	options.base, options.branch, options.repository, options.githubProfile = target.Base, previous.Branch, d.settings.Repository, d.settings.GitHubProfile
 	options.inputs, options.dockerTests = d.settings.ticketInputs(d.plan.Reference, ticket.File), d.settings.DockerTests
 	options.frozenInputs = true
 	roles := d.settings.Roles[ticket.File]

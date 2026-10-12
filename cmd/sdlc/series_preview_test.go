@@ -14,6 +14,26 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
+func TestFeaturePreviewRejectsDuplicateBranchNames(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	if err := os.Remove(filepath.Join(root, ".sdlc/work/TASK-1/tickets/02-other.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdlc/work/TASK-1/tickets/02-selected.md"), []byte("# Second selected task\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := offlinePlan(context.Background(), []string{"--reference", "TASK-1", "--all"}, root)
+	if err == nil || !strings.Contains(err.Error(), "same branch TASK-1-selected") {
+		t.Fatalf("duplicate branch was not rejected: %v", err)
+	}
+	for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR"), filepath.Join(root, ".sdlc/work/TASK-1/series")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("duplicate branch preview touched %s", path)
+		}
+	}
+}
+
 func TestFeaturePreviewTracksExecutionSelections(t *testing.T) {
 	root := runGitFixture(t)
 	marker := forbidConnectedRunCommands(t, root)
@@ -28,6 +48,7 @@ func TestFeaturePreviewTracksExecutionSelections(t *testing.T) {
 	}
 	baseline := preview(args)
 	var result struct {
+		Branches    map[string]string `json:"branches"`
 		Roles       map[string]workrun.Roles
 		Checks      [][]string
 		CheckInputs []string `json:"check_inputs"`
@@ -36,6 +57,9 @@ func TestFeaturePreviewTracksExecutionSelections(t *testing.T) {
 	}
 	if err := json.Unmarshal(baseline, &result); err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Branches, map[string]string{"01-selected.md": "TASK-1-selected", "02-other.md": "TASK-1-other"}) {
+		t.Fatalf("unexpected feature branches: %+v", result.Branches)
 	}
 	if result.Roles["01-selected.md"] != workrun.DefaultModels().Codex || result.Roles["02-other.md"] != workrun.DefaultModels().Claude || !reflect.DeepEqual(result.CheckInputs, []string{"README.md"}) || len(result.Checks) == 0 {
 		t.Fatalf("missing resolved selections: %s", baseline)
@@ -114,6 +138,7 @@ func TestFeatureResumePreviewUsesFrozenSelections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var preview struct {
+		Branches    map[string]string `json:"branches"`
 		Headroom    headroom.Config
 		Roles       map[string]workrun.Roles
 		Checks      [][]string
@@ -121,6 +146,9 @@ func TestFeatureResumePreviewUsesFrozenSelections(t *testing.T) {
 	}
 	if err := json.Unmarshal(baseline, &preview); err != nil {
 		t.Fatal(err)
+	}
+	if preview.Branches["01-selected.md"] != journal.Plan.Branch {
+		t.Fatalf("saved branch changed: %q; want %q", preview.Branches["01-selected.md"], journal.Plan.Branch)
 	}
 	if preview.Headroom != config || !reflect.DeepEqual(preview.Roles, driver.settings.Roles) || !reflect.DeepEqual(preview.Checks, driver.settings.Config.Checks) || !reflect.DeepEqual(preview.InputHashes, driver.settings.InputHashes) {
 		t.Fatalf("frozen selections lost: %s", baseline)

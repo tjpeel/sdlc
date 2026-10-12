@@ -406,6 +406,55 @@ func TestRunDryRunIsOfflineAndPreservesProviderRoles(t *testing.T) {
 	}
 }
 
+func TestRunDryRunResolvesDefaultWorkReferenceBranch(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	var output bytes.Buffer
+	if err := runCommand(context.Background(), runArgs("--repo", "example/project", "--dry-run", "--json"), &output); err != nil {
+		t.Fatal(err)
+	}
+	var preview struct {
+		Plan workrun.Plan `json:"plan"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Plan.Branch != "TASK-1-selected" {
+		t.Fatalf("unexpected planned branch: %q", preview.Plan.Branch)
+	}
+	for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR"), filepath.Join(root, ".sdlc/work/TASK-1/runs")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("offline branch planning touched %s", path)
+		}
+	}
+}
+
+func TestRunDryRunUsesProjectBranchFormatAndExplicitOverride(t *testing.T) {
+	root := runGitFixture(t)
+	forbidConnectedRunCommands(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".sdlc/project.json"), []byte(`{"version":1,"checks":[],"input_files":[],"branch_format":"{reference}/{ticket}"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, override := range []string{"", "TASK-1-chosen-name"} {
+		args := runArgs("--repo", "example/project", "--dry-run", "--json")
+		want := "TASK-1/selected"
+		if override != "" {
+			args = append(args, "--branch", override)
+			want = override
+		}
+		var output bytes.Buffer
+		if err := runCommand(context.Background(), args, &output); err != nil {
+			t.Fatal(err)
+		}
+		var preview struct {
+			Plan workrun.Plan `json:"plan"`
+		}
+		if err := json.Unmarshal(output.Bytes(), &preview); err != nil || preview.Plan.Branch != want {
+			t.Fatalf("branch=%q error=%v; want %q", preview.Plan.Branch, err, want)
+		}
+	}
+}
+
 func TestNewRunInheritsProjectDockerTestsUnlessOverridden(t *testing.T) {
 	for _, feature := range []bool{false, true} {
 		for _, selection := range []string{"default", "enabled", "disabled"} {

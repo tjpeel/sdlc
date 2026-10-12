@@ -24,10 +24,11 @@ const ConfigPath = ".sdlc/project.json"
 const maximumSize = 64 * 1024
 
 type Config struct {
-	Version     int        `json:"version"`
-	Checks      [][]string `json:"checks"`
-	InputFiles  []string   `json:"input_files"`
-	DockerTests bool       `json:"docker_tests,omitempty"`
+	Version      int        `json:"version"`
+	Checks       [][]string `json:"checks"`
+	InputFiles   []string   `json:"input_files"`
+	DockerTests  bool       `json:"docker_tests,omitempty"`
+	BranchFormat string     `json:"branch_format,omitempty"`
 }
 type Remote struct{ Name, Identity string }
 type Result struct {
@@ -97,6 +98,7 @@ func Initialize(ctx context.Context, directory string) (Result, error) {
 	}
 	r.Config.Version = 1
 	r.Config.InputFiles = []string{}
+	r.Config.BranchFormat = DefaultBranchFormat
 	exclude, err := git(ctx, r.Root, "rev-parse", "--git-path", "info/exclude")
 	if err != nil {
 		return r, err
@@ -419,6 +421,9 @@ func decodeConfig(data []byte, c *Config) error {
 		if !portablePath(path) {
 			return errors.New("input_files must use relative paths without traversal or control characters")
 		}
+	}
+	if err := validateBranchFormat(c.BranchFormat); err != nil {
+		return err
 	}
 	*target = decoded
 	return nil

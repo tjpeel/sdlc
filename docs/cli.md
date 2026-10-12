@@ -150,6 +150,7 @@ Portable settings live in `.sdlc/project.json`:
 ```json
 {
   "version": 1,
+  "branch_format": "{reference}-{ticket}",
   "checks": [["go", "test", "./..."], ["go", "vet", "./..."]],
   "input_files": []
 }
@@ -366,7 +367,7 @@ metadata and ambiguous selection fail even during dry-run.
 | `--provider` | `codex`; use `claude` to reverse the implementation/review roles. |
 | `--input` | Repeatable exact path relative to the project; visible to both providers. |
 | `--base` | `main`; must exist locally, be included in source HEAD, and match the GitHub base at publication. |
-| `--branch` | Unique `work/<reference>/<ticket-stem>-<run-prefix>` branch. |
+| `--branch` | Explicit override; defaults to the project's `branch_format`, or `{reference}-{ticket}` when omitted. |
 | `--repo` | GitHub.com `OWNER/REPO`; defaults to saved selection, then initialized identity, then legacy origin discovery. Supply it when no identity can be inferred. |
 | `--github-profile` | Select a registered account/key pair for an unbound repository; omission uses saved repository selection or a unique owner pair or sole configured pair. A conflicting saved selection fails. |
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
@@ -376,6 +377,8 @@ metadata and ambiguous selection fail even during dry-run.
 | `--resume` | Continue a recorded run ID with its original settings. |
 | `--answer-file` | Bounded nonempty UTF-8 human answer, only with `--resume`. |
 | `--dry-run` | Print an offline plan. |
+
+New branch names use the exact work reference when Git accepts it, with a branch-safe rendering for references containing spaces or invalid characters. `{ticket}` is the lowercase description from the numbered filename, with its sequence number and `.md` removed: reference `TASK-123` and ticket `01-add-cache.md` produce `TASK-123-add-cache`. No run ID is appended. `branch_format` must start with `{reference}` and contain each supported placeholder exactly once; `{reference}/{ticket}` is an alternative. Planned names are validated and shown before starting work. Feature plans reject tickets that resolve to the same name. Use `--branch` for an explicit individual-run name; resumed runs always keep their recorded branch.
 
 Before execution, configure the selected [GitHub and signing profile](#github-login-and-signing).
 SDLC freezes its account ID, repository ID/canonical name, effective project Git
