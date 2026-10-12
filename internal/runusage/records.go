@@ -206,8 +206,12 @@ func validateAttempt(a Attempt) error {
 	if err := validateUsage(a.Usage); err != nil {
 		return err
 	}
-	if a.Usage.Subscription != nil && a.Provider != "codex" {
-		return fmt.Errorf("subscription snapshot provider mismatch")
+	if a.Usage.Subscription != nil {
+		for _, snapshot := range []*SubscriptionSnapshot{a.Usage.Subscription.Before, a.Usage.Subscription.After} {
+			if snapshot != nil && snapshot.Source != subscriptionSource(a.Provider) {
+				return fmt.Errorf("subscription snapshot provider mismatch")
+			}
+		}
 	}
 	if value := a.EventTiming; value != nil {
 		if value.Events < 0 || value.Events > maxTokenCount || value.LongestGapMS < 0 || value.LongestGapMS > maxTokenCount {

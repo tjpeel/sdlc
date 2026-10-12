@@ -93,10 +93,16 @@ client's local App Server protocol.
 
 ## Subscription percentages
 
-New Codex provider invocations capture percentage remaining immediately before
+New Codex and Claude provider invocations capture percentage remaining immediately before
 native model work and after it exits, including ordinary failures. The worker
-uses its existing selected login and sends only initialization and
+uses its existing selected login. Codex sends only initialization and
 `account/rateLimits/read` requests to the official `codex app-server` client.
+Claude uses the native stream-json `get_usage` control request declared in the
+[official Agent SDK](https://app.unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.220/files/sdk.d.ts).
+That interface is experimental and was checked against Claude Code 2.1.296;
+unsupported clients or missing windows remain unknown. Its `utilization` is a
+percentage from 0 to 100, unlike the 0-to-1 native `rate_limit_event` ratio.
+Only reported windows are retained; model cost and account metadata are discarded.
 There is no model prompt or direct authenticated HTTP request. A four-second
 deadline limits each probe; unavailable or unsupported clients leave an explicit
 unknown result and do not prevent native work.
@@ -118,7 +124,7 @@ coexist with real token use. The counters describe the account, so concurrent
 sessions can contribute to a change. Do not change login while a run is active.
 
 Older runs cannot recover a missed starting snapshot. Claude's native quota
-events remain last observations rather than paired preflight/end snapshots.
+events remain separate last observations and do not replace either boundary.
 
 ## Comparing Headroom
 

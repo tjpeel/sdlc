@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.24 - 2026-10-12
+
+### Added
+
+- Capture Claude subscription percentage remaining before and after native work through the official client's experimental usage control request. Show percentage points used alongside Codex, retaining unknown results for unsupported clients, missing data or changed quota windows.
+- Verify both pinned clients' quota protocols without authentication, network access or model prompts. Keep Claude's percentage-valued usage snapshots separate from native quota-event ratios and retain only selected numeric fields.
+
 ## 0.1.0-beta.23 - 2026-10-12
 
 ### Added

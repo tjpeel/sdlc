@@ -59,6 +59,14 @@ container. See [Claude permission modes](https://code.claude.com/docs/en/permiss
 Ticket runs submit the account owner's selected work through native `claude -p`;
 SDLC does not override managed restrictions.
 SDLC does not extract token fields or use them for custom provider requests.
+Quota probes initialize a separate native `claude -p` stream-json control session
+and send only `get_usage`, without a user message or model prompt. The
+[published Agent SDK declaration](https://app.unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.220/files/sdk.d.ts)
+marks this usage method experimental. The adapter was checked against Claude
+Code 2.1.296 on 12 October 2026; it degrades to unknown on an unavailable window
+or incompatible response. The official binary owns authentication and any service
+request. SDLC decodes neither credentials nor authenticated HTTP traffic, and
+discards session cost, behaviour and account metadata from the response.
 When the native client atomically refreshes its cache, SDLC preserves that opaque
 file in the same user's private login volume, without decoding its contents.
 Persistence works across Docker mounts; a failed transfer retains the private

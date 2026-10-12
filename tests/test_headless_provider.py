@@ -150,10 +150,42 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(before.st_ino, native_config.stat().st_ino)
 
     def test_quota_snapshots_bracket_native_work(self):
-        phases = []
-        self.capture.side_effect = lambda provider, phase, env: phases.append(phase)
-        self.run_client('codex', effect=lambda path: phases.append('native'))
-        self.assertEqual(phases, ['before', 'native', 'after'])
+        for provider in ('codex', 'claude'):
+            phases = []
+            self.capture.side_effect = lambda provider, phase, env: phases.append(phase)
+            self.run_client(provider, effect=lambda path: phases.append('native'))
+            self.assertEqual(phases, ['before', 'native', 'after'])
+
+    def test_probe_auth_refresh_is_persisted_opaquely_before_and_after_work(self):
+        for target_phase in ('before', 'after', 'both'):
+            with self.subTest(phase=target_phase):
+                refreshed = []
+                def capture(provider, phase, env):
+                    if phase != target_phase and target_phase != 'both':
+                        return
+                    path = Path(env['CLAUDE_CONFIG_DIR']) / native.FILES['claude']
+                    value = ('synthetic-unstructured-refresh-' + phase).encode()
+                    temporary = path.parent / '.new-native-cache'
+                    temporary.write_bytes(value)
+                    temporary.chmod(0o600)
+                    os.replace(temporary, path)
+                    refreshed.append(value)
+                self.capture.side_effect = capture
+                def launch(command, env, cwd, stdin):
+                    path = Path(env['CLAUDE_CONFIG_DIR']) / native.FILES['claude']
+                    self.assertEqual(stdin.read(), self.prompt.read_bytes())
+                    if refreshed:
+                        self.assertFalse(path.is_symlink())
+                        self.assertEqual(path.read_bytes(), refreshed[-1])
+                    class Child:
+                        def wait(self):
+                            return 0
+                    return Child()
+                with patch.object(subprocess, 'Popen', side_effect=launch):
+                    self.assertEqual(headless.headless('claude', 'example-model', 'high', '', False, self.cache), 0)
+                self.assertEqual((self.cache / native.FILES['claude']).read_bytes(), refreshed[-1])
+                self.assertFalse((self.session/'claude'/native.FILES['claude']).exists())
+                self.assertFalse((self.session/'claude'/headless.CLAUDE_REFRESH_BASE).exists())
 
     def test_quota_after_snapshot_survives_native_launch_failure(self):
         phases = []

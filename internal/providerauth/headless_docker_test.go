@@ -45,6 +45,38 @@ print('Official Codex initialize/rate-limit protocol responded without authentic
 	t.Log(string(output))
 }
 
+func TestOfflineClaudeSubscriptionControl(t *testing.T) {
+	if os.Getenv("SDLC_OFFLINE_DOCKER_TESTS") != "1" {
+		t.Skip("set SDLC_OFFLINE_DOCKER_TESTS=1 to check native Claude quota protocol")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	runtime, err := runtimeimage.New(io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := runtime.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := json.Marshal(subscriptionHelper)
+	script := "_quota={'__name__':'offline_subscription'}\nexec(" + string(code) + ",_quota)\n" + `
+import os,pathlib
+home=pathlib.Path('/tmp/home');home.mkdir(mode=0o700)
+config=pathlib.Path('/tmp/claude');config.mkdir(mode=0o700)
+snapshot=_quota['claude_snapshot']({'PATH':os.environ['PATH'],'HOME':str(home),'CLAUDE_CONFIG_DIR':str(config),'DISABLE_AUTOUPDATER':'1','CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC':'1','ENABLE_CLAUDEAI_MCP_SERVERS':'false'})
+assert snapshot['status']=='unavailable' and snapshot['reason']=='missing_windows',snapshot
+assert 'windows' not in snapshot
+assert not (config/'.credentials.json').exists()
+print('Official Claude initialize/get_usage protocol responded without authentication or inference')
+`
+	output, err := runtime.Docker.Output(ctx, "run", "--rm", "--pull", "never", "--network", "none", "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "512m", "--log-driver", "none", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777", "--entrypoint", "python3", state.ImageID, "-c", script)
+	if err != nil {
+		t.Fatalf("offline Claude quota protocol failed: %s", output)
+	}
+	t.Log(string(output))
+}
+
 func TestOfflineClaudePinnedAgentDiscovery(t *testing.T) {
 	if os.Getenv("SDLC_OFFLINE_DOCKER_TESTS") != "1" {
 		t.Skip("set SDLC_OFFLINE_DOCKER_TESTS=1 to check native Claude catalogue discovery")

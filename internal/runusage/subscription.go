@@ -39,12 +39,23 @@ type SubscriptionChange struct {
 }
 
 var subscriptionWindow = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}/(primary|secondary)$`)
+var claudeSubscriptionWindow = regexp.MustCompile(`^claude/(five_hour|seven_day|seven_day_opus|seven_day_sonnet)$`)
+
+func subscriptionSource(provider string) string {
+	if provider == "codex" {
+		return "codex.app_server.rate_limits"
+	}
+	if provider == "claude" {
+		return "claude.control.get_usage"
+	}
+	return ""
+}
 
 func validateSubscriptionSnapshot(snapshot *SubscriptionSnapshot) error {
 	if snapshot == nil {
 		return nil
 	}
-	if snapshot.Source != "codex.app_server.rate_limits" || snapshot.ObservedAt.IsZero() || len(snapshot.Windows) > 32 {
+	if (snapshot.Source != subscriptionSource("codex") && snapshot.Source != subscriptionSource("claude")) || snapshot.ObservedAt.IsZero() || len(snapshot.Windows) > 32 {
 		return fmt.Errorf("invalid subscription snapshot")
 	}
 	switch snapshot.Status {
@@ -65,7 +76,11 @@ func validateSubscriptionSnapshot(snapshot *SubscriptionSnapshot) error {
 		return fmt.Errorf("invalid subscription snapshot status")
 	}
 	for name, window := range snapshot.Windows {
-		if !subscriptionWindow.MatchString(name) || window.RemainingPercent == nil || math.IsNaN(*window.RemainingPercent) || math.IsInf(*window.RemainingPercent, 0) || *window.RemainingPercent < 0 || *window.RemainingPercent > 100 {
+		validName := subscriptionWindow.MatchString(name)
+		if snapshot.Source == subscriptionSource("claude") {
+			validName = claudeSubscriptionWindow.MatchString(name)
+		}
+		if !validName || window.RemainingPercent == nil || math.IsNaN(*window.RemainingPercent) || math.IsInf(*window.RemainingPercent, 0) || *window.RemainingPercent < 0 || *window.RemainingPercent > 100 {
 			return fmt.Errorf("invalid subscription percentage")
 		}
 		for _, value := range []*int64{window.ResetsAt, window.WindowDurationMins} {
@@ -152,7 +167,7 @@ func observeSubscription(line []byte, provider string, usage *Usage) bool {
 		Phase    string                `json:"phase"`
 		Snapshot *SubscriptionSnapshot `json:"snapshot"`
 	}
-	if json.Unmarshal(line, &event) != nil || event.Provider != provider || provider != "codex" || event.Snapshot == nil || validateSubscriptionSnapshot(event.Snapshot) != nil {
+	if json.Unmarshal(line, &event) != nil || event.Provider != provider || subscriptionSource(provider) == "" || event.Snapshot == nil || event.Snapshot.Source != subscriptionSource(provider) || validateSubscriptionSnapshot(event.Snapshot) != nil {
 		return false
 	}
 	if event.Phase != "before" && event.Phase != "after" {

@@ -75,6 +75,59 @@ for line in sys.stdin:
         self.assertEqual(result, {'codex/primary': {'remaining_percent':100}})
         self.assertEqual(subscription.codex_windows({'rateLimits':{'primary':{'usedPercent':True}}}), {})
 
+    def claude_client(self):
+        client = self.root / 'claude'
+        client.write_text('#!' + sys.executable + '\n' + '''
+import json,os,sys
+assert '--input-format' in sys.argv and '--no-session-persistence' in sys.argv
+for line in sys.stdin:
+    message=json.loads(line)
+    assert message['type']=='control_request'
+    request=message['request']['subtype']
+    assert request in {'initialize','get_usage'}
+    with open(os.environ['PROTOCOL_LOG'],'a') as log:log.write(request+'\\n')
+    response={}
+    mode=os.environ.get('PROTOCOL_MODE','observed')
+    if request=='get_usage':
+        response={'rate_limits_available':True,'rate_limits':{'five_hour':{'utilization':25,'resets_at':'2100-01-01T00:00:00Z'},'seven_day':{'utilization':70,'resets_at':'2100-01-02T00:00:00Z'}},'subscription_type':'private-plan','behaviors':{'private':'discard'},'session':{'total_cost_usd':42}}
+        if mode=='empty':response={'rate_limits_available':False,'rate_limits':None}
+        if mode=='changed':response={'rate_limits_available':True,'rate_limits':[]}
+    envelope={'subtype':'success','request_id':message['request_id'],'response':response}
+    if mode=='error' and request=='get_usage':envelope={'subtype':'error','request_id':message['request_id'],'error':'fake-private-error'}
+    print(json.dumps({'type':'control_response','response':envelope}),flush=True)
+''')
+        client.chmod(0o700)
+
+    def test_claude_control_only_percentages_and_iso_reset(self):
+        self.claude_client()
+        result = subscription.claude_snapshot(self.env)
+        self.assertEqual(result['status'], 'observed')
+        self.assertEqual(result['windows']['claude/five_hour']['remaining_percent'], 75)
+        self.assertEqual(result['windows']['claude/five_hour']['resets_at'], 4102444800)
+        self.assertEqual(result['windows']['claude/seven_day']['remaining_percent'], 30)
+        self.assertNotIn('private', json.dumps(result))
+        self.assertNotIn('total_cost', json.dumps(result))
+        self.assertEqual((self.root/'methods').read_text().splitlines(), ['initialize','get_usage'])
+
+    def test_claude_unavailable_or_changed_native_schema(self):
+        self.claude_client()
+        for mode, reason in [('empty','missing_windows'),('error','native_rejected'),('changed','invalid_response')]:
+            with self.subTest(mode=mode):
+                result = subscription.claude_snapshot(dict(self.env, PROTOCOL_MODE=mode))
+                self.assertEqual(result['status'], 'unavailable')
+                self.assertEqual(result['reason'], reason)
+                self.assertNotIn('windows', result)
+                self.assertNotIn('fake-private-error', json.dumps(result))
+
+    def test_claude_get_usage_units_differ_from_native_event_ratios(self):
+        result = subscription.claude_windows({'rate_limits_available':True,'rate_limits':{
+            'five_hour':{'utilization':.7,'resets_at':None},
+            'seven_day':{'utilization':None},'seven_day_opus':{'utilization':100}}})
+        self.assertAlmostEqual(result['claude/five_hour']['remaining_percent'], 99.3)
+        self.assertNotIn('resets_at', result['claude/five_hour'])
+        self.assertNotIn('claude/seven_day', result)
+        self.assertEqual(result['claude/seven_day_opus']['remaining_percent'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

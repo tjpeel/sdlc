@@ -113,6 +113,35 @@ func TestRunSubscriptionUsesFirstAndLastBoundariesAcrossRoles(t *testing.T) {
 	}
 }
 
+func TestClaudeSnapshotIsSeparateFromRatioEvents(t *testing.T) {
+	observer := NewObserver("claude", "example-model")
+	start := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	reset := start.Add(5 * time.Hour).Unix()
+	claudeEvent := func(phase string, remaining float64) string {
+		value := quotaEvent(phase, remaining, reset, start)
+		value = strings.ReplaceAll(value, `"provider":"codex"`, `"provider":"claude"`)
+		value = strings.ReplaceAll(value, "codex.app_server.rate_limits", "claude.control.get_usage")
+		return strings.ReplaceAll(value, "codex/primary", "claude/five_hour")
+	}
+	read(observer, claudeEvent("before", 80))
+	read(observer, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.7}}`)
+	read(observer, claudeEvent("after", 75))
+	usage := observer.Snapshot()
+	if *usage.Subscription.Windows["claude/five_hour"].UsedPercentagePoints != 5 || *usage.RateLimits["five_hour"].Utilization != .7 {
+		t.Fatal("native ratio events replaced boundary percentages")
+	}
+	record := attempt(1, "implementation", "session", 100)
+	record.Provider = "claude"
+	record.Usage.Subscription = usage.Subscription
+	if err := SaveAttempt(dir(t), record); err != nil {
+		t.Fatal(err)
+	}
+	record.Provider = "codex"
+	if err := SaveAttempt(dir(t), record); err == nil {
+		t.Fatal("foreign provider quota accepted")
+	}
+}
+
 func TestMalformedQuotaCannotBecomeZeroRemaining(t *testing.T) {
 	start := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
 	valid := quotaEvent("before", 80, start.Add(time.Hour).Unix(), start)
