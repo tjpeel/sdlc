@@ -14,6 +14,7 @@ type CheckFailure struct {
 	Command   int
 	ExitCode  int
 	formatter bool
+	csharpier bool
 	paths     []string
 	compiler  *compilerDiagnostic
 }
@@ -55,6 +56,7 @@ type formatterDiagnostic struct {
 	line              []byte
 	dropping          bool
 	styleIssues       bool
+	csharpier         bool
 	paths             []string
 	compiler          *compilerDiagnostic
 	dockerUnavailable bool
@@ -93,6 +95,22 @@ func (d *formatterDiagnostic) consume() {
 	}
 	path, warning := strings.CutPrefix(line, "[warn] ")
 	if !warning {
+		// CSharpier reports only a fixed file-level diagnostic. Admit it only
+		// when its resolved path is part of the approved committed source tree.
+		path, ok := strings.CutPrefix(dockerOutputPrefix.ReplaceAllString(line, ""), "Error ")
+		if !ok {
+			return
+		}
+		path, ok = strings.CutSuffix(path, " - Was not formatted.")
+		if !ok {
+			return
+		}
+		path = csharpierSourcePath(path, d.approved)
+		if path == "" {
+			return
+		}
+		d.csharpier = true
+		d.appendPath(path)
 		return
 	}
 	if path == "Code style issues found in the above file(s). Run Prettier with --write to fix." {
@@ -106,7 +124,41 @@ func (d *formatterDiagnostic) consume() {
 			return
 		}
 	}
-	if !d.approved[path] || len(d.paths) >= 20 {
+	if !d.approved[path] {
+		return
+	}
+	d.appendPath(path)
+}
+
+// Strip only the bounded step/time prefix emitted by Docker build output.
+var dockerOutputPrefix = regexp.MustCompile(`^(?:#[0-9]{1,6} [0-9]{1,6}(?:\.[0-9]{1,6})? |[0-9]{1,6}(?:\.[0-9]{1,6})? )`)
+
+func csharpierSourcePath(path string, approved map[string]bool) string {
+	path = strings.TrimPrefix(path, "./")
+	if approved[path] {
+		return path
+	}
+	// CSharpier may run in a project directory and report a sibling project.
+	// A single parent prefix is supported only when its remaining path names
+	// exactly one approved file; never return a raw diagnostic path.
+	suffix, relative := strings.CutPrefix(path, "../")
+	if !relative || len(suffix) > 240 || !sourceRelative(suffix) {
+		return ""
+	}
+	resolved := ""
+	for candidate, allowed := range approved {
+		if allowed && (candidate == suffix || strings.HasSuffix(candidate, "/"+suffix)) {
+			if resolved != "" {
+				return ""
+			}
+			resolved = candidate
+		}
+	}
+	return resolved
+}
+
+func (d *formatterDiagnostic) appendPath(path string) {
+	if len(d.paths) >= 20 {
 		return
 	}
 	for _, seen := range d.paths {
@@ -220,12 +272,15 @@ func checkRepairFeedback(tree string, err error, commands [][]string) string {
 		}
 		// Compound checks may invoke Prettier through a shell. A fixed output
 		// marker identifies formatter evidence without interpreting shell text.
-		if failure.formatter || formatterCheck(commands[failure.Command-1]) {
+		if failure.formatter || failure.csharpier || formatterCheck(commands[failure.Command-1]) {
 			if formatterCheck(commands[failure.Command-1]) {
 				feedback += " The configured formatting check failed."
 			}
 			if failure.formatter {
 				feedback += " Prettier reported code style issues; apply the repository formatter."
+			}
+			if failure.csharpier {
+				feedback += " CSharpier reported that committed source is not formatted; format the reported file before requesting checks again."
 			}
 			for _, path := range failure.paths {
 				feedback += "\nFormatting warning in committed source: " + path

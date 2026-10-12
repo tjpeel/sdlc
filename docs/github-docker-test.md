@@ -87,9 +87,9 @@ installation metadata as part of this check.
 
 GitHub credentials are **plaintext in Docker storage**. Native `gh` cannot use
 your host credential store in these containers, so login explicitly uses its
-documented plaintext-storage option. Read-only mounts prevent publisher cache
-changes; they do not prevent theft by a compromised publisher or Docker
-administrator. A normal job uses the saved login; expiry, revocation or SSO
+documented plaintext-storage option. Read-only mounts prevent publisher and
+companion-source-reader cache changes; they do not prevent theft by a compromised
+trusted container or Docker administrator. A normal job uses the saved login; expiry, revocation or SSO
 denial stops it for attention. Interactive reauthorisation is not an unattended
 token-renewal mechanism.
 

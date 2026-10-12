@@ -21,24 +21,115 @@ func TestFormatterDiagnosticAdmitsOnlyCommittedSourcePaths(t *testing.T) {
 		}
 	}
 	d := &formatterDiagnostic{approved: diagnosticSourcePaths(context.Background(), root)}
-	input := "private-token=disposable-secret\n[warn] /host/private.js\n[warn] .sdlc/config.json\n[warn] profiles.local.json\n[warn] ../README.md\n[warn] src/example.js secret suffix\n[warn] untracked.js\n\x1b[33m[warn] src/example.js\x1b[0m\n[warn] src/example.js\n[warn] Code style issues found in 1 files. Run Prettier with --write to fix.\n"
+	input := "private-token=disposable-secret\n[warn] /host/private.js\n[warn] .sdlc/config.json\n[warn] profiles.local.json\n[warn] ../README.md\n[warn] src/example.js secret suffix\n[warn] untracked.js\nError src/example.js - Was not formatted.\nError /host/private.js - Was not formatted.\nError src/example.js - Was not formatted. private suffix\n\x1b[33m[warn] src/example.js\x1b[0m\n[warn] src/example.js\n[warn] Code style issues found in 1 files. Run Prettier with --write to fix.\n"
 	// Deliberately split the output inside warnings and terminal escapes.
 	for _, b := range []byte(input) {
 		d.Write([]byte{b})
 	}
 	d.finish()
-	if !d.styleIssues || !reflect.DeepEqual(d.paths, []string{"src/example.js"}) {
+	if !d.styleIssues || !d.csharpier || !reflect.DeepEqual(d.paths, []string{"src/example.js"}) {
 		t.Fatalf("unsafe diagnostic: %+v", d)
 	}
-	f := &CheckFailure{Command: 2, ExitCode: 1, formatter: d.styleIssues, paths: d.paths}
+	f := &CheckFailure{Command: 2, ExitCode: 1, formatter: d.styleIssues, csharpier: d.csharpier, paths: d.paths}
 	feedback := checkRepairFeedback(testTree, f, [][]string{{"sh", "-c", "disposable-secret"}, {"npm", "run", "format:check"}})
 	if !strings.Contains(feedback, "command 2 exited with status 1") || !strings.Contains(feedback, "src/example.js") {
 		t.Fatal(feedback)
 	}
-	for _, private := range []string{"disposable-secret", "/host/", "profiles.local", "untracked", "secret suffix", ".sdlc/"} {
+	if !strings.Contains(feedback, "CSharpier reported") {
+		t.Fatal(feedback)
+	}
+	for _, private := range []string{"disposable-secret", "/host/", "profiles.local", "untracked", "secret suffix", ".sdlc/", "private suffix"} {
 		if strings.Contains(feedback, private) {
 			t.Fatalf("private diagnostic reached feedback: %s", private)
 		}
+	}
+}
+
+func TestCSharpierFailureFeedsRepairFeedback(t *testing.T) {
+	checker, _, _, _ := checkFixture(t)
+	checker.DockerTests = false
+	workspace, _ := sourceFixture(t)
+	sourceWrite(t, workspace, "src/ExampleTests.cs", "class Example {}\n")
+	if _, err := SafeGit(context.Background(), workspace, "add", "src"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SafeGit(context.Background(), workspace, "commit", "-m", "Add C sharp source"); err != nil {
+		t.Fatal(err)
+	}
+	checker.Runner = &failingFormatterRunner{failAt: 1, output: "private-token=disposable-secret\nError src/ExampleTests.cs - Was not formatted.\nError /host/private.cs - Was not formatted.\n"}
+	commands := [][]string{{"sh", "-c", "dotnet csharpier check .; private-command-argument"}}
+	var log bytes.Buffer
+	err := checker.Check(context.Background(), workspace, commands, &log)
+	var failure *CheckFailure
+	if !errors.As(err, &failure) || !failure.csharpier || !reflect.DeepEqual(failure.paths, []string{"src/ExampleTests.cs"}) {
+		t.Fatalf("missing CSharpier evidence: %v", err)
+	}
+	feedback := checkRepairFeedback(testTree, failure, commands)
+	if !strings.Contains(feedback, "CSharpier reported") || !strings.Contains(feedback, "src/ExampleTests.cs") {
+		t.Fatal(feedback)
+	}
+	for _, private := range []string{"disposable-secret", "/host/", "private-command-argument", "Was not formatted."} {
+		if strings.Contains(feedback, private) {
+			t.Fatalf("private diagnostic reached feedback (%q): %s", private, feedback)
+		}
+	}
+}
+
+func TestCSharpierDiagnosticResolvesDockerRelativePaths(t *testing.T) {
+	approved := map[string]bool{
+		"tests/Example.IntegrationTests/Scenarios/SearchTests.cs": true,
+		"src/Example/Administration/Cursor.cs":                    true,
+	}
+	for _, tc := range []struct {
+		name, output, want string
+	}{
+		{"dot relative", "Error ./tests/Example.IntegrationTests/Scenarios/SearchTests.cs - Was not formatted.", "tests/Example.IntegrationTests/Scenarios/SearchTests.cs"},
+		{"project relative", "Error ../Example/Administration/Cursor.cs - Was not formatted.", "src/Example/Administration/Cursor.cs"},
+		{"build step", "#22 0.123 Error ./tests/Example.IntegrationTests/Scenarios/SearchTests.cs - Was not formatted.", "tests/Example.IntegrationTests/Scenarios/SearchTests.cs"},
+		{"elapsed time", "0.123 Error ../Example/Administration/Cursor.cs - Was not formatted.", "src/Example/Administration/Cursor.cs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &formatterDiagnostic{approved: approved}
+			d.Write([]byte(tc.output + "\n"))
+			d.finish()
+			if !d.csharpier || !reflect.DeepEqual(d.paths, []string{tc.want}) {
+				t.Fatalf("missing committed formatter path: %+v", d)
+			}
+			feedback := checkRepairFeedback(testTree, &CheckFailure{Command: 1, ExitCode: 1, csharpier: d.csharpier, paths: d.paths}, [][]string{{"docker", "build", "."}})
+			if !strings.Contains(feedback, "Formatting warning in committed source: "+tc.want) || strings.Contains(feedback, "../") || strings.Contains(feedback, "#22") {
+				t.Fatalf("unexpected repair feedback: %s", feedback)
+			}
+		})
+	}
+}
+
+func TestCSharpierDiagnosticRejectsUnresolvedRelativePaths(t *testing.T) {
+	approved := map[string]bool{
+		"src/Example/Administration/Cursor.cs":   true,
+		"other/Example/Administration/Cursor.cs": true,
+		"tests/ExampleTests.cs":                  true,
+	}
+	for _, output := range []string{
+		"Error ../Example/Administration/Cursor.cs - Was not formatted.",
+		"Error ../Missing/Unknown.cs - Was not formatted.",
+		"Error ../../tests/ExampleTests.cs - Was not formatted.",
+		"Error ../Example/../tests/ExampleTests.cs - Was not formatted.",
+		"Error ./tests/Unknown.cs - Was not formatted.",
+		"Error /host/tests/ExampleTests.cs - Was not formatted.",
+		"Error ../tests/ExampleTests.cs private suffix - Was not formatted.",
+		"private prefix Error ./tests/ExampleTests.cs - Was not formatted.",
+		"#22 private-time Error ./tests/ExampleTests.cs - Was not formatted.",
+		"#22 0.123 Error ./tests/ExampleTests.cs - Was not formatted. private suffix",
+		"#22 0.123 \x1b]0;private-token\x07Error ./tests/ExampleTests.cs - Was not formatted.",
+	} {
+		t.Run(output, func(t *testing.T) {
+			d := &formatterDiagnostic{approved: approved}
+			d.Write([]byte(output + "\n"))
+			d.finish()
+			if d.csharpier || len(d.paths) != 0 {
+				t.Fatalf("unapproved diagnostic admitted: %+v", d)
+			}
+		})
 	}
 }
 

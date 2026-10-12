@@ -12,7 +12,11 @@ Follow the [step-by-step profile and signing test](github-docker-test.md), then
 [connected onboarding](onboarding.md). This is an implemented boundary with
 offline validation, including actual Docker signature verification. Live
 GitHub/SSO, Verified attribution and complete provider delivery remain to be
-validated. Official references were checked on 4 October 2026.
+validated. Authentication references were checked on 4 October 2026. The
+[official clone manual](https://cli.github.com/manual/gh_repo_clone) was checked
+on 13 October 2026 for companion-source inspection. The reader uses Docker's
+[documented tar export](https://docs.docker.com/reference/cli/docker/container/cp/#corner-cases)
+to retrieve tmpfs source while the container is running.
 
 ## Current credential flow
 
@@ -21,9 +25,10 @@ validated. Official references were checked on 4 October 2026.
 | Initial clone/fetch | Prepare the checkout on the host using existing approved access. SDLC captures a local checkout; authenticated URL cloning is not implemented. |
 | Account selection | Native `auth ... --service github --profile NAME` provisions login. `github pair --profile NAME --signing-profile KEY_NAME` checks the account and public signing-key registration. `github list` lists paired and unpaired configured profiles locally. `github use [--profile NAME]` checks native account/key/repository access before saving selection; omission uses saved selection or the sole configured profile. Fresh runs use saved selection, a unique owner pair or sole configured pair. |
 | Worker source | A captured local bundle creates a disposable checkout with no origin. Worker commits have a generic unsigned identity. |
+| Companion source | The implementation may request a private companion repository under the selected repository owner. The controller uses the run's frozen GitHub profile and the official `gh repo clone` command in a fixed source-reader container. The default branch is checked out with Git history, the selected `gh` volume is read-only, and the provider receives source without GitHub credentials. The checkout and its revision remain in the private run workspace for inspection only. |
 | Publication identity | The controller freezes effective project `user.name`/`user.email`, numeric GitHub account/repository IDs, canonical repository name, credential volume, signing profile/public key/fingerprint and runtime image before provider work. |
 | Signing | A separate official `op` container retrieves one dedicated Ed25519 key. The Docker publisher recreates linear commits, requires SSH signatures, verifies the approved key and preserves the exact tested tree. |
-| Push/PR/CI | Only the trusted publisher gets the selected native `gh` volume, read-only. HTTPS Git uses the native credential helper. Account/repository/base checks and exact branch leases reject unexpected movement. |
+| Push/PR/CI | The trusted publisher gets the selected native `gh` volume, read-only. HTTPS Git uses the native credential helper. Account/repository/base checks and exact branch leases reject unexpected movement. |
 | Provider/check credentials | Providers get their own native AI cache. Checks get no provider cache. Neither gets GitHub credentials, vault bootstrap, signing key, host SSH agent or host Docker socket. |
 
 The host's GitHub login, `GH_TOKEN`, `GITHUB_TOKEN` and `SSH_AUTH_SOCK` do not

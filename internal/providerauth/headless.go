@@ -93,6 +93,17 @@ func validateHeadless(request HeadlessRequest) error {
 			return fmt.Errorf("repository provider configuration must use regular directories")
 		}
 	}
+	// The controller owns companion source. Reject redirects before adding a
+	// read-only submount over the otherwise writable implementation workspace.
+	for _, directory := range []string{".sdlc", filepath.Join(".sdlc", "repositories")} {
+		if info, err := os.Lstat(filepath.Join(request.Workspace, directory)); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("companion source must use regular directories")
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot inspect companion source directory")
+		}
+	}
 	relative, err := filepath.Rel(request.Workspace, request.SessionDirectory)
 	if err != nil || relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
 		return fmt.Errorf("private native session state must be outside the workspace")
@@ -143,6 +154,10 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 		"--mount", headlessBind(request.SchemaFile, "/schema.json", true))
 	if request.InstructionsFile != "" {
 		args = append(args, "--mount", headlessBind(request.InstructionsFile, "/instructions.md", true))
+	}
+	companion := filepath.Join(request.Workspace, ".sdlc", "repositories")
+	if info, err := os.Lstat(companion); err == nil && info.IsDir() {
+		args = append(args, "--mount", headlessBind(companion, "/workspace/.sdlc/repositories", true))
 	}
 	// Hide repository extensions/configuration while retaining pinned image skills
 	// and agents. Mount existing paths only: Docker cannot create new mountpoints

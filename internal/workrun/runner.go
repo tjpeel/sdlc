@@ -21,6 +21,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	CompanionCloner   CompanionRepositoryCloner
 	Provider          Provider
 	Checker           Checker
 	Publisher         Publisher
@@ -251,12 +252,41 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			journal.Feedback = ""
+			if result.Outcome.Status == "blocked" || result.Outcome.Status == "failed" {
+				return runner.stop(directory, journal, result.Outcome.Status, result.Outcome.Summary)
+			}
+			if len(result.Outcome.RepositoryRequests) > 0 {
+				if err := validateCompanionRepositoryRequests(result.Outcome.RepositoryRequests, &journal.Plan); err != nil {
+					return runner.stop(directory, journal, "blocked", "implementation requested an invalid companion repository")
+				}
+				if runner.CompanionCloner == nil {
+					return runner.stop(directory, journal, "blocked", "the configured GitHub source reader is unavailable in this controller")
+				}
+				feedback, err := runner.stageCompanionRepositories(ctx, directory, journal, result.Outcome.RepositoryRequests)
+				if err != nil {
+					var access *companionSourceAccessError
+					if errors.As(err, &access) {
+						question := "The configured GitHub profile could not clone " + access.repository + ". Confirm that the selected account has read access, then answer and resume this run."
+						journal.PendingRole = "implementation"
+						journal.Outcome.Questions = []string{question}
+						return runner.stop(directory, journal, "waiting_for_human", question)
+					}
+					var stage companionSourceStageError
+					if errors.As(err, &stage) {
+						return runner.stop(directory, journal, "blocked", "The controller could not stage companion source: "+stage.Error())
+					}
+					return runner.stop(directory, journal, "blocked", "the controller could not stage companion source")
+				}
+				journal.Feedback = feedback
+				if err := runner.save(directory, journal); err != nil {
+					return err
+				}
+				continue
+			}
 			switch result.Outcome.Status {
 			case "waiting_for_human":
 				journal.PendingRole = "implementation"
 				return runner.stop(directory, journal, "waiting_for_human", strings.Join(result.Outcome.Questions, "\n"))
-			case "blocked", "failed":
-				return runner.stop(directory, journal, result.Outcome.Status, result.Outcome.Summary)
 			case "checks_requested", "implemented":
 				if result.Outcome.Status == "implemented" {
 					journal.Plan.PRTitle = result.Outcome.PRTitle
@@ -514,7 +544,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 
 func (runner Runner) prompt(journal Journal, role string) string {
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
-	contextDiscipline += "For authorised supplementary repository inspection, reuse an existing selected checkout or clone beneath /workspace/.sdlc/repositories/ and exclude that directory locally with Git info/exclude. Preserve the checkout and record its revision for later inspection. Do not clone repositories into /tmp. Inspection does not authorise modifying or publishing a companion repository; follow the selected ticket delivery boundary.\n"
+	contextDiscipline += "For missing private companion source, do not attempt provider-side GitHub authentication or clone directly. Submit repository_requests with an owner/repository name under the selected project owner, a stable id and a short purpose, Use checks_requested for controller source requests; blocked and failed stop work, including when repository_requests is nonempty. The controller will use the run’s frozen GitHub profile through the official gh client to clone the default branch into /workspace/.sdlc/repositories/, then resume this same session. Human product questions can remain waiting_for_human. Inspect it for context only; do not modify or publish the companion repository.\n"
 	contextDiscipline += "Check-worker contract: each verification request receives a fresh committed source copy at /workspace without .git metadata. Commands within that request share source outputs and a private HOME; candidate and baseline phases are separate. Restore required tools and dependencies explicitly. Package reuse does not preserve bin/obj or prove the current candidate passed. Avoid Git commands in checks; use file checksums to prove formatting preserved source bytes. Dockerfile build caches are separate from worker package caches. Use the selected repository's SDK/tool environment and supported test filters for focused regression proofs; retain the configured full checks. Consume a delegate's bounded findings without repeating its entire investigation unless independent validation needs it.\n"
 	if role == "implementation" {
 		contextDiscipline += "Additional verification is already authorised machine work: submit verification_requests with stable id, purpose and bounded argv commands, rather than asking the human to run tests. Generic requests use baseline:null. To demonstrate a regression, supply baseline with one exact captured StartingSHA " + journal.Plan.StartingSHA + " or SourceSHA " + journal.Plan.SourceSHA + ", named original production paths, current candidate test commands, expected_exit_code and literal assertion failure_contains markers. The candidate commands must pass; the same commands run in a fresh candidate copy retaining new tests with only the named original source restored, and the final command must fail as specified. Return [] when unused; unresolved requests persist. Genuine specification or product questions still require waiting_for_human.\n"
@@ -527,7 +557,7 @@ func (runner Runner) prompt(journal Journal, role string) string {
 			Reference string `json:"reference"`
 			Ticket    string `json:"ticket"`
 		}{journal.Plan.Reference, journal.Plan.Ticket})
-		return "Continue the original tjpeel-engineering-implement session for " + string(identity) + ". Retain the original eligibility, pinned subagent policy, ownership and whole-ticket local review gates. The controller still owns isolated checks, signing, PR publication and CI. Commit candidate changes before status checks_requested; do not run tests, dependency installation or repository scripts in this authenticated worker. Use only current controller verification evidence for an unchanged tree. Return implemented only after passing checks, complete local review and current tjpeel-pr-draft metadata; stop for human questions, missing inputs and provider access/usage/policy limits. Return the supplied JSON schema. For additional machine verification submit verification_requests (stable id, purpose, argv commands; optional captured-source baseline), not a human question. Return [] when unused.\n" + contextDiscipline + "New controller feedback:\n" + journal.Feedback
+		return "Continue the original tjpeel-engineering-implement session for " + string(identity) + ". Retain the original eligibility, pinned subagent policy, ownership and whole-ticket local review gates. The controller still owns isolated checks, signing, PR publication and CI. Commit candidate changes before status checks_requested; do not run tests, dependency installation or repository scripts in this authenticated worker. Use only current controller verification evidence for an unchanged tree. Return implemented only after passing checks, complete local review and current tjpeel-pr-draft metadata; stop for human questions, missing inputs and provider access/usage/policy limits. Return the supplied JSON schema. For additional machine verification submit verification_requests (stable id, purpose, argv commands; optional captured-source baseline), not a human question. For private companion source submit repository_requests rather than trying GitHub authentication inside the provider worker. Return [] when unused.\n" + contextDiscipline + "New controller feedback:\n" + journal.Feedback
 	}
 	packet, _ := json.MarshalIndent(struct {
 		Plan        Plan                 `json:"plan"`

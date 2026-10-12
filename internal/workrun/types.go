@@ -148,15 +148,16 @@ type Finding struct {
 }
 
 type Outcome struct {
-	VerificationRequests []VerificationRequest `json:"verification_requests,omitempty"`
-	Status               string                `json:"status"`
-	Summary              string                `json:"summary"`
-	Questions            []string              `json:"questions"`
-	Findings             []Finding             `json:"findings"`
-	LocalReview          bool                  `json:"local_review"`
-	Limitations          []string              `json:"limitations"`
-	PRTitle              string                `json:"pr_title"`
-	PRBody               string                `json:"pr_body"`
+	RepositoryRequests   []CompanionRepositoryRequest `json:"repository_requests,omitempty"`
+	VerificationRequests []VerificationRequest        `json:"verification_requests,omitempty"`
+	Status               string                       `json:"status"`
+	Summary              string                       `json:"summary"`
+	Questions            []string                     `json:"questions"`
+	Findings             []Finding                    `json:"findings"`
+	LocalReview          bool                         `json:"local_review"`
+	Limitations          []string                     `json:"limitations"`
+	PRTitle              string                       `json:"pr_title"`
+	PRBody               string                       `json:"pr_body"`
 }
 
 type Session struct {
@@ -213,6 +214,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	CompanionRepositories     []CompanionRepository `json:"companion_repositories,omitempty"`
 	PRMetadataCorrections     int                   `json:"pr_metadata_corrections,omitempty"`
 	InputRecoveries           []InputRecovery       `json:"input_recoveries,omitempty"`
 	PendingInputs             *PendingInputRecovery `json:"pending_inputs,omitempty"`

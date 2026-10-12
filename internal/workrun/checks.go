@@ -475,16 +475,16 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 			// spend provider repair turns on it or enable privileges implicitly.
 			// A compiler/formatter failure followed by a Docker cleanup error
 			// still needs the original source repair.
-			if diagnostic.dockerUnavailable && diagnostic.compiler == nil && !diagnostic.styleIssues {
+			if diagnostic.dockerUnavailable && diagnostic.compiler == nil && !diagnostic.styleIssues && !diagnostic.csharpier {
 				if !checker.DockerTests {
 					return fmt.Errorf("repository check %d exited with status %d: Docker daemon unavailable; start a new run with --docker-tests; resume preserves the recorded Docker setting. Private check log retained", i+1, status.ExitCode)
 				}
 				return fmt.Errorf("repository check %d exited with status %d: Docker daemon unavailable; inspect the private check log and resolve the Docker endpoint or isolated test-daemon setup before resuming", i+1, status.ExitCode)
 			}
-			if baseline != nil && i == len(commands)-1 && status.ExitCode == baseline.ExpectedExitCode && matcher.complete() && diagnostic.compiler == nil && !diagnostic.styleIssues && !diagnostic.dockerUnavailable {
+			if baseline != nil && i == len(commands)-1 && status.ExitCode == baseline.ExpectedExitCode && matcher.complete() && diagnostic.compiler == nil && !diagnostic.styleIssues && !diagnostic.csharpier && !diagnostic.dockerUnavailable {
 				return nil
 			}
-			failure := &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, paths: diagnostic.paths, compiler: diagnostic.compiler}
+			failure := &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, csharpier: diagnostic.csharpier, paths: diagnostic.paths, compiler: diagnostic.compiler}
 			if baseline != nil {
 				reason := "earlier baseline command failed; only the final command may fail"
 				if i == len(commands)-1 {
@@ -492,7 +492,7 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 					if status.ExitCode == baseline.ExpectedExitCode && !matcher.complete() {
 						reason = "baseline final command omitted required literal markers"
 					}
-					if diagnostic.compiler != nil || diagnostic.styleIssues {
+					if diagnostic.compiler != nil || diagnostic.styleIssues || diagnostic.csharpier {
 						reason = "baseline compiler or formatter failure cannot satisfy a regression assertion"
 					}
 				}

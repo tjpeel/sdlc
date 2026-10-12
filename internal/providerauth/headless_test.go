@@ -49,6 +49,10 @@ func TestHeadlessSelectedAuthenticationAndMountModes(t *testing.T) {
 				if err := os.Mkdir(filepath.Join(request.Workspace, ".codex"), 0700); err != nil {
 					t.Fatal(err)
 				}
+				companion := filepath.Join(request.Workspace, ".sdlc", "repositories")
+				if err := os.MkdirAll(companion, 0755); err != nil {
+					t.Fatal(err)
+				}
 				var out, diagnostics bytes.Buffer
 				manager.Docker = streamDocker{docker, func(ctx context.Context, in io.Reader, stdout, stderr io.Writer, args []string) error {
 					if in != nil || has(args, "--tty") || !has(args, testImage) || !has(args, "--interactive") {
@@ -73,6 +77,10 @@ func TestHeadlessSelectedAuthenticationAndMountModes(t *testing.T) {
 							if ro != readonly {
 								t.Fatal("workspace has wrong review mode")
 							}
+						case "/workspace/.sdlc/repositories":
+							if !ro || mount["src"] != companion {
+								t.Fatal("companion source is not protected from worker edits")
+							}
 						case "/session":
 							if ro {
 								t.Fatal("session is readonly")
@@ -89,7 +97,7 @@ func TestHeadlessSelectedAuthenticationAndMountModes(t *testing.T) {
 							t.Fatal("unexpected mount")
 						}
 					}
-					for _, destination := range []string{"/workspace", "/session", "/prompt.txt", "/schema.json", "/provider-auth"} {
+					for _, destination := range []string{"/workspace", "/workspace/.sdlc/repositories", "/session", "/prompt.txt", "/schema.json", "/provider-auth"} {
 						if counts[destination] != 1 {
 							t.Fatal("missing or duplicate mount")
 						}
@@ -136,7 +144,7 @@ func TestHeadlessUnavailableAuthNeverStartsModel(t *testing.T) {
 	}
 }
 func TestHeadlessRejectsUnsafeRequestsBeforeDocker(t *testing.T) {
-	for _, kind := range []string{"provider", "relative", "resume", "nested", "extension"} {
+	for _, kind := range []string{"provider", "relative", "resume", "nested", "extension", "companion", "companion-parent"} {
 		t.Run(kind, func(t *testing.T) {
 			manager, docker := fixture(t)
 			request := headlessFixture(t)
@@ -151,6 +159,17 @@ func TestHeadlessRejectsUnsafeRequestsBeforeDocker(t *testing.T) {
 				request.SessionDirectory = request.Workspace
 			case "extension":
 				if err := os.Symlink(request.SessionDirectory, filepath.Join(request.Workspace, ".codex")); err != nil {
+					t.Fatal(err)
+				}
+			case "companion", "companion-parent":
+				path := filepath.Join(request.Workspace, ".sdlc")
+				if kind == "companion" {
+					if err := os.Mkdir(path, 0755); err != nil {
+						t.Fatal(err)
+					}
+					path = filepath.Join(path, "repositories")
+				}
+				if err := os.Symlink(request.SessionDirectory, path); err != nil {
 					t.Fatal(err)
 				}
 			}

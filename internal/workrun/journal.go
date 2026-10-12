@@ -114,6 +114,12 @@ func Load(directory string) (Journal, error) {
 	if err := validateVerificationRequests(journal.Outcome.VerificationRequests, &journal.Plan); err != nil {
 		return Journal{}, err
 	}
+	if err := validateCompanionRepositoryRequests(journal.Outcome.RepositoryRequests, &journal.Plan); err != nil {
+		return Journal{}, err
+	}
+	if err := validateCompanionRepositories(journal.CompanionRepositories, journal.Plan); err != nil {
+		return Journal{}, err
+	}
 	if err := ValidateModel(journal.Plan.Roles.Implementation); err != nil {
 		return Journal{}, err
 	}

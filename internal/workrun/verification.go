@@ -231,6 +231,9 @@ func (o *Outcome) UnmarshalJSON(data []byte) error {
 	if raw, ok := fields["verification_requests"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return fmt.Errorf("verification_requests must be an array")
 	}
+	if raw, ok := fields["repository_requests"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("repository_requests must be an array")
+	}
 	var value plain
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -238,6 +241,9 @@ func (o *Outcome) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if err := validateVerificationRequests(value.VerificationRequests, nil); err != nil {
+		return err
+	}
+	if err := validateCompanionRepositoryRequests(value.RepositoryRequests, nil); err != nil {
 		return err
 	}
 	*o = Outcome(value)

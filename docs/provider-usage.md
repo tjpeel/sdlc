@@ -128,6 +128,16 @@ storage may retain sensitive material. Stop on policy refusals, access denials,
 usage exhaustion and unsupported account routes; resume only after resolving the
 cause without identity switching or limit evasion.
 
+When implementation needs private companion source, it returns a bounded
+repository request. A trusted controller container uses the run's already
+selected GitHub profile through the official `gh repo clone` command, with the
+profile volume mounted read-only. Requests are limited to the selected project's
+GitHub owner. The controller checks out the default branch with Git history,
+keeps the reader alive through a tar export, and validates retained source before
+recovering interrupted staging. The provider receives a read-only
+source mount and its revision in the private workspace. It receives no GitHub
+cache, and the controller does not execute the companion repository's code.
+
 ## Opt-in local proxy
 
 Ticket and feature runs can explicitly select the [Headroom variant](headroom.md).

@@ -544,9 +544,12 @@ The publisher receives the selected GitHub profile volume read-only and the
 resolved signing key through stdin into private tmpfs. It removes the key file
 before push. The separate official 1Password CLI container receives its bootstrap
 token over stdin, has a 35-second internal timeout and is removed after use.
-Neither container receives provider caches, host GitHub configuration, a desktop
-SSH agent or a Docker socket. No GitHub App installation is required for this
-native CLI route. See the [Docker GitHub test guide](github-docker-test.md).
+The fixed companion-source reader also mounts the selected GitHub profile
+read-only and runs a fixed set of controller commands, including official
+`gh repo clone`, for a bounded same-owner request. It has no signing or vault
+access and does not run project code. Provider and check workers receive no GitHub profile, host configuration,
+desktop SSH agent or Docker socket. No GitHub App installation is required for
+this native CLI route. See the [Docker GitHub test guide](github-docker-test.md).
 Supervised private trials have passed provider execution, vault retrieval,
 signed GitHub draft publication, CI and opposite-provider review/repair. New
 account/key pairing and later dashboard changes need separate validation.

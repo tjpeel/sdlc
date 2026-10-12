@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.28 - 2026-10-13
+
+### Fixed
+
+- Include CSharpier formatting diagnostics in repair feedback, resolving Docker prefixes and relative paths to unambiguous committed files while keeping raw check output private.
+- Let implementation workers request companion source through the controller using the run's selected GitHub profile and official CLI. Export tmpfs source through tar while the reader stays running, retain Git history, recover validated staging after interruption, and mount source read-only without exposing GitHub credentials. Provider stops remain stops even when they include source requests.
+
 ## 0.1.0-beta.27 - 2026-10-12
 
 ### Fixed
