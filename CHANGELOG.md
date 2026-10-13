@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.48 - 2026-10-13
+
+### Added
+
+- Enable the durable run-limit override at a verified ready checkpoint before another PR-feedback cycle begins. The command records permission without starting work, preserves cumulative accounting and the original session, and carries the override into later feedback cycles. Provider, input, verification, signing and review gates remain enforced.
+
 ## 0.1.0-beta.47 - 2026-10-13
 
 ### Fixed

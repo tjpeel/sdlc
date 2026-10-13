@@ -1818,7 +1818,8 @@ sdlc resume --run RUN_ID --override-run-limits --dry-run
 
 The same flag is available with a single `sdlc run --reference REFERENCE
 --ticket TICKET --resume RUN_ID`. Admission requires the exact supported local
-numeric hold, its matching saved stage and corroborating accounting. It does not
+numeric hold, its matching saved stage and corroborating accounting, or a locally
+verified saved ready checkpoint on beta.48 or newer. It does not
 admit provider access or usage failures, policy refusals, human questions, missing
 inputs, unfinished cleanup or other operational holds. Legacy missing CI or
 review budgets still require their existing explicit recovery initializer.
@@ -1827,6 +1828,12 @@ initializer or the finite session-turn extension. Dry-run previews admission
 without saving a grant or executing work.
 
 Once granted, ordinary resumes retain the override without repeating the flag.
+At a ready checkpoint, the command saves permission without running a provider
+or starting PR-feedback processing. Use `sdlc resume --run RUN_ID --pr-feedback`
+when new comments are ready for assessment; the saved override remains in force
+through that cycle and later cycles. This does not poll for future comments.
+History and counters are retained rather than reset. Journals containing a
+ready-checkpoint override require beta.48 or newer.
 Formatter preparation honours the same saved repair-limit override; a pending
 correction still requires agent review and a committed repair before full checks.
 It lifts the controller ceilings on native calls, configured-check repair rounds,

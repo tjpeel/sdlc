@@ -1,7 +1,10 @@
 package workrun
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -11,13 +14,23 @@ const verificationFeedbackBound = "verification evidence was already supplied fo
 
 // RunLimitOverride records explicit permission to continue past controller numeric
 // ceilings in the original run. It never changes provider or evidence gates.
+type StableRunLimitBoundary struct {
+	Publication  Publication `json:"publication"`
+	Head         string      `json:"head"`
+	Tree         string      `json:"tree"`
+	EvidenceKey  string      `json:"evidence_key"`
+	CIStatus     string      `json:"ci_status"`
+	ReviewStatus string      `json:"review_status"`
+}
+
 type RunLimitOverride struct {
-	GrantedAt           time.Time `json:"granted_at"`
-	CheckpointUpdatedAt time.Time `json:"checkpoint_updated_at"`
-	GrantedAttempt      int       `json:"granted_attempt"`
-	GrantedRounds       int       `json:"granted_rounds"`
-	OriginalSessionID   string    `json:"original_session_id"`
-	LimitKind           string    `json:"limit_kind"`
+	StableReady         *StableRunLimitBoundary `json:"stable_ready,omitempty"`
+	GrantedAt           time.Time               `json:"granted_at"`
+	CheckpointUpdatedAt time.Time               `json:"checkpoint_updated_at"`
+	GrantedAttempt      int                     `json:"granted_attempt"`
+	GrantedRounds       int                     `json:"granted_rounds"`
+	OriginalSessionID   string                  `json:"original_session_id"`
+	LimitKind           string                  `json:"limit_kind"`
 	// OriginalLimit is zero when the prior configured ceiling was not recorded.
 	OriginalLimit                       int  `json:"original_limit"`
 	PendingVerificationReplay           bool `json:"pending_verification_replay,omitempty"`
@@ -37,7 +50,16 @@ func validatePersistedRunLimitOverride(j *Journal) error {
 	if o.GrantedAt.IsZero() || o.CheckpointUpdatedAt.IsZero() || o.GrantedAt.Before(o.CheckpointUpdatedAt) || o.GrantedAttempt < 0 || o.GrantedAttempt > j.Attempt || o.GrantedRounds < 0 || o.GrantedRounds > j.Rounds || o.OriginalSessionID == "" || o.OriginalSessionID != j.SessionID || o.OriginalLimit < 0 {
 		return fmt.Errorf("invalid persisted run limit override")
 	}
+	if o.LimitKind != "stable_run" && o.StableReady != nil {
+		return fmt.Errorf("unexpected stable run boundary")
+	}
 	switch o.LimitKind {
+	case "stable_run":
+		b := o.StableReady
+		if o.OriginalLimit != 0 || o.PendingVerificationReplay || b == nil || b.CIStatus != "passed" || b.ReviewStatus != "reviewed" || !objectID.MatchString(b.Head) || !objectID.MatchString(b.Tree) || !validInputHash(b.EvidenceKey) || b.Publication.Number < 1 || b.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, b.Publication.Number) || !objectID.MatchString(b.Publication.HeadSHA) || !objectID.MatchString(b.Publication.BaseSHA) {
+			return fmt.Errorf("invalid stable run override boundary")
+		}
+
 	case "native_turns":
 		if o.OriginalLimit != effectiveNativeTurnLimit(j) || o.GrantedAttempt < o.OriginalLimit {
 			return fmt.Errorf("invalid native-turn override accounting")
@@ -82,6 +104,12 @@ func admittedRunLimit(j Journal) (string, int, error) {
 	invalid := fmt.Errorf("run limit override requires a supported saved numeric-limit hold in the original session")
 	if err := validatePersistedRunLimitOverride(&j); err != nil {
 		return "", 0, err
+	}
+	if j.State == "ready" {
+		if err := validateStableRunLimitAdmission(j); err != nil {
+			return "", 0, err
+		}
+		return "stable_run", 0, nil
 	}
 	if j.State != "blocked" || j.SessionID == "" || j.UpdatedAt.IsZero() || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.Outcome.Status == "blocked" || j.Outcome.Status == "failed" || j.Outcome.Status == "waiting_for_human" {
 		return "", 0, invalid
@@ -179,4 +207,109 @@ func formatterRepairFailure(j Journal) bool {
 		}
 	}
 	return false
+}
+
+func validateStableRunLimitAdmission(j Journal) error {
+	if j.State != "ready" || j.UpdatedAt.IsZero() || j.ResumeState != "" || j.StopReason != "" || j.PendingRole != "" || j.Reconciliation != nil || j.Plan.Restack != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.PRFeedback != nil && (j.PRFeedback.Active || j.PRFeedback.FetchPending || pendingFeedback(&j) != nil) {
+		return fmt.Errorf("stable run override requires a completed ready checkpoint")
+	}
+	return ValidatePRFeedbackResume(j)
+}
+
+// ValidateStableRunLimitOverride uses local saved evidence only. The subsequent
+// PR-feedback action retains its normal live publication and account checks.
+func ValidateStableRunLimitOverride(ctx context.Context, directory string, j Journal) error {
+	if err := ValidateRunLimitOverride(j); err != nil {
+		return err
+	}
+	if err := validateStableRunLimitAdmission(j); err != nil {
+		return err
+	}
+	if filepath.Clean(j.Workspace) != filepath.Join(directory, "workspace") {
+		return fmt.Errorf("stable run workspace identity changed")
+	}
+	if err := VerifyCapturedInputs(j.Workspace, j.Plan.Inputs); err != nil {
+		return err
+	}
+	if err := VerifyCapturedInputs(filepath.Join(directory, "check-inputs"), j.Plan.CheckInputs); err != nil {
+		return err
+	}
+	head, err := SafeGit(ctx, j.Workspace, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	head = strings.TrimSpace(head)
+	tree, err := SafeGit(ctx, j.Workspace, "rev-parse", "--verify", "HEAD^{tree}")
+	if err != nil {
+		return err
+	}
+	tree = strings.TrimSpace(tree)
+	status, err := SafeGit(ctx, j.Workspace, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(status) != "" || head != j.Evidence.Head || tree != j.Evidence.Tree || j.Evidence.Key != verificationKey(&j, VerificationRequest{}, head, tree) || !verificationCurrent(&j, head, tree) {
+		return fmt.Errorf("stable run candidate changed after verification")
+	}
+	published := filepath.Join(directory, "publication.git")
+	if j.Plan.PublicationIdentity != nil {
+		published = filepath.Join(directory, "publisher", "publication.git")
+	}
+	if err := realDirectory(published); err != nil {
+		return err
+	}
+	// This bare repository is controller-owned, outside the provider workspace.
+	if err := filepath.Walk(published, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("publication metadata contains unsafe files")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, path := range []string{"objects/info/alternates", "objects/info/http-alternates", "commondir"} {
+		if _, err := os.Lstat(filepath.Join(published, path)); !os.IsNotExist(err) {
+			return fmt.Errorf("redirected publication metadata is unsupported")
+		}
+	}
+	config, err := isolatedGit(ctx, directory, "config", "--no-includes", "--file", filepath.Join(published, "config"), "--null", "--list")
+	if err != nil {
+		return err
+	}
+	allowed := map[string]bool{"core.repositoryformatversion": true, "core.filemode": true, "core.bare": true, "core.logallrefupdates": true, "core.ignorecase": true, "core.precomposeunicode": true, "core.sharedrepository": true, "extensions.objectformat": true}
+	for _, entry := range strings.Split(config, "\x00") {
+		if entry == "" {
+			continue
+		}
+		key, value, _ := strings.Cut(entry, "\n")
+		if !allowed[key] || key == "core.bare" && value != "true" || key == "core.repositoryformatversion" && value != "0" {
+			return fmt.Errorf("publication configuration contains an unsupported setting")
+		}
+	}
+	publishedTree, err := isolatedGit(ctx, directory, "--no-replace-objects", "--git-dir="+published, "rev-parse", "--verify", j.Publication.HeadSHA+"^{tree}")
+	if err != nil || strings.TrimSpace(publishedTree) != tree {
+		return fmt.Errorf("stable published revision differs from the verified candidate tree")
+	}
+	return ctx.Err()
+}
+
+// GrantStableRunLimitOverride requires the caller to own the feature and run
+// locks and to have reloaded the selected checkpoint while holding them.
+func GrantStableRunLimitOverride(ctx context.Context, directory string, j *Journal) error {
+	if err := ValidateStableRunLimitOverride(ctx, directory, *j); err != nil {
+		return err
+	}
+	if j.RunLimitOverride != nil {
+		return nil
+	}
+	before := *j
+	j.RunLimitOverride = &RunLimitOverride{GrantedAt: time.Now().UTC(), CheckpointUpdatedAt: j.UpdatedAt, GrantedAttempt: j.Attempt, GrantedRounds: j.Rounds, OriginalSessionID: j.SessionID, LimitKind: "stable_run", StableReady: &StableRunLimitBoundary{Publication: j.Publication, Head: j.Evidence.Head, Tree: j.Evidence.Tree, EvidenceKey: j.Evidence.Key, CIStatus: j.CI.Status, ReviewStatus: j.Outcome.Status}}
+	if err := Save(directory, j); err != nil {
+		*j = before
+		return err
+	}
+	return nil
 }

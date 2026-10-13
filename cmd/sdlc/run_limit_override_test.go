@@ -5,12 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
@@ -171,5 +176,175 @@ func TestPersistedRunLimitOverridePreviewPreservesFeedback(t *testing.T) {
 	plan := decodeOverridePreview(t, output.Bytes())
 	if string(plan["pr_feedback"]) != "true" || string(plan["run_limits_overridden"]) != "true" {
 		t.Fatalf("preview lost feedback action: %s", output.Bytes())
+	}
+}
+
+func stableOverrideFixture(t *testing.T) (workrun.Journal, string) {
+	t.Helper()
+	j, marker, _ := capturedAttentionFixture(t)
+	ctx := context.Background()
+	directory := filepath.Dir(j.Workspace)
+	git := func(args ...string) string {
+		t.Helper()
+		output, err := workrun.SafeGit(ctx, j.Workspace, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(output)
+	}
+	git("-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit", "--allow-empty", "-qm", "Create disposable candidate")
+	head := git("rev-parse", "HEAD")
+	tree := git("rev-parse", "HEAD^{tree}")
+	signed := git("-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit-tree", tree, "-p", head, "-m", "Create disposable published boundary")
+	j.Plan.Repository = "example/project"
+	j.Plan.PublicationIdentity = &workrun.PublicationIdentity{GitHubProfile: "example", RepositoryID: 1, RepositoryName: "example/project", ProfileID: "example", GitHubID: 1, GitHubLogin: "example", GitName: "Example User", GitEmail: "example@example.invalid", SSHPublicKey: "ssh-ed25519 AAAA", SSHFingerprint: "SHA256:example"}
+	published := filepath.Join(directory, "publisher", "publication.git")
+	if err := os.MkdirAll(filepath.Dir(published), 0700); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "--bare", "--template=", published)
+	git("--git-dir="+published, "fetch", "--no-tags", j.Workspace, signed+":refs/heads/publication")
+	j.State, j.ResumeState, j.StopReason, j.PendingRole = "ready", "", "", ""
+	j.Attempt = 6
+	j.Rounds = 2
+	j.SessionID = "00000000-0000-4000-8000-000000000001"
+	j.Outcome = workrun.Outcome{Status: "reviewed"}
+	j.CI = workrun.CIResult{Status: "passed"}
+	j.Publication = workrun.Publication{Number: 1, URL: "https://github.com/example/project/pull/1", BaseSHA: j.Plan.StartingSHA, HeadSHA: signed}
+	// Build the saved controller key for this disposable ready fixture.
+	data, err := json.Marshal(struct {
+		Request           workrun.VerificationRequest
+		Head, Tree, Image string
+		Inputs            []workrun.Input
+		Commands          [][]string
+		Docker            bool
+		Daemon            string
+		DaemonMode        string `json:",omitempty"`
+	}{workrun.VerificationRequest{}, head, tree, j.ImageID, j.Plan.CheckInputs, j.Plan.Checks, j.Plan.DockerTests, j.Plan.DaemonImage, j.Plan.DaemonMode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Evidence = workrun.CheckEvidence{Passed: true, Head: head, Tree: tree, Key: fmt.Sprintf("%x", sha256.Sum256(data))}
+	if err := workrun.Save(directory, &j); err != nil {
+		t.Fatal(err)
+	}
+	if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Register(directory, j); err != nil {
+		t.Fatal(err)
+	}
+	return j, marker
+}
+
+func TestStableRunOverrideCLIRecordsPermissionWithoutStartingWork(t *testing.T) {
+	j, marker := stableOverrideFixture(t)
+	directory := filepath.Dir(j.Workspace)
+	before := dashboardTree(t, directory)
+	var output bytes.Buffer
+	if err := resumeCommand(context.Background(), []string{"--run", j.ID, "--override-run-limits", "--dry-run"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, dashboardTree(t, directory)) {
+		t.Fatal("ready preview changed saved run")
+	}
+	plan := decodeOverridePreview(t, output.Bytes())
+	if string(plan["state"]) != `"ready"` || string(plan["override_run_limits"]) != "true" || string(plan["pr_feedback"]) == "true" {
+		t.Fatal("preview did not retain ready-only action")
+	}
+	output.Reset()
+	if err := resumeCommand(context.Background(), []string{"--run", j.ID, "--override-run-limits"}, &output); err != nil {
+		t.Fatal("ready opt-in failed", err)
+	}
+	saved, err := workrun.Load(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.RunLimitOverride == nil || saved.RunLimitOverride.LimitKind != "stable_run" || saved.RunLimitOverride.GrantedAttempt != 6 || saved.RunLimitOverride.StableReady.Publication != j.Publication || saved.RunLimitOverride.StableReady.Head == j.Publication.HeadSHA {
+		t.Fatal("stable ready audit missing or signed mapping changed")
+	}
+	audit := *saved.RunLimitOverride
+	expected := j
+	expected.RunLimitOverride = saved.RunLimitOverride
+	expected.UpdatedAt = saved.UpdatedAt
+	if !reflect.DeepEqual(expected, saved) {
+		t.Fatal("ready opt-in changed counters, evidence, session or checkpoint state")
+	}
+	if err := resumeCommand(context.Background(), []string{"--run", j.ID, "--override-run-limits"}, &output); err != nil {
+		t.Fatal("idempotent ready opt-in failed", err)
+	}
+	again, err := workrun.Load(directory)
+	if err != nil || !reflect.DeepEqual(audit, *again.RunLimitOverride) || !again.UpdatedAt.Equal(saved.UpdatedAt) {
+		t.Fatal("ready retry renewed grant", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("ready grant reached native, Docker or GitHub commands")
+	}
+	output.Reset()
+	if err := resumeCommand(context.Background(), []string{"--run", j.ID, "--pr-feedback", "--dry-run"}, &output); err != nil {
+		t.Fatal("future feedback lost saved override", err)
+	}
+	plan = decodeOverridePreview(t, output.Bytes())
+	if string(plan["pr_feedback"]) != "true" || string(plan["run_limits_overridden"]) != "true" {
+		t.Fatal("future feedback did not retain override")
+	}
+}
+
+func TestStableRunOverrideCLIRejectsUnsafeReadyBoundary(t *testing.T) {
+	for _, scenario := range []string{"dirty", "source-head", "evidence-key", "ci", "review", "pending-input", "active-feedback", "ownership", "published-tree", "private-input"} {
+		t.Run(scenario, func(t *testing.T) {
+			j, _ := stableOverrideFixture(t)
+			directory := filepath.Dir(j.Workspace)
+			switch scenario {
+			case "dirty":
+				if err := os.WriteFile(filepath.Join(j.Workspace, "README.md"), []byte("Changed candidate"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "source-head":
+				j.Evidence.Head = strings.Repeat("a", 40)
+			case "evidence-key":
+				j.Evidence.Key = strings.Repeat("a", 64)
+			case "ci":
+				j.CI.Status = "failed"
+			case "review":
+				j.Outcome.Limitations = []string{"Review incomplete"}
+			case "pending-input":
+				// An unfinished transaction is rejected by action admission before any grant.
+				j.PendingInputs = &workrun.PendingInputRecovery{InputRecovery: workrun.InputRecovery{Scope: "checks", PreviousCheckpoint: j.UpdatedAt, AddedAt: time.Now().UTC(), Inputs: []workrun.Input{{Path: "fixture.txt", SHA256: strings.Repeat("a", 64)}}}, Stage: "input-recovery-pending"}
+			case "active-feedback":
+				j.PRFeedback = &workrun.PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: j.Evidence.Head}
+			case "published-tree":
+				j.Publication.HeadSHA = strings.Repeat("b", 40)
+			case "private-input":
+				if err := os.WriteFile(filepath.Join(directory, "check-inputs", j.Plan.CheckInputs[0].Path), []byte("Changed private fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := workrun.Save(directory, &j); err != nil {
+				t.Fatal(err)
+			}
+			if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Register(directory, j); err != nil {
+				t.Fatal(err)
+			}
+			var lock *os.File
+			if scenario == "ownership" {
+				var err error
+				lock, err = filelock.Acquire(filepath.Join(directory, "run.lock"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+			}
+			before, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+			var output bytes.Buffer
+			err := resumeCommand(context.Background(), []string{"--run", j.ID, "--override-run-limits"}, &output)
+			if err == nil {
+				t.Fatal("unsafe ready grant admitted")
+			}
+			if scenario == "ownership" && !errors.Is(err, filelock.ErrBusy) {
+				t.Fatal("active ownership not enforced", err)
+			}
+			after, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+			if !bytes.Equal(before, after) {
+				t.Fatal("rejected grant changed checkpoint")
+			}
+		})
 	}
 }

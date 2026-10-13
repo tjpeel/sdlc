@@ -195,3 +195,18 @@ func TestReportRunLimitOverrideAuditProjection(t *testing.T) {
 		t.Fatal("unknown limit kind was not sanitized")
 	}
 }
+
+func TestStableRunOverrideStatusPreservesAuditWithoutInventingLimit(t *testing.T) {
+	granted := time.Now().UTC()
+	status := RunLimitOverrideStatus(&workrun.RunLimitOverride{LimitKind: "stable_run", GrantedAt: granted, GrantedAttempt: 6, GrantedRounds: 2, OriginalLimit: 0, OriginalSessionID: "excluded-original-session"})
+	if status == nil || status.LimitKind != "stable_run" || status.OriginalLimit != 0 || status.GrantedAttempt != 6 || status.GrantedRounds != 2 || !status.GrantedAt.Equal(granted) {
+		t.Fatal("stable permission display lost audit or invented a ceiling")
+	}
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "excluded-") || strings.Contains(string(data), "original_session_id") {
+		t.Fatal("stable permission display exposed session identity")
+	}
+}

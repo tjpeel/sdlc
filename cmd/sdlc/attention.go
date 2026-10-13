@@ -85,7 +85,7 @@ func inspectRunAction(ctx context.Context, id string, feedback ...bool) (runActi
 		if stage == "blocked" || stage == "failed" {
 			stage = journal.ResumeState
 		}
-		if !resumableStage(stage) && !(stage == "ready" && len(feedback) > 0 && feedback[0]) {
+		if !resumableStage(stage) && !(stage == "ready" && (len(feedback) > 0 && feedback[0] || len(feedback) > 1 && feedback[1])) {
 			return runAction{}, fmt.Errorf("run state %q has no supported resumable stage", journal.State)
 		}
 	}
@@ -311,7 +311,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	if sources == 1 && !suppliedText && !stdin && path == "" {
 		return fmt.Errorf("--answer-file cannot be empty")
 	}
-	action, err := resolveRunAction(ctx, *id, answer, feedback)
+	action, err := resolveRunAction(ctx, *id, answer, feedback, override)
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			return err
 		}
 	}
-	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback)
+	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback, override)
 	if err != nil {
 		return err
 	}

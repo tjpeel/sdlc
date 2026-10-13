@@ -181,7 +181,7 @@ func RunLimitOverrideStatus(o *workrun.RunLimitOverride) *RunLimitOverrideSummar
 	}
 	kind := "unknown"
 	switch o.LimitKind {
-	case "native_turns", "configured_repairs", "ci_repairs", "review_handoffs", "verification_feedback", "verification_requests", "pr_metadata":
+	case "stable_run", "native_turns", "configured_repairs", "ci_repairs", "review_handoffs", "verification_feedback", "verification_requests", "pr_metadata":
 		kind = o.LimitKind
 	}
 	return &RunLimitOverrideSummary{

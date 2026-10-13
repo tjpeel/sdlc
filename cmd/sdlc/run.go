@@ -596,6 +596,38 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 	}
 
+	if options.overrideRunLimits && journal.State == "ready" {
+		view := runstatus.View{ID: journal.ID, Root: journal.Plan.Root, Reference: journal.Plan.Reference, Ticket: journal.Plan.Ticket, Directory: directory, UpdatedAt: journal.UpdatedAt}
+		release, err := lockInputRun(ctx, view, !options.dryRun)
+		if err != nil {
+			return err
+		}
+		defer release()
+		current, err := workrun.Load(directory)
+		if err != nil {
+			return err
+		}
+		if current.ID != journal.ID || current.Plan.Root != journal.Plan.Root || current.Plan.Reference != journal.Plan.Reference || current.Plan.Ticket != journal.Plan.Ticket || !current.UpdatedAt.Equal(journal.UpdatedAt) {
+			return fmt.Errorf("run checkpoint changed; select the run again")
+		}
+		if options.dryRun {
+			if err := workrun.ValidateStableRunLimitOverride(ctx, directory, current); err != nil {
+				return err
+			}
+			return printRunLimitOverridePlan(output, current, options.jsonOutput, true, ctx, "", false, 0)
+		}
+		previous := current.UpdatedAt
+		if err := workrun.GrantStableRunLimitOverride(ctx, directory, &current); err != nil {
+			return err
+		}
+		if !current.UpdatedAt.Equal(previous) {
+			if err := runstatus.New(runtime.Directory).Register(directory, current); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(output, "Run %s: numerical allowances overridden at its saved ready checkpoint. No work started.\n", current.ID)
+		return nil
+	}
 	if options.dryRun {
 		if options.resume != "" {
 			if options.overrideRunLimits || journal.RunLimitOverride != nil {

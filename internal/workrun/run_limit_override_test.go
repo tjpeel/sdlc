@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -505,5 +506,117 @@ func TestSavedBatchReplayRecoversIntermediateOutcomeCheckpoints(t *testing.T) {
 				t.Fatal("recovery repeated assessment, dropped companion or consumed native turn")
 			}
 		})
+	}
+}
+
+func stableGrantFixture(t *testing.T) (string, *Journal) {
+	t.Helper()
+	directory, value, _ := recoveryFixture(t)
+	j := &value
+	ctx := context.Background()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := SafeGit(ctx, j.Workspace, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(out)
+	}
+	git("-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit", "--allow-empty", "-qm", "Create disposable candidate")
+	head := git("rev-parse", "HEAD")
+	tree := git("rev-parse", "HEAD^{tree}")
+	signed := git("-c", "user.name=Example User", "-c", "user.email=example@example.invalid", "commit-tree", tree, "-p", head, "-m", "Create disposable published boundary")
+	published := filepath.Join(directory, "publication.git")
+	git("init", "--bare", "--template=", published)
+	git("--git-dir="+published, "fetch", "--no-tags", j.Workspace, signed+":refs/heads/publication")
+	j.State, j.ResumeState, j.PendingRole, j.StopReason = "ready", "", "", ""
+	j.Attempt = 6
+	j.SessionID = testNative
+	j.Outcome = testOutcome("reviewed")
+	j.CI = CIResult{Status: "passed"}
+	j.Publication = Publication{Number: 1, URL: "https://github.com/" + j.Plan.Repository + "/pull/1", BaseSHA: j.Plan.StartingSHA, HeadSHA: signed}
+	j.Evidence = CheckEvidence{Head: head, Tree: tree, Passed: true, Key: verificationKey(j, VerificationRequest{}, head, tree)}
+	if err := Save(directory, j); err != nil {
+		t.Fatal(err)
+	}
+	return directory, j
+}
+
+func TestRunnerStableOverrideReturnsBeforeExecutionBoundaries(t *testing.T) {
+	directory, j := stableGrantFixture(t)
+	provider := &fakeProvider{}
+	checker := &fakeChecker{}
+	publisher := &fakePublisher{}
+	repository := &fakeRepository{}
+	runner := fakeRunner(provider, checker, publisher, repository)
+	runner.OverrideRunLimits = true
+	started := false
+	runner.OnStart = func(Journal) error { started = true; return errors.New("unexpected execution start") }
+	before := *j
+	if err := runner.Run(context.Background(), directory, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	if started || len(provider.calls) != 0 || checker.calls != 0 || publisher.ci != 0 || publisher.calls != 0 || repository.calls != 0 {
+		t.Fatal("stable permission invoked execution boundary")
+	}
+	if j.RunLimitOverride == nil || j.RunLimitOverride.LimitKind != "stable_run" || j.RunLimitOverride.GrantedAttempt != 6 {
+		t.Fatal("stable grant missing below native ceiling")
+	}
+	expected := before
+	expected.RunLimitOverride = j.RunLimitOverride
+	expected.UpdatedAt = j.UpdatedAt
+	if !reflect.DeepEqual(expected, *j) {
+		t.Fatal("stable grant reset counters/history/evidence/session")
+	}
+	saved, err := Load(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := saved.UpdatedAt
+	grant := *saved.RunLimitOverride
+	if err := runner.Run(context.Background(), directory, &saved, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !saved.UpdatedAt.Equal(checkpoint) || !reflect.DeepEqual(grant, *saved.RunLimitOverride) {
+		t.Fatal("stable retry renewed audit")
+	}
+	invalid := saved
+	invalid.RunLimitOverride = &RunLimitOverride{}
+	*invalid.RunLimitOverride = grant
+	invalid.RunLimitOverride.StableReady = nil
+	if validatePersistedRunLimitOverride(&invalid) == nil {
+		t.Fatal("stable grant without ready proof admitted")
+	}
+}
+
+func TestStableOverrideRetainedThroughFreshPRFeedbackTurn(t *testing.T) {
+	directory, j := stableGrantFixture(t)
+	if err := GrantStableRunLimitOverride(context.Background(), directory, j); err != nil {
+		t.Fatal(err)
+	}
+	grant := *j.RunLimitOverride
+	j.Attempt = 24
+	if err := Save(directory, j); err != nil {
+		t.Fatal(err)
+	}
+	comment := generalFeedback("comment:1", "Clarify the response contract")
+	question := testOutcome("waiting_for_human")
+	question.Questions = []string{"Which documented response should this feedback require?"}
+	provider := &feedbackScriptProvider{outcomes: []Outcome{question}}
+	checker := &fakeChecker{}
+	publisher := &feedbackPublisherFake{fakePublisher: &fakePublisher{}, comments: []PRFeedbackComment{comment}}
+	repository := &fakeRepository{revisions: []Revision{{Head: j.Evidence.Head, Tree: j.Evidence.Tree, Clean: true}}}
+	runner := fakeRunner(&fakeProvider{}, checker, publisher.fakePublisher, repository)
+	runner.Provider = provider
+	runner.Publisher = publisher
+	runner.ProcessPRFeedback = true
+	if err := runner.Run(context.Background(), directory, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal("fresh feedback did not preserve human hold", err)
+	}
+	if j.State != "waiting_for_human" || j.Attempt != 25 || j.SessionID != testNative || len(provider.sessions) != 1 || !reflect.DeepEqual(grant, *j.RunLimitOverride) || !reflect.DeepEqual(j.Outcome.Questions, question.Questions) {
+		t.Fatal("feedback reset grant/accounting or bypassed human hold")
+	}
+	if provider.sessions[0].Role != "implementation" || provider.sessions[0].ResumeID != testNative || publisher.reads != 1 {
+		t.Fatal("feedback did not dispatch the original native session past its numeric ceiling")
 	}
 }

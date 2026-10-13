@@ -151,6 +151,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
 			return err
 		}
+		if journal.State == "ready" {
+			return GrantStableRunLimitOverride(ctx, directory, journal)
+		}
 	}
 	if runner.InitializeCIRepairBudget {
 		if err := ValidateCIRepairInitialization(*journal); err != nil {
