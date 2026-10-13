@@ -3,6 +3,7 @@ package project
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,10 @@ func dotnetFormatter(root string) ([][]string, string, error) {
 	if err != nil || data == nil {
 		return nil, "", err
 	}
+	return pinnedDotnetFormatter(data)
+}
+
+func pinnedDotnetFormatter(data []byte) ([][]string, string, error) {
 	var manifest struct {
 		Version int                        `json:"version"`
 		IsRoot  json.RawMessage            `json:"isRoot"`
@@ -145,4 +150,154 @@ func dotnetFormatterFirst(commands, defaults [][]string) ([][]string, [][]string
 		lint = append(lint, defaults[1])
 	}
 	return append(setup, lint...), remaining
+}
+
+// Formatter describes a controller-supported preparation policy. Commands are
+// fixed by this package, never inferred from scripts or check failure output.
+type Formatter struct {
+	Name       string
+	Extensions []string
+	Setup      [][]string
+	Command    []string
+}
+
+// DiscoverFormatters reads committed metadata supplied by the controller. Check
+// selection is independent: explicit and legacy suites receive the same policy.
+func DiscoverFormatters(manifest []byte) ([]Formatter, error) {
+	if len(manifest) == 0 {
+		return nil, nil
+	}
+	commands, warning, err := pinnedDotnetFormatter(manifest)
+	if err != nil {
+		return nil, err
+	}
+	if warning != "" {
+		return nil, fmt.Errorf("%s", warning)
+	}
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	return []Formatter{{Name: "csharpier", Extensions: []string{".cs"}, Setup: commands[:1], Command: []string{"dotnet", "csharpier", "format"}}}, nil
+}
+
+// FormatterForChecks retains documented root configuration from direct check
+// argv. Scripts and arbitrary fix commands are never interpreted as policies.
+func FormatterForChecks(formatter Formatter, checks [][]string) (Formatter, error) {
+	if formatter.Name != "csharpier" {
+		return formatter, nil
+	}
+	var selected []string
+	var selectedEnv []string
+	var setup []string
+	for _, command := range checks {
+		invocation := dotnetInvocation(command)
+		restore := len(invocation) >= 3 && slices.Equal(invocation[:3], []string{"dotnet", "tool", "restore"})
+		rootCheck := len(invocation) >= 4 && slices.Equal(invocation[:4], []string{"dotnet", "csharpier", "check", "."})
+		if !restore && !rootCheck {
+			continue
+		}
+		environment, err := formatterEnvironment(command, invocation)
+		if err != nil {
+			return Formatter{}, err
+		}
+		if restore {
+			for i := 3; i < len(invocation); i++ {
+				switch invocation[i] {
+				case "--disable-parallel", "--ignore-failed-sources", "--no-cache":
+				case "--verbosity", "-v":
+					i++
+					if i >= len(invocation) || !slices.Contains([]string{"q", "quiet", "m", "minimal", "n", "normal", "d", "detailed", "diag", "diagnostic"}, invocation[i]) {
+						return Formatter{}, fmt.Errorf("unsupported formatter tool restore options")
+					}
+				case "--tool-manifest":
+					i++
+					if i >= len(invocation) || invocation[i] != dotnetToolsManifest {
+						return Formatter{}, fmt.Errorf("unsupported formatter tool manifest")
+					}
+				case "--configfile":
+					i++
+					if i >= len(invocation) || !formatterConfigPath(invocation[i]) {
+						return Formatter{}, fmt.Errorf("unsafe formatter tool configuration")
+					}
+				default:
+					return Formatter{}, fmt.Errorf("unsupported formatter tool restore options")
+				}
+			}
+			if setup != nil && !slices.Equal(setup, command) {
+				return Formatter{}, fmt.Errorf("ambiguous formatter tool restore policy")
+			}
+			setup = append([]string(nil), command...)
+			continue
+		}
+		options := []string{}
+		for i := 4; i < len(invocation); i++ {
+			argument := invocation[i]
+			name, value, equals := strings.Cut(argument, "=")
+			switch name {
+			case "--config-path", "--ignore-path":
+				if !equals {
+					i++
+					if i >= len(invocation) {
+						return Formatter{}, fmt.Errorf("missing formatter configuration path")
+					}
+					value = invocation[i]
+				}
+				if !formatterConfigPath(value) {
+					return Formatter{}, fmt.Errorf("unsafe formatter configuration path")
+				}
+				if slices.Contains(options, name) {
+					return Formatter{}, fmt.Errorf("ambiguous formatter configuration options")
+				}
+				options = append(options, name, value)
+			case "--include-generated", "--no-msbuild-check":
+				if equals {
+					return Formatter{}, fmt.Errorf("unsupported formatter check option")
+				}
+				options = append(options, name)
+			case "--no-cache":
+				if equals {
+					return Formatter{}, fmt.Errorf("unsupported formatter check option")
+				}
+			default:
+				return Formatter{}, fmt.Errorf("unsupported formatter check option; preparation cannot infer its formatting policy")
+			}
+		}
+		if selected != nil && (!slices.Equal(selected, options) || !slices.Equal(selectedEnv, environment)) {
+			return Formatter{}, fmt.Errorf("ambiguous root formatter policy")
+		}
+		selected, selectedEnv = options, environment
+	}
+	if setup != nil {
+		formatter.Setup = [][]string{setup}
+	}
+	formatter.Command = append(append([]string(nil), formatter.Command...), selected...)
+	if len(selectedEnv) > 0 {
+		formatter.Command = append(append([]string{"env"}, selectedEnv...), formatter.Command...)
+	}
+	return formatter, nil
+}
+
+func formatterConfigPath(value string) bool {
+	if value == "" || filepath.IsAbs(value) || filepath.Clean(value) != value || strings.Contains(value, "\\") {
+		return false
+	}
+	for _, part := range strings.Split(value, "/") {
+		if part == ".." || part == ".git" {
+			return false
+		}
+	}
+	return !strings.ContainsAny(value, "\x00\r\n")
+}
+func formatterEnvironment(command, invocation []string) ([]string, error) {
+	if len(command) == len(invocation) {
+		return nil, nil
+	}
+	environment := command[1 : len(command)-len(invocation)]
+	for _, setting := range environment {
+		name, value, ok := strings.Cut(setting, "=")
+		if !ok || !slices.Contains([]string{"DOTNET_CLI_TELEMETRY_OPTOUT", "DOTNET_NOLOGO", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE"}, name) || !slices.Contains([]string{"0", "1", "true", "false"}, value) {
+			return nil, fmt.Errorf("unsupported formatter environment setting")
+		}
+	}
+	return append([]string(nil), environment...), nil
 }

@@ -732,7 +732,11 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	}
 	packetEvidence := journal.Evidence
 	packetAdditional := append([]VerificationResult(nil), journal.Verification...)
+	packetPreparation := append([]VerificationResult(nil), journal.FormatterPreparation...)
 	if role == "review" {
+		for i := range packetPreparation {
+			packetPreparation[i].Output = nil
+		}
 		packetEvidence.Output = nil
 		packetEvidence.CompletedFailureFeedback = ""
 		for i := range packetAdditional {
@@ -744,10 +748,11 @@ func (runner Runner) prompt(journal Journal, role string) string {
 		Publication Publication          `json:"publication"`
 		Evidence    CheckEvidence        `json:"verification"`
 		Additional  []VerificationResult `json:"additional_verification"`
+		Preparation []VerificationResult `json:"formatter_preparation,omitempty"`
 		PRFeedback  *PRFeedbackHistory   `json:"human_pr_feedback,omitempty"`
 		Assessment  *ReviewAssessment    `json:"prior_review_assessment,omitempty"`
 		HumanInput  *ReviewHumanInput    `json:"recorded_review_human_input,omitempty"`
-	}{journal.Plan, journal.Publication, packetEvidence, packetAdditional, journal.PRFeedback, journal.ReviewAssessment, journal.ReviewHumanInput}, "", "  ")
+	}{journal.Plan, journal.Publication, packetEvidence, packetAdditional, packetPreparation, journal.PRFeedback, journal.ReviewAssessment, journal.ReviewHumanInput}, "", "  ")
 	// Shared instructions are already supplied once through the native global
 	// instruction file. Do not duplicate their body in the conversation.
 	shared := "Follow the native global shared instructions.\n" + contextDiscipline + "Selected launch context:\n" + string(packet) + "\n\n"

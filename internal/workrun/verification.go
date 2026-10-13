@@ -217,12 +217,17 @@ func verificationFeedback(j *Journal) string {
 	for i := range copyJournal.Verification {
 		copyJournal.Verification[i].Output = append([]CommandOutput(nil), j.Verification[i].Output...)
 	}
+	copyJournal.FormatterPreparation = append([]VerificationResult(nil), j.FormatterPreparation...)
+	for i := range copyJournal.FormatterPreparation {
+		copyJournal.FormatterPreparation[i].Output = append([]CommandOutput(nil), j.FormatterPreparation[i].Output...)
+	}
 	boundOutputs(&copyJournal, 16*1024)
 	j = &copyJournal
 	data, _ := json.Marshal(struct {
-		Suite      CheckEvidence        `json:"suite"`
-		Additional []VerificationResult `json:"additional"`
-	}{j.Evidence, j.Verification})
+		Suite       CheckEvidence        `json:"suite"`
+		Additional  []VerificationResult `json:"additional"`
+		Preparation []VerificationResult `json:"preparation,omitempty"`
+	}{j.Evidence, j.Verification, j.FormatterPreparation})
 	return "Controller verification evidence: " + string(data)
 }
 func verificationFeedbackKey(j *Journal, head, tree string) string {

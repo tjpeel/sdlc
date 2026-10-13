@@ -133,8 +133,26 @@ func validateSourcePatchResult(result *SourcePatchResult, request VerificationRe
 	return nil
 }
 func validateSourcePatchJournal(journal *Journal) error {
+	if len(journal.FormatterPreparation) > 16 {
+		return errors.New("formatter preparation exceeds journal bound")
+	}
+	requests := make([]VerificationRequest, len(journal.FormatterPreparation))
+	for i, evidence := range journal.FormatterPreparation {
+		requests[i] = evidence.Request
+	}
+	if err := validateVerificationRequests(requests, &journal.Plan); err != nil {
+		return err
+	}
+	for _, evidence := range journal.FormatterPreparation {
+		if err := validateVerificationRequests([]VerificationRequest{evidence.Request}, &journal.Plan); err != nil {
+			return err
+		}
+		if evidence.Request.SourcePatch == nil || !objectID.MatchString(evidence.Head) || !objectID.MatchString(evidence.Tree) || !strings.HasPrefix(evidence.Request.ID, "formatter-") || evidence.SourcePatch == nil && evidence.Passed || evidence.Key != verificationKey(journal, evidence.Request, evidence.Head, evidence.Tree) || evidence.SourcePatch != nil && evidence.Passed != (evidence.SourcePatch.Diff == "") {
+			return errors.New("invalid formatter preparation evidence")
+		}
+	}
 	total := 0
-	for _, evidence := range journal.Verification {
+	for _, evidence := range append(append([]VerificationResult(nil), journal.Verification...), journal.FormatterPreparation...) {
 		if evidence.SourcePatch == nil {
 			continue
 		}
@@ -172,7 +190,7 @@ func discardSourcePatchFeedback(journal *Journal, evidence *VerificationResult) 
 // stale artifact data from feedback, preserving review findings and human input.
 func (runner Runner) validateSourcePatchResume(ctx context.Context, directory string, journal *Journal) error {
 	pending := false
-	for _, evidence := range journal.Verification {
+	for _, evidence := range append(append([]VerificationResult(nil), journal.Verification...), journal.FormatterPreparation...) {
 		pending = pending || evidence.SourcePatch != nil
 	}
 	if !pending {
@@ -183,6 +201,22 @@ func (runner Runner) validateSourcePatchResume(ctx context.Context, directory st
 		return runner.stop(directory, journal, "blocked", "cannot establish the source correction candidate before resuming")
 	}
 	stale := false
+	for i := range journal.FormatterPreparation {
+		evidence := &journal.FormatterPreparation[i]
+		if !revision.Clean || evidence.Head != revision.Head || evidence.Tree != revision.Tree {
+			discardSourcePatchFeedback(journal, evidence)
+			evidence.Key = ""
+			evidence.Output = nil
+			stale = true
+		}
+	}
+	activePreparation := journal.FormatterPreparation[:0]
+	for _, evidence := range journal.FormatterPreparation {
+		if evidence.Key != "" {
+			activePreparation = append(activePreparation, evidence)
+		}
+	}
+	journal.FormatterPreparation = activePreparation
 	for i := range journal.Verification {
 		evidence := &journal.Verification[i]
 		if evidence.SourcePatch != nil && (!revision.Clean || evidence.Head != revision.Head || evidence.Tree != revision.Tree) {

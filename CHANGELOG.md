@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.44 - 2026-10-13
+
+### Added
+
+- Prepare formatting before full repository checks. Discover supported formatters from committed candidate metadata, starting with pinned CSharpier 1.x, and format changed C# files from the repository root in an isolated source copy. Return bounded corrections and hashes to the original implementation session for review and commitment before running the full suite; reuse preparation for an unchanged candidate and preserve frozen checks and repair limits.
+
+### Changed
+
+- Journals containing formatter preparation evidence require beta.44 or newer. Existing saved runs remain readable and receive preparation without changing their frozen check selection.
+
 ## 0.1.0-beta.43 - 2026-10-13
 
 ### Added

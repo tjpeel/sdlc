@@ -1,5 +1,10 @@
 # Run history and retention
 
+Formatter preparation evidence is retained separately from agent-requested
+verification. A correction artifact is private data for the original agent to
+review; it does not establish passing full checks. Keep beta.44 or newer when
+resuming a journal that contains preparation evidence.
+
 SDLC keeps local run data indefinitely. A one-time `--extend-session-turn-budget N`
 continuation retains the original session and cumulative attempt count; its
 additional allowance and original session are recorded in the private journal. Reaching `ready` means a draft PR has

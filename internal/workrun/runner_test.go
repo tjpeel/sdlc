@@ -1016,3 +1016,7 @@ func TestRunnerInitializedCIBudgetOrdinaryResumeRetainsHistory(t *testing.T) {
 		t.Fatal("ordinary resume lost existing budget/history/session", err)
 	}
 }
+
+func (*fakeRepository) FormatterPreparation(context.Context, *Journal, Revision) ([]VerificationRequest, error) {
+	return nil, nil
+}

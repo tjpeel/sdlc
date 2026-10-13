@@ -194,6 +194,28 @@ or malformed and ambiguous manifests require explicit checks; a forced refresh
 keeps usable saved settings when it cannot infer the formatter safely. See the
 [CSharpier CLI documentation](https://csharpier.com/docs/CLI).
 
+Before the full suite, the controller also discovers supported formatters from
+the committed candidate. For pinned CSharpier 1.x, it restores the local tool and
+formats new or changed C# source in batches of at most 16 files, with the working
+directory at the repository root. Project formatter configuration remains in
+effect. This preparation also applies to saved runs with explicit or legacy
+checks; it does not replace their frozen suite.
+
+Formatter commands run in an independent source copy without provider
+credentials, private check inputs or Docker-test access. An empty correction
+continues to full checks. A nonempty correction returns a bounded private diff
+and hashes to the original implementation session, which reviews, applies and
+commits it before requesting checks again. SDLC does not apply corrections to
+the agent's workspace. Preparation evidence is tied to the candidate and commands
+and reused while they remain unchanged. Existing input, cleanup, artifact-size,
+stale-candidate and repair limits still apply. Other formatter implementations
+can use the same preparation phase; arbitrary lint scripts are not inferred as
+formatting commands.
+
+A failed preparation still permits new agent-requested diagnostics or smaller
+source corrections in the isolated check worker. Their results do not clear the
+failed preparation or establish a passing full suite.
+
 `input_files` starts empty. During a run, these exact relative files are copied
 only into the separate credential-free check worker. Use this for reviewed test
 configuration; it does not supply requirements to the provider. Files named
