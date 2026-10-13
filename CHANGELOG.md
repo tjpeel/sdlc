@@ -12,7 +12,7 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 ### Fixed
 
 - Keep PR-comment assessments provisional while the implementation session requests checks, companion source or human clarification. Accept the final assessment for the same current comment revision, retain assessment history, and post the reply only after completion. Recover the matching saved feedback hold without another provider turn or budget reset.
-- Retain bounded publication failure diagnostics in private host files. Deliver a verified publisher helper with the CLI so saved runs can use current diagnostics while preserving their frozen runtime, signing identity, remote guards and credential isolation.
+- Retain bounded publication failure diagnostics in private host files. Deliver a verified publisher helper with the CLI so saved runs can use current diagnostics while preserving their frozen runtime, signing identity, remote guards and credential isolation. Stage verified read-only package assets as executable private copies before credential acquisition.
 
 ### Added
 

@@ -127,8 +127,8 @@ func resolveHash(cli, hash string, identity buildinfo.Identity, platform string)
 		return "", fmt.Errorf("unsupported publisher platform")
 	}
 	path := filepath.Join(directory, "sdlc-publisher-linux-"+arch)
-	if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0555 {
-		return "", fmt.Errorf("publisher controller must have mode 0555")
+	if info, err := os.Lstat(path); err != nil || (info.Mode().Perm() != 0444 && info.Mode().Perm() != 0555) {
+		return "", fmt.Errorf("publisher controller must have read-only mode 0444 or 0555")
 	}
 	if err = privateImmutable(path, false); err != nil {
 		return "", err
@@ -154,7 +154,10 @@ func resolveHash(cli, hash string, identity buildinfo.Identity, platform string)
 // Stage snapshots verified bytes into a private controller-owned immutable directory.
 // The staged file is revalidated before any credentials are acquired.
 func Stage(platform string) (string, func() error, error) {
-	path, err := Resolve(platform)
+	return stage(platform, Resolve)
+}
+func stage(platform string, resolve func(string) (string, error)) (string, func() error, error) {
+	path, err := resolve(platform)
 	if err != nil {
 		return "", nil, err
 	}
@@ -182,11 +185,12 @@ func Stage(platform string) (string, func() error, error) {
 	}
 	_, copyErr := io.Copy(output, io.LimitReader(file, 128*1024*1024+1))
 	closeErr := output.Close()
-	if copyErr != nil || closeErr != nil {
+	modeErr := os.Chmod(staged, 0555)
+	if copyErr != nil || modeErr != nil || closeErr != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("cannot stage publisher controller")
 	}
-	verified, err := Resolve(platform)
+	verified, err := resolve(platform)
 	if err != nil || verified != path {
 		cleanup()
 		return "", nil, fmt.Errorf("publisher controller changed during staging")
@@ -196,6 +200,10 @@ func Stage(platform string) (string, func() error, error) {
 	if err != nil || stagedErr != nil || sourceHash != stagedHash {
 		cleanup()
 		return "", nil, fmt.Errorf("publisher controller changed during staging")
+	}
+	if info, err := os.Lstat(staged); err != nil || info.Mode().Perm() != 0555 || privateImmutable(staged, false) != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("staged publisher controller is not immutable and executable")
 	}
 	if err = os.Chmod(directory, 0555); err != nil {
 		cleanup()

@@ -71,6 +71,32 @@ func TestControllerAssetsRejectUntrustedOrMismatchedBytes(t *testing.T) {
 	}
 	write(manifest)
 	path := filepath.Join(directory, "sdlc-publisher-linux-amd64")
+	// Homebrew keeps foreign ELF binaries as immutable data; execution belongs
+	// to the private staged copy mounted into the frozen Linux runtime.
+	if err := os.Chmod(path, 0444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolve(cli, identity, "linux/amd64"); err != nil {
+		t.Fatal("Homebrew read-only helper rejected", err)
+	}
+	staged, cleanup, err := stage("linux/amd64", func(platform string) (string, error) { return resolve(cli, identity, platform) })
+	if err != nil {
+		t.Fatal("Homebrew helper staging failed", err)
+	}
+	info, err := os.Lstat(staged)
+	if err != nil || info.Mode().Perm() != 0555 {
+		t.Fatal("staged helper is not immutable and executable", err)
+	}
+	stagedHash, err := Hash(staged)
+	if err != nil || stagedHash != manifest.Helpers["amd64"] {
+		t.Fatal("staged helper bytes changed", err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal("staged helper cleanup failed", err)
+	}
+	if _, err := os.Lstat(staged); !os.IsNotExist(err) {
+		t.Fatal("staged helper survived cleanup", err)
+	}
 	os.Chmod(path, 0755)
 	if _, err := resolve(cli, identity, "linux/amd64"); err == nil {
 		t.Fatal("writable helper accepted")
