@@ -60,6 +60,57 @@ func TestInitForceRefreshesExistingSettingsThroughCLI(t *testing.T) {
 	}
 }
 
+func TestInitCSharpierIsStaticAndForcePreservesSavedState(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	if err := os.WriteFile(filepath.Join(root, "fake-bin", "dotnet"), []byte("#!/bin/sh\nprintf called > \"$(dirname \"$0\")/called\"\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		".config/dotnet-tools.json": `{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`,
+		"Example.Tests.csproj":      `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><IsTestProject>true</IsTestProject></PropertyGroup></Project>`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original, _ := os.ReadFile(filepath.Join(root, project.ConfigPath))
+	ticket := filepath.Join(root, ".sdlc/work/TASK-1/tickets/01-selected.md")
+	savedTicket, _ := os.ReadFile(ticket)
+	var output bytes.Buffer
+	if err := initCommand(context.Background(), nil, &output); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, project.ConfigPath)); !bytes.Equal(data, original) {
+		t.Fatal("ordinary init replaced saved checks")
+	}
+	output.Reset()
+	if err := initCommand(context.Background(), []string{"--force"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, project.ConfigPath))
+	config, parseErr := project.ParseConfig(data)
+	if err != nil || parseErr != nil || len(config.Checks) < 3 || !reflect.DeepEqual(config.Checks[:2], [][]string{{"dotnet", "tool", "restore"}, {"dotnet", "csharpier", "check", "."}}) || !reflect.DeepEqual(config.InputFiles, []string{"README.md"}) || !strings.Contains(output.String(), `Check source: ".config/dotnet-tools.json"`) {
+		t.Fatalf("CLI omitted formatter or saved preferences: %s %v %v", data, err, parseErr)
+	}
+	if observed, _ := os.ReadFile(ticket); !bytes.Equal(observed, savedTicket) {
+		t.Fatal("init changed saved work")
+	}
+	output.Reset()
+	if err := initCommand(context.Background(), []string{"--force"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if observed, _ := os.ReadFile(filepath.Join(root, project.ConfigPath)); !bytes.Equal(observed, data) || strings.Contains(output.String(), "Previous settings retained") {
+		t.Fatal("identical force init changed settings or created another backup")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("init executed a tool or connected command")
+	}
+}
+
 func TestInitFromNestedDirectoryReportsProjectAndPreservesSettings(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)

@@ -169,6 +169,22 @@ are added for the fresh check workspace; Compose sequences include an exit trap
 for teardown and enable `docker_tests`. The summary identifies the source files.
 Unsupported shell/setup context, conditional or custom test output paths and
 ambiguous targets require explicit configuration. Inspection executes no project commands.
+
+When `.config/dotnet-tools.json` pins supported stable CSharpier 1.x, initialization
+places local tool restore and a root formatting check before the other inferred
+checks, including Compose startup and builds:
+
+```sh
+dotnet tool restore
+dotnet csharpier check .
+```
+
+Documented root formatter options and environment settings are preserved. The
+check reports formatting errors without rewriting source. Unsupported tool pins
+or malformed and ambiguous manifests require explicit checks; a forced refresh
+keeps usable saved settings when it cannot infer the formatter safely. See the
+[CSharpier CLI documentation](https://csharpier.com/docs/CLI).
+
 `input_files` starts empty. During a run, these exact relative files are copied
 only into the separate credential-free check worker. Use this for reviewed test
 configuration; it does not supply requirements to the provider. Files named

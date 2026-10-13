@@ -457,3 +457,46 @@ func TestDockerCompilerErrorBeyondLargeBuildOutputSurvivesTeardown(t *testing.T)
 		t.Fatal("private host log was changed")
 	}
 }
+
+func TestBuildAnalyzerFailureSuppliesSafeConfiguredAndAdditionalFeedback(t *testing.T) {
+	d := &formatterDiagnostic{approved: map[string]bool{"src/ExampleTests.cs": true}}
+	output := "/host/private.cs(4,2): error S8969: private input\n#22 0.123 \x1b[31m/src/src/ExampleTests.cs(42,9): error S8969: private source operand and diagnostic text\x1b[0m\r\n"
+	for _, b := range []byte(output) {
+		d.Write([]byte{b})
+	}
+	d.finish()
+	failure := &CheckFailure{Command: 1, ExitCode: 1, compiler: d.compiler}
+	commands := [][]string{{"dotnet", "build", "Example.slnx"}}
+	request := regressionRequest()
+	request.Commands = commands
+	for _, feedback := range []string{
+		checkRepairFeedback(testTree, failure, commands),
+		verificationDiagnostic(request, testTree, &VerificationFailure{Phase: "candidate", Err: failure}),
+	} {
+		for _, wanted := range []string{"S8969", "src/ExampleTests.cs:42:9", "redundant null-forgiving operator"} {
+			if !strings.Contains(feedback, wanted) {
+				t.Fatalf("analyzer repair evidence missing %q: %s", wanted, feedback)
+			}
+		}
+		for _, private := range []string{"private input", "private source", "diagnostic text", "/host/", "/src/", "#22", "\x1b"} {
+			if strings.Contains(feedback, private) {
+				t.Fatalf("raw analyzer diagnostic reached feedback: %s", feedback)
+			}
+		}
+	}
+}
+
+func TestBuildAnalyzerDiagnosticRetainsExistingSafetyBoundaries(t *testing.T) {
+	for _, output := range []string{
+		"src/Unknown.cs(42,9): error S8969: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error S1111: private diagnostic\n",
+		"\x1b]0;private-token\x07src/ExampleTests.cs(42,9): error S8969: private diagnostic\n",
+	} {
+		d := &formatterDiagnostic{approved: map[string]bool{"src/ExampleTests.cs": true}}
+		d.Write([]byte(output))
+		d.finish()
+		if d.compiler != nil {
+			t.Fatal("unsafe or unsupported analyzer diagnostic admitted", d.compiler)
+		}
+	}
+}

@@ -14,6 +14,7 @@ import (
 
 type dotnetDiscovery struct {
 	checks            [][]string
+	formatting        [][]string
 	docker            bool
 	sources, warnings []string
 }
@@ -108,6 +109,14 @@ func discoverDotnet(root string, tools []string) (dotnetDiscovery, error) {
 		found.warnings = append(found.warnings, "Multiple .NET build targets found; configure checks for the intended solution.")
 		return found, nil
 	}
+	formatter, warning, err := dotnetFormatter(root)
+	if err != nil {
+		return found, err
+	}
+	if warning != "" {
+		found.warnings = append(found.warnings, warning)
+		return found, nil
+	}
 	target := targets[0]
 	projects, err := dotnetProjects(root, target)
 	if err != nil {
@@ -164,13 +173,16 @@ func discoverDotnet(root string, tools []string) (dotnetDiscovery, error) {
 				found.warnings = append(found.warnings, "Documented .NET test commands do not match global.json; configure the matching runner before starting work.")
 				return found, nil
 			}
-			found.checks, found.docker = dotnetPrepare(commands, target, ci)
+			found.checks, found.docker, found.formatting = dotnetPrepare(commands, target, ci, formatter)
 			if found.docker && !compose {
 				found.warnings = append(found.warnings, "Documented checks need Compose but no root Compose file was found; configure checks explicitly.")
 				found.checks = nil
 				return found, nil
 			}
 			found.sources = []string{name, target}
+			if len(formatter) != 0 {
+				found.sources = append(found.sources, dotnetToolsManifest)
+			}
 			if !dotnetHas(commands, "restore") && dotnetHas(ci, "restore") {
 				found.sources = append(found.sources, ciSources...)
 			}
@@ -185,13 +197,16 @@ func discoverDotnet(root string, tools []string) (dotnetDiscovery, error) {
 		return found, nil
 	}
 	if len(ciSources) == 1 && dotnetComplete(ci) && dotnetRunnerMatches(ci, runner) {
-		found.checks, found.docker = dotnetPrepare(ci, target, nil)
+		found.checks, found.docker, found.formatting = dotnetPrepare(ci, target, nil, formatter)
 		if found.docker && !compose {
 			found.checks = nil
 			found.warnings = append(found.warnings, "CI checks need Compose but no root Compose file was found; configure checks explicitly.")
 			return found, nil
 		}
 		found.sources = append([]string{target}, ciSources...)
+		if len(formatter) != 0 {
+			found.sources = append(found.sources, dotnetToolsManifest)
+		}
 		if global != nil {
 			found.sources = append(found.sources, "global.json")
 		}
@@ -298,7 +313,10 @@ func discoverDotnet(root string, tools []string) (dotnetDiscovery, error) {
 	} else if compose && hasTests {
 		found.warnings = append(found.warnings, "Compose is present but test service startup is not documented; review whether the generated checks need Docker services.")
 	}
-	found.checks, found.docker = dotnetPrepare(fallback, target, nil)
+	found.checks, found.docker, found.formatting = dotnetPrepare(fallback, target, nil, formatter)
+	if len(formatter) != 0 {
+		found.sources = append(found.sources, dotnetToolsManifest)
+	}
 	if !hasTests {
 		found.warnings = append(found.warnings, "No .NET test projects found; generated checks restore and build the selected target.")
 	}
@@ -455,7 +473,7 @@ func dotnetCICommands(root string) ([][]string, []string, []string, error) {
 		relevant := false
 		flush := func() {
 			text := strings.Join(body, "\n")
-			if strings.Contains(text, "dotnet restore") || strings.Contains(text, "dotnet build") || strings.Contains(text, "dotnet test") || strings.Contains(text, "docker compose") {
+			if strings.Contains(text, "dotnet restore") || strings.Contains(text, "dotnet build") || strings.Contains(text, "dotnet test") || strings.Contains(text, "dotnet tool restore") || strings.Contains(text, "dotnet csharpier") || strings.Contains(text, "docker compose") {
 				relevant = true
 			}
 			if parsed := dotnetCommandLines(text); parsed == nil && strings.TrimSpace(text) != "" {
@@ -535,8 +553,17 @@ func dotnetCommandLine(line string) []string {
 		return nil
 	}
 	if words[0] == "dotnet" {
-		if words[1] != "restore" && words[1] != "build" && words[1] != "test" {
+		toolRestore := len(words) >= 3 && words[1] == "tool" && words[2] == "restore"
+		formatterCheck := len(words) >= 4 && words[1] == "csharpier" && words[2] == "check" && !strings.HasPrefix(words[3], "-")
+		if words[1] != "restore" && words[1] != "build" && words[1] != "test" && !toolRestore && !formatterCheck {
 			return nil
+		}
+		if toolRestore {
+			for i, word := range words {
+				if strings.HasPrefix(word, "--tool-manifest") && (word != "--tool-manifest" || i+1 >= len(words) || words[i+1] != dotnetToolsManifest) {
+					return nil
+				}
+			}
 		}
 	} else if len(words) >= 3 && words[0] == "docker" && words[1] == "compose" {
 		if words[2] != "up" && words[2] != "down" {
@@ -599,7 +626,8 @@ func dotnetQuote(command []string) string {
 	return strings.Join(words, " ")
 }
 
-func dotnetPrepare(commands [][]string, target string, ci [][]string) ([][]string, bool) {
+func dotnetPrepare(commands [][]string, target string, ci, formatter [][]string) ([][]string, bool, [][]string) {
+	prefix, commands := dotnetFormatterFirst(commands, formatter)
 	if !dotnetHas(commands, "restore") {
 		restore := []string{"dotnet", "restore", target}
 		for _, command := range ci {
@@ -626,11 +654,11 @@ func dotnetPrepare(commands [][]string, target string, ci [][]string) ([][]strin
 		work = append(work, command)
 	}
 	if !docker {
-		return work, false
+		return work, false, prefix
 	}
 	parts := []string{"trap " + dotnetQuote([]string{dotnetQuote(down)}) + " EXIT"}
 	for _, command := range work {
 		parts = append(parts, dotnetQuote(command))
 	}
-	return [][]string{{"sh", "-eu", "-c", strings.Join(parts, "; ")}}, true
+	return [][]string{{"sh", "-eu", "-c", strings.Join(parts, "; ")}}, true, prefix
 }

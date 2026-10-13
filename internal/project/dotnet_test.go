@@ -6,6 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -23,6 +26,157 @@ func dotnetFixture(t *testing.T) string {
 	write(t, root, "CONTRIBUTING.md", "# Contributing\n\n## Required checks\n\n```bash\ndocker compose up --build -d --wait\nDOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet build example.slnx --no-restore -m:1 -nodeReuse:false --disable-build-servers -v:minimal\nDOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet test --test-modules tests/Example.Tests/bin/Debug/net10.0/Example.Tests.dll --no-build -v:minimal\nDOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet test --test-modules tests/Example.IntegrationTests/bin/Debug/net10.0/Example.IntegrationTests.dll --no-build -v:minimal\ndocker compose down -v --remove-orphans\n```\n")
 	write(t, root, ".github/workflows/check.yml", "jobs:\n  checks:\n    steps:\n      - run: dotnet restore example.slnx -p:NuGetAudit=true -p:NuGetAuditMode=all\n")
 	return root
+}
+
+func TestInitializeDotnetFrontLoadsCSharpierBeforeRequiredChecks(t *testing.T) {
+	for _, documented := range []bool{true, false} {
+		t.Run(map[bool]string{true: "documented Compose", false: "manifest fallback"}[documented], func(t *testing.T) {
+			root := dotnetFixture(t)
+			write(t, root, ".config/dotnet-tools.json", `{"version":1,"isRoot":true,"future":{"values":[true,{"name":"example"}]},"tools":{"CSharpier":{"version":"1.3.0","commands":["csharpier"],"rollForward":true}}}`)
+			if !documented {
+				os.Remove(filepath.Join(root, "CONTRIBUTING.md"))
+				os.RemoveAll(filepath.Join(root, ".github"))
+				os.Remove(filepath.Join(root, "compose.yml"))
+			}
+			result := initAt(t, root)
+			data, err := os.ReadFile(filepath.Join(root, ConfigPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := ParseConfig(data)
+			prefix := [][]string{{"dotnet", "tool", "restore"}, {"dotnet", "csharpier", "check", "."}}
+			if err != nil || len(config.Checks) < 3 || !reflect.DeepEqual(config.Checks[:2], prefix) {
+				t.Fatalf("formatter does not precede expensive checks: %s (%v)", data, err)
+			}
+			if !slices.Contains(result.CheckSources, ".config/dotnet-tools.json") {
+				t.Fatal("formatter inference source missing", result.CheckSources)
+			}
+			if documented {
+				if config.Checks[2][0] != "sh" || !config.DockerTests || !strings.Contains(config.Checks[2][3], "NuGetAuditMode=all") || !strings.Contains(config.Checks[2][3], "Example.IntegrationTests.dll") {
+					t.Fatal("required Compose, restore, or integration checks lost", config.Checks)
+				}
+			} else if !reflect.DeepEqual(config.Checks[2], []string{"dotnet", "restore", "example.slnx"}) || config.DockerTests {
+				t.Fatal("fallback solution restore missing", config.Checks)
+			}
+		})
+	}
+}
+
+func TestInitializeDotnetPreservesDocumentedCSharpierOptionsAndDeduplicates(t *testing.T) {
+	for _, source := range []string{"documentation", "CI"} {
+		t.Run(source, func(t *testing.T) {
+			root := dotnetFixture(t)
+			os.Remove(filepath.Join(root, "compose.yml"))
+			os.RemoveAll(filepath.Join(root, ".github"))
+			write(t, root, ".config/dotnet-tools.json", `{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`)
+			setup := "dotnet tool restore --verbosity minimal"
+			lint := "DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet csharpier check . --config-path .config/csharpier.json --ignore-path .config/csharpierignore"
+			lines := []string{
+				"dotnet restore example.slnx -p:NuGetAuditMode=all",
+				"dotnet build example.slnx --no-restore",
+				"dotnet csharpier check src/Example --no-cache",
+				"dotnet test --test-modules tests/Example.Tests/bin/Debug/net10.0/Example.Tests.dll --no-build",
+				setup, lint, setup, lint,
+			}
+			if source == "documentation" {
+				write(t, root, "CONTRIBUTING.md", "## Required checks\n```sh\n"+strings.Join(lines, "\n")+"\n```\n")
+			} else {
+				os.Remove(filepath.Join(root, "CONTRIBUTING.md"))
+				write(t, root, ".github/workflows/check.yml", "jobs:\n  checks:\n    steps:\n      - run: |\n          "+strings.Join(lines, "\n          ")+"\n")
+			}
+			result := initAt(t, root)
+			want := [][]string{
+				{"dotnet", "tool", "restore", "--verbosity", "minimal"},
+				{"env", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "dotnet", "csharpier", "check", ".", "--config-path", ".config/csharpier.json", "--ignore-path", ".config/csharpierignore"},
+				{"dotnet", "restore", "example.slnx", "-p:NuGetAuditMode=all"},
+				{"dotnet", "build", "example.slnx", "--no-restore"},
+				{"dotnet", "csharpier", "check", "src/Example", "--no-cache"},
+				{"dotnet", "test", "--test-modules", "tests/Example.Tests/bin/Debug/net10.0/Example.Tests.dll", "--no-build"},
+			}
+			if !reflect.DeepEqual(result.Config.Checks, want) {
+				t.Fatalf("formatter options, deduplication, or required sequence changed: %+v", result.Config.Checks)
+			}
+		})
+	}
+}
+
+func TestInitializeDotnetFormatterPrecedesOtherEcosystems(t *testing.T) {
+	root := dotnetFixture(t)
+	write(t, root, ".config/dotnet-tools.json", `{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`)
+	write(t, root, "go.mod", "module example.invalid/project\n\ngo 1.25\n")
+	result := initAt(t, root)
+	want := [][]string{{"dotnet", "tool", "restore"}, {"dotnet", "csharpier", "check", "."}, {"go", "test", "./..."}, {"go", "vet", "./..."}}
+	if len(result.Config.Checks) != 5 || !reflect.DeepEqual(result.Config.Checks[:4], want) || result.Config.Checks[4][0] != "sh" {
+		t.Fatal("leading lint or existing ecosystem order lost", result.Config.Checks)
+	}
+}
+
+func TestInitializeDotnetAmbiguousFormatterRetainsSavedSettings(t *testing.T) {
+	for index, manifest := range []string{
+		`{`,
+		`{"version":1,"isRoot":"invalid","tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`,
+		`{"version":1,"isRoot":null,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"],"rollForward":"invalid"}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"],"rollForward":null}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"0.30.6","commands":["dotnet-csharpier"]},"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"0.30.6","version":"1.3.0","commands":["csharpier"]}}}`,
+		`{"version":2,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"*","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.*","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.0-beta.1","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"2.0.0","commands":["csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"0.30.6","commands":["dotnet-csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["dotnet-csharpier"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier","other"]}}}`,
+		`{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]},"CSharpier":{"version":"1.2.0","commands":["csharpier"]}}}`,
+	} {
+		t.Run(strconv.Itoa(index), func(t *testing.T) {
+			root := dotnetFixture(t)
+			write(t, root, ".config/dotnet-tools.json", manifest)
+			const original = `{"version":1,"checks":[["custom","test"]],"input_files":[]}`
+			write(t, root, ConfigPath, original)
+			result, err := Initialize(context.Background(), root)
+			if err != nil || !reflect.DeepEqual(result.Config.Checks, [][]string{{"custom", "test"}}) || len(result.Warnings) == 0 {
+				t.Fatalf("ordinary init lost saved checks or ambiguity warning: %+v %v", result, err)
+			}
+			if _, err := InitializeWithOptions(context.Background(), root, InitOptions{Force: true}); err == nil {
+				t.Fatal("ambiguous formatter overwrote saved checks", manifest)
+			}
+			data, _ := os.ReadFile(filepath.Join(root, ConfigPath))
+			if string(data) != original {
+				t.Fatal("ambiguous formatter changed configuration")
+			}
+		})
+	}
+}
+
+func TestInitializeDotnetRejectsUnsafeFormatterManifest(t *testing.T) {
+	for _, scenario := range []string{"linked directory", "linked manifest", "oversized manifest"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := dotnetFixture(t)
+			outside := t.TempDir()
+			if scenario == "linked directory" {
+				if err := os.Symlink(outside, filepath.Join(root, ".config")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				write(t, root, ".config/dotnet-tools.json", strings.Repeat("x", maximumSize+1))
+				if scenario == "linked manifest" {
+					os.Remove(filepath.Join(root, dotnetToolsManifest))
+					write(t, outside, "tools.json", `{"version":1,"tools":{}}`)
+					if err := os.Symlink(filepath.Join(outside, "tools.json"), filepath.Join(root, dotnetToolsManifest)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := Initialize(context.Background(), root); err == nil {
+				t.Fatal("unsafe formatter manifest accepted")
+			}
+			if _, err := os.Stat(filepath.Join(root, ConfigPath)); !os.IsNotExist(err) {
+				t.Fatal("unsafe manifest caused configuration writes")
+			}
+		})
+	}
 }
 
 func TestInitializeDotnetUsesRequiredChecksAndAlwaysTearsDown(t *testing.T) {
@@ -95,6 +249,7 @@ func TestInitializeDotnetManifestFallbackMatchesRunner(t *testing.T) {
 
 func TestForceInitRefreshesChecksAndPreservesPreferencesAndSavedWork(t *testing.T) {
 	root := dotnetFixture(t)
+	write(t, root, ".config/dotnet-tools.json", `{"version":1,"tools":{"csharpier":{"version":"1.3.0","commands":["csharpier"]}}}`)
 	initAt(t, root)
 	original := `{"version":1,"checks":[["custom","test"]],"input_files":["README.md"],"branch_format":"{reference}-custom-{ticket}","nuget_cache":{"max_packages":128,"max_bytes":10485760}}`
 	write(t, root, ConfigPath, original)
@@ -109,6 +264,9 @@ func TestForceInitRefreshesChecksAndPreservesPreferencesAndSavedWork(t *testing.
 	}
 	if !result.ConfigUpdated || !result.Config.DockerTests || result.Config.BranchFormat != "{reference}-custom-{ticket}" || len(result.Config.InputFiles) != 1 || result.Config.InputFiles[0] != "README.md" || result.Config.NugetCache == nil || result.Config.NugetCache.MaxPackages != 128 {
 		t.Fatalf("forced refresh lost preferences or did not refresh checks: %+v", result)
+	}
+	if !reflect.DeepEqual(result.Config.Checks[:2], [][]string{{"dotnet", "tool", "restore"}, {"dotnet", "csharpier", "check", "."}}) {
+		t.Fatal("forced refresh omitted leading formatter", result.Config.Checks)
 	}
 	backup, err := os.ReadFile(result.ConfigBackup)
 	if err != nil || string(backup) != original {

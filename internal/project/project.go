@@ -118,6 +118,9 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 		return r, err
 	}
 	r.Config.Checks = append(r.Config.Checks, dotnet.checks...)
+	if len(dotnet.checks) != 0 {
+		r.Config.Checks = append(dotnet.formatting, r.Config.Checks...)
+	}
 	r.Config.DockerTests = dotnet.docker
 	r.CheckSources = dotnet.sources
 	r.Warnings = append(r.Warnings, dotnet.warnings...)

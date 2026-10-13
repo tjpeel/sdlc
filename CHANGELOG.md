@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.30 - 2026-10-13
+
+### Fixed
+
+- Detect pinned CSharpier 1.x in local .NET tool manifests and place tool restore and root formatting checks before other inferred checks. Preserve documented formatter options, service cleanup and saved settings; reject malformed or ambiguous manifests without overwriting usable configuration.
+- Recognise analyzer error S8969 in bounded repair feedback, returning its committed source location and fixed guidance without exposing private log messages.
+
 ## 0.1.0-beta.29 - 2026-10-13
 
 ### Fixed
