@@ -237,3 +237,105 @@ work on refresh. Include narrow terminals, monochrome output, Unicode wrapping,
 copy selection, interrupted cursors and legacy timestamps. This review establishes
 reuse points and tradeoffs; no performance improvement or final colour scheme
 has been measured yet.
+
+## F005: Human takeover and return of a stuck run
+
+Added: 2026-10-13. Status: deferred; workflow proposal, not implemented.
+
+Let a human take control of a specific saved run, investigate its failure, edit
+the candidate, run tests and commit corrections, then return the same job to
+SDLC. Support an editor and terminal without a provider, or an interactive
+session in the run's original implementation provider. Keep the work, diagnosis
+and verification available to the implementer when automated work resumes.
+
+### Current boundary
+
+The implementation workspace and native session are already retained, but
+`sdlc interactive` opens an empty disposable workspace. It does not attach to
+a saved run. The implementation worker can edit and make source commits; its
+instructions delegate tests, dependencies, repository scripts and Compose to
+credential-free check workers. Opening the native CLI does not supply Docker
+access or the captured private test inputs. See [interactive sessions](cli.md#interactive-provider-sessions),
+[native session mounts](../internal/providerauth/headless.go) and
+[the check contract](workflow.md).
+
+### Proposed workflow
+
+1. **Inspect and claim the run.** Show the current failure, candidate, session,
+   controller ownership, pending work and relevant private diagnostics. Checkpoint
+   and gracefully stop an active controller and native operation, finish cleanup,
+   then give the human exclusive ownership. Another controller or takeover must
+   not write the workspace or native session concurrently. Failed cleanup or
+   uncertain ownership leaves the handoff held.
+2. **Open the working environment.** Use the retained candidate and requirements.
+   Offer an editor and managed terminal, with optional interactive resume of the
+   original implementation session using its selected provider, account, model,
+   runtime and working-directory layout. Codex and Claude histories are not
+   interchangeable. Verify compatibility with the pinned official clients before
+   advertising native resume; do not silently create a replacement conversation
+   or copy authentication caches into a different route.
+3. **Investigate and change the code.** Let the human and, when selected, the
+   interactive agent assess the actual failure output and make corrections.
+   Run the project's supported formatter from the working-directory root through
+   the credential-free source-correction bridge below. Review and apply returned
+   corrections in the editing workspace. Record a short explanation of the
+   cause, changes and unresolved issues.
+   Allow ordinary source commits while preserving protected published history;
+   retain the existing guarded recovery for any authorised unpublished-history
+   correction. SDLC continues to own signed publication.
+4. **Run and observe tests.** Provide a managed check terminal or command bridge
+   from the interactive session to the existing credential-free check workers.
+   Support focused commands and the full configured suite, including tool restore,
+   builds and, where the run supports Docker tests, Compose up, tests and teardown.
+   Use the captured private check inputs only in that environment. Keep provider
+   caches, GitHub credentials, signing keys and the host Docker socket out of it.
+   The human must see useful command output and failures and be able to iterate;
+   repository execution must not require removing a prompt restriction from an
+   authenticated worker or adding a raw daemon mount there.
+5. **Record proof for the committed candidate.** Tests during editing can aid
+   diagnosis, but authoritative evidence must name the committed head and tree,
+   checks and commands, captured input hashes, runtime and relevant environment,
+   exit results, explicit omissions and successful cleanup. Failed, interrupted
+   or stale checks must not become a pass. Record output truncation explicitly;
+   a bounded display is not a substitute for a completed, verifiable command
+   result. A pasted log or assertion that tests passed is supporting information,
+   not controller verification.
+6. **Return control explicitly.** End interactive work, retain its native history
+   and human handoff, complete owned cleanup and release the ownership lock.
+   Reconcile committed changes through a supported controller action; editing
+   journal fields or merely resuming a publishing checkpoint is insufficient.
+   Reuse completed managed checks only when their candidate and execution context
+   still match. Otherwise run the required checks again. Pass the human's changes,
+   reasoning and results to the original implementer for assessment and any
+   remaining local review or PR metadata work.
+7. **Complete the delivery gates.** Continue normal signing and protected PR
+   publication, current required CI and fresh independent review of the final
+   published head before returning it for human review. Earlier readiness or
+   approval cannot cover a changed candidate. Outstanding or skipped review must
+   remain visible; takeover must not approve, merge or bypass a gate.
+
+### Recovery and acceptance criteria
+
+- Define supported commands to enter, inspect, verify and return during design.
+  Show clearly whether the human or controller owns the run and what the next
+  action is. This proposal does not introduce working CLI flags.
+- Once ownership and source integrity are established, a numeric-limit hold or
+  unavailable provider must still offer a local edit/test path without starting
+  a provider. Keep provider access, usage and policy holds enforced for
+  native CLI work. Preserve all cumulative counts and budgets; takeover must not
+  reset them. Define how manual provider turns are accounted for and use explicit
+  supported limit actions when automated continuation needs them.
+- Missing or changed private test inputs require the existing explicit check-input
+  capture rules; do not silently read a newly created `.env` into the provider
+  workspace or treat a text answer as an input update.
+- Recover terminal loss, cancellation, crashes, unfinished edits, stale evidence
+  and interrupted cleanup without losing commits, duplicating a provider turn or
+  allowing concurrent ownership. Uncommitted changes remain visible and cannot
+  satisfy the publication gate.
+- Validate both implementation providers, editor-only intervention when a provider
+  is unavailable, an existing published PR, a numeric-limit hold and a run with
+  Docker tests. Prove that a
+  human correction can pass managed checks, commit, return to the original job
+  and complete its normal gates. Include negative cases for a changed candidate
+  or environment, forged proof, concurrent resume and failed teardown. Measure
+  whether valid managed evidence avoids repeating expensive checks unnecessarily.
