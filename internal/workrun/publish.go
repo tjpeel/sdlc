@@ -210,7 +210,10 @@ func (publisher GitHubPublisher) git(ctx context.Context, directory string, args
 var githubRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspace, directory string, previous Publication, output io.Writer) (Publication, error) {
-	if err := ValidatePRMetadata(plan); err != nil {
+	if plan.Derived != nil && publisher.Frozen == nil {
+		return Publication{}, fmt.Errorf("derived publication requires frozen signing identity")
+	}
+	if err := ValidatePRMetadata(plan); plan.Derived == nil && err != nil {
 		return Publication{}, err
 	}
 	if !githubRepository.MatchString(plan.Repository) || !objectID.MatchString(plan.BaseSHA) {
@@ -404,10 +407,6 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 			return Publication{}, fmt.Errorf("signing credential cleanup failed before publication")
 		}
 	}
-	prs, err := publisher.command(ctx, "gh", "pr", "list", "--repo", plan.Repository, "--head", plan.Branch, "--state", "all", "--json", "number,url,baseRefName,baseRefOid,headRefOid,state")
-	if err != nil {
-		return Publication{}, err
-	}
 	var matches []struct {
 		Number  int    `json:"number"`
 		URL     string `json:"url"`
@@ -416,23 +415,31 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		Head    string `json:"headRefOid"`
 		State   string `json:"state"`
 	}
-	if json.Unmarshal(prs, &matches) != nil || len(matches) > 1 {
-		return Publication{}, fmt.Errorf("cannot reconcile destination PR")
-	}
-	if len(matches) == 1 {
-		pr := matches[0]
-		if pr.State != "OPEN" || (previous.Number != 0 && previous.Number != pr.Number) {
-			return Publication{}, fmt.Errorf("destination PR was changed or closed externally")
+	if plan.Derived == nil {
+		prs, err := publisher.command(ctx, "gh", "pr", "list", "--repo", plan.Repository, "--head", plan.Branch, "--state", "all", "--json", "number,url,baseRefName,baseRefOid,headRefOid,state")
+		if err != nil {
+			return Publication{}, err
 		}
-		if plan.Restack == nil && pr.Base != plan.Base {
-			return Publication{}, fmt.Errorf("destination PR was changed or closed externally")
+
+		if json.Unmarshal(prs, &matches) != nil || len(matches) > 1 {
+			return Publication{}, fmt.Errorf("cannot reconcile destination PR")
 		}
-		if plan.Restack != nil && (pr.Number != plan.Restack.Number || !validRestackPR(plan, pr.Base, pr.BaseSHA, pr.Head, parent)) {
-			return Publication{}, fmt.Errorf("destination PR was changed externally; refusing retarget")
+		if len(matches) == 1 {
+			pr := matches[0]
+			if pr.State != "OPEN" || (previous.Number != 0 && previous.Number != pr.Number) {
+				return Publication{}, fmt.Errorf("destination PR was changed or closed externally")
+			}
+			if plan.Restack == nil && pr.Base != plan.Base {
+				return Publication{}, fmt.Errorf("destination PR was changed or closed externally")
+			}
+			if plan.Restack != nil && (pr.Number != plan.Restack.Number || !validRestackPR(plan, pr.Base, pr.BaseSHA, pr.Head, parent)) {
+				return Publication{}, fmt.Errorf("destination PR was changed externally; refusing retarget")
+			}
+			if pr.Head != parent && (previous.HeadSHA == "" || pr.Head != previous.HeadSHA) {
+				return Publication{}, fmt.Errorf("PR head changed externally; refusing to overwrite it")
+			}
 		}
-		if pr.Head != parent && (previous.HeadSHA == "" || pr.Head != previous.HeadSHA) {
-			return Publication{}, fmt.Errorf("PR head changed externally; refusing to overwrite it")
-		}
+
 	}
 	remote, err := publisher.git(ctx, local, "ls-remote", "https://github.com/"+plan.Repository+".git", "refs/heads/"+plan.Branch)
 	if err != nil {
@@ -457,6 +464,14 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 			return Publication{}, err
 		}
 	}
+	if plan.Derived != nil {
+		if err := publisher.verifyDerivedBoundary(ctx, plan); err != nil {
+			return Publication{}, err
+		}
+		if remoteHead != "" && remoteHead != parent {
+			return Publication{}, fmt.Errorf("immutable derived branch changed externally")
+		}
+	}
 	if remoteHead != parent {
 		// An exact lease also rejects a competing fast-forward between the
 		// last inspection and push. An empty expected value requires absence.
@@ -468,6 +483,12 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 	confirmed, err := publisher.git(ctx, local, "ls-remote", "https://github.com/"+plan.Repository+".git", "refs/heads/"+plan.Branch)
 	if err != nil || !strings.HasPrefix(confirmed, parent+"\t") {
 		return Publication{}, fmt.Errorf("remote branch publication was not confirmed")
+	}
+	if plan.Derived != nil {
+		if err := publisher.verifyDerivedBoundary(ctx, plan); err != nil {
+			return Publication{}, err
+		}
+		return Publication{BaseSHA: plan.BaseSHA, HeadSHA: parent}, nil
 	}
 	bodyPath := filepath.Join(directory, "pr-body.md")
 	if err := os.WriteFile(bodyPath, []byte(plan.PRBody), 0600); err != nil {
@@ -724,6 +745,56 @@ func (publisher GitHubPublisher) verifyIdentity(ctx context.Context) error {
 	}
 	if err != nil || json.Unmarshal(data, &identity) != nil || identity.ID != publisher.Frozen.GitHubID || identity.Login != publisher.Frozen.GitHubLogin {
 		return fmt.Errorf("GitHub account differs from frozen publication identity")
+	}
+	return nil
+}
+
+func (publisher GitHubPublisher) verifyDerivedBoundary(ctx context.Context, plan Plan) error {
+	if plan.Derived == nil || len(plan.Derived.Parents) < 2 {
+		return fmt.Errorf("invalid derived parent boundary")
+	}
+	if err := publisher.verifyRemoteBoundary(ctx, plan); err != nil {
+		return err
+	}
+	for _, parent := range plan.Derived.Parents {
+		if parent.Number < 1 || !objectID.MatchString(parent.HeadSHA) {
+			return fmt.Errorf("invalid derived parent publication")
+		}
+		data, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(parent.Number), "--repo", plan.Repository, "--json", "state,headRefOid,headRefName,baseRefName,baseRefOid,mergeCommit")
+		if err != nil {
+			return err
+		}
+		var observed struct {
+			State   string
+			Base    string `json:"baseRefName"`
+			BaseSHA string `json:"baseRefOid"`
+			Head    string `json:"headRefOid"`
+			Branch  string `json:"headRefName"`
+			Merge   *struct {
+				OID string `json:"oid"`
+			} `json:"mergeCommit"`
+		}
+		if json.Unmarshal(data, &observed) != nil || observed.Head != parent.HeadSHA || observed.Branch != parent.Branch || observed.Base != parent.Base || observed.BaseSHA != parent.BaseSHA {
+			return fmt.Errorf("derived parent changed externally")
+		}
+		if parent.State == "ready" {
+			if observed.State != "OPEN" {
+				return fmt.Errorf("derived parent state changed")
+			}
+			remote, err := publisher.Branch(ctx, plan, parent.Branch)
+			if err != nil || remote.SHA != parent.HeadSHA {
+				return fmt.Errorf("derived parent branch changed")
+			}
+			parentPlan := plan
+			parentPlan.Branch, parentPlan.Base, parentPlan.BaseSHA = parent.Branch, parent.Base, parent.BaseSHA
+			parentPlan.Derived = nil
+			checks, err := publisher.Checks(ctx, parentPlan, Publication{Number: parent.Number, HeadSHA: parent.HeadSHA, BaseSHA: parent.BaseSHA})
+			if err != nil || checks.Status != "passed" {
+				return fmt.Errorf("derived parent is no longer ready")
+			}
+		} else if parent.State != "merged" || observed.State != "MERGED" || observed.Merge == nil || observed.Merge.OID != parent.MergeSHA {
+			return fmt.Errorf("derived parent merge changed")
+		}
 	}
 	return nil
 }

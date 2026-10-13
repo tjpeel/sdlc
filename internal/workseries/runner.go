@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -142,17 +143,27 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 	for _, t := range s.Plan.Tickets {
 		key := filepath.Base(t.File)
 		result, ok := s.Results[key]
-		if !ok || result.State != "ready" {
+		if !ok || (result.State != "ready" && result.State != "waiting_base" && !result.DependencyInvalid) {
 			continue
 		}
-		o, err := r.Driver.Observe(ctx, result)
+		var o Observation
+		var err error
+		if result.HeadSHA == "" {
+			o.State = "OPEN"
+		} else {
+			o, err = r.Driver.Observe(ctx, result)
+		}
 		if err != nil {
 			return deferred, err
 		}
 		switch strings.ToUpper(o.State) {
 		case "OPEN", "READY", "":
 			if o.HeadSHA != "" && o.HeadSHA != result.HeadSHA {
+				if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+					return deferred, err
+				}
 				result.State = "blocked"
+				result.DependencyInvalid = false
 				result.StopReason = "pull request head changed outside this series"
 				s.Results[key] = result
 				write("%s blocked: %s\n", key, result.StopReason)
@@ -163,14 +174,30 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 			}
 			target, wait, err := r.target(ctx, *s, t)
 			if err != nil {
+				if invalidErr := r.invalidate(ctx, s, t, save); invalidErr != nil {
+					return deferred, invalidErr
+				}
+				if invalidErr := r.invalidateDescendants(ctx, s, t, save); invalidErr != nil {
+					return deferred, invalidErr
+				}
 				return deferred, err
 			}
 			if o.Base != "" && o.Base != result.Base && !knownAutomaticRetarget(*s, t, result, target, o.Base) {
+				if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+					return deferred, err
+				}
 				result.State = "blocked"
+				result.DependencyInvalid = false
 				result.StopReason = "pull request base changed outside this series"
 				s.Results[key] = result
 				write("%s blocked: %s\n", key, result.StopReason)
 				if err := save(); err != nil {
+					return deferred, err
+				}
+				continue
+			}
+			if wait {
+				if err := r.invalidate(ctx, s, t, save); err != nil {
 					return deferred, err
 				}
 				continue
@@ -181,7 +208,15 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 					continue
 				}
 				result.StopReason = o.Details
+				if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+					return deferred, err
+				}
+				if result.State == "waiting_base" {
+					result.State = "ready"
+				}
 				next, e := r.Driver.Reconcile(ctx, t, target, result)
+				next.Dependencies = target.Dependencies
+				next.DependencyInvalid = false
 				if e != nil {
 					r.reconcileFailed(s, key, result, next, e)
 					if saveErr := save(); saveErr != nil {
@@ -199,12 +234,20 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 				}
 				continue
 			}
-			if !wait && (target.Base != result.Base || target.SHA != result.BaseSHA || (o.BaseSHA != "" && o.BaseSHA != result.BaseSHA)) {
+			if !wait && (result.DependencyInvalid || result.State == "waiting_base" || !reflect.DeepEqual(target.Dependencies, result.Dependencies) || target.Base != result.Base || target.SHA != result.BaseSHA || (o.BaseSHA != "" && o.BaseSHA != result.BaseSHA)) {
 				if !allowReconcile {
 					deferred = true
 					continue
 				}
+				if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+					return deferred, err
+				}
+				if result.State == "waiting_base" {
+					result.State = "ready"
+				}
 				next, e := r.Driver.Reconcile(ctx, t, target, result)
+				next.Dependencies = target.Dependencies
+				next.DependencyInvalid = false
 				if e != nil {
 					r.reconcileFailed(s, key, result, next, e)
 					if saveErr := save(); saveErr != nil {
@@ -222,8 +265,15 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 				write("%s reconciled\n", key)
 			}
 		case "MERGED":
+			if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+				return deferred, err
+			}
 			if o.HeadSHA == "" || o.HeadSHA != result.HeadSHA || o.MergeSHA == "" || (o.Base != "" && o.Base != result.Base) {
+				if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+					return deferred, err
+				}
 				result.State = "blocked"
+				result.DependencyInvalid = false
 				result.StopReason = "merged pull request does not match checkpoint"
 			} else {
 				result.State = "merged"
@@ -234,14 +284,22 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 				return deferred, err
 			}
 		case "CLOSED":
+			if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+				return deferred, err
+			}
 			result.State = "blocked"
+			result.DependencyInvalid = false
 			result.StopReason = "pull request was closed"
 			s.Results[key] = result
 			if err := save(); err != nil {
 				return deferred, err
 			}
 		default:
+			if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+				return deferred, err
+			}
 			result.State = "blocked"
+			result.DependencyInvalid = false
 			result.StopReason = "unknown pull request state"
 			s.Results[key] = result
 			if err := save(); err != nil {
@@ -325,6 +383,8 @@ func (r Runner) launch(ctx context.Context, s *State, save func() error, write f
 					return err
 				}
 			}
+			old.Dependencies = target.Dependencies
+			old.DependencyInvalid = false
 			old.State = "running"
 			old.StopReason = ""
 			s.Results[key] = old
@@ -367,6 +427,13 @@ func (r Runner) launch(ctx context.Context, s *State, save func() error, write f
 				continue
 			}
 			current := s.Results[key]
+			if current.State == "waiting_base" && !attentionState(item.result.State) && (item.err == nil || isDependencyInvalidation(item.err)) {
+				item.result = completeResult(current, item.result)
+				item.result.State, item.result.StopReason = current.State, current.StopReason
+				item.result.DependencyInvalid = true
+				s.Results[key] = item.result
+				item.err = nil
+			}
 			if item.err != nil {
 				r.reconcileFailed(s, key, current, item.result, item.err)
 				write("%s %s: %v\n", key, s.Results[key].State, item.err)
@@ -422,6 +489,9 @@ func completeResult(current, returned Result) Result {
 	if returned.BaseSHA == "" {
 		returned.BaseSHA = current.BaseSHA
 	}
+	if returned.Dependencies == nil {
+		returned.Dependencies = current.Dependencies
+	}
 	return returned
 }
 
@@ -445,14 +515,30 @@ func (r Runner) reconcileFailed(s *State, key string, current, returned Result, 
 func (r Runner) target(ctx context.Context, s State, t Ticket) (Target, bool, error) {
 	deps := t.DependsOn
 	if len(deps) > 1 {
-		for _, d := range deps {
-			if s.Results[d].State != "merged" {
+		vector := make([]Dependency, 0, len(deps))
+		unmerged := false
+		for _, name := range deps {
+			parent := s.Results[name]
+			if parent.State != "ready" && parent.State != "merged" {
 				return Target{}, true, nil
 			}
+			vector = append(vector, Dependency{Ticket: name, RunID: parent.RunID, Branch: parent.Branch, Base: parent.Base, BaseSHA: parent.BaseSHA, HeadSHA: parent.HeadSHA, State: parent.State, MergeSHA: parent.MergeSHA, PRNumber: parent.PRNumber})
+			unmerged = unmerged || parent.State == "ready"
 		}
-		target, e := r.Driver.Base(ctx, s.Plan.Base)
+		target, err := r.Driver.Base(ctx, s.Plan.Base)
+		if err != nil {
+			return Target{}, false, err
+		}
 		target.Ancestors = mergedAncestors(s, t)
-		return target, false, e
+		target.Dependencies = vector
+		if unmerged {
+			driver, ok := r.Driver.(CombinedDriver)
+			if !ok {
+				return Target{}, true, nil
+			}
+			target, err = driver.Combine(ctx, t, target, vector)
+		}
+		return target, false, err
 	}
 	if len(deps) == 1 {
 		parent := s.Results[deps[0]]
@@ -509,7 +595,7 @@ func resumable(state string) bool {
 }
 func knownState(state string) bool {
 	switch state {
-	case "prepared", "running", "implementing", "repairing", "checking", "publishing", "ci", "reviewing", "ready", "merged", "blocked", "waiting_human", "waiting_for_human", "awaiting_reviewer", "failed", "stopped":
+	case "waiting_base", "prepared", "running", "implementing", "repairing", "checking", "publishing", "ci", "reviewing", "ready", "merged", "blocked", "waiting_human", "waiting_for_human", "awaiting_reviewer", "failed", "stopped":
 		return true
 	}
 	return false
@@ -517,7 +603,7 @@ func knownState(state string) bool {
 func attention(s State) error {
 	for _, t := range s.Plan.Tickets {
 		r := s.Results[filepath.Base(t.File)]
-		if attentionState(r.State) {
+		if attentionState(r.State) && !r.DependencyInvalid {
 			return fmt.Errorf("series requires attention: %s: %s", filepath.Base(t.File), r.StopReason)
 		}
 	}
@@ -559,4 +645,45 @@ func allMerged(s State) bool {
 		}
 	}
 	return true
+}
+
+// invalidate binds the wait marker to the run journal as well as the feature.
+func (r Runner) invalidate(ctx context.Context, s *State, t Ticket, save func() error) error {
+	key := filepath.Base(t.File)
+	result, exists := s.Results[key]
+	if !exists || result.State == "merged" || result.DependencyInvalid {
+		return nil
+	}
+	if driver, ok := r.Driver.(CombinedDriver); ok {
+		if err := driver.Invalidate(ctx, t, result); err != nil {
+			return err
+		}
+	}
+	result.DependencyInvalid = true
+	if !attentionState(result.State) && (result.Directory != "" || result.HeadSHA != "" || result.State == "running") {
+		result.State, result.StopReason = "waiting_base", "dependency base changed; waiting for parent readiness"
+	}
+	s.Results[key] = result
+	return save()
+}
+func (r Runner) invalidateDescendants(ctx context.Context, s *State, parent Ticket, save func() error) error {
+	for _, child := range s.Plan.Tickets {
+		for _, name := range child.DependsOn {
+			if name == filepath.Base(parent.File) {
+				if err := r.invalidate(ctx, s, child, save); err != nil {
+					return err
+				}
+				if err := r.invalidateDescendants(ctx, s, child, save); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func isDependencyInvalidation(err error) bool {
+	var invalid interface{ DependencyInvalidated() bool }
+	return errors.As(err, &invalid) && invalid.DependencyInvalidated()
 }

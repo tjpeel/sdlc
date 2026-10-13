@@ -37,6 +37,9 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 // disposable storage. Privileged
 // containers are not a security boundary against hostile code.
 type DockerChecker struct {
+	// WorkerName pins private derived-base checks so interrupted work can be
+	// stopped and cleaned before retrying the same generation.
+	WorkerName     string
 	onTiming       func(CheckTiming)
 	workerSequence *int
 	sourcePatch    *sourcePatchCapture
@@ -287,6 +290,12 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 		return err
 	}
 	name := "sdlc-check-" + hex.EncodeToString(token[:])
+	if checker.WorkerName != "" {
+		if !combinedWorkerName.MatchString(checker.WorkerName) {
+			return fmt.Errorf("invalid combined check worker identity")
+		}
+		name = checker.WorkerName
+	}
 	if checker.DockerTests && checker.DaemonMode == SharedTestDaemon {
 		return checker.checkShared(ctx, workspace, inputs, commands, output, baseline, name, state, daemonImage, phase)
 	}

@@ -87,7 +87,7 @@ remains deferred. See [the CLI guide](cli.md#address-human-pr-feedback).
 
 ## F003: Start dependent tickets from a tested combined base
 
-Added: 2026-10-13. Status: deferred; implementation has not started.
+Added: 2026-10-13. Status: implemented in beta.50.
 
 Allow a ticket with multiple dependencies to start before its parent PRs merge
 into the integration branch. For example, tickets 1 and 2 can be implemented in
@@ -124,7 +124,10 @@ Expected behaviour:
   the reconciled published head. Preserve saved accounts, models, inputs, runtime,
   history and budgets throughout the transition.
 
-Implementation should define derived-branch naming and retention, combined-check
-evidence, and how conflicts or invalidated bases are presented and recovered.
-Current multi-parent tickets continue to wait for all parents to merge until this
-feature is implemented.
+Implemented through the existing feature command and private dependency plan.
+The controller retains immutable `sdlc-derived/` generations, exact parent and
+verification context, source and signed tree evidence, and the child's own
+commit boundary. Conflicting or failing combinations leave the child unstarted;
+changed parents require reconciliation and current checks and review. Operational
+checkpoint recovery retains prior evidence and original jobs. See
+[the feature run guide](cli.md#run-a-feature) for continuation and merge sequencing.

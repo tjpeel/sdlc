@@ -721,12 +721,13 @@ func seriesInputHash(root, relative string) (string, error) {
 }
 
 type seriesDriver struct {
-	runtime   runtimeimage.Manager
-	options   runOptions
-	settings  seriesSettings
-	plan      workseries.Plan
-	directory string
-	output    io.Writer
+	combinedOps *combinedOperations
+	runtime     runtimeimage.Manager
+	options     runOptions
+	settings    seriesSettings
+	plan        workseries.Plan
+	directory   string
+	output      io.Writer
 }
 
 func (d *seriesDriver) validateSettings() error {
@@ -788,17 +789,31 @@ func (d *seriesDriver) publisher(plan workrun.Plan) workrun.DockerPublisher {
 }
 
 func (d *seriesDriver) Base(ctx context.Context, branch string) (workseries.Target, error) {
+	if d.combinedOps != nil && d.combinedOps.Base != nil {
+		return d.combinedOps.Base(ctx, branch)
+	}
 	remote, err := d.publisher(d.publicationPlan()).Branch(ctx, d.publicationPlan(), branch)
 	return workseries.Target{Base: remote.Branch, SHA: remote.SHA}, err
 }
 
 func (d *seriesDriver) snapshot(ctx context.Context, target workseries.Target, parent string) (workrun.BranchSnapshot, func(), error) {
+	if d.combinedOps != nil && d.combinedOps.Snapshot != nil {
+		return d.combinedOps.Snapshot(ctx, target, parent)
+	}
 	request, err := os.MkdirTemp(parent, ".feature-source-")
 	if err != nil {
 		return workrun.BranchSnapshot{}, func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(request) }
 	snapshot, err := d.publisher(d.publicationPlan()).Snapshot(ctx, d.publicationPlan(), target.Base, target.SHA, request)
+	if err == nil && len(target.Context) != 0 {
+		var dependency workrun.DependencyContext
+		if json.Unmarshal(target.Context, &dependency) != nil || dependency.SignedSHA != snapshot.SHA {
+			err = fmt.Errorf("invalid combined dependency context")
+		} else {
+			snapshot.DependencyContext = &dependency
+		}
+	}
 	if err == nil {
 		err = checkSeriesAncestry(ctx, snapshot, target.Ancestors, request)
 	}
@@ -892,6 +907,12 @@ func resultForRun(directory string, journal workrun.Journal) workseries.Result {
 }
 
 func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, target workseries.Target, previous *workseries.Result) (workseries.Result, error) {
+	if err := d.validateDependencyTarget(ctx, target); err != nil {
+		if previous != nil {
+			return *previous, err
+		}
+		return workseries.Result{}, err
+	}
 	if previous == nil || previous.RunID == "" {
 		return workseries.Result{}, fmt.Errorf("feature must checkpoint a run identity before launching")
 	}
@@ -955,6 +976,9 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 		defer cleanup()
 		options.snapshot = &snapshot
 	}
+	if err := d.validateDependencyTarget(ctx, target); err != nil {
+		return *previous, err
+	}
 	fmt.Fprintf(d.output, "Feature ticket %s; implementation provider %s.\n", ticket.File, options.provider)
 	stream := &seriesTicketWriter{output: d.output, ticket: ticket.File}
 	defer stream.Flush()
@@ -997,6 +1021,9 @@ func (d *seriesDriver) Observe(ctx context.Context, result workseries.Result) (w
 }
 
 func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, target workseries.Target, previous workseries.Result) (workseries.Result, error) {
+	if err := d.validateDependencyTarget(ctx, target); err != nil {
+		return previous, err
+	}
 	if err := d.checkInputs(); err != nil {
 		return previous, err
 	}
@@ -1013,6 +1040,8 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 		return previous, fmt.Errorf("ticket is owned by another controller")
 	}
 	defer lock.Close()
+	held := seriesHeldState(journal.State)
+	heldState, _, heldReason, heldOutcome := journal.State, journal.ResumeState, journal.StopReason, journal.Outcome
 	current, err := workrun.Load(directory)
 	if err != nil || current.UpdatedAt != journal.UpdatedAt {
 		return previous, fmt.Errorf("ticket checkpoint changed before reconciliation")
@@ -1029,15 +1058,24 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 		observed = remote
 	}
 	if journal.Reconciliation == nil && journal.Plan.Base == target.Base && journal.Plan.BaseSHA == target.SHA {
-		journal.State, journal.ResumeState, journal.StopReason = "ci", "", ""
+		journal.DependencyInvalid = false
+		if !held {
+			journal.State, journal.ResumeState, journal.StopReason = "ci", "", ""
+		}
 		journal.Feedback = previous.StopReason
 		if err := workrun.Save(directory, &journal); err != nil {
+			return previous, err
+		}
+		if err := workrun.ClearDependencyInvalidation(directory); err != nil {
 			return previous, err
 		}
 		if err := lock.Close(); err != nil {
 			return previous, err
 		}
 		updated := resultForRun(directory, journal)
+		if held && journal.DeferredAnswer == "" {
+			return updated, nil
+		}
 		return d.Execute(ctx, ticket, target, &updated)
 	}
 	if journal.Reconciliation == nil {
@@ -1073,6 +1111,7 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 	}
 	journal.Plan.Base, journal.Plan.BaseSHA = recorded.Branch, recorded.SHA
 	journal.Plan.SourceSHA, journal.Plan.StartingSHA = recorded.SHA, recorded.SHA
+	journal.Plan.DependencyContext = recorded.DependencyContext
 	journal.Evidence = workrun.CheckEvidence{}
 	journal.CI = workrun.CIResult{}
 	journal.Outcome = workrun.Outcome{}
@@ -1081,13 +1120,21 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 	if rebase.Conflict {
 		journal.Feedback += " Resolve the unfinished Git rebase in this workspace, preserving only this ticket's changes. Conflicting paths: " + strings.Join(rebase.Paths, ", ") + ". Finish the rebase and commit before requesting checks; ask a human for product decisions."
 	}
+	journal.RestackNeedsChecks = true
+	if held {
+		journal.State, journal.ResumeState, journal.StopReason, journal.Outcome = heldState, "implementing", heldReason, heldOutcome
+	}
 	journal.Reconciliation = nil
+	journal.DependencyInvalid = false
 	if err := workrun.Save(directory, &journal); err != nil {
 		return previous, err
 	}
 	_ = os.Remove(recorded.Bundle)
 	// Release before the normal runner acquires this same lock and registers
 	// its heartbeat. The saved native SessionID is deliberately retained.
+	if err := workrun.ClearDependencyInvalidation(directory); err != nil {
+		return previous, err
+	}
 	if err := lock.Close(); err != nil {
 		return previous, err
 	}
@@ -1097,6 +1144,9 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 			return updated, fmt.Errorf("base moved again during conflict recovery; resolve the recorded rebase before retrying")
 		}
 		return d.Reconcile(ctx, ticket, target, updated)
+	}
+	if held && journal.DeferredAnswer == "" {
+		return updated, nil
 	}
 	return d.Execute(ctx, ticket, target, &updated)
 }
@@ -1203,6 +1253,11 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 			return err
 		}
 		refreshed := resultForRun(directory, journal)
+		refreshed.Dependencies = previous.Dependencies
+		refreshed.DependencyInvalid = previous.DependencyInvalid || workrun.DependencyIsInvalid(directory, &journal)
+		if refreshed.DependencyInvalid && !seriesHeldState(refreshed.State) {
+			refreshed.State = "waiting_base"
+		}
 		if previous.State == "merged" {
 			refreshed.State = "merged"
 			refreshed.MergeSHA = previous.MergeSHA
@@ -1257,6 +1312,14 @@ func containsSeriesPath(paths []string, wanted string) bool {
 		if path == wanted {
 			return true
 		}
+	}
+	return false
+}
+
+func seriesHeldState(state string) bool {
+	switch state {
+	case "blocked", "failed", "stopped", "waiting_human", "waiting_for_human", "awaiting_reviewer":
+		return true
 	}
 	return false
 }

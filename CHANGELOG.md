@@ -7,6 +7,18 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.50 - 2026-10-13
+
+### Added
+
+- Start tickets with multiple dependencies from a checked combination of current integration and exact ready parent revisions. Publish an immutable signed derived base and target the child PR there, keeping its review diff limited to its own work.
+- Record combined-base generations, parent provenance, verification context and the child's own source boundary. Reuse unchanged contexts, invalidate affected descendants when parents change, and reconcile through the original saved jobs and sessions. After all parents merge, replay only the child's changes onto integration and retarget its existing PR.
+
+### Changed
+
+- Restacks retain linear ticket history and repeat repository checks, signing, CI and independent review. Parent PRs still require human merge decisions; dependent PRs should wait for retargeting to integration before merging. Recorded derived branches remain available for recovery and audit.
+- Saved checkpoints and run journals containing the new dependency or restack recovery fields require beta.50 or newer. Existing saved work without those fields remains readable.
+
 ## 0.1.0-beta.49 - 2026-10-13
 
 ### Fixed

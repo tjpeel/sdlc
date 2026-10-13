@@ -122,6 +122,7 @@ func CaptureSnapshot(ctx context.Context, launch project.LaunchResult, snapshot 
 	// The journal remains anchored to the user's project, never the temporary
 	// clone. Capture has already produced the worker checkout and hashes.
 	plan.Root = launch.Root
+	plan.DependencyContext = snapshot.DependencyContext
 	return plan, nil
 }
 

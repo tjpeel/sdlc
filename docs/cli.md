@@ -372,9 +372,56 @@ are independent and follow numeric filename order.
 
 A ticket with one dependency can start when its parent has a signed, tested and
 independently reviewed draft PR in `ready`. The child's source and PR base use
-that parent's recorded branch/head. A ticket with multiple parents waits until
-all parents merge into the integration branch, then starts from that branch.
+that parent's recorded branch/head. A ticket with multiple dependencies can
+start when each parent is ready or merged. SDLC combines current integration
+with the exact ready parent revisions, checks the source combination in an
+isolated worker and publishes a signed derived base with the same verified
+tree. The checkpoint retains both source and signed revisions. Conflicts or failed combined checks
+stop before the child starts. Its PR targets that derived branch so its review
+diff contains only its own changes.
 SDLC never merges or approves PRs automatically.
+
+A conflicting or failing combination retains its failed generation and leaves
+the child unstarted. Correct the affected parent work through its saved run,
+complete its normal checks and review, then continue the feature to build a new
+generation. For an operational failure, resolve its reported cause and continue
+the same feature; retained preparation and publication checkpoints support retry.
+
+Review a dependent PR while it targets the derived branch, but wait until it is
+retargeted to integration before merging it. Merging into the temporary base
+would not merge that work into integration.
+
+Derived bases are immutable generations bound to the integration revision,
+parent revisions and frozen verification context. Repeating a feature command
+reuses an unchanged recorded generation. Source PR updates invalidate dependent
+readiness; dependent work waits while its parents complete their checks and
+review. A first parent merge updates the remaining parent from integration,
+then SDLC rebuilds the combination and restacks the child once that parent is
+ready again. After all parents merge, it replays only the child's own commits
+onto integration and retargets the original PR.
+
+Derived branches use `sdlc-derived/` followed by the generation identity. They
+remain recorded for recovery and are not reused for a different context.
+
+A stale dependent ticket keeps its original hold while its parents reconcile.
+For a pending human question, `sdlc answer` records the response without starting
+work on the stale base. Continue the owning feature to reconcile that base before
+the saved run consumes the answer. Restacking invalidates old checks,
+CI and review evidence; a previously published head cannot establish readiness
+for the revised source.
+
+Restacking changes commit IDs because Git includes parent IDs in each commit's
+hash. SDLC keeps linear ticket history, batches observed parent updates and
+avoids repeated restacks for an unchanged context. It preserves the original
+jobs, sessions and accounting, and requires fresh checks, signing, CI and
+independent review for the updated head. Recorded derived branches are retained
+for resume and audit; this workflow does not delete them automatically.
+
+If the implementation has unfinished tracked edits, reconciliation retains them
+in an unsigned ticket commit before replay. The original implementer assesses
+that work before the normal verification and publication pipeline continues.
+Untracked files remain in the workspace; reconciliation refuses to overwrite
+colliding files.
 
 ### Continue and reconcile a feature
 

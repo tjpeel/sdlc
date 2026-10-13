@@ -23,7 +23,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.49`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.50`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -213,8 +213,14 @@ sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --watch
 An optional private `plan.json` declares ticket priorities, dependencies and path
 prefixes that must run serially. Independent tickets can overlap; a ticket with
 one dependency can start from its parent's signed, tested and reviewed draft PR.
-Tickets with multiple dependencies wait until all parents merge into the
-integration branch. `--watch` keeps the foreground controller monitoring human
+Tickets with multiple dependencies can start from a separately checked, signed
+combination of their ready parents and current integration. Their PRs target an
+immutable derived branch so reviewers see only the dependent ticket's changes.
+As parents merge, SDLC rebuilds the combination and restacks the dependent work;
+after all parents merge, it retargets the existing PR to integration. Restacking
+changes commit IDs, but unchanged contexts are reused. Review dependent PRs early,
+then wait for retargeting to integration before merging them.
+`--watch` keeps the foreground controller monitoring human
 merges; without it, SDLC runs currently unblocked work and exits. Repeat the
 command to continue the saved feature. `--alternate-providers` alternates
 implementers in planned ticket order, with the opposite provider reviewing each.

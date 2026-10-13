@@ -139,3 +139,33 @@ func TestSharedCleanupStopsProducersBeforeEnumeratingTheirResources(t *testing.T
 		t.Fatal("completed cleanup retained recovery marker")
 	}
 }
+
+func TestPinnedCombinedCheckRecoveryUsesValidSharedSessionAndPreservesDaemon(t *testing.T) {
+	engine := &cleanupEngineProbe{}
+	checker := DockerChecker{WorkerName: "sdlc-check-" + strings.Repeat("c", 24), Runtime: runtimeimage.Manager{Directory: t.TempDir(), Docker: engine}}
+	if !validCheckSession(checker.WorkerName) {
+		t.Fatal("frozen generation name cannot be recovered by shared daemon")
+	}
+	s, err := newSharedChecks(checker, runtimeimage.State{Engine: "offline"}, "docker:29.8.2-dind@sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(s.directory, checker.WorkerName+".session")
+	if err := os.WriteFile(marker, []byte(checker.WorkerName+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checker.RecoverCombinedCheck(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("inner session marker survived recovery")
+	}
+	for _, call := range engine.calls {
+		if call == "rm --force "+s.name || call == "volume rm "+s.workVolume {
+			t.Fatal("generation recovery removed shared daemon/cache")
+		}
+	}
+}

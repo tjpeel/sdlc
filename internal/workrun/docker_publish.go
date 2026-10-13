@@ -155,6 +155,19 @@ type DockerPublisher struct {
 	Runner       PublisherCommandRunner
 }
 
+// PublishDerived uses the same isolated linear signing and exact tree proof as
+// normal publication, without creating or updating any pull request.
+func (publisher DockerPublisher) PublishDerived(ctx context.Context, plan Plan, directory string, revision Revision, evidence CheckEvidence) (Publication, error) {
+	if plan.Derived == nil || !evidence.Passed || evidence.Head != revision.Head || evidence.Tree != revision.Tree || !revision.Clean {
+		return Publication{}, fmt.Errorf("derived publication requires passing source evidence")
+	}
+	response, err := publisher.invoke(ctx, directory, PublisherRequest{Action: "publish", Plan: plan, ExpectedHead: revision.Head, ExpectedTree: revision.Tree})
+	if err == nil && (response.Publication.BaseSHA != plan.BaseSHA || !objectID.MatchString(response.Publication.HeadSHA)) {
+		return Publication{}, fmt.Errorf("invalid derived publication revision")
+	}
+	return response.Publication, err
+}
+
 func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspace, directory string, previous Publication, output io.Writer) (Publication, error) {
 	if err := ValidatePRMetadata(plan); err != nil {
 		return Publication{}, err
@@ -496,7 +509,7 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 		}
 		return fail(fmt.Sprintf("isolated publication refused at %s (%s); inspect private diagnostic %s", response.Diagnostic.Stage, response.Diagnostic.Code, filepath.Join(private, "failure.stderr")))
 	}
-	if request.Action == "publish" && (response.Publication.Number < 1 || response.Publication.BaseSHA != request.Plan.BaseSHA || !objectID.MatchString(response.Publication.HeadSHA) || !strings.HasPrefix(response.Publication.URL, "https://github.com/"+request.Plan.Repository+"/pull/")) {
+	if request.Action == "publish" && request.Plan.Derived == nil && (response.Publication.Number < 1 || response.Publication.BaseSHA != request.Plan.BaseSHA || !objectID.MatchString(response.Publication.HeadSHA) || !strings.HasPrefix(response.Publication.URL, "https://github.com/"+request.Plan.Repository+"/pull/")) {
 		return fail("invalid isolated publication result")
 	}
 	if request.Action == "checks" {

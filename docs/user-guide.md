@@ -617,9 +617,18 @@ no separate SDLC concurrency limit. Supply common requirements with the same rep
 An optional private `.sdlc/work/YOUR_WORK_REFERENCE/plan.json` maps exact ticket filenames to lower-first
 `priority`, `depends_on` filenames and `touches` path prefixes. Overlapping prefixes serialize work.
 Without it, tickets are independent and use numeric filename order. A child with one dependency can
-start from its parent's signed, tested and reviewed draft PR, targeting the parent branch/head. Multiple
-parents must all merge into the integration branch before their child starts. See the
+start from its parent's signed, tested and reviewed draft PR, targeting the parent branch/head. A child
+with multiple parents can start from a signed derived branch after the ready parent changes and current
+integration pass combined repository checks. Its PR targets that branch and shows only its own work. See the
 [plan format](cli.md#private-feature-plan).
+
+If one parent merges, remaining parents update from integration first. The dependent child waits for
+their renewed readiness, then updates from a newly checked combination. Once all parents merge, only
+the child's changes replay onto integration and its existing PR is retargeted. Restacks change commit
+IDs; batching parent updates and reusing unchanged contexts reduces unnecessary review churn.
+
+You can review the dependent PR before its parents merge. Wait for it to be retargeted to the
+integration branch before merging it; merging into its derived base would leave the work there.
 
 `--watch` keeps the foreground controller observing human merges. Without it, SDLC finishes currently
 unblocked work and exits. Rerun the same feature command to continue its checkpoint. Compatible existing

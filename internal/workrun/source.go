@@ -64,7 +64,7 @@ func isolatedGit(ctx context.Context, directory string, args ...string) (string,
 		return "", ctx.Err()
 	}
 	if err != nil {
-		return "", fmt.Errorf("safe Git %s failed", args[0])
+		return "", fmt.Errorf("safe Git %s failed: %w", args[0], err)
 	}
 	return string(out), nil
 }

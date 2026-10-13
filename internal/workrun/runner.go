@@ -21,6 +21,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	ValidateDependencies         func(context.Context, string, Plan) error
 	OverrideRunLimits            bool
 	ProcessPRFeedback            bool
 	CompanionCloner              CompanionRepositoryCloner
@@ -65,6 +66,9 @@ func (runner Runner) stop(directory string, journal *Journal, state, message str
 }
 
 func (runner Runner) transition(directory string, journal *Journal, state string) error {
+	if state == "ready" {
+		journal.RestackNeedsChecks = false
+	}
 	journal.State = state
 	journal.ResumeState = ""
 	journal.StopReason = ""
@@ -103,6 +107,9 @@ func (output observedOutput) Write(data []byte) (int, error) {
 }
 
 func (runner Runner) Run(ctx context.Context, directory string, journal *Journal, answer string) (runErr error) {
+	if DependencyIsInvalid(directory, journal) {
+		return ErrDependencyInvalid
+	}
 	if runner.Provider == nil || runner.Checker == nil || runner.Publisher == nil || runner.Repository == nil {
 		return fmt.Errorf("run controller is missing an execution boundary")
 	}
@@ -125,6 +132,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 		if current.UpdatedAt != journal.UpdatedAt {
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
+		}
+	}
+	if runner.ValidateDependencies != nil {
+		if err := runner.ValidateDependencies(ctx, directory, journal.Plan); err != nil {
+			return err
 		}
 	}
 	savedFeedbackReplay := journal.State == "blocked" && journal.StopReason == noPendingFeedbackHold
@@ -281,6 +293,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 	}
 	if journal.State == "waiting_for_human" {
+		if answer == "" && journal.DeferredAnswer != "" {
+			answer = journal.DeferredAnswer
+		}
 		if answer == "" {
 			return runner.stop(directory, journal, "waiting_for_human", "answer the recorded questions with --answer-file before resuming")
 		}
@@ -292,8 +307,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		}
+		journal.DeferredAnswer = ""
 		journal.Feedback = "Recorded human questions:\n" + strings.Join(journal.Outcome.Questions, "\n") + "\nHuman answer:\n" + answer
 		journal.State = journal.PendingRole
+		if journal.RestackNeedsChecks {
+			journal.State = "implementing"
+		}
 		if journal.State == "review" {
 			journal.State = "reviewing"
 		} else {
@@ -328,6 +347,14 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		runner.MissingCheckGrace = 2 * time.Minute
 	}
 	for {
+		if runner.ValidateDependencies != nil {
+			if err := runner.ValidateDependencies(ctx, directory, journal.Plan); err != nil {
+				return err
+			}
+		}
+		if DependencyIsInvalid(directory, journal) {
+			return ErrDependencyInvalid
+		}
 		if err := ctx.Err(); err != nil {
 			return runner.stop(directory, journal, "blocked", "run was cancelled or timed out; checkpoint retained")
 		}
@@ -603,6 +630,9 @@ func verifyInputs(root string, inputs []Input) error {
 }
 
 func (runner Runner) session(ctx context.Context, directory string, journal *Journal, role, workspace, resume string) (result SessionResult, resultErr error) {
+	if DependencyIsInvalid(directory, journal) {
+		return SessionResult{}, ErrDependencyInvalid
+	}
 	// Standalone session callers retain the same raw output and progress boundaries.
 	if runner.rawOutput == nil {
 		runner.rawOutput = runner.Output

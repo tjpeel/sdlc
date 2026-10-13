@@ -374,8 +374,25 @@ main
     ticket-two  PR base: ticket-one
 ```
 
-A ticket with multiple parents waits until all parents have merged into the
-integration branch. No controller merges or approves automatically.
+A ticket with multiple parents can start from a tested combination of their
+ready changes and current integration. The controller creates a signed derived
+branch from exact recorded parent revisions and checks the source aggregate
+before starting the child. Publication verifies that its signed counterpart
+has the same tree, retaining both revisions in the checkpoint. The child's PR targets that branch, keeping its diff
+limited to its own work. No controller merges or approves the parent PRs.
+
+When a parent merges, dependent readiness is invalidated while the remaining
+parents update from integration and complete their normal checks and review.
+The child waits without preventing those parent repairs. Once the updated
+parents are ready, their changes are combined and checked again before the
+child restacks. After every parent merges, the child replays only its own work
+onto integration and its existing PR is retargeted there. An unchanged recorded
+context is reused; changed context requires fresh verification.
+
+The aggregate base is one synthetic commit, not part of the child's own
+commit range. Restacks rewrite that range because its parent changes; original
+source PRs and recorded history remain retained. Derived refs are immutable
+generations and remain available for resume and audit.
 
 When a parent squash-merges or the integration base moves, the controller
 restacks only the affected ticket's own commits. It verifies the old PR head and
@@ -388,7 +405,10 @@ Compatible existing runs are adopted or resumed without duplicate work. One
 feature checkpoint freezes the plan, models, accounts, runtime, common inputs,
 each ticket's linked requirements and checks. Explicit file recovery applies only
 to the selected paused ticket and retains the original frozen hashes.
-Human-attention states stop feature execution; resolve the recorded
+Stale descendants retain their original holds without preventing parent repair.
+A human answer can be recorded while the base is stale; the owning feature
+reconciles the base before continuing work or consuming the answer. Current
+human-attention states stop feature execution; resolve the recorded
 individual run with its resume/answer command, then repeat the feature command.
 The dashboard retains individual-run reporting. Detached supervision remains
 future work. Offline tests cover feature scheduling and reconciliation; a

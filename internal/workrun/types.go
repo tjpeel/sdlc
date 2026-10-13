@@ -44,6 +44,8 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	DependencyContext   *DependencyContext        `json:"dependency_context,omitempty"`
+	Derived             *DerivedBoundary          `json:"derived,omitempty"`
 	RuntimeProvenance   *RuntimeProvenance        `json:"runtime_provenance,omitempty"`
 	NugetCache          *project.NugetCacheBudget `json:"nuget_cache,omitempty"`
 	PRMetadataPolicy    *PRMetadataPolicy         `json:"pr_metadata_policy,omitempty"`
@@ -75,6 +77,15 @@ type Plan struct {
 	Restack             *RestackBoundary          `json:"restack,omitempty"`
 }
 
+// DerivedBoundary authorises a branch-only aggregate of exact parent snapshots.
+type DerivedBoundary struct {
+	Parents []DerivedParent `json:"parents"`
+}
+type DerivedParent struct {
+	Ticket, RunID, Branch, Base, BaseSHA, HeadSHA, State, MergeSHA string
+	Number                                                         int
+}
+
 // RestackBoundary is the exact remote PR boundary which a restack may move.
 // It prevents a resumed controller from retargeting an unrelated PR.
 type RestackBoundary struct {
@@ -85,9 +96,17 @@ type RestackBoundary struct {
 }
 
 type BranchSnapshot struct {
-	Branch string `json:"branch"`
-	SHA    string `json:"sha"`
-	Bundle string `json:"bundle"`
+	DependencyContext *DependencyContext `json:"dependency_context,omitempty"`
+	Branch            string             `json:"branch"`
+	SHA               string             `json:"sha"`
+	Bundle            string             `json:"bundle"`
+}
+
+type DependencyContext struct {
+	Identity, IntegrationBranch, IntegrationSHA, SourceSHA, SignedSHA, Tree string
+	Owner, Ticket                                                           string
+	Parents                                                                 []DerivedParent
+	Evidence                                                                CheckEvidence
 }
 
 type RemotePR struct {
@@ -226,6 +245,9 @@ type Publisher interface {
 }
 
 type Journal struct {
+	RestackNeedsChecks        bool                  `json:"restack_needs_checks,omitempty"`
+	DeferredAnswer            string                `json:"deferred_answer,omitempty"`
+	DependencyInvalid         bool                  `json:"dependency_invalid,omitempty"`
 	RunLimitOverride          *RunLimitOverride     `json:"run_limit_override,omitempty"`
 	FormatterPreparation      []VerificationResult  `json:"formatter_preparation,omitempty"`
 	PRFeedback                *PRFeedbackHistory    `json:"pr_feedback,omitempty"`
