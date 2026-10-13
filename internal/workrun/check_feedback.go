@@ -230,7 +230,7 @@ type compilerDiagnostic struct {
 
 // Docker BuildKit prefixes command output with a step and elapsed time. Accept
 // those fixed prefixes, then only C# code/location metadata, never message text.
-var compilerErrorLine = regexp.MustCompile(`^(?:#[0-9]{1,6} [0-9]{1,6}(?:\.[0-9]{1,6})? |[0-9]{1,6}(?:\.[0-9]{1,6})? )?([^()]+)\(([0-9]{1,7}),([0-9]{1,5})\): error (CS[0-9]{4}|S8969): `)
+var compilerErrorLine = regexp.MustCompile(`^(?:#[0-9]{1,6} [0-9]{1,6}(?:\.[0-9]{1,6})? |[0-9]{1,6}(?:\.[0-9]{1,6})? )?([^()]+)\(([0-9]{1,7}),([0-9]{1,5})\): error (CS[0-9]{4}|S[0-9]{3,6}): `)
 
 func parseCompilerDiagnostic(line string, approved map[string]bool) *compilerDiagnostic {
 	match := compilerErrorLine.FindStringSubmatch(line)
@@ -305,6 +305,8 @@ func checkRepairFeedback(tree string, err error, commands [][]string) string {
 				feedback += " C# reports an ambiguous reference. Inspect that location and qualify the intended symbol or resolve conflicting namespace imports."
 			} else if c.code == "S8969" {
 				feedback += " The analyzer reports a redundant null-forgiving operator. Inspect that location and remove the unnecessary operator while preserving nullability behavior."
+			} else if strings.HasPrefix(c.code, "S") {
+				feedback += " C# analyzer reports an error. Inspect the source location and repair the analyzer error before rerunning checks."
 			} else {
 				feedback += " Inspect that source location and repair the compiler error before rerunning checks."
 			}

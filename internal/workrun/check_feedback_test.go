@@ -459,44 +459,64 @@ func TestDockerCompilerErrorBeyondLargeBuildOutputSurvivesTeardown(t *testing.T)
 }
 
 func TestBuildAnalyzerFailureSuppliesSafeConfiguredAndAdditionalFeedback(t *testing.T) {
-	d := &formatterDiagnostic{approved: map[string]bool{"src/ExampleTests.cs": true}}
-	output := "/host/private.cs(4,2): error S8969: private input\n#22 0.123 \x1b[31m/src/src/ExampleTests.cs(42,9): error S8969: private source operand and diagnostic text\x1b[0m\r\n"
-	for _, b := range []byte(output) {
-		d.Write([]byte{b})
-	}
-	d.finish()
-	failure := &CheckFailure{Command: 1, ExitCode: 1, compiler: d.compiler}
-	commands := [][]string{{"dotnet", "build", "Example.slnx"}}
-	request := regressionRequest()
-	request.Commands = commands
-	for _, feedback := range []string{
-		checkRepairFeedback(testTree, failure, commands),
-		verificationDiagnostic(request, testTree, &VerificationFailure{Phase: "candidate", Err: failure}),
-	} {
-		for _, wanted := range []string{"S8969", "src/ExampleTests.cs:42:9", "redundant null-forgiving operator"} {
-			if !strings.Contains(feedback, wanted) {
-				t.Fatalf("analyzer repair evidence missing %q: %s", wanted, feedback)
+	for _, code := range []string{"S8969", "S1854", "S6667", "S1075", "S1111", "S123", "S123456"} {
+		t.Run(code, func(t *testing.T) {
+			d := &formatterDiagnostic{approved: map[string]bool{"src/ExampleTests.cs": true}}
+			output := "/host/private.cs(4,2): error " + code + ": private input\n#22 0.123 \x1b[31m/src/src/ExampleTests.cs(42,9): error " + code + ": private source operand and diagnostic text\x1b[0m\r\n" +
+				"/workspace/src/ExampleTests.cs(43,10): error S9999: later private diagnostic\n"
+			for _, b := range []byte(output) {
+				d.Write([]byte{b})
 			}
-		}
-		for _, private := range []string{"private input", "private source", "diagnostic text", "/host/", "/src/", "#22", "\x1b"} {
-			if strings.Contains(feedback, private) {
-				t.Fatalf("raw analyzer diagnostic reached feedback: %s", feedback)
+			d.finish()
+			failure := &CheckFailure{Command: 1, ExitCode: 1, compiler: d.compiler}
+			commands := [][]string{{"dotnet", "build", "Example.slnx"}}
+			request := regressionRequest()
+			request.Commands = commands
+			guidance := "C# analyzer reports an error. Inspect the source location and repair the analyzer error before rerunning checks."
+			if code == "S8969" {
+				guidance = "redundant null-forgiving operator"
 			}
-		}
+			for _, feedback := range []string{
+				checkRepairFeedback(testTree, failure, commands),
+				verificationDiagnostic(request, testTree, &VerificationFailure{Phase: "candidate", Err: failure}),
+			} {
+				for _, wanted := range []string{code, "src/ExampleTests.cs:42:9", guidance} {
+					if !strings.Contains(feedback, wanted) {
+						t.Fatalf("analyzer repair evidence missing %q: %s", wanted, feedback)
+					}
+				}
+				for _, private := range []string{"private input", "private source", "diagnostic text", "/host/", "/src/", "#22", "\x1b", "S9999", ":43:10"} {
+					if strings.Contains(feedback, private) {
+						t.Fatalf("raw or later analyzer diagnostic reached feedback: %s", feedback)
+					}
+				}
+				if code != "S8969" && strings.Contains(feedback, "redundant null-forgiving operator") {
+					t.Fatalf("unrelated specific analyzer guidance reached feedback: %s", feedback)
+				}
+			}
+		})
 	}
 }
 
 func TestBuildAnalyzerDiagnosticRetainsExistingSafetyBoundaries(t *testing.T) {
 	for _, output := range []string{
-		"src/Unknown.cs(42,9): error S8969: private diagnostic\n",
-		"src/ExampleTests.cs(42,9): error S1111: private diagnostic\n",
-		"\x1b]0;private-token\x07src/ExampleTests.cs(42,9): error S8969: private diagnostic\n",
+		"src/Unknown.cs(42,9): error S1854: private diagnostic\n",
+		"../src/ExampleTests.cs(42,9): error S6667: private diagnostic\n",
+		"/host/src/ExampleTests.cs(42,9): error S1075: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error S12: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error S1234567: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error S1854X: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error S18A4: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error s1854: private diagnostic\n",
+		"src/ExampleTests.cs(42,9): error S1854: private\x07diagnostic\n",
+		"\x1b]0;private-token\x07src/ExampleTests.cs(42,9): error S6667: private diagnostic\n",
+		"\x1b[2Jsrc/ExampleTests.cs(42,9): error S1075: private diagnostic\n",
 	} {
 		d := &formatterDiagnostic{approved: map[string]bool{"src/ExampleTests.cs": true}}
 		d.Write([]byte(output))
 		d.finish()
 		if d.compiler != nil {
-			t.Fatal("unsafe or unsupported analyzer diagnostic admitted", d.compiler)
+			t.Fatalf("unsupported or unsafe analyzer diagnostic admitted: %#v", d.compiler)
 		}
 	}
 }

@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.34 - 2026-10-13
+
+### Fixed
+
+- Include bounded Sonar analyzer identifiers and committed source locations in C# check feedback, so repair workers can identify analyzer failures without receiving private diagnostic text. Preserve the existing first-error limit and source-path checks.
+
 ## 0.1.0-beta.33 - 2026-10-13
 
 ### Fixed
