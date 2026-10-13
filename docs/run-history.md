@@ -22,11 +22,13 @@ and published. Shallow checkouts or missing reachable objects fail before
 provider preparation; restore the history or use a complete checkout. An offline
 `--dry-run` remains available to inspect the plan.
 
-When an isolated check fails, repair feedback identifies the command number and
-exit status. Recognised Prettier warnings also identify committed source files
-that need formatting, including when checks share one shell command. Raw check
-logs stay in `checks-N.log`; arbitrary output and private inputs are withheld
-from provider prompts.
+Completed isolated checks return bounded actual command output to the original
+implementation session, with command number, exit status, tested revision and
+explicit truncation. The agent assesses unfamiliar failures and passing results
+without prescribed error-specific repairs. Full logs remain in `checks-N.log`.
+Only process output is returned; controller setup messages, host logs and native
+transcripts remain outside this channel. Printed private input values can enter
+provider context. Operational and cleanup failures withhold provisional output.
 
 Check processes receive no inherited proxy or publication credential variables.
 SDLC first overrides Docker's automatic proxy injection, then removes those

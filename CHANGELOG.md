@@ -7,6 +7,15 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.39 - 2026-10-13
+
+### Changed
+
+- Return bounded actual command output from isolated checks to the original implementation session, including unfamiliar failures and successful diagnostics. Include command exit status, tested revision and explicit head/tail truncation instead of prescribing repairs for recognised errors. Preserve operational holds and keep command output out of independent-review packets and checkpoint exports.
+- Discover checks from committed project metadata before each checking phase for projects using runtime selection. New initialization records that selection without saving an inferred command snapshot. Preserve explicit and legacy suites, invalidate evidence when effective commands change, and stop when discovery is ambiguous or requires Docker access absent from the saved run.
+- Return newly completed verification to the original session for assessment before publication, while retaining the existing session-turn and repair bounds.
+- Require current provider-documentation review for sign-in attempts and provider-related implementation changes, rather than routine SDLC CLI commands.
+
 ## 0.1.0-beta.38 - 2026-10-13
 
 ### Fixed

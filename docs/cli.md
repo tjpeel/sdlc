@@ -154,13 +154,22 @@ Portable settings live in `.sdlc/project.json`:
 {
   "version": 1,
   "branch_format": "{reference}-{ticket}",
-  "checks": [["go", "test", "./..."], ["go", "vet", "./..."]],
+  "check_selection": "runtime",
+  "checks": [],
   "input_files": []
 }
 ```
 
-Each check is an argument array. The initial checks are suggestions based on
-detected project files; review and edit them for the project's requirements.
+New projects use `check_selection: "runtime"`. Initialization displays a current
+preview without saving inferred commands. The controller resolves the suite from
+committed candidate metadata before each checking phase; untracked files, check
+outputs and private check inputs do not determine it. Changed commands invalidate
+previous verification. Missing or ambiguous discovery stops the run.
+
+For a custom complete sequence, set `check_selection: "explicit"` and supply
+argument arrays in `checks`, for example `[["go", "test", "./..."], ["go", "vet", "./..."]]`.
+Existing settings and saved runs without `check_selection` retain their explicit
+frozen commands. Runtime selection ignores the saved `checks` array.
 .NET inspection prefers the complete Required checks section in `CONTRIBUTING.md`
 or `README.md`, then a simple CI sequence. Otherwise it derives restore, build and
 test commands from one solution or project, `global.json` and test-project metadata.
@@ -170,7 +179,7 @@ for teardown and enable `docker_tests`. The summary identifies the source files.
 Unsupported shell/setup context, conditional or custom test output paths and
 ambiguous targets require explicit configuration. Inspection executes no project commands.
 
-When `.config/dotnet-tools.json` pins supported stable CSharpier 1.x, initialization
+When `.config/dotnet-tools.json` pins supported stable CSharpier 1.x, runtime discovery
 places local tool restore and a root formatting check before the other inferred
 checks, including Compose startup and builds:
 
@@ -203,8 +212,8 @@ input, while service `env_file` supplies container environment. See the
 itself ignored and untracked and use settings for disposable test services.
 
 Repeated initialization validates and preserves existing settings, including
-custom checks. `sdlc init --force` repeats inspection and refreshes the `checks`
-and `docker_tests` fields. It preserves `input_files`, `branch_format`, NuGet cache
+custom checks. `sdlc init --force` repeats inspection, selects runtime discovery
+and refreshes `docker_tests`. It preserves `input_files`, `branch_format`, NuGet cache
 preferences and saved runs. Before replacing changed settings it saves their exact
 previous bytes under the ignored `.sdlc/work/.archive/init-*/project.json` path,
 shown in the summary. If inspection cannot produce usable checks, existing settings
@@ -599,9 +608,22 @@ neither registry entries nor heartbeats. These records are private local state.
 Within the repair bound, a configured check failure still allows pending structured
 verification requests to run in the isolated check worker. Failed commands prevent
 reuse of their source copy and HOME. Passing an additional request does not replace
-the failed configured checks or permit publication. Command output remains in
-private logs; repair feedback includes only bounded diagnostic metadata, including
-CSharpier's approximate Expected/Actual line locations for committed files.
+the failed configured checks or permit publication. Completed command results
+return to the original implementation session as untrusted data: combined stdout
+and stderr, exit status, revision, retained head/tail bytes and explicit omissions.
+Each execution captures at most 64 KiB, with at most 16 KiB per command; retained
+and returned command output shares a 16 KiB aggregate budget across the current
+suite and additional requests. Oversized output is drained and marked truncated.
+Binary or split UTF-8 bytes use an explicit base64 encoding. Narrow diagnostic
+requests can obtain more focused output without error-specific adapters.
+
+Output can include source, assertions and values printed from private check inputs;
+returning it to the selected implementation provider is part of running checks.
+These limits bound context and storage, not disclosure. Controller setup messages,
+arbitrary host logs and native transcripts are not exported through this channel.
+Operational or cleanup failures remain holds and cannot return provisional output.
+Independent-review packets and checkpoint exports exclude command output. The
+original implementation session assesses newly completed results before publication.
 
 Native structured JSONL streams to the terminal and is retained privately under:
 

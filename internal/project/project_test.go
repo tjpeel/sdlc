@@ -76,6 +76,23 @@ func TestInitializeNestedAndRepeat(t *testing.T) {
 	}
 }
 
+func TestInitializePreservesExplicitSuiteWithConflictingLockfiles(t *testing.T) {
+	root := repo(t)
+	write(t, root, "package.json", `{"scripts":{"test":"test"}}`)
+	write(t, root, "package-lock.json", "{}")
+	write(t, root, "yarn.lock", "disposable")
+	config := `{"version":1,"checks":[["custom","test"]],"input_files":[]}`
+	write(t, root, ConfigPath, config)
+	r := initAt(t, root)
+	settings, err := os.ReadFile(filepath.Join(root, ConfigPath))
+	if err != nil || string(settings) != config || r.Config.Checks[0][0] != "custom" {
+		t.Fatal("discovery replaced or rejected explicit settings", err, r.Config)
+	}
+	if _, err := DiscoverChecks(root); err == nil {
+		t.Fatal("runtime discovery accepted conflicting lockfiles")
+	}
+}
+
 func TestInitializeIgnoresWholeLocalStateDirectory(t *testing.T) {
 	root := repo(t)
 	write(t, root, "go.mod", "module example.invalid/project\n\ngo 1.25\n")

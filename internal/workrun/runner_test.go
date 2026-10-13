@@ -42,12 +42,14 @@ func testRun(t *testing.T) (string, *Journal) {
 }
 
 type fakeProvider struct {
-	status          map[string]string
-	statusErr       error
-	calls           []Session
-	outcomes        []Outcome
-	executeErr      error
-	resultSessionID string
+	assessments        []Session
+	lastImplementation Outcome
+	status             map[string]string
+	statusErr          error
+	calls              []Session
+	outcomes           []Outcome
+	executeErr         error
+	resultSessionID    string
 }
 
 func (p *fakeProvider) Status(_ context.Context, name string) (string, error) {
@@ -60,6 +62,10 @@ func (p *fakeProvider) Status(_ context.Context, name string) (string, error) {
 	return "stored", nil
 }
 func (p *fakeProvider) Execute(_ context.Context, s Session, out, diag io.Writer) (SessionResult, error) {
+	if s.Role == "implementation" && s.ResumeID != "" && strings.Contains(s.Prompt, "Submit verification_requests for additional machine work") && p.lastImplementation.Status == "implemented" {
+		p.assessments = append(p.assessments, s)
+		return SessionResult{Outcome: p.lastImplementation, SessionID: s.ResumeID, ReportedModel: s.Model.Name}, nil
+	}
 	p.calls = append(p.calls, s)
 	id := p.resultSessionID
 	if id == "" {
@@ -72,6 +78,9 @@ func (p *fakeProvider) Execute(_ context.Context, s Session, out, diag io.Writer
 		return SessionResult{}, errors.New("unexpected session")
 	}
 	o := p.outcomes[0]
+	if s.Role == "implementation" {
+		p.lastImplementation = o
+	}
 	p.outcomes = p.outcomes[1:]
 	io.WriteString(out, "fake streamed event\n")
 	return SessionResult{Outcome: o, SessionID: id, ReportedModel: s.Model.Name}, nil
@@ -345,7 +354,7 @@ func TestRunnerPublicationTreeMustMatchChecks(t *testing.T) {
 	dir, j := testRun(t)
 	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented")}}
 	pub := &fakePublisher{}
-	repo := &fakeRepository{revisions: []Revision{{testHead, testTree, true}, {testHead, testBase, true}}}
+	repo := &fakeRepository{revisions: []Revision{{testHead, testTree, true}, {testHead, testTree, true}, {testHead, testBase, true}}}
 	r := fakeRunner(p, &fakeChecker{}, pub, repo)
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || pub.calls != 0 || j.ResumeState != "publishing" {
 		t.Fatalf("changed tree published: %v", err)
@@ -906,7 +915,7 @@ func TestRunnerCIAnnotationRepairsSameSessionThenReviewsNewHead(t *testing.T) {
 	j.SessionID = testNative
 	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("implemented"), testOutcome("reviewed")}}
 	pub := &fakePublisher{heads: []string{testHead, strings.Repeat("4", 40)}, ciResults: []CIResult{{Status: "failed", Details: "private CI raw message", Diagnostics: []CIAnnotation{{Head: testHead, Path: "src/Example.cs", Line: 21, Level: "failure", Kind: "cognitive_complexity", Current: 18, Limit: 15}}}, {Status: "passed"}}}
-	repo := &fakeRepository{revisions: []Revision{{Head: testHead, Tree: testTree, Clean: true}, {Head: testHead, Tree: testTree, Clean: true}, {Head: strings.Repeat("4", 40), Tree: strings.Repeat("5", 40), Clean: true}, {Head: strings.Repeat("4", 40), Tree: strings.Repeat("5", 40), Clean: true}}}
+	repo := &fakeRepository{revisions: []Revision{{Head: testHead, Tree: testTree, Clean: true}, {Head: testHead, Tree: testTree, Clean: true}, {Head: testHead, Tree: testTree, Clean: true}, {Head: strings.Repeat("4", 40), Tree: strings.Repeat("5", 40), Clean: true}, {Head: strings.Repeat("4", 40), Tree: strings.Repeat("5", 40), Clean: true}}}
 	checks := &fakeChecker{}
 	runner := fakeRunner(p, checks, pub, repo)
 	if err := runner.Run(context.Background(), dir, j, ""); err != nil {

@@ -119,7 +119,7 @@ func unpreparedSeriesResult(result workseries.Result) bool {
 func canRefreshSeriesPreparation(state workseries.State, settings seriesSettings) (bool, error) {
 	// Older clients froze empty checks before ticket preparation failed. Refresh
 	// only that configuration, and only while no retained run data exists.
-	if len(settings.Config.Checks) != 0 {
+	if len(settings.Config.Checks) != 0 || settings.Config.CheckSelection == "runtime" {
 		return false, nil
 	}
 	for _, result := range state.Results {
@@ -308,7 +308,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		fmt.Fprintln(output, "Offline feature plan only; ticket content, account access and live PR state are checked during execution.")
 		return nil
 	}
-	if len(selections.Config.Checks) == 0 {
+	if len(selections.Config.Checks) == 0 && selections.Config.CheckSelection != "runtime" {
 		return fmt.Errorf("no verification checks configured: run sdlc init --force or configure checks in .sdlc/project.json before starting a feature; no provider work started")
 	}
 	if inCI() {
@@ -845,7 +845,7 @@ func (d *seriesDriver) loadRun(ticket string, result workseries.Result) (string,
 		return "", journal, err
 	}
 	roles, exists := d.settings.Roles[ticket]
-	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Plan.DaemonMode != d.settings.DaemonMode || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
+	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Plan.DaemonMode != d.settings.DaemonMode || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.CheckSelection != d.settings.Config.CheckSelection || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
 		return "", journal, fmt.Errorf("saved ticket run differs from frozen feature settings")
 	}
 	for _, input := range journal.Plan.CheckInputs {

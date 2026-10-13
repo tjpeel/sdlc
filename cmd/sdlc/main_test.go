@@ -52,7 +52,7 @@ func TestInitForceRefreshesExistingSettingsThroughCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var config project.Config
-	if err := json.Unmarshal(data, &config); err != nil || !reflect.DeepEqual(config.Checks, [][]string{{"go", "test", "./..."}, {"go", "vet", "./..."}}) || !reflect.DeepEqual(config.InputFiles, []string{"README.md"}) {
+	if err := json.Unmarshal(data, &config); err != nil || (config.CheckSelection != "runtime" || len(config.Checks) != 0) || !reflect.DeepEqual(config.InputFiles, []string{"README.md"}) {
 		t.Fatalf("force did not save expected checks and preserve inputs: %+v %v", config, err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -93,7 +93,7 @@ func TestInitCSharpierIsStaticAndForcePreservesSavedState(t *testing.T) {
 	}
 	data, err := os.ReadFile(filepath.Join(root, project.ConfigPath))
 	config, parseErr := project.ParseConfig(data)
-	if err != nil || parseErr != nil || len(config.Checks) < 3 || !reflect.DeepEqual(config.Checks[:2], [][]string{{"dotnet", "tool", "restore"}, {"dotnet", "csharpier", "check", "."}}) || !reflect.DeepEqual(config.InputFiles, []string{"README.md"}) || !strings.Contains(output.String(), `Check source: ".config/dotnet-tools.json"`) {
+	if err != nil || parseErr != nil || (config.CheckSelection != "runtime" || len(config.Checks) != 0) || !reflect.DeepEqual(config.InputFiles, []string{"README.md"}) || !strings.Contains(output.String(), `Check source: ".config/dotnet-tools.json"`) {
 		t.Fatalf("CLI omitted formatter or saved preferences: %s %v %v", data, err, parseErr)
 	}
 	if observed, _ := os.ReadFile(ticket); !bytes.Equal(observed, savedTicket) {

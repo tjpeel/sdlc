@@ -361,7 +361,7 @@ func validateSupplementSeries(ctx context.Context, view runstatus.View, j workru
 		return err
 	}
 	roles, exists := settings.Roles[filepath.Base(view.Ticket)]
-	if !exists || j.ImageID != settings.ImageID || !reflect.DeepEqual(j.Plan.Roles, roles) || !reflect.DeepEqual(j.Plan.PublicationIdentity, settings.Identity) || j.Plan.Repository != settings.Repository || j.Plan.GitHubProfile != settings.GitHubProfile || j.Plan.SigningProfile != settings.SigningProfile || j.Plan.SigningImage != settings.SigningImage || j.Plan.DaemonImage != settings.DaemonImage || j.Instructions != settings.Instructions || !reflect.DeepEqual(j.Plan.Checks, settings.Config.Checks) || j.Plan.DockerTests != settings.DockerTests || !reflect.DeepEqual(j.Plan.Headroom, settings.Headroom) {
+	if !exists || j.ImageID != settings.ImageID || !reflect.DeepEqual(j.Plan.Roles, roles) || !reflect.DeepEqual(j.Plan.PublicationIdentity, settings.Identity) || j.Plan.Repository != settings.Repository || j.Plan.GitHubProfile != settings.GitHubProfile || j.Plan.SigningProfile != settings.SigningProfile || j.Plan.SigningImage != settings.SigningImage || j.Plan.DaemonImage != settings.DaemonImage || j.Instructions != settings.Instructions || !reflect.DeepEqual(j.Plan.Checks, settings.Config.Checks) || j.Plan.CheckSelection != settings.Config.CheckSelection || j.Plan.DockerTests != settings.DockerTests || !reflect.DeepEqual(j.Plan.Headroom, settings.Headroom) {
 		return errors.New("feature run differs from frozen settings")
 	}
 	if len(j.Plan.CheckInputs) != len(settings.Config.InputFiles) {

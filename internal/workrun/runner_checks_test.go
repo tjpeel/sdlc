@@ -33,7 +33,7 @@ func TestControllerCandidatePhaseKeepsPassingEvidenceAndClosesBeforePublishing(t
 	checker := &controllerPhaseChecker{}
 	checker.beforeCleanup = func() {
 		checkpoint, err := Load(directory)
-		if err != nil || checkpoint.State != "checking" || !checkpoint.CandidatePhasePending {
+		if err != nil || (checkpoint.State != "checking" && checkpoint.State != "implementing") || !checkpoint.CandidatePhasePending {
 			t.Fatal("publication became eligible before cleanup", checkpoint.State, err)
 		}
 	}
@@ -52,13 +52,14 @@ func TestControllerPendingCandidatePhaseRechecksProvisionalEvidence(t *testing.T
 	directory, journal := testRun(t)
 	journal.State = "checking"
 	journal.CandidatePhasePending = true
+	journal.SessionID = testNative
 	journal.CheckAttempt = 1
 	journal.Outcome = testOutcome("implemented")
 	journal.Plan.PRTitle, journal.Plan.PRBody = journal.Outcome.PRTitle, journal.Outcome.PRBody
 	journal.Evidence = CheckEvidence{Head: testHead, Tree: testTree, Passed: true}
 	request := regressionRequest()
 	journal.Verification = []VerificationResult{{Request: request, Key: verificationKey(journal, request, testHead, testTree), Passed: true}}
-	provider := &fakeProvider{outcomes: []Outcome{testOutcome("reviewed")}}
+	provider := &fakeProvider{lastImplementation: testOutcome("implemented"), outcomes: []Outcome{testOutcome("reviewed")}}
 	checker := &controllerPhaseChecker{}
 	publisher := &fakePublisher{}
 	runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
@@ -116,10 +117,10 @@ func TestControllerConfiguredFailureRunsPendingVerificationBeforeRepair(t *testi
 				t.Fatalf("pending diagnostic skipped or failed suite bypassed: suite=%d requested=%d publish=%d sessions=%d", checker.calls, len(checker.requests), publisher.calls, len(provider.calls))
 			}
 			prompt := provider.calls[1].Prompt
-			if !strings.Contains(prompt, "src/Example.cs (CSharpier Expected around line 42)") || !strings.Contains(prompt, `"additional"`) || journal.Verification[0].Passed == additionalFailed {
+			if !strings.Contains(prompt, "Configured checks failed") || !strings.Contains(prompt, `"additional"`) || journal.Verification[0].Passed == additionalFailed {
 				t.Fatal("configured or additional evidence missing", prompt)
 			}
-			if additionalFailed && !strings.Contains(prompt, "src/Other.cs:7:3") {
+			if additionalFailed && !strings.Contains(prompt, "Additional verification") {
 				t.Fatal("mixed failure lost compiler location", prompt)
 			}
 			if strings.Contains(prompt, "private test output") {
@@ -143,7 +144,7 @@ func TestControllerConfiguredFailureStopsOnAdditionalOperationalFailure(t *testi
 	if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) || journal.State != "blocked" || journal.ResumeState != "checking" || journal.Evidence.Passed || publisher.calls != 0 || len(provider.calls) != 1 || len(checker.requests) != 1 {
 		t.Fatal("additional operational failure reached repair or publication", err)
 	}
-	if journal.Verification[0].Key != "" || !strings.Contains(journal.Feedback, "Configured checks failed") {
+	if journal.Verification[0].Key != "" || journal.Feedback != "" {
 		t.Fatal("operational failure cached or configured feedback lost")
 	}
 }
@@ -196,7 +197,7 @@ func TestControllerConfiguredFailureReusesCompletedSuiteForFreshDiagnostic(t *te
 	if checker.calls != 1 || len(checker.requests) != 2 || checker.requests[1].ID != "new-diagnostic" || publisher.calls != 0 || journal.Evidence.Passed || journal.Rounds != 2 {
 		t.Fatalf("fresh diagnostic repeated failed suite or bypassed failure: suites=%d diagnostics=%d publications=%d rounds=%d", checker.calls, len(checker.requests), publisher.calls, journal.Rounds)
 	}
-	if len(provider.calls) != 3 || !strings.Contains(provider.calls[2].Prompt, "src/Example.cs (CSharpier Expected around line 42)") || !strings.Contains(provider.calls[2].Prompt, regressionRequest().ID) || journal.Verification[0].Passed || journal.Verification[1].Passed {
+	if len(provider.calls) != 3 || !strings.Contains(provider.calls[2].Prompt, "Configured checks failed") || !strings.Contains(provider.calls[2].Prompt, regressionRequest().ID) || journal.Verification[0].Passed || journal.Verification[1].Passed {
 		t.Fatal("prior configured or additional failure evidence disappeared")
 	}
 }

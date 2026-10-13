@@ -16,9 +16,10 @@ version and source revision before reporting delivery complete.
 # Provider service rules
 
 Account safety and compliance with provider terms are requirements throughout
-development. Read `docs/provider-usage.md` before changing authentication or
-executing connected provider work, and verify current official documentation for
-the proposed account type and execution mode.
+development. Before attempting provider sign-in or changing provider-related
+implementation, read `docs/provider-usage.md` and verify current official
+documentation for the proposed account type and execution mode. Routine SDLC CLI
+commands do not require a fresh provider-documentation review.
 
 - Use unmodified official clients and their documented authentication flows.
 - Do not extract or replay subscription OAuth tokens through custom API clients

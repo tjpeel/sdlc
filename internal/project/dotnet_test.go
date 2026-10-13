@@ -44,6 +44,10 @@ func TestInitializeDotnetFrontLoadsCSharpierBeforeRequiredChecks(t *testing.T) {
 				t.Fatal(err)
 			}
 			config, err := ParseConfig(data)
+			if err != nil || config.CheckSelection != "runtime" || len(config.Checks) != 0 {
+				t.Fatal("inferred commands were frozen", config, err)
+			}
+			config.Checks = result.Config.Checks
 			prefix := [][]string{{"dotnet", "tool", "restore"}, {"dotnet", "csharpier", "check", "."}}
 			if err != nil || len(config.Checks) < 3 || !reflect.DeepEqual(config.Checks[:2], prefix) {
 				t.Fatalf("formatter does not precede expensive checks: %s (%v)", data, err)
@@ -192,7 +196,8 @@ func TestInitializeDotnetUsesRequiredChecksAndAlwaysTearsDown(t *testing.T) {
 	if _, err := ParseConfig(data); err != nil {
 		t.Fatalf("generated configuration cannot be used by a run: %v", err)
 	}
-	text := string(data)
+	preview, _ := json.Marshal(result.Config.Checks)
+	text := string(preview)
 	for _, required := range []string{"dotnet", "restore", "NuGetAuditMode=all", "--test-modules", "Example.Tests.dll", "Example.IntegrationTests.dll", "--disable-build-servers"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("missing repository requirement %q", required)

@@ -467,6 +467,16 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 		diagnostic := &formatterDiagnostic{approved: approvedPaths}
 		matcher := newFailureMatcher(baseline)
 		commandOutput := io.MultiWriter(output, diagnostic, matcher)
+		var captured io.Writer
+		if capture, ok := output.(interface{ commandOutput(int, bool) io.Writer }); ok {
+			captured = capture.commandOutput(i+1, baseline != nil)
+			commandOutput = io.MultiWriter(commandOutput, captured)
+		}
+		complete := func(exit int) {
+			if captured != nil {
+				captured.(interface{ completed(int) }).completed(exit)
+			}
+		}
 		commandStarted := time.Now()
 		err = runner.Run(ctx, commandOutput, args...)
 		checker.recordTiming("command", baseline, i+1, commandStarted)
@@ -491,6 +501,7 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 			if json.Unmarshal(metadata, &status) != nil || status.Status != "exited" || status.Running || status.ExitCode == 0 || status.Error != "" || status.OOMKilled {
 				return fmt.Errorf("repository check %d did not complete successfully: %w", i+1, err)
 			}
+			complete(status.ExitCode)
 			diagnostic.finish()
 			// An unavailable Docker daemon is a check setup failure. Do not
 			// spend provider repair turns on it or enable privileges implicitly.
@@ -524,6 +535,7 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		complete(0)
 	}
 	if baseline != nil {
 		return &baselineMismatch{Reason: "baseline final command unexpectedly passed", Err: ErrCheckFailed}

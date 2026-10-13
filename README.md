@@ -17,7 +17,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.38`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.39`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Ticket and feature runs retain [usage metrics](docs/usage-metrics.md) across
 attempts and resumes. Read them with `sdlc usage --since 7d --json`.
@@ -145,7 +145,8 @@ This discovers Git state, project files and ticket paths, protects private work
 by ignoring the whole `/.sdlc/` directory in Git's local exclude file, and creates
 `.sdlc/project.json`. Review the
 suggested checks before using them. .NET discovery reads required-check guidance, simple CI sequences
-and runner manifests. Use `sdlc init --force` to refresh inferred checks and Docker-test settings;
+and runner manifests. New projects select checks from committed metadata at runtime.
+Use `sdlc init --force` to switch existing settings to runtime discovery and refresh Docker-test settings;
 other preferences and saved runs are preserved, and changed settings are backed up privately.
 Initialization works without Docker or provider login;
 `github use` saves the checked pair for this checkout in private external state.

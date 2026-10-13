@@ -351,7 +351,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 				return err
 			}
 		}
-		if !options.dryRun && len(launch.Config.Checks) == 0 {
+		if !options.dryRun && len(launch.Config.Checks) == 0 && launch.Config.CheckSelection != "runtime" {
 			return fmt.Errorf("no verification checks configured: set checks in .sdlc/project.json before starting a provider run; inspect sdlc onboard status or preview with --dry-run")
 		}
 		if options.frozenConfig != nil && !sameSeriesConfig(launch.Config, *options.frozenConfig) {

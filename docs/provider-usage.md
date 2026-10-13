@@ -124,7 +124,11 @@ artifact through `verification_requests.source_patch`. Its formatter commands
 run in a fresh source-only check copy and HOME with no provider authentication,
 publication credentials, private inputs or Docker daemon. A fixed network-disabled
 collector exports only selected committed text as a private diff with revision
-and content hashes. It does not forward tool output. The authenticated worker
+and content hashes. Completed check commands also return bounded actual process
+output to the original implementation session, with exit status and explicit
+truncation. This output is untrusted data and can contain private source or values
+printed from selected check inputs; size limits do not make it secret-free.
+The authenticated worker
 treats that code as data, reviews and applies the intended correction, commits
 it and requests full verification. This artifact channel does not authorise raw
 log access, credential export or execution of repository tools in the provider

@@ -130,3 +130,47 @@ func tickets(root string) ([]string, error) {
 	sort.Strings(result)
 	return result, nil
 }
+
+// DiscoverChecks inspects metadata without running project commands or changing state.
+func DiscoverChecks(root string) (Config, error) {
+	tools, checks, err := discover(root)
+	if err != nil {
+		return Config{}, err
+	}
+	node := false
+	for _, tool := range tools {
+		switch tool {
+		case "package.json":
+			node = true
+		}
+	}
+	if node {
+		found := false
+		for _, command := range checks {
+			if command[0] == "npm" || command[0] == "pnpm" || command[0] == "yarn" {
+				found = true
+			}
+		}
+		if !found {
+			return Config{}, errors.New("package.json does not identify supported test, lint or build scripts; configure an explicit complete check suite")
+		}
+	}
+	dotnet, err := discoverDotnet(root, tools)
+	if err != nil {
+		return Config{}, err
+	}
+	for _, warning := range dotnet.warnings {
+		if len(dotnet.checks) > 0 && (strings.HasPrefix(warning, "No .NET test projects found;") || strings.HasPrefix(warning, "Compose is present but test service startup is not documented;")) {
+			continue
+		}
+		return Config{}, errors.New(warning)
+	}
+	checks = append(checks, dotnet.checks...)
+	if len(dotnet.checks) > 0 {
+		checks = append(dotnet.formatting, checks...)
+	}
+	if len(checks) == 0 {
+		return Config{}, errors.New("project metadata does not identify a supported, unambiguous check suite")
+	}
+	return Config{Version: 1, CheckSelection: "runtime", Checks: checks, InputFiles: []string{}, DockerTests: dotnet.docker}, nil
+}

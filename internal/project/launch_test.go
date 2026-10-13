@@ -42,3 +42,14 @@ func TestLaunchMissingConfiguredAndSelectedInput(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeLaunchPreviewDoesNotBlockSelectedWork(t *testing.T) {
+	root := workRepo(t)
+	workTicket(t, root, "JOB", "1-first.md")
+	write(t, root, ConfigPath, `{"version":1,"check_selection":"runtime","checks":[],"input_files":[]}`)
+	write(t, root, "package.json", "untracked malformed preview metadata")
+	r, err := Launch(context.Background(), root, "JOB", "1-first.md", nil)
+	if err != nil || r.Config.CheckSelection != "runtime" || len(r.Config.Checks) != 0 {
+		t.Fatal("preview changed execution selection or rejected work", err, r.Config)
+	}
+}

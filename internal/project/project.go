@@ -26,12 +26,13 @@ const maximumSize = 64 * 1024
 const localIgnoreRule = "/.sdlc/"
 
 type Config struct {
-	NugetCache   *NugetCacheBudget `json:"nuget_cache,omitempty"`
-	Version      int               `json:"version"`
-	Checks       [][]string        `json:"checks"`
-	InputFiles   []string          `json:"input_files"`
-	DockerTests  bool              `json:"docker_tests,omitempty"`
-	BranchFormat string            `json:"branch_format,omitempty"`
+	CheckSelection string            `json:"check_selection,omitempty"`
+	NugetCache     *NugetCacheBudget `json:"nuget_cache,omitempty"`
+	Version        int               `json:"version"`
+	Checks         [][]string        `json:"checks"`
+	InputFiles     []string          `json:"input_files"`
+	DockerTests    bool              `json:"docker_tests,omitempty"`
+	BranchFormat   string            `json:"branch_format,omitempty"`
 }
 type Remote struct{ Name, Identity string }
 type Result struct {
@@ -44,6 +45,7 @@ type Result struct {
 	ConfigUpdated            bool
 	ConfigBackup             string
 	CheckSources             []string
+	CheckPreview             [][]string
 }
 
 type InitOptions struct{ Force bool }
@@ -110,6 +112,7 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 	if err != nil {
 		return r, err
 	}
+	r.Config.CheckSelection = "runtime"
 	r.Config.Version = 1
 	r.Config.InputFiles = []string{}
 	r.Config.BranchFormat = DefaultBranchFormat
@@ -131,6 +134,7 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 			}
 		}
 	}
+	r.CheckPreview = r.Config.Checks
 	discovered := r.Config
 	var existingSettings []byte
 	exclude, err := git(ctx, r.Root, "rev-parse", "--git-path", "info/exclude")
@@ -269,7 +273,7 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 	}
 	config := filepath.Join(r.Root, ConfigPath)
 	if _, err = os.Lstat(config); errors.Is(err, os.ErrNotExist) {
-		data, _ = json.MarshalIndent(r.Config, "", "  ")
+		data, _ = json.MarshalIndent(savedConfig(r.Config), "", "  ")
 		data = append(data, '\n')
 		if err = writeRegular(config, data, true, nil); err != nil {
 			return r, err
@@ -278,7 +282,7 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 	} else if err != nil {
 		return r, errors.New("cannot inspect project settings")
 	} else if options.Force {
-		data, _ = json.MarshalIndent(r.Config, "", "  ")
+		data, _ = json.MarshalIndent(savedConfig(r.Config), "", "  ")
 		data = append(data, '\n')
 		if !bytes.Equal(data, existingSettings) {
 			r.ConfigBackup, err = backupInitSettings(r.Root, existingSettings)
@@ -299,7 +303,10 @@ func InitializeWithOptions(ctx context.Context, directory string, options InitOp
 	if len(r.Tickets) == 0 {
 		r.Warnings = append(r.Warnings, "No local ticket paths found.")
 	}
-	if len(r.Config.Checks) == 0 {
+	if r.Config.CheckSelection != "runtime" {
+		r.CheckPreview = nil
+	}
+	if len(r.Config.Checks) == 0 && r.Config.CheckSelection != "runtime" {
 		r.Warnings = append(r.Warnings, "No project checks configured; run sdlc init --force to inspect again or configure checks before launching work.")
 	}
 	return r, nil
@@ -335,6 +342,7 @@ func decodeInitConfig(data []byte, config *Config, discovered Config, force bool
 		return errors.New("project settings must contain valid version 1 JSON")
 	}
 	fields["checks"], _ = json.Marshal(discovered.Checks)
+	fields["check_selection"], _ = json.Marshal("runtime")
 	fields["docker_tests"], _ = json.Marshal(discovered.DockerTests)
 	encoded, err := json.Marshal(fields)
 	if err != nil {
@@ -506,6 +514,9 @@ func decodeConfig(data []byte, c *Config) error {
 	var extra any
 	if decoder.Decode(&extra) != io.EOF || c.Version != 1 || c.Checks == nil || c.InputFiles == nil || len(c.Checks) > 64 || len(c.InputFiles) > 256 {
 		return errors.New("project settings require version 1 and bounded checks and input files")
+	}
+	if c.CheckSelection != "" && c.CheckSelection != "explicit" && c.CheckSelection != "runtime" {
+		return errors.New("check_selection must be explicit or runtime")
 	}
 	for _, command := range c.Checks {
 		if len(command) == 0 || len(command) > 64 {
@@ -724,4 +735,11 @@ func GitHubRepository(remotes []Remote) string {
 		repository = name
 	}
 	return repository
+}
+
+func savedConfig(c Config) Config {
+	if c.CheckSelection == "runtime" {
+		c.Checks = [][]string{}
+	}
+	return c
 }

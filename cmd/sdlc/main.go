@@ -296,7 +296,11 @@ func initCommand(ctx context.Context, args []string, output io.Writer) error {
 	for _, source := range result.CheckSources {
 		fmt.Fprintf(&summary, "Check source: %q\n", source)
 	}
-	fmt.Fprintf(&summary, "Checks configured: %d; review project settings before execution.\n", len(result.Config.Checks))
+	if result.Config.CheckSelection == "runtime" {
+		fmt.Fprintf(&summary, "Checks selected at runtime from committed candidate metadata; current preview: %d commands.\n", len(result.CheckPreview))
+	} else {
+		fmt.Fprintf(&summary, "Checks configured: %d; review project settings before execution.\n", len(result.Config.Checks))
+	}
 	fmt.Fprintln(&summary, "Private work inputs and run output are ignored and untracked.")
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(&summary, "Warning: %s\n", warning)

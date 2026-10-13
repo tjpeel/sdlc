@@ -63,6 +63,7 @@ type Plan struct {
 	Repository          string                    `json:"repository"`
 	Inputs              []Input                   `json:"inputs"`
 	CheckInputs         []Input                   `json:"check_inputs"`
+	CheckSelection      string                    `json:"check_selection,omitempty"`
 	Checks              [][]string                `json:"checks"`
 	DockerTests         bool                      `json:"docker_tests"`
 	SigningImage        string                    `json:"signing_image,omitempty"`
@@ -114,6 +115,9 @@ type Reconciliation struct {
 // ValidateSidecarImages accepts absent pins for journals written before runtime
 // sidecars were selected per installation. Callers retain the historical defaults.
 func (plan Plan) ValidateSidecarImages() error {
+	if plan.CheckSelection != "" && plan.CheckSelection != "explicit" && plan.CheckSelection != "runtime" {
+		return fmt.Errorf("unsupported check selection")
+	}
 	if _, err := project.ResolveNugetCacheBudget(plan.NugetCache); err != nil {
 		return err
 	}
@@ -185,6 +189,8 @@ type Provider interface {
 }
 
 type CheckEvidence struct {
+	Output []CommandOutput `json:"output,omitempty"`
+	Key    string          `json:"key,omitempty"`
 	// Only completed semantic failure on this frozen boundary may be reused
 	// while a new diagnostic runs. Legacy and operational failures have no key.
 	CompletedFailureKey      string     `json:"completed_failure_key,omitempty"`
@@ -219,6 +225,8 @@ type Publisher interface {
 }
 
 type Journal struct {
+	EffectiveChecks           [][]string            `json:"effective_checks,omitempty"`
+	ConfiguredFeedbackKey     string                `json:"configured_feedback_key,omitempty"`
 	CompanionRepositories     []CompanionRepository `json:"companion_repositories,omitempty"`
 	PRMetadataCorrections     int                   `json:"pr_metadata_corrections,omitempty"`
 	InputRecoveries           []InputRecovery       `json:"input_recoveries,omitempty"`

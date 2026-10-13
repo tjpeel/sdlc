@@ -13,6 +13,7 @@ type LaunchResult struct {
 	Root, Reference, Ticket, Head, Branch string
 	Config                                Config
 	Inputs                                []string
+	CheckPreview                          [][]string
 }
 
 // Launch validates project settings and resolves linked requirement documents
@@ -61,6 +62,12 @@ func launch(ctx context.Context, directory, reference, ticket string, inputs []s
 	}
 	if err = decodeConfig(data, &r.Config); err != nil {
 		return r, err
+	}
+	if resolve && r.Config.CheckSelection == "runtime" {
+		preview, err := DiscoverChecks(r.Root)
+		if err == nil {
+			r.CheckPreview = preview.Checks
+		}
 	}
 	selected := append([]string{r.Ticket}, inputs...)
 	selected = append(selected, r.Config.InputFiles...)

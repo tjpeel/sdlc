@@ -452,12 +452,17 @@ once to `github use` when no identity can be inferred; subsequent commands reuse
 To share it after review, explicitly use `git add -f .sdlc/project.json`; already
 tracked settings remain tracked. Keep account data,
 vault references and private host paths out. Existing `package.json`, lockfiles, SDK selections and CI remain
-the project's authority; `init` may suggest checks from them but does not replace them. Repeated `init`
-preserves valid custom settings. Use `sdlc init --force` to repeat inspection and refresh checks and
-Docker-test settings. It preserves inputs, branch format, NuGet cache preferences and saved runs,
+the project's authority. New settings use `check_selection: "runtime"`, resolving
+checks from committed candidate metadata before each checking phase. Initialization
+shows a preview and does not freeze inferred commands. Existing settings without
+that field retain their explicit suites. Set `check_selection: "explicit"` for a
+complete custom sequence, including dependency setup when the project requires it.
+Repeated `init` preserves valid settings. Use `sdlc init --force` to switch to runtime
+discovery and refresh Docker-test settings. It preserves inputs, branch format, NuGet cache preferences and saved runs,
 and backs up changed configuration under the ignored `.sdlc/work/.archive/` directory.
 Dependency installation must be an explicit check when required; the
-controller does not guess commands at run time.
+runtime discovery retains the supported repository metadata conventions and does
+not invent dependency setup or replace a complete custom sequence.
 
 For npm, configure the repository's own commands, for example `["npm", "ci"]`, `["npm", "run", "test"]` and
 `["npm", "run", "build"]` inside the `checks` array. Use scripts that actually exist. Each check is an
@@ -719,8 +724,10 @@ The answer becomes provider input and private run history; include only what the
 repair that failure, then resume. For an interrupted/stale controller, confirm its process and container state
 before resuming; stale display alone does not prove the controller has stopped.
 
-Resume preserves the frozen repository, account/key, image, models, instructions, inputs, checks and native
-implementation session. It accepts only reference, ticket, resume ID, answer file, timeout, dry-run and
+Resume preserves the frozen repository, account/key, image, models, instructions,
+inputs, check-selection policy and native implementation session. Explicit and
+legacy suites keep their commands; runtime suites resolve against the committed
+candidate again. It accepts only reference, ticket, resume ID, answer file, timeout, dry-run and
 notification options. Do not supply new provider/profile/model/input flags to change the run. Existing older
 frozen journals retain their legacy same-name signer route. Changed identities, missing pinned images, moved
 bases or external PR changes need deliberate reconciliation; SDLC does not fall back to host credentials.
