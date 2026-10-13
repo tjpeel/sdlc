@@ -283,3 +283,88 @@ func TestInputsPendingListShowsEscapedCompletionWithoutMutation(t *testing.T) {
 		t.Fatal("listing reached connected provider")
 	}
 }
+
+func TestInputsCommandPrivateCheckCaptureAndOwnership(t *testing.T) {
+	j, marker, _ := capturedAttentionFixture(t)
+	directory := filepath.Dir(j.Workspace)
+	if err := os.WriteFile(filepath.Join(j.Plan.Root, ".env"), []byte("TEST_MODE=offline\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	lock, err := filelock.Acquire(filepath.Join(directory, "run.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env", "--dry-run"}, &output)
+	lock.Close()
+	if !errors.Is(err, filelock.ErrBusy) {
+		t.Fatal("check capture bypassed ownership", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+	if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env", "--dry-run", "--json"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("preview changed journal")
+	}
+	if !strings.Contains(output.String(), `"scope":"checks"`) || strings.Contains(output.String(), "TEST_MODE") {
+		t.Fatal("scope missing or check contents exposed", output.String())
+	}
+	output.Reset()
+	if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env", "--json"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := workrun.Load(directory)
+	if err != nil || len(saved.Plan.CheckInputs) != len(j.Plan.CheckInputs)+1 {
+		t.Fatalf("check capture failed: %v; inputs=%+v; output=%s", err, saved.Plan.CheckInputs, output.String())
+	}
+	if _, err := os.Stat(filepath.Join(j.Workspace, ".env")); !os.IsNotExist(err) {
+		t.Fatal("check file entered provider workspace")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("capture invoked provider")
+	}
+	if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env", "--add", "fixture.md"}, &output); err == nil {
+		t.Fatal("mixed scopes admitted")
+	}
+}
+
+func TestSeriesCheckInputsPermitOnlyScopedAuditedAppends(t *testing.T) {
+	j, _, _ := capturedAttentionFixture(t)
+	directory := filepath.Dir(j.Workspace)
+	originals := make([]string, len(j.Plan.CheckInputs))
+	hashes := map[string]string{}
+	for i, in := range j.Plan.CheckInputs {
+		originals[i] = in.Path
+		hashes[in.Path] = in.SHA256
+	}
+	if err := os.WriteFile(filepath.Join(j.Plan.Root, ".env"), []byte("TEST_MODE=offline\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workrun.AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSeriesCheckInputs(j, directory, originals, hashes); err != nil {
+		t.Fatal("audited check append rejected", err)
+	}
+	for _, scenario := range []string{"missing-audit", "original-hash", "missing-private-bytes"} {
+		t.Run(scenario, func(t *testing.T) {
+			copy := j
+			copy.Plan.CheckInputs = append([]workrun.Input(nil), j.Plan.CheckInputs...)
+			switch scenario {
+			case "missing-audit":
+				copy.InputRecoveries = nil
+			case "original-hash":
+				copy.Plan.CheckInputs[0].SHA256 = strings.Repeat("a", 64)
+			case "missing-private-bytes":
+				if err := os.Remove(filepath.Join(directory, "check-inputs", ".env")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := validateSeriesCheckInputs(copy, directory, originals, hashes); err == nil {
+				t.Fatal("unaudited or changed frozen input admitted")
+			}
+		})
+	}
+}

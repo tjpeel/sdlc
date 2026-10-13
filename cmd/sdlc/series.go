@@ -848,17 +848,12 @@ func (d *seriesDriver) loadRun(ticket string, result workseries.Result) (string,
 	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Plan.DaemonMode != d.settings.DaemonMode || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.CheckSelection != d.settings.Config.CheckSelection || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
 		return "", journal, fmt.Errorf("saved ticket run differs from frozen feature settings")
 	}
-	for _, input := range journal.Plan.CheckInputs {
-		if expected, ok := d.settings.InputHashes[input.Path]; !ok || input.SHA256 != expected {
-			return "", journal, fmt.Errorf("saved ticket requirements differ from the feature")
-		}
+	if err := validateSeriesCheckInputs(journal, directory, d.settings.Config.InputFiles, d.settings.InputHashes); err != nil {
+		return "", journal, err
 	}
 	expectedInputs := d.settings.ticketInputs(d.plan.Reference, ticket)
 	if err := validateSeriesRunInputs(context.Background(), journal, expectedInputs, d.settings.InputHashes); err != nil {
 		return "", journal, err
-	}
-	if !sameSeriesInputPaths(journal.Plan.CheckInputs, d.settings.Config.InputFiles) {
-		return "", journal, fmt.Errorf("saved ticket input selection differs from the feature")
 	}
 	return directory, journal, nil
 }

@@ -2,6 +2,8 @@ package workrun
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -287,5 +289,276 @@ func TestAttachInputsPromotesSafeCheckDocumentOnly(t *testing.T) {
 	}
 	if _, err := AttachInputs(context.Background(), directory, &j, []string{".env"}, false); err == nil {
 		t.Fatal("check-only environment file became provider input")
+	}
+}
+
+func TestAttachCheckInputsPreservesHoldAndPrivateScope(t *testing.T) {
+	directory, j, _ := recoveryFixture(t)
+	j.State, j.ResumeState, j.StopReason = "blocked", "checking", configuredCheckRepairBound
+	j.PendingRole = ""
+	j.Evidence.Log = "checks-previous.log"
+	request := VerificationRequest{ID: "offline", Purpose: "Check fixture", Commands: [][]string{{"test", "fixture"}}}
+	j.Verification = []VerificationResult{{Request: request, Key: strings.Repeat("a", 64), Passed: true, Log: "verification-previous.log"}}
+	before := j
+	sourceWrite(t, j.Plan.Root, ".env", "TEST_MODE=offline\n")
+	preview, err := AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, true)
+	if err != nil || len(preview) != 1 || !reflect.DeepEqual(before, j) {
+		t.Fatal("dry run changed checkpoint", err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "check-inputs")); !os.IsNotExist(err) {
+		t.Fatal("dry run created check directory")
+	}
+	added, err := AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, false)
+	if err != nil || len(added) != 1 {
+		t.Fatal(added, err)
+	}
+	if j.State != before.State || j.ResumeState != before.ResumeState || j.StopReason != before.StopReason || j.SessionID != before.SessionID || j.Rounds != before.Rounds || j.Attempt != before.Attempt || !reflect.DeepEqual(j.Plan.Inputs, before.Plan.Inputs) {
+		t.Fatal("capture changed checkpoint")
+	}
+	if len(j.Plan.CheckInputs) != 1 || j.Plan.CheckInputs[0].SHA256 != inputHash([]byte("TEST_MODE=offline\n")) || j.InputRecoveries[0].Scope != "checks" || !j.InputRecoveries[0].PreviousCheckpoint.Equal(before.UpdatedAt) {
+		t.Fatal("check audit mismatch")
+	}
+	if j.Evidence.Passed || j.Verification[0].Passed || j.Verification[0].Key != "" || j.Evidence.Log != "checks-previous.log" || j.Verification[0].Log != "verification-previous.log" {
+		t.Fatal("stale evidence retained or historical log lost")
+	}
+	if _, err := os.Stat(filepath.Join(j.Workspace, ".env")); !os.IsNotExist(err) {
+		t.Fatal("check-only input entered workspace")
+	}
+	if err := VerifyCapturedInputs(filepath.Join(directory, "check-inputs"), j.Plan.CheckInputs); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := Load(directory)
+	if err != nil || !reflect.DeepEqual(saved.Plan.CheckInputs, j.Plan.CheckInputs) {
+		t.Fatal("check capture did not round trip", err)
+	}
+	if again, err := AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, false); err != nil || len(again) != 0 {
+		t.Fatal("identical retry changed capture", err)
+	}
+	sourceWrite(t, j.Plan.Root, ".env", "TEST_MODE=changed\n")
+	if _, err := AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, false); err == nil {
+		t.Fatal("frozen hash replaced")
+	}
+}
+
+func TestCheckInputPendingRecoveryUsesImmutableScopedBytes(t *testing.T) {
+	for _, scenario := range []string{"complete", "partial", "conflict", "wrong-scope"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory, j, _ := recoveryFixture(t)
+			data := []byte("TEST_MODE=offline\n")
+			stage, err := os.MkdirTemp(directory, "input-recovery-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeSynced(filepath.Join(stage, "0"), data, 0400); err != nil {
+				t.Fatal(err)
+			}
+			j.PendingInputs = &PendingInputRecovery{InputRecovery: InputRecovery{Scope: "checks", PreviousCheckpoint: j.UpdatedAt, AddedAt: time.Now().UTC(), Inputs: []Input{{".env", inputHash(data)}}}, Stage: filepath.Base(stage)}
+			if err := Save(directory, &j); err != nil {
+				t.Fatal(err)
+			}
+			sourceWrite(t, j.Plan.Root, ".env", "TEST_MODE=changed\n")
+			if scenario == "partial" || scenario == "conflict" {
+				body := string(data)
+				if scenario == "conflict" {
+					body = "conflict"
+				}
+				sourceWrite(t, filepath.Join(directory, "check-inputs"), ".env", body)
+			}
+			var attachErr error
+			if scenario == "wrong-scope" {
+				_, attachErr = AttachInputs(context.Background(), directory, &j, []string{".env"}, false)
+			} else {
+				_, attachErr = AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, false)
+			}
+			if scenario == "conflict" || scenario == "wrong-scope" {
+				if attachErr == nil || j.PendingInputs == nil {
+					t.Fatal("unsafe recovery admitted")
+				}
+				return
+			}
+			if attachErr != nil {
+				t.Fatal(attachErr)
+			}
+			got, err := os.ReadFile(filepath.Join(directory, "check-inputs", ".env"))
+			if err != nil || string(got) != string(data) {
+				t.Fatal("recovery recaptured source", err)
+			}
+			if _, err := os.Stat(filepath.Join(j.Workspace, ".env")); !os.IsNotExist(err) {
+				t.Fatal("recovery leaked into workspace")
+			}
+		})
+	}
+}
+
+func TestCheckInputsRejectUnsafeConflictingAndProviderPromotion(t *testing.T) {
+	for _, scenario := range []string{"symlink", "directory-symlink", "conflict", "credential", "system", "over-budget", "provider", "prefix", "promotion"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory, j, _ := recoveryFixture(t)
+			path := "check-fixture.txt"
+			sourceWrite(t, j.Plan.Root, path, "offline fixture\n")
+			switch scenario {
+			case "symlink":
+				os.Remove(filepath.Join(j.Plan.Root, path))
+				if err := os.Symlink("README.md", filepath.Join(j.Plan.Root, path)); err != nil {
+					t.Fatal(err)
+				}
+			case "directory-symlink":
+				if err := os.Symlink(j.Workspace, filepath.Join(directory, "check-inputs")); err != nil {
+					t.Fatal(err)
+				}
+			case "conflict":
+				sourceWrite(t, filepath.Join(directory, "check-inputs"), path, "existing")
+			case "credential":
+				path = ".ssh/fake-key"
+				sourceWrite(t, j.Plan.Root, path, "disposable")
+			case "system":
+				path = ".git/config"
+			case "over-budget":
+				sourceWrite(t, j.Plan.Root, path, strings.Repeat("x", maximumInputBytes))
+			case "provider":
+				path = j.Plan.Inputs[0].Path
+			case "prefix":
+				path = filepath.Dir(j.Plan.Inputs[0].Path)
+			case "promotion":
+				if _, err := AttachCheckInputs(context.Background(), directory, &j, []string{path}, false); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := AttachInputs(context.Background(), directory, &j, []string{path}, false); err == nil {
+					t.Fatal("private check data promoted")
+				}
+				return
+			}
+			before := j.UpdatedAt
+			if _, err := AttachCheckInputs(context.Background(), directory, &j, []string{path}, false); err == nil {
+				t.Fatal("unsafe capture admitted")
+			}
+			if !j.UpdatedAt.Equal(before) || j.PendingInputs != nil {
+				t.Fatal("rejected capture changed journal")
+			}
+		})
+	}
+}
+
+func TestNewCheckInputInvalidatesCurrentCandidateAndReviewExposure(t *testing.T) {
+	directory, j, _ := recoveryFixture(t)
+	j.State, j.ResumeState, j.StopReason = "blocked", "checking", configuredCheckRepairBound
+	j.PendingRole = ""
+	j.Outcome = testOutcome("implemented")
+	j.SessionID = testNative
+	request := VerificationRequest{ID: "offline", Purpose: "Check fixture", Commands: [][]string{{"test", "fixture"}}}
+	j.Verification = []VerificationResult{{Request: request, Key: verificationKey(&j, request, testHead, testTree), Head: testHead, Tree: testTree, Passed: true, Log: "previous-verification.log"}}
+	j.Evidence = CheckEvidence{Passed: true, Key: verificationKey(&j, VerificationRequest{}, testHead, testTree), Head: testHead, Tree: testTree, Log: "previous-check.log"}
+	prepRequest := sourcePatchRequest()
+	prepRequest.ID = "formatter-example-1"
+	j.FormatterPreparation = []VerificationResult{{Request: prepRequest, Key: verificationKey(&j, prepRequest, testHead, testTree), Head: testHead, Tree: testTree, Diagnostic: "Previous formatter failure"}}
+	if err := Save(directory, &j); err != nil {
+		t.Fatal(err)
+	}
+	overrideGrant(&j, "verification_requests", 16)
+	grant := *j.RunLimitOverride
+	sourceWrite(t, j.Plan.Root, ".env", "TEST_MODE=offline\n")
+	if _, err := AttachCheckInputs(context.Background(), directory, &j, []string{".env"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(j.FormatterPreparation) != 0 || !reflect.DeepEqual(grant, *j.RunLimitOverride) {
+		t.Fatal("formatter cache or grant changed incorrectly")
+	}
+	checker := &supplementaryChecker{}
+	runner := fakeRunner(&fakeProvider{}, &checker.fakeChecker, &fakePublisher{}, &fakeRepository{})
+	runner.Checker = checker
+	completed := errors.New("offline checks complete")
+	runner.OnState = func(saved Journal) error {
+		if saved.State == "implementing" && checker.calls == 1 && len(checker.requests) == 1 {
+			return completed
+		}
+		return nil
+	}
+	if err := runner.Run(context.Background(), directory, &j, ""); !errors.Is(err, completed) {
+		t.Fatal("verification did not rerun", err)
+	}
+	if checker.calls != 1 || len(checker.requests) != 1 || !j.Evidence.Passed || !j.Verification[0].Passed || j.Verification[0].Key != verificationKey(&j, request, testHead, testTree) {
+		t.Fatal("stale candidate evidence reused")
+	}
+	j.Publication = Publication{HeadSHA: j.Plan.StartingSHA}
+	if _, err := SafeGit(context.Background(), j.Workspace, "clone", "--bare", "--no-local", j.Workspace, filepath.Join(directory, "publication.git")); err != nil {
+		t.Fatal(err)
+	}
+	review, err := PrepareReview(context.Background(), j, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(review, ".env")); !os.IsNotExist(err) {
+		t.Fatal("private check capture entered reviewer source")
+	}
+}
+
+func TestCheckInputSelectionCannotInvalidateStructuredMachineRequests(t *testing.T) {
+	for _, scenario := range []string{"source-patch", "baseline", "pending-outcome", "prefix"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory, j, _ := recoveryFixture(t)
+			path := "fixture/input.txt"
+			sourceWrite(t, j.Plan.Root, path, "offline fixture")
+			request := VerificationRequest{ID: "offline", Purpose: "Check fixture", Commands: [][]string{{"test", "fixture"}}}
+			selected := path
+			if scenario == "baseline" {
+				request.Baseline = &VerificationBaseline{Revision: j.Plan.StartingSHA, Paths: []string{path}, ExpectedExitCode: 1, FailureContains: []string{"fixture"}}
+			} else {
+				if scenario == "prefix" {
+					selected = "fixture"
+				}
+				request.SourcePatch = &SourcePatchRequest{Paths: []string{selected}}
+			}
+			if scenario == "pending-outcome" {
+				j.Outcome.VerificationRequests = []VerificationRequest{request}
+			} else {
+				j.Verification = []VerificationResult{{Request: request}}
+			}
+			if err := Save(directory, &j); err != nil {
+				t.Fatal(err)
+			}
+			before := j.UpdatedAt
+			if _, err := AttachCheckInputs(context.Background(), directory, &j, []string{path}, false); err == nil {
+				t.Fatal("check selection invalidated retained request")
+			}
+			if j.PendingInputs != nil || !j.UpdatedAt.Equal(before) {
+				t.Fatal("rejected request overlap started a transaction")
+			}
+			if _, err := os.Stat(filepath.Join(directory, "check-inputs", path)); !os.IsNotExist(err) {
+				t.Fatal("rejected selection materialized bytes")
+			}
+		})
+	}
+}
+
+func TestLegacyInitialCheckInputBoundaryRemainsLoadable(t *testing.T) {
+	directory, j, providerPath := recoveryFixture(t)
+	checkRoot := filepath.Join(directory, "check-inputs")
+	data := []byte("offline fixture\n")
+	for i := 0; i < 256; i++ {
+		path := fmt.Sprintf("fixtures/check-%03d.txt", i)
+		sourceWrite(t, j.Plan.Root, path, string(data))
+		sourceWrite(t, checkRoot, path, string(data))
+		j.Plan.CheckInputs = append(j.Plan.CheckInputs, Input{path, inputHash(data)})
+	}
+	if err := Save(directory, &j); err != nil {
+		t.Fatal("legacy initial check manifest rejected", err)
+	}
+	saved, err := Load(directory)
+	if err != nil || len(saved.Plan.CheckInputs) != 256 || len(saved.Plan.Inputs) != 1 {
+		t.Fatal("legacy 256 check inputs plus ticket cannot load", err)
+	}
+	before := saved.UpdatedAt
+	sourceWrite(t, saved.Plan.Root, "extra-check.txt", "offline extra")
+	if _, err := AttachCheckInputs(context.Background(), directory, &saved, []string{"extra-check.txt"}, false); err == nil {
+		t.Fatal("check manifest exceeded its own 256-input bound")
+	}
+	if saved.PendingInputs != nil || !saved.UpdatedAt.Equal(before) {
+		t.Fatal("rejected check addition changed checkpoint")
+	}
+	if _, err := AttachInputs(context.Background(), directory, &saved, []string{providerPath}, false); err != nil {
+		t.Fatal("check boundary incorrectly blocked separate provider manifest", err)
+	}
+	if len(saved.Plan.Inputs) != 2 || len(saved.Plan.CheckInputs) != 256 {
+		t.Fatal("separate destination bounds changed")
 	}
 }

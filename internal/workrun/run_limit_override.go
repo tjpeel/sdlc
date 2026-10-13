@@ -96,7 +96,7 @@ func admittedRunLimit(j Journal) (string, int, error) {
 			return "native_turns", effectiveNativeTurnLimit(&j), nil
 		}
 	case configuredCheckRepairBound:
-		if j.ResumeState == "checking" && j.Rounds > j.RepairWindowStart && !j.Evidence.Passed && j.Evidence.CompletedFailureKey != "" {
+		if j.ResumeState == "checking" && j.Rounds > j.RepairWindowStart && !j.Evidence.Passed && (j.Evidence.CompletedFailureKey != "" || formatterRepairFailure(j)) {
 			return "configured_repairs", 0, nil
 		}
 	case ciRepairBound:
@@ -167,4 +167,16 @@ func validateRetainedVerification(j *Journal) error {
 		limit = 0
 	}
 	return validateVerificationRequestSet(requests, &j.Plan, limit)
+}
+
+func formatterRepairFailure(j Journal) bool {
+	if validateSourcePatchJournal(&j) != nil {
+		return false
+	}
+	for _, result := range j.FormatterPreparation {
+		if !result.Passed && result.Key != "" && (result.SourcePatch != nil && result.SourcePatch.Diff != "" || result.SourcePatch == nil && result.Diagnostic != "") && result.Key == verificationKey(&j, result.Request, result.Head, result.Tree) {
+			return true
+		}
+	}
+	return false
 }

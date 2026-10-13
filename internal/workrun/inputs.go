@@ -16,6 +16,7 @@ import (
 )
 
 type InputRecovery struct {
+	Scope              string    `json:"scope,omitempty"`
 	PreviousCheckpoint time.Time `json:"previous_checkpoint"`
 	AddedAt            time.Time `json:"added_at"`
 	Inputs             []Input   `json:"inputs"`
@@ -38,6 +39,29 @@ func CanAttachInputs(j Journal) error {
 	return nil
 }
 
+// CanAttachCheckInputs permits offline capture without releasing an existing hold.
+func CanAttachCheckInputs(j Journal) error {
+	if j.Publication != (Publication{}) || j.Reconciliation != nil || j.Plan.Restack != nil || len(j.RestackAudit) > 0 {
+		return errors.New("check inputs cannot be added after publication or during reconciliation")
+	}
+	if j.State == "waiting_for_human" {
+		return CanAttachInputs(j)
+	}
+	if j.State != "blocked" {
+		return errors.New("check inputs require a stopped implementation run")
+	}
+	switch j.ResumeState {
+	case "implementing", "repairing", "checking":
+		return nil
+	}
+	return errors.New("check inputs require an implementation checkpoint")
+}
+func safeCheckRecoveryPath(path string) bool {
+	return sourceRelative(path) && len(path) <= 4096 && strings.IndexFunc(path, unicode.IsControl) < 0 && !forbiddenCheckInput(path)
+}
+func AttachCheckInputs(ctx context.Context, directory string, j *Journal, paths []string, dry bool) ([]Input, error) {
+	return attachInputs(ctx, directory, j, paths, dry, "checks")
+}
 func safeRecoveryPath(path, reference string) bool {
 	if !sourceRelative(path) || len(path) > 4096 || strings.IndexFunc(path, unicode.IsControl) >= 0 || codexPath(path) {
 		return false
@@ -125,6 +149,9 @@ func inputBudget(directory string, j Journal) (int64, error) {
 // then run ownership. dry only reads. A saved pending transaction owns its
 // immutable bytes, so recovery never recaptures a subsequently changed source.
 func AttachInputs(ctx context.Context, directory string, j *Journal, paths []string, dry bool) ([]Input, error) {
+	return attachInputs(ctx, directory, j, paths, dry, "")
+}
+func attachInputs(ctx context.Context, directory string, j *Journal, paths []string, dry bool, scope string) ([]Input, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -136,11 +163,31 @@ func AttachInputs(ctx context.Context, directory string, j *Journal, paths []str
 			return nil, err
 		}
 	}
-	if err := CanAttachInputs(*j); err != nil {
+	admit := CanAttachInputs
+	if scope == "checks" {
+		admit = CanAttachCheckInputs
+	}
+	if err := admit(*j); err != nil {
 		return nil, err
 	}
 	if err := validateInputRecoveries(*j); err != nil {
 		return nil, err
+	}
+	if j.PendingInputs != nil && j.PendingInputs.Scope != scope {
+		return nil, errors.New("pending input recovery has a different scope")
+	}
+	destination := j.Workspace
+	manifest := j.Plan.Inputs
+	if scope == "checks" {
+		destination = filepath.Join(directory, "check-inputs")
+		manifest = j.Plan.CheckInputs
+		if info, err := os.Lstat(destination); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return nil, errors.New("unsafe check input directory")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	budget, err := inputBudget(directory, *j)
 	if err != nil {
@@ -164,13 +211,30 @@ func AttachInputs(ctx context.Context, directory string, j *Journal, paths []str
 		return nil, errors.New("input recovery history is full")
 	}
 	known := map[string]string{}
-	for _, in := range j.Plan.Inputs {
+	for _, in := range manifest {
 		known[in.Path] = in.SHA256
 	}
 	var additions []Input
 	var contents [][]byte
 	for _, path := range paths {
-		if !safeRecoveryPath(path, j.Plan.Reference) {
+		if scope == "checks" {
+			for _, in := range j.Plan.Inputs {
+				if inputPathsOverlap(path, in.Path) {
+					return nil, errors.New("check-only input conflicts with provider input")
+				}
+			}
+		} else {
+			for _, recovery := range j.InputRecoveries {
+				if recovery.Scope == "checks" {
+					for _, in := range recovery.Inputs {
+						if inputPathsOverlap(path, in.Path) {
+							return nil, errors.New("private check input cannot be promoted to provider input")
+						}
+					}
+				}
+			}
+		}
+		if (scope == "" && !safeRecoveryPath(path, j.Plan.Reference)) || (scope == "checks" && !safeCheckRecoveryPath(path)) {
 			return nil, fmt.Errorf("unsafe supplementary input %q", path)
 		}
 		limit := budget
@@ -188,14 +252,16 @@ func AttachInputs(ctx context.Context, directory string, j *Journal, paths []str
 			}
 			continue
 		}
-		tracked, err := SafeGit(ctx, j.Workspace, "ls-files", "--cached", "--", path)
-		if err != nil {
-			return nil, err
+		if scope == "" {
+			tracked, err := SafeGit(ctx, j.Workspace, "ls-files", "--cached", "--", path)
+			if err != nil {
+				return nil, err
+			}
+			if tracked != "" {
+				return nil, errors.New("supplementary input conflicts with tracked worker output")
+			}
 		}
-		if tracked != "" {
-			return nil, errors.New("supplementary input conflicts with tracked worker output")
-		}
-		if err := checkInputDestination(j.Workspace, path, nil, false); err != nil {
+		if err := checkInputDestination(destination, path, nil, false); err != nil {
 			return nil, err
 		}
 		budget -= int64(len(data))
@@ -203,8 +269,22 @@ func AttachInputs(ctx context.Context, directory string, j *Journal, paths []str
 		contents = append(contents, data)
 		known[path] = hash
 	}
-	if len(j.Plan.Inputs)+len(additions) > 256 {
+	if len(manifest)+len(additions) > 256 {
 		return nil, errors.New("too many recorded inputs")
+	}
+	if scope == "checks" {
+		projected := *j
+		applyCheckInputSelection(&projected, additions)
+		if err := validateRetainedVerification(&projected); err != nil {
+			return nil, err
+		}
+		limit := 16
+		if runLimitsOverridden(&projected) {
+			limit = 0
+		}
+		if err := validateVerificationRequestSet(projected.Outcome.VerificationRequests, &projected.Plan, limit); err != nil {
+			return nil, err
+		}
 	}
 	if dry || len(additions) == 0 {
 		return additions, nil
@@ -221,7 +301,7 @@ func AttachInputs(ctx context.Context, directory string, j *Journal, paths []str
 	if err := syncDirectory(stage); err != nil {
 		return nil, err
 	}
-	j.PendingInputs = &PendingInputRecovery{InputRecovery: InputRecovery{PreviousCheckpoint: j.UpdatedAt, AddedAt: time.Now().UTC(), Inputs: additions}, Stage: filepath.Base(stage)}
+	j.PendingInputs = &PendingInputRecovery{InputRecovery: InputRecovery{Scope: scope, PreviousCheckpoint: j.UpdatedAt, AddedAt: time.Now().UTC(), Inputs: additions}, Stage: filepath.Base(stage)}
 	if err := Save(directory, j); err != nil {
 		return nil, err
 	}
@@ -293,6 +373,17 @@ func checkInputDestination(root, path string, data []byte, recovering bool) erro
 }
 func completeInputs(ctx context.Context, directory string, j *Journal, budget int64, dry bool) ([]Input, error) {
 	pending := j.PendingInputs
+	destination := j.Workspace
+	if pending.Scope == "checks" {
+		destination = filepath.Join(directory, "check-inputs")
+		if info, err := os.Lstat(destination); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return nil, errors.New("unsafe check input directory")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	stage := filepath.Join(directory, pending.Stage)
 	if err := realDirectory(stage); err != nil {
 		return nil, err
@@ -311,22 +402,46 @@ func completeInputs(ctx context.Context, directory string, j *Journal, budget in
 		}
 		budget -= int64(len(data))
 		contents = append(contents, data)
-		tracked, err := SafeGit(ctx, j.Workspace, "ls-files", "--cached", "--", in.Path)
-		if err != nil {
+		if pending.Scope == "" {
+			tracked, err := SafeGit(ctx, j.Workspace, "ls-files", "--cached", "--", in.Path)
+			if err != nil {
+				return nil, err
+			}
+			if tracked != "" {
+				return nil, errors.New("input recovery conflicts with tracked worker output")
+			}
+		}
+		if err := checkInputDestination(destination, in.Path, data, true); err != nil {
 			return nil, err
 		}
-		if tracked != "" {
-			return nil, errors.New("input recovery conflicts with tracked worker output")
+	}
+	if pending.Scope == "checks" {
+		projected := *j
+		applyCheckInputSelection(&projected, pending.Inputs)
+		if err := validateRetainedVerification(&projected); err != nil {
+			return nil, err
 		}
-		if err := checkInputDestination(j.Workspace, in.Path, data, true); err != nil {
+		limit := 16
+		if runLimitsOverridden(&projected) {
+			limit = 0
+		}
+		if err := validateVerificationRequestSet(projected.Outcome.VerificationRequests, &projected.Plan, limit); err != nil {
 			return nil, err
 		}
 	}
 	if dry {
 		return pending.Inputs, nil
 	}
+	if pending.Scope == "checks" {
+		if err := os.MkdirAll(destination, 0700); err != nil {
+			return nil, err
+		}
+		if err := realDirectory(destination); err != nil {
+			return nil, err
+		}
+	}
 	for i, in := range pending.Inputs {
-		full := filepath.Join(j.Workspace, filepath.FromSlash(in.Path))
+		full := filepath.Join(destination, filepath.FromSlash(in.Path))
 		if err := os.MkdirAll(filepath.Dir(full), 0777); err != nil {
 			return nil, err
 		}
@@ -342,7 +457,11 @@ func completeInputs(ctx context.Context, directory string, j *Journal, budget in
 		name := temp.Name()
 		_, err = temp.Write(contents[i])
 		if err == nil {
-			err = temp.Chmod(0666)
+			mode := os.FileMode(0666)
+			if pending.Scope == "checks" {
+				mode = 0600
+			}
+			err = temp.Chmod(mode)
 		}
 		if err == nil {
 			err = temp.Sync()
@@ -351,7 +470,7 @@ func completeInputs(ctx context.Context, directory string, j *Journal, budget in
 		if err == nil {
 			err = os.Link(name, full)
 			if os.IsExist(err) {
-				err = checkInputDestination(j.Workspace, in.Path, contents[i], true)
+				err = checkInputDestination(destination, in.Path, contents[i], true)
 			}
 		}
 		os.Remove(name)
@@ -362,55 +481,67 @@ func completeInputs(ctx context.Context, directory string, j *Journal, budget in
 			return nil, err
 		}
 	}
-	exclude := filepath.Join(j.Workspace, ".git", "info", "exclude")
-	info, e := os.Lstat(exclude)
-	if e != nil || !info.Mode().IsRegular() || info.Size() > maximumInputBytes {
-		return nil, errors.New("worker excludes are unsafe")
-	}
-	data, err := os.ReadFile(exclude)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > 0 && data[len(data)-1] != '\n' {
-		data = append(data, '\n')
-	}
-	var paths []string
-	for _, in := range pending.Inputs {
-		paths = append(paths, in.Path)
-	}
-	for _, line := range strings.Split(inputExcludes(paths), "\n") {
-		if line != "" && !strings.Contains("\n"+string(data), "\n"+line+"\n") {
-			data = append(data, []byte(line+"\n")...)
+	if pending.Scope == "" {
+		exclude := filepath.Join(j.Workspace, ".git", "info", "exclude")
+		info, e := os.Lstat(exclude)
+		if e != nil || !info.Mode().IsRegular() || info.Size() > maximumInputBytes {
+			return nil, errors.New("worker excludes are unsafe")
+		}
+		data, err := os.ReadFile(exclude)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			data = append(data, '\n')
+		}
+		var paths []string
+		for _, in := range pending.Inputs {
+			paths = append(paths, in.Path)
+		}
+		for _, line := range strings.Split(inputExcludes(paths), "\n") {
+			if line != "" && !strings.Contains("\n"+string(data), "\n"+line+"\n") {
+				data = append(data, []byte(line+"\n")...)
+			}
+		}
+		temp, err := os.CreateTemp(filepath.Dir(exclude), ".exclude-")
+		if err != nil {
+			return nil, err
+		}
+		name := temp.Name()
+		defer os.Remove(name)
+		_, err = temp.Write(data)
+		if err == nil {
+			mode := os.FileMode(0666)
+			if pending.Scope == "checks" {
+				mode = 0600
+			}
+			err = temp.Chmod(mode)
+		}
+		if err == nil {
+			err = temp.Sync()
+		}
+		err = errors.Join(err, temp.Close())
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Rename(name, exclude); err != nil {
+			return nil, err
+		}
+		if err := syncDirectory(filepath.Dir(exclude)); err != nil {
+			return nil, err
 		}
 	}
-	temp, err := os.CreateTemp(filepath.Dir(exclude), ".exclude-")
-	if err != nil {
-		return nil, err
-	}
-	name := temp.Name()
-	defer os.Remove(name)
-	_, err = temp.Write(data)
-	if err == nil {
-		err = temp.Chmod(0666)
-	}
-	if err == nil {
-		err = temp.Sync()
-	}
-	err = errors.Join(err, temp.Close())
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Rename(name, exclude); err != nil {
-		return nil, err
-	}
-	if err := syncDirectory(filepath.Dir(exclude)); err != nil {
-		return nil, err
-	}
 	before := *j
-	j.Plan.Inputs = append(append([]Input{}, j.Plan.Inputs...), pending.Inputs...)
+	if pending.Scope == "checks" {
+		applyCheckInputSelection(j, pending.Inputs)
+	} else {
+		j.Plan.Inputs = append(append([]Input{}, j.Plan.Inputs...), pending.Inputs...)
+	}
 	j.InputRecoveries = append(append([]InputRecovery{}, j.InputRecoveries...), pending.InputRecovery)
 	j.PendingInputs = nil
-	j.Evidence = CheckEvidence{}
+	if pending.Scope == "" {
+		j.Evidence = CheckEvidence{}
+	}
 	if err := Save(directory, j); err != nil {
 		*j = before
 		return nil, err
@@ -419,30 +550,61 @@ func completeInputs(ctx context.Context, directory string, j *Journal, budget in
 }
 
 func validateInputRecoveries(j Journal) error {
+	providerCount, checkCount := len(j.Plan.Inputs), len(j.Plan.CheckInputs)
+	if pending := j.PendingInputs; pending != nil {
+		if pending.Scope == "checks" {
+			checkCount += len(pending.Inputs)
+		} else {
+			providerCount += len(pending.Inputs)
+		}
+	}
+	if providerCount > 256 || checkCount > 256 {
+		return errors.New("too many recorded inputs")
+	}
 	known := map[string]string{}
 	for _, in := range j.Plan.Inputs {
-		if !sourceRelative(in.Path) || !validInputHash(in.SHA256) || known[in.Path] != "" {
+		if !sourceRelative(in.Path) || !validInputHash(in.SHA256) || known["\x00"+in.Path] != "" {
 			return errors.New("invalid input manifest")
 		}
-		known[in.Path] = in.SHA256
+		known["\x00"+in.Path] = in.SHA256
+	}
+	for _, in := range j.Plan.CheckInputs {
+		if !safeCheckRecoveryPath(in.Path) || !validInputHash(in.SHA256) || known["checks\x00"+in.Path] != "" {
+			return errors.New("invalid check input manifest")
+		}
+		known["checks\x00"+in.Path] = in.SHA256
 	}
 	audited := map[string]bool{}
 	validate := func(r InputRecovery, pending bool) error {
+		if r.Scope != "" && r.Scope != "checks" {
+			return errors.New("unknown input recovery scope")
+		}
 		if r.PreviousCheckpoint.IsZero() || r.AddedAt.IsZero() || len(r.Inputs) == 0 || len(r.Inputs) > 256 {
 			return errors.New("invalid input recovery audit")
 		}
 		for _, in := range r.Inputs {
-			if !safeRecoveryPath(in.Path, j.Plan.Reference) || !validInputHash(in.SHA256) || audited[in.Path] {
+			key := "\x00" + in.Path
+			if r.Scope == "checks" {
+				key = "checks\x00" + in.Path
+			}
+			if r.Scope == "checks" {
+				for _, providerInput := range j.Plan.Inputs {
+					if inputPathsOverlap(in.Path, providerInput.Path) {
+						return errors.New("private check audit conflicts with provider manifest")
+					}
+				}
+			}
+			if (r.Scope == "" && !safeRecoveryPath(in.Path, j.Plan.Reference)) || (r.Scope == "checks" && !safeCheckRecoveryPath(in.Path)) || !validInputHash(in.SHA256) || audited[key] {
 				return errors.New("invalid supplementary input audit")
 			}
 			if pending {
-				if known[in.Path] != "" {
+				if known[key] != "" {
 					return errors.New("pending input already exists in manifest")
 				}
-			} else if known[in.Path] != in.SHA256 {
+			} else if known[key] != in.SHA256 {
 				return errors.New("input audit does not match manifest")
 			}
-			audited[in.Path] = true
+			audited[key] = true
 		}
 		return nil
 	}
@@ -482,4 +644,21 @@ func VerifyCapturedInputs(root string, inputs []Input) error {
 func validInputHash(value string) bool {
 	data, err := hex.DecodeString(value)
 	return err == nil && len(data) == 32 && strings.ToLower(value) == value
+}
+
+func inputPathsOverlap(a, b string) bool {
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+}
+
+func applyCheckInputSelection(j *Journal, inputs []Input) {
+	j.Verification = append([]VerificationResult(nil), j.Verification...)
+	j.FormatterPreparation = append([]VerificationResult(nil), j.FormatterPreparation...)
+	j.Plan.CheckInputs = append(append([]Input{}, j.Plan.CheckInputs...), inputs...)
+	invalidateCommandEvidence(j)
+	for i := range j.Verification {
+		j.Verification[i].Passed = false
+		j.Verification[i].Head = ""
+		j.Verification[i].Tree = ""
+		j.Verification[i].Diagnostic = ""
+	}
 }

@@ -39,16 +39,28 @@ func inputsCommand(ctx context.Context, args []string, output io.Writer) error {
 	id := flags.String("run", "", "recorded run ID or unique prefix")
 	dry := flags.Bool("dry-run", false, "offline preview")
 	structured := flags.Bool("json", false, "JSON output")
-	var selected inputSelections
+	var selected, checkSelected inputSelections
 	flags.Var(&selected, "add", "supplementary relative input (repeatable)")
+	flags.Var(&checkSelected, "add-check-input", "private check-only relative input (repeatable)")
 	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
-		_, err = fmt.Fprintln(output, "Usage: sdlc inputs --run RUN_ID [--add RELATIVE_PATH] [--dry-run] [--json]")
+		_, err = fmt.Fprintln(output, "Usage: sdlc inputs --run RUN_ID [--add RELATIVE_PATH | --add-check-input RELATIVE_PATH] [--dry-run] [--json]")
 		return err
 	} else if err != nil {
 		return err
 	}
 	if *id == "" || flags.NArg() != 0 {
 		return errors.New("inputs requires --run RUN_ID")
+	}
+	if len(selected) > 0 && len(checkSelected) > 0 {
+		return errors.New("--add and --add-check-input are mutually exclusive")
+	}
+	checkOnly := len(checkSelected) > 0
+	if checkOnly {
+		selected = checkSelected
+	}
+	scope := "provider"
+	if checkOnly {
+		scope = "checks"
 	}
 	runtime, err := runtimeimage.New(io.Discard, io.Discard)
 	if err != nil {
@@ -97,13 +109,17 @@ func inputsCommand(ctx context.Context, args []string, output io.Writer) error {
 			return errors.New("run controller is still active")
 		}
 		expanded := []string(selected)
-		if journal.PendingInputs == nil {
+		if journal.PendingInputs == nil && !checkOnly {
 			expanded, err = project.ResolveRequirements(ctx, journal.Plan.Root, journal.Plan.Reference, expanded)
 			if err != nil {
 				return err
 			}
 		}
-		additions, err = workrun.AttachInputs(ctx, directory, &journal, expanded, *dry)
+		if checkOnly {
+			additions, err = workrun.AttachCheckInputs(ctx, directory, &journal, expanded, *dry)
+		} else {
+			additions, err = workrun.AttachInputs(ctx, directory, &journal, expanded, *dry)
+		}
 		if err != nil {
 			return err
 		}
@@ -129,41 +145,51 @@ func inputsCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if *structured {
 		return json.NewEncoder(output).Encode(struct {
-			RunID      string                        `json:"run_id"`
-			Offline    bool                          `json:"offline"`
-			DryRun     bool                          `json:"dry_run"`
-			Inputs     []workrun.Input               `json:"inputs"`
-			Additions  []workrun.Input               `json:"additions,omitempty"`
-			Recoveries []workrun.InputRecovery       `json:"input_recoveries,omitempty"`
-			Pending    *workrun.PendingInputRecovery `json:"pending_inputs,omitempty"`
-			Missing    []string                      `json:"uncaptured_requirements,omitempty"`
-			Issue      string                        `json:"requirement_issue,omitempty"`
-		}{journal.ID, true, *dry, journal.Plan.Inputs, additions, journal.InputRecoveries, journal.PendingInputs, missing, requirementIssue})
+			RunID       string                        `json:"run_id"`
+			Scope       string                        `json:"scope"`
+			CheckInputs []workrun.Input               `json:"check_inputs"`
+			Offline     bool                          `json:"offline"`
+			DryRun      bool                          `json:"dry_run"`
+			Inputs      []workrun.Input               `json:"inputs"`
+			Additions   []workrun.Input               `json:"additions,omitempty"`
+			Recoveries  []workrun.InputRecovery       `json:"input_recoveries,omitempty"`
+			Pending     *workrun.PendingInputRecovery `json:"pending_inputs,omitempty"`
+			Missing     []string                      `json:"uncaptured_requirements,omitempty"`
+			Issue       string                        `json:"requirement_issue,omitempty"`
+		}{journal.ID, scope, journal.Plan.CheckInputs, true, *dry, journal.Plan.Inputs, additions, journal.InputRecoveries, journal.PendingInputs, missing, requirementIssue})
 	}
-	fmt.Fprintf(output, "Run %s | project %s\nRecorded inputs:\n", journal.ID, dashboard.SafeText(journal.Plan.Root))
+	fmt.Fprintf(output, "Run %s | project %s\nRecorded provider inputs:\n", journal.ID, dashboard.SafeText(journal.Plan.Root))
 	for _, in := range journal.Plan.Inputs {
 		fmt.Fprintf(output, "  %s  %s\n", in.SHA256, dashboard.SafeText(in.Path))
 	}
+	fmt.Fprintln(output, "Recorded private check inputs:")
+	for _, in := range journal.Plan.CheckInputs {
+		fmt.Fprintf(output, "  %s %s\n", in.SHA256, dashboard.SafeText(in.Path))
+	}
 	for _, r := range journal.InputRecoveries {
-		fmt.Fprintf(output, "Recovery %s (previous checkpoint %s):\n", r.AddedAt.Format(time.RFC3339Nano), r.PreviousCheckpoint.Format(time.RFC3339Nano))
+		fmt.Fprintf(output, "Recovery scope=%s %s (previous checkpoint %s):\n", recoveryScope(r.Scope), r.AddedAt.Format(time.RFC3339Nano), r.PreviousCheckpoint.Format(time.RFC3339Nano))
 		for _, in := range r.Inputs {
 			fmt.Fprintf(output, "  %s  %s\n", in.SHA256, dashboard.SafeText(in.Path))
 		}
 	}
 	if journal.PendingInputs != nil {
-		fmt.Fprintln(output, "Unfinished recovery; staged inputs:")
+		fmt.Fprintf(output, "Unfinished %s recovery; staged inputs:\n", recoveryScope(journal.PendingInputs.Scope))
+		addFlag := "--add"
+		if journal.PendingInputs.Scope == "checks" {
+			addFlag = "--add-check-input"
+		}
 		var completion strings.Builder
 		fmt.Fprintf(&completion, "sdlc inputs --run %s", journal.ID)
 		for _, in := range journal.PendingInputs.Inputs {
 			fmt.Fprintf(output, "  %s  %s\n", in.SHA256, dashboard.SafeText(in.Path))
-			fmt.Fprintf(&completion, " --add %s", quoteInputPath(in.Path))
+			fmt.Fprintf(&completion, " %s %s", addFlag, quoteInputPath(in.Path))
 		}
 		fmt.Fprintf(output, "Complete the saved recovery:\n  %s\n", completion.String())
 	}
 
 	if *dry {
 		for _, in := range additions {
-			fmt.Fprintf(output, "Would add: %s  %s\n", in.SHA256, dashboard.SafeText(in.Path))
+			fmt.Fprintf(output, "Would add (%s): %s  %s\n", scope, in.SHA256, dashboard.SafeText(in.Path))
 		}
 	}
 	for _, path := range missing {
@@ -172,7 +198,9 @@ func inputsCommand(ctx context.Context, args []string, output io.Writer) error {
 	if requirementIssue != "" {
 		fmt.Fprintf(output, "Requirement issue: %s\n", dashboard.SafeText(requirementIssue))
 	}
-	if len(selected) > 0 {
+	if checkOnly {
+		fmt.Fprintf(output, "Run remains %s; recorded hold is unchanged. Capture did not resume execution.\n", dashboard.SafeText(journal.State))
+	} else if len(selected) > 0 {
 		fmt.Fprintf(output, "Run remains waiting for its recorded answer. Next: sdlc answer --run %s\n", journal.ID)
 	}
 	return nil
@@ -288,6 +316,9 @@ func validateSeriesRunInputs(ctx context.Context, journal workrun.Journal, origi
 	}
 	audited := map[string]string{}
 	for _, recovery := range journal.InputRecoveries {
+		if recovery.Scope == "checks" {
+			continue
+		}
 		if recovery.PreviousCheckpoint.IsZero() || recovery.AddedAt.IsZero() {
 			return errors.New("invalid input recovery audit")
 		}
@@ -364,7 +395,7 @@ func validateSupplementSeries(ctx context.Context, view runstatus.View, j workru
 	if !exists || j.ImageID != settings.ImageID || !reflect.DeepEqual(j.Plan.Roles, roles) || !reflect.DeepEqual(j.Plan.PublicationIdentity, settings.Identity) || j.Plan.Repository != settings.Repository || j.Plan.GitHubProfile != settings.GitHubProfile || j.Plan.SigningProfile != settings.SigningProfile || j.Plan.SigningImage != settings.SigningImage || j.Plan.DaemonImage != settings.DaemonImage || j.Instructions != settings.Instructions || !reflect.DeepEqual(j.Plan.Checks, settings.Config.Checks) || j.Plan.CheckSelection != settings.Config.CheckSelection || j.Plan.DockerTests != settings.DockerTests || !reflect.DeepEqual(j.Plan.Headroom, settings.Headroom) {
 		return errors.New("feature run differs from frozen settings")
 	}
-	if len(j.Plan.CheckInputs) != len(settings.Config.InputFiles) {
+	if len(j.Plan.CheckInputs) < len(settings.Config.InputFiles) {
 		return errors.New("feature run check inputs differ from frozen settings")
 	}
 	for i, path := range settings.Config.InputFiles {
@@ -372,8 +403,53 @@ func validateSupplementSeries(ctx context.Context, view runstatus.View, j workru
 			return errors.New("feature run check inputs differ from frozen settings")
 		}
 	}
+	if err := validateSeriesCheckInputs(j, view.Directory, settings.Config.InputFiles, settings.InputHashes); err != nil {
+		return err
+	}
 	// The unfinished transaction is validated by workrun.AttachInputs. Originals
 	// and previous successful supplements must still match before recovery writes.
 	j.PendingInputs = nil
 	return validateSeriesRunInputs(ctx, j, settings.ticketInputs(state.Plan.Reference, filepath.Base(view.Ticket)), settings.InputHashes)
+}
+
+func recoveryScope(scope string) string {
+	if scope == "checks" {
+		return "checks"
+	}
+	return "provider"
+}
+
+func validateSeriesCheckInputs(j workrun.Journal, directory string, originals []string, hashes map[string]string) error {
+	if len(j.Plan.CheckInputs) < len(originals) {
+		return errors.New("feature run removed frozen check inputs")
+	}
+	for i, path := range originals {
+		if j.Plan.CheckInputs[i].Path != path || j.Plan.CheckInputs[i].SHA256 != hashes[path] {
+			return errors.New("feature run check inputs differ from frozen settings")
+		}
+	}
+	auditedChecks := map[string]string{}
+	for _, recovery := range j.InputRecoveries {
+		if recovery.Scope == "checks" {
+			for _, in := range recovery.Inputs {
+				auditedChecks[in.Path] = in.SHA256
+			}
+		}
+	}
+	for _, in := range j.Plan.CheckInputs[len(originals):] {
+		if auditedChecks[in.Path] != in.SHA256 {
+			return errors.New("feature check input lacks recovery audit")
+		}
+		if err := workrun.VerifyCapturedInputs(j.Plan.Root, []workrun.Input{in}); err != nil {
+			return err
+		}
+		if err := workrun.VerifyCapturedInputs(filepath.Join(directory, "check-inputs"), []workrun.Input{in}); err != nil {
+			return err
+		}
+		delete(auditedChecks, in.Path)
+	}
+	if len(auditedChecks) != 0 {
+		return errors.New("feature check input audit differs from manifest")
+	}
+	return nil
 }

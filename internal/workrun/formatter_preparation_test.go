@@ -424,3 +424,100 @@ func TestFormatterPreparationBoundsNoisyBatchesBeforeIntermediateSave(t *testing
 		t.Fatal("preparation exceeded shared command feedback budget")
 	}
 }
+
+func TestFormatterRepairLimitDefaultAndPersistedOverride(t *testing.T) {
+	for _, overridden := range []bool{false, true} {
+		t.Run(fmt.Sprint(overridden), func(t *testing.T) {
+			directory, j, runner, checker, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
+			j.SessionID = testNative
+			j.Rounds = runner.MaxRounds
+			if err := Save(directory, j); err != nil {
+				t.Fatal(err)
+			}
+			if overridden {
+				overrideGrant(j, "verification_requests", 16)
+			}
+			_, err := runner.prepareCandidate(context.Background(), directory, j, Revision{Head: testHead, Tree: testTree, Clean: true})
+			if overridden {
+				if err != nil || j.State != "repairing" || j.Rounds != runner.MaxRounds+1 {
+					t.Fatal("persisted grant did not reach repair", err)
+				}
+			} else {
+				if !errors.Is(err, ErrStopped) || j.State != "blocked" || j.ResumeState != "checking" || j.StopReason != configuredCheckRepairBound {
+					t.Fatal("default formatter limit missing", err)
+				}
+				if err := ValidateRunLimitOverride(*j); err != nil {
+					t.Fatal("formatter numeric hold not admitted", err)
+				}
+				invalid := *j
+				invalid.StopReason = "formatter preparation could not complete; inspect its private log"
+				if ValidateRunLimitOverride(invalid) == nil {
+					t.Fatal("operational formatter hold admitted")
+				}
+				invalid = *j
+				invalid.FormatterPreparation = append([]VerificationResult(nil), j.FormatterPreparation...)
+				invalid.FormatterPreparation[0].Key = "stale"
+				if ValidateRunLimitOverride(invalid) == nil {
+					t.Fatal("stale formatter evidence admitted")
+				}
+			}
+			if checker.calls != 0 || checker.patchCalls != 1 {
+				t.Fatal("full suite ran before committed repair")
+			}
+		})
+	}
+}
+
+func TestFormatterNumericHoldAdmitsCompletedSemanticFailure(t *testing.T) {
+	directory, j, runner, _, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
+	j.SessionID = testNative
+	j.Rounds = runner.MaxRounds
+	if _, err := runner.prepareCandidate(context.Background(), directory, j, Revision{Head: testHead, Tree: testTree, Clean: true}); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	j.FormatterPreparation[0].SourcePatch = nil
+	j.FormatterPreparation[0].Diagnostic = "Formatter preparation commands failed."
+	if err := ValidateRunLimitOverride(*j); err != nil {
+		t.Fatal("completed semantic formatter failure rejected", err)
+	}
+	j.FormatterPreparation[0].Diagnostic = ""
+	if ValidateRunLimitOverride(*j) == nil {
+		t.Fatal("empty failure evidence admitted")
+	}
+}
+
+func TestRunnerResumesFormatterHoldWithOriginalPersistedGrant(t *testing.T) {
+	directory, j, runner, checker, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
+	j.SessionID = testNative
+	j.Rounds = runner.MaxRounds
+	j.Attempt = 26
+	j.Outcome = testOutcome("implemented")
+	if _, err := runner.prepareCandidate(context.Background(), directory, j, Revision{Head: testHead, Tree: testTree, Clean: true}); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	overrideGrant(j, "verification_requests", 16)
+	j.SessionTurnExtension = &SessionTurnExtension{GrantedAt: j.RunLimitOverride.GrantedAt, GrantedAttempt: 24, OriginalLimit: 24, Additional: 6, OriginalSessionID: testNative}
+	for i := 0; i < 17; i++ {
+		request := VerificationRequest{ID: fmt.Sprintf("offline-%d", i), Purpose: "Check fixture", Commands: [][]string{{"test", "fixture"}}}
+		j.Verification = append(j.Verification, VerificationResult{Request: request, Key: verificationKey(j, request, testHead, testTree), Head: testHead, Tree: testTree, Passed: true})
+	}
+	grant := *j.RunLimitOverride
+	if err := Save(directory, j); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := Load(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{executeErr: errors.New("offline native boundary")}
+	runner.Provider = provider
+	if err := runner.Run(context.Background(), directory, &saved, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 1 || provider.calls[0].ResumeID != testNative || saved.SessionID != testNative || saved.Attempt != 27 || saved.Rounds != runner.MaxRounds+2 || saved.RepairWindowStart != 0 {
+		t.Fatal("ordinary resume changed original session or repair accounting")
+	}
+	if !reflect.DeepEqual(grant, *saved.RunLimitOverride) || saved.SessionTurnExtension.Additional != 6 || checker.calls != 0 || checker.patchCalls != 1 || len(saved.FormatterPreparation) != 1 || saved.FormatterPreparation[0].SourcePatch == nil {
+		t.Fatal("resume lost persisted grant/artifact or ran full checks before commit")
+	}
+}

@@ -1,5 +1,9 @@
 # Run history and retention
 
+Check-only input recoveries record scope, relative paths, hashes and the previous
+checkpoint. File bodies remain in the run's private check-input directory. Keep
+beta.46 or newer for journals containing these scoped recovery records.
+
 Formatter preparation evidence is retained separately from agent-requested
 verification. A correction artifact is private data for the original agent to
 review; it does not establish passing full checks. Keep beta.44 or newer when

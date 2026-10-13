@@ -731,6 +731,32 @@ If attachment is interrupted, `inputs` shows the pending operation. Complete it
 before answering or resuming; the controller refuses a partial input manifest.
 Use `--json` for structured input metadata without file bodies.
 
+### Missing private check inputs
+
+A text answer also does not capture a private environment or test-input file
+that appeared after launch. For a stopped, unpublished implementation run, use
+the explicit check-only action:
+
+```sh
+sdlc inputs --run RUN_ID --add-check-input .env --dry-run
+sdlc inputs --run RUN_ID --add-check-input .env
+sdlc resume --run RUN_ID
+```
+
+`--add-check-input` is repeatable and cannot be combined with provider-visible
+`--add`. It snapshots selected files from the recorded project root into the
+private check-input directory, records their paths and hashes, and invalidates
+configured, formatter and additional verification. It leaves the checkpoint
+state, original session, counters and allowances intact. The file bytes never
+enter the provider workspace, review snapshot or published source. Existing
+captured files cannot be replaced; unsafe paths, linked files, conflicting
+destinations and resource-budget overflow are refused.
+
+An interrupted capture retains immutable staged bytes and its check-only scope;
+complete that operation before resuming. Check-only recovery records require
+beta.46 or newer. `--json` returns metadata without file bodies. Provider, input,
+cleanup and other unresolved holds still require their normal resolution.
+
 ## Shared agent instructions
 
 Inspect or change the installation's shared instructions from any directory:
@@ -1795,6 +1821,8 @@ initializer or the finite session-turn extension. Dry-run previews admission
 without saving a grant or executing work.
 
 Once granted, ordinary resumes retain the override without repeating the flag.
+Formatter preparation honours the same saved repair-limit override; a pending
+correction still requires agent review and a committed repair before full checks.
 It lifts the controller ceilings on native calls, configured-check repair rounds,
 CI repairs, independent-review handoffs, repeated verification feedback, retained
 verification request IDs and PR metadata correction attempts. The original

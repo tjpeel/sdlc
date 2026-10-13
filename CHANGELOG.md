@@ -7,6 +7,20 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.46 - 2026-10-13
+
+### Fixed
+
+- Honour a saved run-limit override during formatter preparation, so a pending correction can reach the original implementation session without granting or resetting another allowance. Recognise corroborated formatter repair holds when explicitly requesting an override; ordinary runs retain their repair ceiling.
+
+### Added
+
+- Add explicit check-only input recovery for stopped, unpublished implementation runs with `sdlc inputs --run RUN_ID --add-check-input RELATIVE_PATH`. Snapshot selected files into the private check-input directory, audit their hashes and invalidate verification while preserving the original state, sessions, counters and limits. Keep those bytes out of provider workspaces, review snapshots and publication; retain immutable interrupted recovery and input resource bounds.
+
+### Changed
+
+- Journals with check-only recovery records require beta.46 or newer. Existing provider-input recoveries remain readable.
+
 ## 0.1.0-beta.45 - 2026-10-13
 
 ### Added
