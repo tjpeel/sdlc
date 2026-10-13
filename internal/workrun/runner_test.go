@@ -475,7 +475,7 @@ func TestRunnerReviewFailureBoundStopsRepair(t *testing.T) {
 		p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), finding, testOutcome("implemented"), finding}}
 		r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
 		r.MaxRounds = 1
-		if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.State != "blocked" || j.Rounds != windowStart+2 || len(p.calls) != 4 {
+		if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.State != "blocked" || j.Rounds != windowStart+2 || j.StopReason != reviewUnchangedBound || j.ReviewRepairBudget.Used != 1 || len(p.calls) != 4 {
 			t.Fatalf("review repair not bounded: %v %+v", err, j)
 		}
 	}
@@ -588,6 +588,10 @@ func TestPrepareReviewRetryUsesFreshSnapshotAtSameAttempt(t *testing.T) {
 	first, err := PrepareReview(ctx, *j, dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	status, err := isolatedGit(ctx, first, "status", "--porcelain")
+	if err != nil || strings.TrimSpace(status) != "" {
+		t.Fatalf("selected untracked requirements polluted review snapshot status: %q %v", status, err)
 	}
 	second, err := PrepareReview(ctx, *j, dir)
 	if err != nil {

@@ -858,3 +858,19 @@ The harness must preserve the foreground controller session and existing account
 safety rules. Read the [unified onboarding proposal](proposals/unified-onboarding.md)
 for the proposed Back/Next/Resume setup flow and the remaining manual vault steps.
 No `sdlc setup` command is available yet.
+
+### Assessing independent review findings
+
+A completed independent review sends its findings back to the original
+implementation session. The implementor investigates and decides whether to fix
+the defect or explain an evidence-backed disagreement. Human input is requested for unresolved questions; a priority such as P3
+does not require it by itself.
+The controller retains the reviewed head and findings while diagnostics run, then
+includes a bounded final assessment in the next fresh independent review. The
+reviewer still decides independently, and signing, verification and CI gates remain.
+
+Review handoffs have their own finite allowance, normally three, separate from
+configured-check and CI failures. The cumulative history and 24 native-turn
+ceiling remain. Repeated findings on the same assessed published head stop rather
+than repeatedly sending the same finding to implementation. Legacy completed
+review holds can use the explicit recovery flag documented in the CLI guide.

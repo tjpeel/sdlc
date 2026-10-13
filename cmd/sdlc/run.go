@@ -33,7 +33,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--runtime NAME] [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE | --initialize-ci-repair-budget]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--runtime NAME] [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--answer-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -52,6 +52,7 @@ type runOptions struct {
 	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, resume, answerFile, githubProfile string
 	inputs                                                                                                                             selectedInputs
 	initializeCIRepairBudget                                                                                                           bool
+	initializeReviewRepairBudget                                                                                                       int
 	dockerTests, dryRun                                                                                                                bool
 	timeout                                                                                                                            time.Duration
 	notifications                                                                                                                      notify.Options
@@ -96,6 +97,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.root, "run-root", "", "internal recorded root for resume")
 	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
 	flags.StringVar(&options.resume, "resume", "", "recorded run ID or unique prefix of at least three characters")
+	flags.IntVar(&options.initializeReviewRepairBudget, "initialize-review-repair-budget", 0, "one-time legacy completed-review handoff allowance (1-3)")
 	flags.BoolVar(&options.initializeCIRepairBudget, "initialize-ci-repair-budget", false, "one-time recovery for a legacy published CI-bound hold")
 	flags.StringVar(&options.answerFile, "answer-file", "", "human answer to recorded questions")
 	flags.Var(&options.inputs, "input", "exact additional requirements input; repeatable")
@@ -118,8 +120,14 @@ func parseRunOptions(args []string) (runOptions, error) {
 		return options, fmt.Errorf("--initialize-ci-repair-budget requires a single --resume without --answer-file")
 	}
 
+	if options.initializeReviewRepairBudget != 0 && (options.initializeReviewRepairBudget < 1 || options.initializeReviewRepairBudget > 3 || options.resume == "" || options.all || options.answerFile != "" || options.initializeCIRepairBudget) {
+		return options, fmt.Errorf("--initialize-review-repair-budget requires 1-3 and a single --resume without other recovery flags")
+	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.supplied["initialize-review-repair-budget"] && options.initializeReviewRepairBudget == 0 {
+		return options, fmt.Errorf("--initialize-review-repair-budget must be 1-3")
+	}
 	if options.reference == "" || flags.NArg() != 0 || !options.all && options.ticket == "" {
 		return options, fmt.Errorf("run requires --reference REFERENCE and either --ticket NUMBERED_FILE or --all")
 	}
@@ -201,7 +209,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "initialize-ci-repair-budget", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -542,6 +550,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return fmt.Errorf("answer the recorded questions with sdlc answer --run %s", journal.ID)
 		}
 	}
+	if options.initializeReviewRepairBudget != 0 {
+		if err := workrun.ValidateReviewRepairInitialization(journal, options.initializeReviewRepairBudget); err != nil {
+			return err
+		}
+	}
 	if options.initializeCIRepairBudget {
 		if err := workrun.ValidateCIRepairInitialization(journal); err != nil {
 			return err
@@ -608,7 +621,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	githubManager.OnAcquired = manager.OnAcquired
 	resolver := signing.Resolver{Profile: profile, Image: journal.Plan.SigningImage}
 	publisher := workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve, ValidatePair: func() error { _, err := runSigningProfile(runtime, journal.Plan); return err }}
-	runner := workrun.Runner{InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	runner := workrun.Runner{InitializeReviewRepairBudget: options.initializeReviewRepairBudget, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)

@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.40 - 2026-10-13
+
+### Fixed
+
+- Give independent review findings a separate persisted allowance of three handoffs to the original implementation session, preserving configured-check and CI accounting and the overall native-turn ceiling. The implementor assesses each finding, fixes justified defects, explains evidence-backed disagreement, or asks a genuinely unresolved human question; finding priority alone does not demand human input.
+- Preserve the reviewed publication boundary and findings through diagnostic turns, and send a bounded final assessment to a fresh independent reviewer without raw command output. Repeated findings on an already assessed published head cannot grant another implementation handoff.
+- Add an explicit one-time legacy completed-review recovery with an allowance of one to three handoffs. Validate the current candidate, published tree, CI and inputs before forwarding the stored finding, without repeating the completed review or resetting history.
+
 ## 0.1.0-beta.39 - 2026-10-13
 
 ### Changed

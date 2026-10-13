@@ -246,6 +246,9 @@ type Journal struct {
 	Verification              []VerificationResult  `json:"additional_verification,omitempty"`
 	Evidence                  CheckEvidence         `json:"evidence"`
 	Outcome                   Outcome               `json:"outcome"`
+	ReviewHumanInput          *ReviewHumanInput     `json:"review_human_input,omitempty"`
+	ReviewRepairBudget        *ReviewRepairBudget   `json:"review_repair_budget,omitempty"`
+	ReviewAssessment          *ReviewAssessment     `json:"review_assessment,omitempty"`
 	CIRepairBudget            *CIRepairBudget       `json:"ci_repair_budget,omitempty"`
 	Rounds                    int                   `json:"rounds"`
 	RepairWindowStart         int                   `json:"repair_window_start,omitempty"`

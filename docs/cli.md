@@ -1653,3 +1653,16 @@ change; the existing image can be reused.
 Use `sdlc storage` from a project repository to report retained `.sdlc` sizes, categories and run ages. `sdlc storage --older-than 30 --json` filters the run rows by their latest recorded activity; total directory sizes still cover the complete scan. This command reads metadata and file sizes without initializing accounts or removing files. See [run history](run-history.md) for scan boundaries and partial reports.
 
 A single-ticket run can select `--runtime NAME`. Resume recovers that selection from its journal. Named runtimes have their own image tag and state while retaining the installation's account caches and build lock. To test committed local skill changes without replacing a paused run's default image, build with `sdlc runtime build --name reviewed-skills --source . --skills-source /path/to/skills`, then select `--runtime reviewed-skills` on the new ticket run. See [runtime variants](runtime-variants.md) for provenance, rebuild options and limitations.
+
+### Recover a legacy completed-review hold
+
+`--initialize-review-repair-budget N` is available only for a single saved-run
+`--resume`, with `N` from 1 to 3. It admits only a completed independent review
+with stored findings, no unresolved questions or limitations, no existing review
+allowance, and the exact legacy review repair-bound hold. Current source, passing
+verification, selected inputs, published tree and CI must still match. Recovery
+passes the stored findings directly to the original implementation session; it
+neither reruns the completed reviewer nor resets counters, sessions or other
+budgets. The allowance is persisted before implementation and cannot be reset.
+A failed provider turn does not refund it; ordinary supported resume continues
+that same pending assessment, subject to provider holds and the native-turn cap.

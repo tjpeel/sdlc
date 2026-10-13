@@ -60,6 +60,9 @@ func Save(directory string, journal *Journal) error {
 	if err := validateCommandEvidence(journal); err != nil {
 		return err
 	}
+	if err := validateReviewJournal(journal); err != nil {
+		return err
+	}
 	if err := validateCIJournal(journal); err != nil {
 		return err
 	}
@@ -129,6 +132,9 @@ func Load(directory string) (Journal, error) {
 		}
 	}
 	if err := validateVerificationRequests(requests, &journal.Plan); err != nil {
+		return Journal{}, err
+	}
+	if err := validateReviewJournal(&journal); err != nil {
 		return Journal{}, err
 	}
 	if err := validateCIJournal(&journal); err != nil {

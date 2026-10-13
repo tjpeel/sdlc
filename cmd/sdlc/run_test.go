@@ -615,3 +615,15 @@ func TestParseRunCIRepairInitializationRequiresExplicitResume(t *testing.T) {
 		t.Fatal("terminal launch dropped recovery authorization", err)
 	}
 }
+
+func TestParseRunReviewRepairInitializationRequiresExplicitResume(t *testing.T) {
+	for _, args := range [][]string{runArgs("--initialize-review-repair-budget", "1"), runArgs("--resume", "recorded", "--initialize-review-repair-budget", "0"), runArgs("--resume", "recorded", "--initialize-review-repair-budget", "4"), runArgs("--resume", "recorded", "--initialize-review-repair-budget", "1", "--answer-file", "answer.txt"), runArgs("--resume", "recorded", "--initialize-review-repair-budget", "1", "--initialize-ci-repair-budget")} {
+		if _, err := parseRunOptions(args); err == nil {
+			t.Fatal("invalid review recovery selection accepted", args)
+		}
+	}
+	options, err := parseRunOptions(runArgs("--resume", "recorded", "--initialize-review-repair-budget", "1", "--dry-run"))
+	if err != nil || options.initializeReviewRepairBudget != 1 {
+		t.Fatal(err)
+	}
+}
