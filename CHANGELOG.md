@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.55 - 2026-10-13
+
+### Added
+
+- Supply bounded supplemental CI context to an original implementation session that stopped for missing failure evidence with `sdlc resume --run RUN_ID --ci-feedback-file FILE`. Bind the context to the unchanged candidate and failed published head, retain a private recovery audit, and require normal checks, signing, CI and independent review afterward.
+- Preserve the existing CI grant and all cumulative accounting. Refuse unrelated holds, repeated supplementation of the same published head, stale evidence and ambiguous interrupted dispatch.
+
 ## 0.1.0-beta.54 - 2026-10-13
 
 ### Added

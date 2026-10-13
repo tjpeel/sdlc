@@ -244,12 +244,14 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	id := flags.String("run", "", "run ID or unique prefix")
 	dry := flags.Bool("dry-run", false, "offline preview")
 	var text, path string
+	var ciFeedbackPath string
 	var stdin bool
 	var extension int
 	var feedback bool
 	var override bool
 	var timeout time.Duration
 	if !answer {
+		flags.StringVar(&ciFeedbackPath, "ci-feedback-file", "", "bounded supplemental CI context")
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
 		flags.BoolVar(&feedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
 		flags.BoolVar(&override, "override-run-limits", false, "persistently lift SDLC numeric run allowances")
@@ -264,7 +266,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24] [--timeout 2h] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --ci-feedback-file FILE] [--timeout 2h] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -287,6 +289,15 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if override && (feedback || extensionSupplied) {
 		return fmt.Errorf("--override-run-limits cannot be combined with another recovery action")
+	}
+	ciFeedbackSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "ci-feedback-file" {
+			ciFeedbackSupplied = true
+		}
+	})
+	if ciFeedbackSupplied && (ciFeedbackPath == "" || feedback || override || extensionSupplied) {
+		return fmt.Errorf("--ci-feedback-file requires a nonempty path without another recovery action")
 	}
 	if !answer && (timeout < time.Minute || timeout > 24*time.Hour) {
 		return fmt.Errorf("timeout must be between 1m and 24h")
@@ -317,6 +328,15 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if override {
 		if err := workrun.ValidateRunLimitOverride(*action.View.Journal); err != nil {
+			return err
+		}
+	}
+	if ciFeedbackSupplied {
+		data, err := readHumanAnswer(ciFeedbackPath)
+		if err != nil {
+			return err
+		}
+		if err := workrun.ValidateCIFeedbackResume(*action.View.Journal, string(data)); err != nil {
 			return err
 		}
 	}
@@ -380,6 +400,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if ciFeedbackSupplied {
+		runArgs = append(runArgs, "--ci-feedback-file", ciFeedbackPath)
+	}
 	if override {
 		runArgs = append(runArgs, "--override-run-limits")
 	}
@@ -409,6 +432,20 @@ func printResumePlan(output io.Writer, journal workrun.Journal, answer string, s
 		fmt.Fprintln(output, "Offline resume plan; authentication and model access have not been checked.")
 	}
 	return jsonResumePlan(output, journal, hash, extension...)
+}
+
+func printCIFeedbackResumePlan(output io.Writer, journal workrun.Journal, text string, structured bool) error {
+	if !structured {
+		fmt.Fprintln(output, "Offline CI context resume plan; current candidate and failed published CI will be checked before dispatch.")
+	}
+	return json.NewEncoder(output).Encode(struct {
+		Mode                string `json:"mode"`
+		Offline             bool   `json:"offline"`
+		RunID               string `json:"run_id"`
+		Checkpoint          string `json:"checkpoint"`
+		CIFeedbackSHA256    string `json:"ci_feedback_sha256"`
+		FailedPublishedHead string `json:"failed_published_head"`
+	}{"ci_feedback_resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), fmt.Sprintf("%x", sha256.Sum256([]byte(text))), journal.Publication.HeadSHA})
 }
 
 func jsonResumePlan(output io.Writer, journal workrun.Journal, hash string, extension ...int) error {

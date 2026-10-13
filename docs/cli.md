@@ -813,6 +813,39 @@ Cumulative repair and turn counts remain recorded. The native-turn ceiling defau
 This renewal applies only to that check-limit stop, not provider, CI or independent
 review holds.
 
+### Supply missing CI failure context
+
+A saved implementation can stop for missing CI failure evidence without
+recording a question. Supply selected factual context through the controller:
+
+```sh
+sdlc resume --run RUN_ID --ci-feedback-file /PATH/TO/CI_CONTEXT.txt --dry-run
+sdlc resume --run RUN_ID --ci-feedback-file /PATH/TO/CI_CONTEXT.txt
+```
+
+The file must contain nonempty UTF-8 text of at most 64 KiB. Keep credentials
+out of it. The preview reports hashes and identities without printing the text.
+The same flag is available on a
+single-ticket `sdlc run --resume RUN_ID`.
+
+This action supports only a stopped native implementation that needs CI
+evidence after an existing repair grant for the failed published head. It
+requires the original session, a clean candidate and current failed CI.
+Unrelated requirements, provider, policy, access, usage and review holds remain
+held. Other recovery flags cannot be combined with this action.
+
+SDLC records a private audit, binds the context to the candidate at preparation
+and the failed publication, then rechecks the candidate and inputs before
+dispatch. The original implementer receives the text as untrusted evidence and
+decides how to address it. The existing CI grant, rounds and cumulative counts
+stay intact; native calls still receive normal accounting. Full repository
+checks, signing, publication CI and independent review remain required.
+
+Only one supplement is accepted for each failed published head. An interrupted
+operation before dispatch can continue with its saved context after its cause
+is resolved. An ambiguous interruption after dispatch stays held for inspection
+to avoid sending the context twice.
+
 ### Missing requirement files
 
 An older run may lack a linked requirement that was present on the host. A text

@@ -21,6 +21,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	CIFeedback                   string
 	ValidateDependencies         func(context.Context, string, Plan) error
 	OverrideRunLimits            bool
 	ProcessPRFeedback            bool
@@ -140,6 +141,21 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 	}
 	savedFeedbackReplay := journal.State == "blocked" && journal.StopReason == noPendingFeedbackHold
+	if runner.CIFeedback != "" || pendingCIFeedback(journal) != nil {
+		if answer != "" || runner.ProcessPRFeedback || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
+			return fmt.Errorf("CI feedback cannot be combined with another recovery action")
+		}
+		text := runner.CIFeedback
+		if text == "" {
+			text = pendingCIFeedback(journal).Text
+		}
+		if f := pendingCIFeedback(journal); f != nil && f.DispatchAttempt != 0 {
+			return fmt.Errorf("CI feedback dispatch was interrupted; inspect the original session before recovery")
+		}
+		if err := ValidateCIFeedbackResume(*journal, text); err != nil {
+			return err
+		}
+	}
 	if savedFeedbackReplay && !CanReplaySavedPRFeedback(*journal) {
 		return fmt.Errorf("saved feedback outcome is not eligible for replay; inspect the diagnostic snapshot")
 	}
@@ -280,6 +296,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if err := runner.beginPRFeedback(ctx, directory, journal); err != nil {
 			return err
 		}
+	}
+	if err := runner.prepareCIFeedback(ctx, directory, journal); err != nil {
+		return err
 	}
 	if savedFeedbackReplay {
 		if answer != "" || runner.ProcessPRFeedback || runner.OverrideRunLimits || runner.ExtendSessionTurnBudget != 0 || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 {
@@ -443,6 +462,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "failed", err.Error())
 			}
 			journal.Outcome = result.Outcome
+			if f := pendingCIFeedback(journal); f != nil && f.DispatchAttempt == journal.Attempt {
+				f.Completed = true
+			}
 			if err := runner.acceptImplementationOutcome(ctx, directory, journal); err != nil {
 				return err
 			}
@@ -721,6 +743,9 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		nativeDirectory = filepath.Join(directory, fmt.Sprintf("native-review-%d", journal.Attempt))
 	}
 	prompt := runner.prompt(*journal, role)
+	if role == "implementation" {
+		prompt += supplementalCIFeedback(*journal)
+	}
 	metricRole := role
 	if role == "implementation" && resume != "" {
 		metricRole = "repair"
@@ -764,9 +789,34 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	diagnosticProgress := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "agent", Provider: model.Provider, Role: metricRole, Stage: journal.State, Attempt: journal.Attempt, Text: "Diagnostic: "}, false)
 	defer func() { resultErr = errors.Join(resultErr, progressOutput.Finish(), diagnosticProgress.Finish()) }()
 	nativeOutput := observedOutput{io.MultiWriter(events, runner.rawOutput), runner.OnNativeOutput}
-	return runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
+	var contextRecovery *CIFeedbackRecovery
+	if role == "implementation" {
+		contextRecovery = pendingCIFeedback(journal)
+		if contextRecovery != nil {
+			if contextRecovery.DispatchAttempt != 0 || resume != contextRecovery.SessionID {
+				return result, fmt.Errorf("CI feedback cannot be dispatched twice or to a different session")
+			}
+			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
+			if err != nil || revision != contextRecovery.Candidate {
+				return result, fmt.Errorf("CI feedback candidate changed before dispatch")
+			}
+			if err := verifyInputs(journal.Workspace, journal.Plan.Inputs); err != nil {
+				return result, err
+			}
+			if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
+				return result, err
+			}
+			contextRecovery.DispatchAttempt = journal.Attempt
+			contextRecovery.Text = ""
+			if err := runner.save(directory, journal); err != nil {
+				return result, err
+			}
+		}
+	}
+	result, resultErr = runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
 		Directory: nativeDirectory, Prompt: prompt, Schema: outcomeSchema, ResumeID: resume,
 		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom}, io.MultiWriter(metrics, nativeOutput, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
+	return result, resultErr
 }
 
 func (runner Runner) prompt(journal Journal, role string) string {

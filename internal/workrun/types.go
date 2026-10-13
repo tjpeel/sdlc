@@ -245,6 +245,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	CIFeedbackRecoveries      []CIFeedbackRecovery  `json:"ci_feedback_recoveries,omitempty"`
 	PushRepair                *PushProtectionRepair `json:"push_protection_repair,omitempty"`
 	RestackNeedsChecks        bool                  `json:"restack_needs_checks,omitempty"`
 	DeferredAnswer            string                `json:"deferred_answer,omitempty"`
