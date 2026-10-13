@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.32 - 2026-10-13
+
+### Fixed
+
+- Execute new additional verification requests even when earlier requests have failed on the same candidate. Keep those failures as publication blockers, avoid rerunning cached failures and retain the hold when no new machine work is pending.
+
 ## 0.1.0-beta.31 - 2026-10-13
 
 ### Fixed

@@ -135,7 +135,8 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			}
 		}
 	}
-	repaired := false
+	firstSemanticFailure := ""
+	executedAny := false
 	for i := range journal.Verification {
 		evidence := &journal.Verification[i]
 		key := verificationKey(journal, evidence.Request, revision.Head, revision.Tree)
@@ -143,7 +144,10 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			continue
 		}
 		if evidence.Key == key && !evidence.Passed {
-			return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" still fails on the unchanged candidate; change the candidate or request before resuming")
+			if firstSemanticFailure == "" {
+				firstSemanticFailure = evidence.Request.ID
+			}
+			continue
 		}
 		checker, ok := runner.Checker.(VerificationChecker)
 		patchChecker, patchOK := runner.Checker.(SourcePatchChecker)
@@ -220,19 +224,21 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			if !errors.Is(checkErr, ErrCheckFailed) {
 				return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" could not complete; inspect its private log")
 			}
-			journal.Feedback = verificationFeedback(journal)
-			if configuredFeedback != "" {
-				journal.Feedback = configuredFeedback + "\n" + journal.Feedback
+			if firstSemanticFailure == "" {
+				firstSemanticFailure = evidence.Request.ID
 			}
-			if err := runner.transition(directory, journal, "repairing"); err != nil {
-				return err
-			}
-			repaired = true
-			break
 		}
+		executedAny = true
 	}
-	if repaired {
-		return nil
+	if firstSemanticFailure != "" {
+		if !executedAny {
+			return runner.stop(directory, journal, "blocked", "additional verification "+firstSemanticFailure+" still fails on the unchanged candidate; change the candidate or request before resuming")
+		}
+		journal.Feedback = verificationFeedback(journal)
+		if configuredFeedback != "" {
+			journal.Feedback = configuredFeedback + "\n" + journal.Feedback
+		}
+		return runner.transition(directory, journal, "repairing")
 	}
 	if configuredFeedback != "" {
 		journal.Feedback = configuredFeedback
