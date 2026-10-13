@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.36 - 2026-10-13
+
+### Fixed
+
+- Read failed Sonar check annotations through the trusted GitHub CLI controller and return bounded diagnostics tied to the exact published revision and committed source locations. Keep raw annotation messages private and require the original implementation session to repair, verify and publish the change.
+- Give CI repairs a finite allowance separate from earlier repository-check repairs. Preserve cumulative history and the implementation-turn ceiling, stop unchanged published revisions, and provide one explicit recovery for legacy runs stopped before their first CI repair.
+
 ## 0.1.0-beta.35 - 2026-10-13
 
 ### Fixed

@@ -129,8 +129,8 @@ func (publisherCommandRunner) Run(ctx context.Context, input io.Reader, output i
 	command := exec.CommandContext(ctx, "docker", args...)
 	command.Stdin, command.Stdout = input, output
 	command.Stderr = io.Discard
-	if command.Run() != nil {
-		return fmt.Errorf("isolated publisher failed")
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("isolated publisher failed: %w", err)
 	}
 	return nil
 }
@@ -165,23 +165,109 @@ func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspa
 	return response.Publication, err
 }
 
-// Directory is the run's private directory, never a worker workspace.
-func (publisher DockerPublisher) Checks(ctx context.Context, plan Plan, previous Publication) (CIResult, error) {
-	directory, err := os.MkdirTemp("", "sdlc-publisher-checks-")
-	if err != nil {
-		return CIResult{}, fmt.Errorf("cannot prepare publisher request")
+// Checks runs the current controller's collector with the frozen image's official
+// gh client. Old publisher binaries do not determine diagnostic capabilities.
+func (publisher DockerPublisher) Checks(ctx context.Context, plan Plan, previous Publication) (result CIResult, resultErr error) {
+	frozen := plan.PublicationIdentity
+	if frozen == nil {
+		return CIResult{}, fmt.Errorf("CI inspection requires frozen publication identity")
 	}
-	defer os.RemoveAll(directory)
-	directory, err = filepath.EvalSymlinks(directory)
-	if err != nil {
-		return CIResult{}, fmt.Errorf("cannot resolve publisher request directory")
+	if err := frozen.Validate(); err != nil {
+		return CIResult{}, err
 	}
-	response, err := publisher.invoke(ctx, directory, PublisherRequest{Action: "checks", Plan: plan, Previous: previous})
-	return response.Checks, err
+	if publisher.ValidatePair != nil {
+		if err := publisher.ValidatePair(); err != nil {
+			return CIResult{}, err
+		}
+	}
+	if publisher.Runtime.Docker == nil || publisher.ImageID == "" {
+		return CIResult{}, fmt.Errorf("CI inspection requires pinned runtime")
+	}
+	state, err := publisher.Runtime.Status(ctx)
+	if err != nil || state.ImageID != publisher.ImageID {
+		return CIResult{}, fmt.Errorf("CI runtime differs from pinned image")
+	}
+	session, err := publisher.Auth.Acquire(ctx)
+	if err != nil {
+		return CIResult{}, fmt.Errorf("GitHub stored login unavailable")
+	}
+	defer func() {
+		if session.Close() != nil {
+			result = CIResult{}
+			resultErr = errors.Join(resultErr, fmt.Errorf("CI credential lease cleanup failed"))
+		}
+	}()
+	if publisher.ValidatePair != nil {
+		if err := publisher.ValidatePair(); err != nil {
+			return CIResult{}, err
+		}
+	}
+	profile, profileErr := githubauth.NormalizeProfile(plan.GitHubProfile)
+	frozenProfile, frozenErr := githubauth.NormalizeProfile(frozen.GitHubProfile)
+	identity, err := session.Identity(ctx)
+	if err != nil || profileErr != nil || frozenErr != nil || profile != frozenProfile || session.Profile != frozenProfile || session.ImageID != publisher.ImageID || session.Volume != frozen.GitHubVolume || identity.ID != frozen.GitHubID || identity.Login != frozen.GitHubLogin {
+		return CIResult{}, fmt.Errorf("CI GitHub session differs from frozen publication identity")
+	}
+	collector := GitHubPublisher{Frozen: frozen, Command: func(ctx context.Context, name string, argv ...string) ([]byte, error) {
+		if name != "gh" || len(argv) < 1 || argv[0] != "api" && argv[0] != "pr" {
+			return nil, fmt.Errorf("unsupported CI controller command")
+		}
+		return publisher.ciControllerCommand(ctx, session.Volume, argv)
+	}}
+	result, err = collector.Checks(ctx, plan, previous)
+	if err != nil {
+		return CIResult{}, err
+	}
+	if err := validateCIResult(result, previous); err != nil {
+		return CIResult{}, err
+	}
+	return result, nil
+}
+
+func (publisher DockerPublisher) ciControllerCommand(ctx context.Context, volume string, argv []string) (data []byte, commandErr error) {
+	id, err := NewID()
+	if err != nil {
+		return nil, fmt.Errorf("cannot allocate CI controller")
+	}
+	name := "sdlc-ci-" + id
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		listed, err := publisher.Runtime.Docker.Output(cleanup, "ps", "--all", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+		if err != nil {
+			data = nil
+			commandErr = errors.Join(commandErr, fmt.Errorf("CI controller cleanup inspection failed"))
+			return
+		}
+		if strings.TrimSpace(string(listed)) == name {
+			if _, err := publisher.Runtime.Docker.Output(cleanup, "rm", "--force", name); err != nil {
+				data = nil
+				commandErr = errors.Join(commandErr, fmt.Errorf("CI controller cleanup failed"))
+			}
+		}
+	}()
+	args := ciControllerArguments(publisher.ImageID, name, volume)
+	args = append(args, argv...)
+	runner := publisher.Runner
+	if runner == nil {
+		runner = publisherCommandRunner{}
+	}
+	var output ciAPIOutput
+	err = runner.Run(ctx, nil, &output, args...)
+	if output.exceeded {
+		return nil, fmt.Errorf("CI controller response exceeds bound")
+	}
+	return output.buffer.Bytes(), err
+}
+
+func ciControllerArguments(image, name, volume string) []string {
+	installation := strings.TrimSuffix(strings.TrimPrefix(volume, "sdlc-github-auth-"), "-github")
+	args := checkContainerEnvironment([]string{"run", "--name", name, "--label", "io.sdlc.managed=true", "--label", "io.sdlc.kind=github-auth", "--label", "io.sdlc.provider=github", "--label", "io.sdlc.installation=" + installation, "--pull", "never", "--network", "bridge", "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--memory", "2g", "--cpus", "2", "--log-driver", "none", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777", "--mount", "type=volume,src=" + volume + ",dst=/github-auth,readonly,volume-nocopy", "--env", "HOME=/tmp", "--env", "GH_CONFIG_DIR=/github-auth", "--env", "GH_HOST=github.com", "--env", "GH_NO_UPDATE_NOTIFIER=1", "--env", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "--env", "GH_PROMPT_DISABLED=1"})
+	return append(args, "--entrypoint", "/usr/local/bin/gh", image)
 }
 
 type boundedPublisherOutput struct {
-	bytes.Buffer
+	buffer   bytes.Buffer
 	exceeded bool
 }
 
@@ -198,12 +284,14 @@ func (reader clearingKeyReader) Read(data []byte) (int, error) {
 	return n, err
 }
 
+func (output *boundedPublisherOutput) Len() int { return output.buffer.Len() }
+
 func (output *boundedPublisherOutput) Write(data []byte) (int, error) {
-	if output.Len()+len(data) > 1024*1024 {
+	if output.buffer.Len()+len(data) > 1024*1024 {
 		output.exceeded = true
 		return len(data), nil
 	}
-	return output.Buffer.Write(data)
+	return output.buffer.Write(data)
 }
 func (publisher DockerPublisher) invoke(ctx context.Context, directory string, request PublisherRequest) (result PublisherResponse, resultErr error) {
 	fail := func(message string) (PublisherResponse, error) { return PublisherResponse{}, fmt.Errorf("%s", message) }
@@ -339,7 +427,7 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 		return fail("isolated publisher failed")
 	}
 	var response PublisherResponse
-	decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
+	decoder := json.NewDecoder(bytes.NewReader(output.buffer.Bytes()))
 	decoder.DisallowUnknownFields()
 	if output.exceeded || decoder.Decode(&response) != nil {
 		return fail("invalid isolated publisher response")
@@ -354,6 +442,12 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if request.Action == "publish" && (response.Publication.Number < 1 || response.Publication.BaseSHA != request.Plan.BaseSHA || !objectID.MatchString(response.Publication.HeadSHA) || !strings.HasPrefix(response.Publication.URL, "https://github.com/"+request.Plan.Repository+"/pull/")) {
 		return fail("invalid isolated publication result")
 	}
+	if request.Action == "checks" {
+		if err := validateCIResult(response.Checks, request.Previous); err != nil {
+			return fail("invalid isolated CI diagnostics")
+		}
+	}
+
 	return response, nil
 }
 

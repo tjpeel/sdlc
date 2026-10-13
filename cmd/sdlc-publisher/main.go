@@ -30,11 +30,42 @@ func trustedCommand(ctx context.Context, name string, args ...string) ([]byte, e
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "GH_CONFIG_DIR=/github-auth", "GH_HOST=github.com", "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "LANG=C.UTF-8"}
 	command.Stderr = io.Discard
+	return trustedCommandOutput(command, name == "gh")
+}
+
+const maximumAPIOutput = 512 * 1024
+
+type apiCommandOutput struct {
+	buffer   bytes.Buffer
+	exceeded bool
+}
+
+func (output *apiCommandOutput) Write(p []byte) (int, error) {
+	if output.exceeded || output.buffer.Len()+len(p) > maximumAPIOutput {
+		output.exceeded = true
+		return len(p), nil
+	}
+	return output.buffer.Write(p)
+}
+func trustedCommandOutput(command *exec.Cmd, api bool) ([]byte, error) {
+	if api {
+		var output apiCommandOutput
+		command.Stdout = &output
+		err := command.Run()
+		if output.exceeded {
+			return nil, fmt.Errorf("publisher GitHub response exceeds output bound")
+		}
+		if err != nil {
+			return output.buffer.Bytes(), fmt.Errorf("publisher command failed: %w", err)
+		}
+		return output.buffer.Bytes(), nil
+	}
 	output, err := command.Output()
 	if err != nil {
-		return output, fmt.Errorf("publisher command failed")
+		return output, fmt.Errorf("publisher command failed: %w", err)
 	}
 	return output, nil
+
 }
 func execute(ctx context.Context, request workrun.PublisherRequest, input io.Reader) (workrun.PublisherResponse, error) {
 	if request.Plan.PublicationIdentity == nil {

@@ -13,7 +13,12 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 
 	checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
 	journal.Timings.CIQueryMS += time.Since(queryStarted).Milliseconds()
-	journal.CI = checks
+	if err == nil {
+		err = validateCIResult(checks, journal.Publication)
+	}
+	if err == nil {
+		journal.CI = checks
+	}
 	if err != nil {
 		return runner.stop(directory, journal, "blocked", err.Error())
 	}
@@ -57,11 +62,28 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 		return nil
 	case "failed":
-		journal.Rounds++
-		if journal.Rounds > runner.MaxRounds {
-			return runner.stop(directory, journal, "blocked", "required CI still fails after the repair bound")
+		if journal.Attempt >= 24 {
+			return runner.stop(directory, journal, "blocked", "implementation reached the configured session-turn bound")
 		}
-		journal.Feedback = "Required CI failed on the published revision. Use tjpeel-pr-monitor guidance for a bounded repair: " + checks.Details
+		budget := journal.CIRepairBudget
+		if budget == nil {
+			return runner.stop(directory, journal, "blocked", legacyCIRepairBound)
+		}
+		if budget.LastGrantedHead == journal.Publication.HeadSHA {
+			return runner.stop(directory, journal, "blocked", "CI repair requires a new published head; unchanged failed revision retained")
+		}
+		limit := runner.MaxRounds
+		if limit <= 0 || limit > 3 {
+			limit = 3
+		}
+		if budget.Used >= limit {
+			return runner.stop(directory, journal, "blocked", ciRepairBound)
+		}
+		budget.Used++
+		budget.LastGrantedHead = journal.Publication.HeadSHA
+		journal.Rounds++
+		journal.Feedback = ciRepairFeedback(checks, journal.Publication.HeadSHA)
+
 		if err := runner.transition(directory, journal, "repairing"); err != nil {
 			return err
 		}

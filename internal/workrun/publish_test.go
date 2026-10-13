@@ -28,7 +28,7 @@ func TestGitHubChecksStatusAndExactRevision(t *testing.T) {
 					t.Fatal("omitted available CI evidence")
 				}
 				data, _ := json.Marshal([]map[string]string{{"name": "tests", "bucket": tc.bucket, "state": "COMPLETED"}})
-				return data, errors.New("gh check status exit")
+				return data, ciStatusExit(1)
 			}}
 			result, err := pub.Checks(context.Background(), Plan{Repository: "example/project"}, Publication{Number: 1, BaseSHA: testBase, HeadSHA: testHead})
 			if tc.want == "error" {
@@ -351,7 +351,7 @@ func TestGitHubMissingChecksConfirmExactRevision(t *testing.T) {
 			views := 0
 			pub := GitHubPublisher{Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				if args[1] == "checks" {
-					return []byte(`[]`), errors.New("no checks yet")
+					return []byte(`[]`), ciStatusExit(1)
 				}
 				views++
 				head := testHead
@@ -367,3 +367,8 @@ func TestGitHubMissingChecksConfirmExactRevision(t *testing.T) {
 		})
 	}
 }
+
+type ciStatusExit int
+
+func (e ciStatusExit) Error() string { return "synthetic gh check exit" }
+func (e ciStatusExit) ExitCode() int { return int(e) }

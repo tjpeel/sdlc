@@ -598,3 +598,20 @@ func TestRunNamedRuntimePlanAndResumeSelection(t *testing.T) {
 		t.Fatal("feature silently accepted unsupported runtime")
 	}
 }
+
+func TestParseRunCIRepairInitializationRequiresExplicitResume(t *testing.T) {
+	for _, args := range [][]string{runArgs("--initialize-ci-repair-budget"), runArgs("--resume", "recorded", "--initialize-ci-repair-budget", "--answer-file", "answer.txt")} {
+		if _, err := parseRunOptions(args); err == nil {
+			t.Fatal("invalid CI recovery selection accepted")
+		}
+	}
+	options, err := parseRunOptions(runArgs("--resume", "recorded", "--initialize-ci-repair-budget", "--dry-run"))
+	if err != nil || !options.initializeCIRepairBudget {
+		t.Fatal("explicit legacy recovery option lost", err)
+	}
+	args := controllerArgs(runArgs("--resume", "recorded", "--initialize-ci-repair-budget", "--terminal", "background"))
+	options, err = parseRunOptions(args)
+	if err != nil || !options.initializeCIRepairBudget {
+		t.Fatal("terminal launch dropped recovery authorization", err)
+	}
+}

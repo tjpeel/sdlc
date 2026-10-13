@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestJournalRoundTripRetainsRecoveryEvidence(t *testing.T) {
 	if got.ResumeState != j.ResumeState || got.SessionID != j.SessionID || got.Evidence.Tree != testTree || got.Publication != j.Publication || got.Rounds != 2 || got.Attempt != 4 || got.UpdatedAt.IsZero() {
 		t.Fatalf("lost recovery state: %+v", got)
 	}
-	if got.StopReason != j.StopReason || got.CI != j.CI || got.StartedAt.IsZero() {
+	if got.StopReason != j.StopReason || !reflect.DeepEqual(got.CI, j.CI) || got.StartedAt.IsZero() {
 		t.Fatal("reporting fields were not retained")
 	}
 	started := got.StartedAt

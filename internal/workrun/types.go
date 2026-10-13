@@ -204,8 +204,9 @@ type Publication struct {
 }
 
 type CIResult struct {
-	Status  string `json:"status"`
-	Details string `json:"details"`
+	Diagnostics []CIAnnotation `json:"diagnostics,omitempty"`
+	Status      string         `json:"status"`
+	Details     string         `json:"details"`
 }
 
 type Publisher interface {
@@ -233,6 +234,7 @@ type Journal struct {
 	Verification              []VerificationResult  `json:"additional_verification,omitempty"`
 	Evidence                  CheckEvidence         `json:"evidence"`
 	Outcome                   Outcome               `json:"outcome"`
+	CIRepairBudget            *CIRepairBudget       `json:"ci_repair_budget,omitempty"`
 	Rounds                    int                   `json:"rounds"`
 	RepairWindowStart         int                   `json:"repair_window_start,omitempty"`
 	Attempt                   int                   `json:"attempt"`

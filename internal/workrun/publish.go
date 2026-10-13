@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -28,6 +29,19 @@ func localCommand(ctx context.Context, name string, args ...string) ([]byte, err
 	command.Env = append(command.Env, "GIT_TERMINAL_PROMPT=0", "GH_PROMPT_DISABLED=1", "GIT_OPTIONAL_LOCKS=0")
 	var diagnostic bytes.Buffer
 	command.Stderr = &diagnostic
+	if name == "gh" {
+		var output ciAPIOutput
+		command.Stdout = &output
+		command.Stderr = io.Discard
+		err := command.Run()
+		if output.exceeded {
+			return nil, fmt.Errorf("GitHub response exceeds output bound")
+		}
+		if err != nil {
+			return output.buffer.Bytes(), fmt.Errorf("GitHub command failed: %w", err)
+		}
+		return output.buffer.Bytes(), nil
+	}
 	data, err := command.Output()
 	if err != nil {
 		return data, fmt.Errorf("%s command failed; check host authentication, signing and remote state", name)
@@ -546,23 +560,32 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 		return CIResult{}, fmt.Errorf("PR revision changed while waiting for CI")
 	}
 	data, checkErr := publisher.command(ctx, "gh", "pr", "checks", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "name,bucket,state,link")
-	// gh exits nonzero for pending/failed checks; parse its structured output.
-	_ = checkErr
+	// Only documented failure/pending exits may carry usable check JSON.
+	if checkErr != nil {
+		var status interface{ ExitCode() int }
+		if !errors.As(checkErr, &status) || status.ExitCode() != 1 && status.ExitCode() != 8 {
+			return CIResult{}, fmt.Errorf("required CI checks could not be read")
+		}
+	}
 	var checks []struct {
 		Name   string `json:"name"`
 		Bucket string `json:"bucket"`
 		State  string `json:"state"`
 		Link   string `json:"link"`
 	}
-	if json.Unmarshal(data, &checks) != nil || checks == nil {
+	if len(data) > maxCIAPIBytes || json.Unmarshal(data, &checks) != nil || checks == nil || len(checks) > 200 {
 		return CIResult{}, fmt.Errorf("required CI checks could not be read")
 	}
-	result := CIResult{Status: "passed", Details: string(data)}
+	result := CIResult{Status: "passed"}
+	sonarNames := map[string]bool{}
 	if len(checks) == 0 {
 		result.Status = "missing"
 	}
 	for _, check := range checks {
-		if check.Name == "" {
+		if (check.Bucket == "fail" || check.Bucket == "cancel") && strings.Contains(strings.ToLower(check.Name), "sonar") {
+			sonarNames[check.Name] = true
+		}
+		if check.Name == "" || len(check.Name) > 240 {
 			return CIResult{}, fmt.Errorf("required check has no identity")
 		}
 		switch check.Bucket {
@@ -577,6 +600,13 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, fmt.Errorf("required check has unknown status")
 		}
 	}
+	if len(sonarNames) > 0 {
+		result.Diagnostics, err = publisher.collectCIAnnotations(ctx, plan, pr, sonarNames)
+		if err != nil {
+			return CIResult{}, err
+		}
+	}
+
 	// Re-read the boundary after querying checks so results never certify a
 	// concurrently changed PR head or base.
 	after, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state")

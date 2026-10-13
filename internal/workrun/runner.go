@@ -21,19 +21,20 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
-	CompanionCloner   CompanionRepositoryCloner
-	Provider          Provider
-	Checker           Checker
-	Publisher         Publisher
-	Repository        Repository
-	Output            io.Writer
-	ProgressOutput    io.Writer
-	rawOutput         io.Writer
-	progress          *runprogress.Recorder
-	Instructions      string
-	MaxRounds         int
-	PollInterval      time.Duration
-	MissingCheckGrace time.Duration
+	CompanionCloner          CompanionRepositoryCloner
+	Provider                 Provider
+	Checker                  Checker
+	Publisher                Publisher
+	Repository               Repository
+	Output                   io.Writer
+	ProgressOutput           io.Writer
+	rawOutput                io.Writer
+	progress                 *runprogress.Recorder
+	Instructions             string
+	MaxRounds                int
+	InitializeCIRepairBudget bool
+	PollInterval             time.Duration
+	MissingCheckGrace        time.Duration
 	// Reporting hooks run while the exclusive controller lock is held.
 	OnStart        func(Journal) error
 	OnState        func(Journal) error
@@ -122,6 +123,18 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
 		}
 	}
+	if runner.InitializeCIRepairBudget {
+		if err := ValidateCIRepairInitialization(*journal); err != nil {
+			return err
+		}
+		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
+		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+	} else if journal.CIRepairBudget == nil && journal.Publication.Number == 0 && journal.Publication.URL == "" {
+		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
+	}
+
 	if journal.PendingInputs != nil {
 		return fmt.Errorf("input recovery is unfinished; complete it with sdlc inputs --run %s", journal.ID)
 	}
@@ -214,7 +227,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		switch journal.State {
 		case "ready":
 			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
-			journal.CI = checks
+			if err == nil {
+				err = validateCIResult(checks, journal.Publication)
+			}
+			if err == nil {
+				journal.CI = checks
+			}
 			if err != nil || checks.Status != "passed" {
 				return runner.stop(directory, journal, "blocked", "PR or CI changed after independent review")
 			}
@@ -354,6 +372,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			journal.Publication = publication
+			journal.CI = CIResult{}
 			if journal.Plan.Restack != nil {
 				journal.RestackAudit = append(journal.RestackAudit, *journal.Plan.Restack)
 				journal.Plan.Restack = nil
@@ -375,7 +394,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "awaiting_reviewer", fmt.Sprintf("authenticate %s, then resume this run for independent review", journal.Plan.Roles.Review.Provider))
 			}
 			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
-			journal.CI = checks
+			if err == nil {
+				err = validateCIResult(checks, journal.Publication)
+			}
+			if err == nil {
+				journal.CI = checks
+			}
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
@@ -421,7 +445,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			// A review is evidence for this exact PR boundary only.
 			checks, err = runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
-			journal.CI = checks
+			if err == nil {
+				err = validateCIResult(checks, journal.Publication)
+			}
+			if err == nil {
+				journal.CI = checks
+			}
 			if err != nil || checks.Status != "passed" {
 				return runner.stop(directory, journal, "blocked", "PR or CI changed during independent review")
 			}

@@ -115,13 +115,15 @@ func (r *fakeRepository) Inspect(context.Context, string) (Revision, error) {
 func (r *fakeRepository) Bundle(context.Context, string, string) error { r.bundles++; return nil }
 
 type fakePublisher struct {
-	statuses []string
-	calls    int
-	ci       int
-	failures int
-	err      error
-	ciErr    error
-	previous []Publication
+	heads     []string
+	ciResults []CIResult
+	statuses  []string
+	calls     int
+	ci        int
+	failures  int
+	err       error
+	ciErr     error
+	previous  []Publication
 }
 
 func (p *fakePublisher) Publish(_ context.Context, _ Plan, _, _ string, previous Publication, _ io.Writer) (Publication, error) {
@@ -130,12 +132,26 @@ func (p *fakePublisher) Publish(_ context.Context, _ Plan, _, _ string, previous
 	if p.err != nil {
 		return Publication{}, p.err
 	}
-	return Publication{URL: "https://github.com/example/project/pull/1", Number: 1, BaseSHA: testBase, HeadSHA: testHead}, nil
+	head := testHead
+	if len(p.heads) > 0 {
+		head = p.heads[0]
+		if len(p.heads) > 1 {
+			p.heads = p.heads[1:]
+		}
+	}
+	return Publication{URL: "https://github.com/example/project/pull/1", Number: 1, BaseSHA: testBase, HeadSHA: head}, nil
 }
 func (p *fakePublisher) Checks(context.Context, Plan, Publication) (CIResult, error) {
 	p.ci++
 	if p.ciErr != nil {
 		return CIResult{}, p.ciErr
+	}
+	if len(p.ciResults) > 0 {
+		result := p.ciResults[0]
+		if len(p.ciResults) > 1 {
+			p.ciResults = p.ciResults[1:]
+		}
+		return result, nil
 	}
 	if len(p.statuses) > 0 {
 		status := p.statuses[0]
@@ -785,5 +801,121 @@ func TestRunnerCompactRepairPromptContainsOnlyNewFeedbackAndIdentity(t *testing.
 		if !strings.Contains(prompt, boundary) {
 			t.Fatalf("repair prompt omitted check-worker boundary %q", boundary)
 		}
+	}
+}
+
+func TestRunnerFirstCIRepairIndependentOfPriorRounds(t *testing.T) {
+	dir, j := testRun(t)
+	j.State = "ci"
+	j.Rounds = 11
+	j.SessionID = testNative
+	j.Publication = Publication{URL: "https://github.com/example/project/pull/1", Number: 1, BaseSHA: testBase, HeadSHA: testHead}
+	j.CIRepairBudget = &CIRepairBudget{StartRound: 11}
+	runner := fakeRunner(&fakeProvider{}, &fakeChecker{}, &fakePublisher{failures: 1}, &fakeRepository{})
+	runner.MaxRounds = 3
+	if err := runner.checkCI(context.Background(), dir, j); err != nil || j.State != "repairing" {
+		t.Fatalf("prior rounds prevented first CI repair: %v %+v", err, j)
+	}
+	if j.Rounds != 12 || j.CIRepairBudget.Used != 1 || j.CIRepairBudget.LastGrantedHead != testHead || j.SessionID != testNative {
+		t.Fatalf("CI repair lost accounting or original session: %+v", j)
+	}
+}
+
+func TestRunnerCIRepairFiniteAndUnchangedHead(t *testing.T) {
+	dir, j := testRun(t)
+	j.State = "ci"
+	j.SessionID = testNative
+	j.Publication = annotationPublication()
+	j.Rounds = 11
+	j.CIRepairBudget = &CIRepairBudget{StartRound: 11}
+	pub := &fakePublisher{failures: 100}
+	runner := fakeRunner(&fakeProvider{}, &fakeChecker{}, pub, &fakeRepository{})
+	runner.MaxRounds = 99
+	for i, head := range []string{testHead, testTree, strings.Repeat("4", 40)} {
+		j.Publication.HeadSHA = head
+		j.State = "ci"
+		if err := runner.checkCI(context.Background(), dir, j); err != nil || j.CIRepairBudget.Used != i+1 {
+			t.Fatal("finite grant unavailable", err)
+		}
+	}
+	j.State = "ci"
+	j.Publication.HeadSHA = strings.Repeat("5", 40)
+	if err := runner.checkCI(context.Background(), dir, j); !errors.Is(err, ErrStopped) || j.CIRepairBudget.Used != 3 || j.Rounds != 14 {
+		t.Fatal("CI budget exceeded or changed counters", err)
+	}
+	if err := runner.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.CIRepairBudget.Used != 3 || j.Rounds != 14 {
+		t.Fatal("resume renewed exhausted CI budget", err)
+	}
+	dir, j = testRun(t)
+	j.State = "ci"
+	j.SessionID = testNative
+	j.Publication = annotationPublication()
+	j.CIRepairBudget = &CIRepairBudget{}
+	runner = fakeRunner(&fakeProvider{}, &fakeChecker{}, &fakePublisher{failures: 100}, &fakeRepository{})
+	if err := runner.checkCI(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	j.State = "ci"
+	if err := runner.checkCI(context.Background(), dir, j); !errors.Is(err, ErrStopped) || j.CIRepairBudget.Used != 1 || j.Rounds != 1 || !strings.Contains(j.StopReason, "unchanged") {
+		t.Fatal("unchanged CI head granted twice", err)
+	}
+	j.CIRepairBudget = &CIRepairBudget{}
+	j.State = "ci"
+	j.Attempt = 24
+	if err := runner.checkCI(context.Background(), dir, j); !errors.Is(err, ErrStopped) || j.CIRepairBudget.Used != 0 || j.Rounds != 1 {
+		t.Fatal("CI grant exceeded total turn ceiling", err)
+	}
+}
+func TestRunnerLegacyCIBudgetInitializationIsOneTime(t *testing.T) {
+	dir, j := testRun(t)
+	j.State = "ci"
+	j.SessionID = testNative
+	j.Publication = annotationPublication()
+	j.Rounds = 11
+	j.Attempt = 7
+	pub := &fakePublisher{failures: 100}
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("blocked")}}
+	runner := fakeRunner(p, &fakeChecker{}, pub, &fakeRepository{})
+	if err := runner.checkCI(context.Background(), dir, j); !errors.Is(err, ErrStopped) || j.CIRepairBudget != nil || j.Rounds != 11 || len(p.calls) != 0 {
+		t.Fatal("legacy published run silently reset CI accounting", err)
+	}
+	runner.InitializeCIRepairBudget = true
+	if err := runner.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal("explicit recovery failed", err)
+	}
+	if j.CIRepairBudget == nil || j.CIRepairBudget.StartRound != 11 || j.CIRepairBudget.Used != 1 || j.Rounds != 12 || j.Attempt != 8 || len(p.calls) != 1 || p.calls[0].ResumeID != testNative {
+		t.Fatal("recovery reset history or native session")
+	}
+	if ValidateCIRepairInitialization(*j) == nil {
+		t.Fatal("repeated initialization accepted")
+	}
+	for _, reason := range []string{"configured checks failed after the repair bound", "provider denied", "missing CI"} {
+		copy := *j
+		copy.CIRepairBudget = nil
+		copy.State = "blocked"
+		copy.ResumeState = "ci"
+		copy.StopReason = reason
+		if ValidateCIRepairInitialization(copy) == nil {
+			t.Fatal("other hold renewed CI budget")
+		}
+	}
+}
+func TestRunnerCIAnnotationRepairsSameSessionThenReviewsNewHead(t *testing.T) {
+	dir, j := testRun(t)
+	j.Rounds = 11
+	j.SessionID = testNative
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("implemented"), testOutcome("reviewed")}}
+	pub := &fakePublisher{heads: []string{testHead, strings.Repeat("4", 40)}, ciResults: []CIResult{{Status: "failed", Details: "private CI raw message", Diagnostics: []CIAnnotation{{Head: testHead, Path: "src/Example.cs", Line: 21, Level: "failure", Kind: "cognitive_complexity", Current: 18, Limit: 15}}}, {Status: "passed"}}}
+	repo := &fakeRepository{revisions: []Revision{{Head: testHead, Tree: testTree, Clean: true}, {Head: testHead, Tree: testTree, Clean: true}, {Head: strings.Repeat("4", 40), Tree: strings.Repeat("5", 40), Clean: true}, {Head: strings.Repeat("4", 40), Tree: strings.Repeat("5", 40), Clean: true}}}
+	checks := &fakeChecker{}
+	runner := fakeRunner(p, checks, pub, repo)
+	if err := runner.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	if j.State != "ready" || pub.calls != 2 || checks.calls != 2 || j.CIRepairBudget.Used != 1 || j.Rounds != 12 || j.Publication.HeadSHA == testHead || len(p.calls) != 3 {
+		t.Fatalf("repair did not recheck and republish a new head: %+v checks%d calls%d", j, checks.calls, len(p.calls))
+	}
+	if p.calls[1].ResumeID != testNative || !strings.Contains(p.calls[1].Prompt, "src/Example.cs:21") || !strings.Contains(p.calls[1].Prompt, "from 18 to at most 15") || strings.Contains(p.calls[1].Prompt, "private CI") || p.calls[2].Model != j.Plan.Roles.Review || p.calls[2].ResumeID != "" {
+		t.Fatal("CI metadata/session or opposite review boundary lost")
 	}
 }

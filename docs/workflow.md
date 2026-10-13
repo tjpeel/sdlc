@@ -159,7 +159,30 @@ The delivery sequence is:
 6. Passing current CI and a complete review without findings produce `ready` for
    human review. The PR stays draft. SDLC never merges or approves automatically.
 
-The normal repair bound is three rounds. Both leads use the pinned
+Failed Sonar checks are inspected by the trusted GitHub publisher through the
+official `gh api` client for the exact published head. The current controller
+runs the frozen image's unmodified `gh` binary with the selected profile's
+read-only credential volume; it mounts no worker source, Docker socket or signing
+material. Existing frozen worker images and journals retain their image IDs,
+and the older image's publisher binary does not supply the annotation collector. Only bounded annotation
+metadata from regular committed source files reaches the original implementation
+session: source path, positive location, level, and fixed analyzer guidance.
+Cognitive-complexity annotations can include bounded current and allowed values;
+raw titles, messages, URLs and assertion text remain private. API failures,
+incomplete responses or changed PR/check-run identities stop the run.
+
+CI repairs have a separate persisted budget of at most three grants. Each grant
+records its failed published head, so unchanged-head failures cannot obtain
+another repair turn. Total round history and the 24-turn implementation ceiling
+remain intact, as do configured-check and review bounds. New runs initialize CI
+accounting before publication. Published legacy journals with unknown CI
+accounting do not receive an automatic fresh budget. For an existing legacy
+`blocked`/`ci` repair-bound hold with the original session and publication, use
+`sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID --initialize-ci-repair-budget`
+once. Other holds and already initialized or exhausted CI budgets reject this
+option; it does not reset historical counters or renew other budgets.
+
+The normal configured-check and review repair bound is three rounds. Both leads use the pinned
 `read_low`, `read_medium` and `read_high` roles where their skills direct;
 implementation also uses `write_medium`. The controller's authority to publish
 one ticket does not authorise rewriting unrelated work.

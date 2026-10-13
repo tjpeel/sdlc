@@ -335,3 +335,120 @@ func TestPublisherParentRequiresPrivateTraversalBoundary(t *testing.T) {
 		t.Fatal("public parent accepted")
 	}
 }
+
+func TestPublisherOutputBoundCannotBypassWriteThroughReaderFrom(t *testing.T) {
+	var output boundedPublisherOutput
+	if _, err := io.Copy(&output, strings.NewReader(strings.Repeat("x", 1024*1024+1))); err != nil {
+		t.Fatal(err)
+	}
+	if !output.exceeded || output.Len() > 1024*1024 {
+		t.Fatal("publisher IPC output cap bypassed")
+	}
+}
+
+type frozenCIControllerDocker struct {
+	pairingRaceDocker
+	cleanupFailure bool
+}
+
+func (docker *frozenCIControllerDocker) Output(ctx context.Context, args ...string) ([]byte, error) {
+	if args[0] == "run" && args[len(args)-1] == "identity" {
+		return []byte(`{"id":123,"login":"example"}`), nil
+	}
+	if args[0] == "ps" && docker.cleanupFailure && strings.Contains(strings.Join(args, " "), "sdlc-ci-") {
+		return nil, errors.New("private cleanup error")
+	}
+	return docker.pairingRaceDocker.Output(ctx, args...)
+}
+
+type frozenCIControllerRunner struct {
+	docker              *frozenCIControllerDocker
+	failCleanupOnChecks bool
+	t                   *testing.T
+	fixture             *ciAnnotationFixture
+	image, volume       string
+	calls               int
+}
+
+func (runner *frozenCIControllerRunner) Run(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
+	runner.calls++
+	joined := strings.Join(args, " ")
+	for _, required := range []string{"--read-only", "--entrypoint /usr/local/bin/gh", "dst=/github-auth,readonly,volume-nocopy", "GH_CONFIG_DIR=/github-auth", "--log-driver none"} {
+		if !strings.Contains(joined, required) {
+			runner.t.Fatal("missing frozen collector boundary", required)
+		}
+	}
+	for _, forbidden := range []string{"sdlc-publisher", "/workspace", "docker.sock", "--privileged", "/source.bundle", "signing-key", "/request.json"} {
+		if strings.Contains(joined, forbidden) {
+			runner.t.Fatal("unsafe frozen collector mount or binary", forbidden)
+		}
+	}
+	if input != nil {
+		runner.t.Fatal("CI inspection received signing input")
+	}
+	position := -1
+	for i, arg := range args {
+		if arg == runner.image {
+			position = i
+			break
+		}
+	}
+	if position < 0 || !strings.Contains(joined, runner.volume) {
+		runner.t.Fatal("collector lost frozen image or selected credential volume")
+	}
+	data, err := runner.fixture.command(ctx, "gh", args[position+1:]...)
+	if runner.failCleanupOnChecks && len(args) > position+2 && args[position+1] == "pr" && args[position+2] == "checks" {
+		runner.docker.cleanupFailure = true
+	}
+	if _, writeErr := output.Write(data); writeErr != nil {
+		return writeErr
+	}
+	return err
+}
+func TestDockerPublisherCurrentCollectorWorksWithFrozenLegacyImage(t *testing.T) {
+	for _, failure := range []string{"", "cleanup", "cleanup checks", "API"} {
+		t.Run(failure, func(t *testing.T) {
+			directory, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			docker := &frozenCIControllerDocker{pairingRaceDocker: pairingRaceDocker{image: "sha256:" + strings.Repeat("a", 64), volume: "sdlc-github-auth-" + strings.Repeat("d", 32) + "-github"}, cleanupFailure: failure == "cleanup"}
+			runtime := runtimeimage.Manager{Directory: directory, Docker: docker}
+			state, _ := json.Marshal(runtimeimage.State{Version: 1, Engine: "fake-engine", ImageID: docker.image})
+			if err := os.WriteFile(filepath.Join(directory, "runtime.json"), state, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "github-installation.json"), []byte(`{"id":"`+strings.Repeat("d", 32)+`"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("DOCKER_HOST", "")
+			t.Setenv("DOCKER_CONTEXT", "")
+			fixture := newCIAnnotationFixture()
+			fixture.responses["user"] = map[string]any{"id": 123, "login": "example"}
+			fixture.responses["repos/example/project"] = map[string]any{"id": 99, "full_name": "example/project"}
+			fixture.responses["repos/example/project/branches/main"] = map[string]any{"commit": map[string]any{"sha": testBase}}
+			if failure == "API" {
+				fixture.fail = "repos/example/project/commits/" + testHead + "/check-runs?per_page=100&page=1"
+			}
+			runner := &frozenCIControllerRunner{t: t, fixture: fixture, image: docker.image, volume: docker.volume, docker: docker, failCleanupOnChecks: failure == "cleanup checks"}
+			identity := frozenTestIdentity()
+			identity.GitHubVolume = docker.volume
+			auth := githubauth.New(runtime)
+			auth.Docker = docker
+			publisher := DockerPublisher{Runtime: runtime, ImageID: docker.image, Auth: auth, Runner: runner, SigningKey: func(context.Context) ([]byte, error) { t.Fatal("CI requested a signing key"); return nil, nil }}
+			result, err := publisher.Checks(context.Background(), Plan{Repository: "example/project", Base: "main", BaseSHA: testBase, PublicationIdentity: identity}, annotationPublication())
+			if failure != "" {
+				if err == nil || len(result.Diagnostics) > 0 {
+					t.Fatal("frozen collector failure became semantic repair")
+				}
+				return
+			}
+			if err != nil || result.Status != "failed" || len(result.Diagnostics) != 2 || runner.calls < 8 || publisher.ImageID != docker.image || result.Diagnostics[0].Kind != "cognitive_complexity" {
+				t.Fatalf("legacy runtime did not execute current controller collector: %+v %v calls%d", result, err, runner.calls)
+			}
+		})
+	}
+}
