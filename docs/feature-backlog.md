@@ -79,3 +79,47 @@ Expected behaviour:
 
 Implementation should define the supported resume action and how comment
 processing and outstanding replies are shown to the user.
+
+## F003: Start dependent tickets from a tested combined base
+
+Added: 2026-10-13. Status: deferred; implementation has not started.
+
+Allow a ticket with multiple dependencies to start before its parent PRs merge
+into the integration branch. For example, tickets 1 and 2 can be implemented in
+parallel, then ticket 3 can start from a tested combination of their reviewed
+changes. Independent tickets should not need an artificial linear dependency
+chain to make later work possible.
+
+Expected behaviour:
+
+- Keep independent parent tickets on their own branches and preserve feature
+  priorities, dependencies, path-overlap rules and the selected ticket parallel
+  limit. Parents must meet the applicable readiness requirements before their
+  changes are included in a dependent ticket's base.
+- Build a separate derived branch from the recorded integration revision and
+  exact eligible parent commit IDs. Preserve the original PRs and their human
+  merge decisions; creating this base must not approve or merge those PRs.
+- Run the required repository checks against the combined candidate. Report
+  merge conflicts or failing combined checks before starting the dependent
+  ticket; individual parent checks do not establish that their combination works.
+- Start the dependent ticket on its own branch from the fixed, tested derived
+  commit. Target its PR at the derived branch so the review diff contains only
+  that ticket's changes.
+- Persist parent commit IDs, integration revision, derived-base revision and
+  the dependent ticket's own commit boundary in the feature checkpoint. Resume
+  from that recorded context rather than silently following moving parent heads.
+- Invalidate the derived base and descendant readiness when a parent revision
+  changes. Rebuild and validate the combination, then reconcile affected work
+  through the original saved implementation session and normal review workflow.
+- Once the parent PRs have merged into the integration branch, restack only the
+  dependent ticket's own changes onto the current integration revision and
+  retarget its PR. Handle squash merges without duplicating parent changes or
+  carrying the derived branch's merge commits into the ticket's own changes.
+- Repeat the required signing, repository checks, CI and independent review for
+  the reconciled published head. Preserve saved accounts, models, inputs, runtime,
+  history and budgets throughout the transition.
+
+Implementation should define derived-branch naming and retention, combined-check
+evidence, and how conflicts or invalidated bases are presented and recovered.
+Current multi-parent tickets continue to wait for all parents to merge until this
+feature is implemented.
