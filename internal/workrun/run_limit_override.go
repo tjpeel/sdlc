@@ -88,6 +88,10 @@ func validatePersistedRunLimitOverride(j *Journal) error {
 		if o.OriginalLimit != 16 {
 			return fmt.Errorf("invalid verification request override accounting")
 		}
+	case "push_repairs":
+		if o.OriginalLimit != 3 {
+			return fmt.Errorf("invalid push protection repair override accounting")
+		}
 	default:
 		return fmt.Errorf("unknown run limit override kind")
 	}
@@ -127,6 +131,10 @@ func admittedRunLimit(j Journal) (string, int, error) {
 		if j.ResumeState == "checking" && j.Rounds > j.RepairWindowStart && !j.Evidence.Passed && (j.Evidence.CompletedFailureKey != "" || formatterRepairFailure(j)) {
 			return "configured_repairs", 0, nil
 		}
+	case pushProtectionRepairBound:
+		if j.ResumeState == "publishing" && j.PushRepair != nil && len(j.PushRepair.Candidates) == 3 && j.Evidence.Passed && objectID.MatchString(j.Evidence.Head) && j.SessionID != "" {
+			return "push_repairs", 3, nil
+		}
 	case ciRepairBound:
 		b := j.CIRepairBudget
 		if j.ResumeState == "ci" && b != nil && b.Used > 0 && j.CI.Status == "failed" && j.Publication.Number > 0 && objectID.MatchString(j.Publication.HeadSHA) && b.LastGrantedHead != j.Publication.HeadSHA {
@@ -160,6 +168,9 @@ func admittedRunLimit(j Journal) (string, int, error) {
 // ValidateRunLimitOverride admits only actual controller numeric holds. Callers
 // must also recheck input integrity before saving the audit record.
 func ValidateRunLimitOverride(j Journal) error {
+	if err := validatePushRepairJournal(&j); err != nil {
+		return err
+	}
 	if err := validateRetainedVerification(&j); err != nil {
 		return err
 	}

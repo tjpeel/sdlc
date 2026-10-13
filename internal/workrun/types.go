@@ -245,6 +245,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	PushRepair                *PushProtectionRepair `json:"push_protection_repair,omitempty"`
 	RestackNeedsChecks        bool                  `json:"restack_needs_checks,omitempty"`
 	DeferredAnswer            string                `json:"deferred_answer,omitempty"`
 	DependencyInvalid         bool                  `json:"dependency_invalid,omitempty"`

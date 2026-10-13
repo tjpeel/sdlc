@@ -54,6 +54,9 @@ func trustedCommand(ctx context.Context, name string, args ...string) ([]byte, e
 		clear(failureOutput.buffer.Bytes())
 		failureOutput = diagnosticOutput{}
 	}
+	if err != nil && !failureOutput.exceeded {
+		err = &workrun.PublisherCommandFailure{Name: name, Args: append([]string(nil), args...), Stderr: append([]byte(nil), failureOutput.buffer.Bytes()...), Exit: failureExit, Cause: err}
+	}
 	return data, err
 }
 
@@ -78,6 +81,17 @@ func (output *diagnosticOutput) Write(data []byte) (int, error) {
 	return n, nil
 }
 func failureResponse(err error, diagnostic io.Writer) workrun.PublisherResponse {
+	var history *workrun.HistoricalCleanupIncomplete
+	if errors.As(err, &history) {
+		return workrun.PublisherResponse{Error: "historical cleanup incomplete", HistoryIncomplete: history}
+	}
+	var rejection *workrun.PushProtectionRejection
+	if errors.As(err, &rejection) {
+		clear(failureOutput.buffer.Bytes())
+		failureOutput = diagnosticOutput{}
+		_, _ = failureOutput.Write(rejection.Diagnostic)
+		failureStage, failureCode, failureExit = "command", "command_failed", 1
+	}
 	if err != nil {
 		if failureOutput.buffer.Len() > 0 {
 			_, _ = failureOutput.Write([]byte("\nOrigin: "))
@@ -96,43 +110,44 @@ func failureResponse(err error, diagnostic io.Writer) workrun.PublisherResponse 
 		return workrun.PublisherResponse{Error: "publisher refused request"}
 	}
 	digest := sha256.Sum256(data)
-	return workrun.PublisherResponse{Error: "publisher refused request", Diagnostic: &workrun.PublicationDiagnostic{Stage: failureStage, Code: failureCode, ExitCode: failureExit, Path: "failure.stderr", SHA256: hex.EncodeToString(digest[:]), Bytes: len(data)}}
+	return workrun.PublisherResponse{Error: "publisher refused request", PushProtection: rejection, Diagnostic: &workrun.PublicationDiagnostic{Stage: failureStage, Code: failureCode, ExitCode: failureExit, Path: "failure.stderr", SHA256: hex.EncodeToString(digest[:]), Bytes: len(data)}}
 }
 
 const maximumAPIOutput = 512 * 1024
 
 type apiCommandOutput struct {
+	limit    int
 	buffer   bytes.Buffer
 	exceeded bool
 }
 
 func (output *apiCommandOutput) Write(p []byte) (int, error) {
-	if output.exceeded || output.buffer.Len()+len(p) > maximumAPIOutput {
+	limit := output.limit
+	if limit == 0 {
+		limit = maximumAPIOutput
+	}
+	if output.exceeded || output.buffer.Len()+len(p) > limit {
 		output.exceeded = true
 		return len(p), nil
 	}
 	return output.buffer.Write(p)
 }
 func trustedCommandOutput(command *exec.Cmd, api bool) ([]byte, error) {
-	if api {
-		var output apiCommandOutput
-		command.Stdout = &output
-		err := command.Run()
-		if output.exceeded {
-			return nil, fmt.Errorf("publisher GitHub response exceeds output bound")
-		}
-		if err != nil {
-			return output.buffer.Bytes(), fmt.Errorf("publisher command failed: %w", err)
-		}
-		return output.buffer.Bytes(), nil
+	output := apiCommandOutput{}
+	if !api {
+		output.limit = 1024 * 1024
 	}
-	output, err := command.Output()
+	command.Stdout = &output
+	err := command.Run()
+	if output.exceeded {
+		return nil, fmt.Errorf("publisher response exceeds output bound")
+	}
 	if err != nil {
-		return output, fmt.Errorf("publisher command failed: %w", err)
+		return output.buffer.Bytes(), fmt.Errorf("publisher command failed: %w", err)
 	}
-	return output, nil
-
+	return output.buffer.Bytes(), nil
 }
+
 func execute(ctx context.Context, request workrun.PublisherRequest, input io.Reader) (workrun.PublisherResponse, error) {
 	if request.Plan.PublicationIdentity == nil {
 		return workrun.PublisherResponse{}, fmt.Errorf("missing frozen identity")
@@ -141,7 +156,7 @@ func execute(ctx context.Context, request workrun.PublisherRequest, input io.Rea
 	if err := identity.Validate(); err != nil {
 		return workrun.PublisherResponse{}, err
 	}
-	publisher := workrun.GitHubPublisher{Command: trustedCommand, Frozen: identity, ExpectedHead: request.ExpectedHead, ExpectedTree: request.ExpectedTree, BundlePath: "/source.bundle", SigningKeyPath: "/tmp/signing-key", AllowedSignersPath: "/tmp/allowed-signers"}
+	publisher := workrun.GitHubPublisher{Command: trustedCommand, Frozen: identity, PushRepair: request.PushRepair, RejectedBundlePath: "/rejected.bundle", ExpectedHead: request.ExpectedHead, ExpectedTree: request.ExpectedTree, BundlePath: "/source.bundle", SigningKeyPath: "/tmp/signing-key", AllowedSignersPath: "/tmp/allowed-signers"}
 	switch request.Action {
 	case "branch":
 		snapshot, err := publisher.Branch(ctx, request.Plan, request.SnapshotBranch)

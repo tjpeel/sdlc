@@ -86,3 +86,24 @@ func TestPublisherFailureKeepsActualStderrOutsidePublicJSON(t *testing.T) {
 		t.Fatal("stderr is not bounded")
 	}
 }
+
+func TestTypedPushFailureKeepsRawDetectionOutsideResponse(t *testing.T) {
+	oldOutput, oldStage, oldCode, oldExit := failureOutput, failureStage, failureCode, failureExit
+	t.Cleanup(func() { failureOutput, failureStage, failureCode, failureExit = oldOutput, oldStage, oldCode, oldExit })
+	rejection := &workrun.PushProtectionRejection{Diagnostic: []byte("private disposable flagged line and arbitrary detection title\n")}
+	var private bytes.Buffer
+	response := failureResponse(rejection, &private)
+	encoded, err := json.Marshal(response)
+	if err != nil || response.PushProtection != rejection || response.Diagnostic == nil || !strings.Contains(private.String(), "private disposable flagged line") || strings.Contains(string(encoded), "private disposable flagged line") || strings.Contains(string(encoded), "arbitrary detection title") {
+		t.Fatal("typed push response leaked private diagnostic", err)
+	}
+}
+
+func TestTrustedGitOutputHasBoundedActualSubprocessCapture(t *testing.T) {
+	command := exec.Command("/bin/sh", "-c", "head -c 1048577 /dev/zero")
+	command.Stderr = io.Discard
+	data, err := trustedCommandOutput(command, false)
+	if err == nil || len(data) != 0 {
+		t.Fatal("oversize Git metadata retained", len(data), err)
+	}
+}

@@ -57,6 +57,9 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validatePushRepairJournal(journal); err != nil {
+		return err
+	}
 	if err := validatePersistedRunLimitOverride(journal); err != nil {
 		return err
 	}
@@ -121,6 +124,9 @@ func Load(directory string) (Journal, error) {
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&journal) != nil || decoder.Decode(new(any)) != io.EOF || journal.Version != 1 || journal.ID != filepath.Base(directory) || !objectID.MatchString(journal.Plan.StartingSHA) || !objectID.MatchString(journal.Plan.SourceSHA) {
 		return Journal{}, fmt.Errorf("invalid run journal")
+	}
+	if err := validatePushRepairJournal(&journal); err != nil {
+		return Journal{}, err
 	}
 	if err := validatePersistedRunLimitOverride(&journal); err != nil {
 		return Journal{}, err

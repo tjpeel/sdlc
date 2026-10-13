@@ -22,20 +22,23 @@ import (
 
 // PublisherRequest contains public frozen settings only; key material uses stdin.
 type PublisherRequest struct {
-	Action         string      `json:"action"`
-	Plan           Plan        `json:"plan"`
-	Previous       Publication `json:"previous"`
-	ExpectedHead   string      `json:"expected_head"`
-	ExpectedTree   string      `json:"expected_tree"`
-	SnapshotBranch string      `json:"snapshot_branch,omitempty"`
+	PushRepair     *PushProtectionRepair `json:"push_repair,omitempty"`
+	Action         string                `json:"action"`
+	Plan           Plan                  `json:"plan"`
+	Previous       Publication           `json:"previous"`
+	ExpectedHead   string                `json:"expected_head"`
+	ExpectedTree   string                `json:"expected_tree"`
+	SnapshotBranch string                `json:"snapshot_branch,omitempty"`
 }
 type PublisherResponse struct {
-	Diagnostic  *PublicationDiagnostic `json:"diagnostic,omitempty"`
-	Publication Publication            `json:"publication"`
-	Checks      CIResult               `json:"checks"`
-	Snapshot    BranchSnapshot         `json:"snapshot"`
-	RemotePR    RemotePR               `json:"remote_pr"`
-	Error       string                 `json:"error,omitempty"`
+	HistoryIncomplete *HistoricalCleanupIncomplete `json:"history_incomplete,omitempty"`
+	PushProtection    *PushProtectionRejection     `json:"push_protection,omitempty"`
+	Diagnostic        *PublicationDiagnostic       `json:"diagnostic,omitempty"`
+	Publication       Publication                  `json:"publication"`
+	Checks            CIResult                     `json:"checks"`
+	Snapshot          BranchSnapshot               `json:"snapshot"`
+	RemotePR          RemotePR                     `json:"remote_pr"`
+	Error             string                       `json:"error,omitempty"`
 }
 
 // Snapshot exports one verified remote branch into caller-private state.
@@ -180,7 +183,10 @@ func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspa
 	if err != nil || !revision.Clean || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head {
 		return Publication{}, fmt.Errorf("source changed after verification")
 	}
-	response, err := publisher.invoke(ctx, directory, PublisherRequest{Action: "publish", Plan: plan, Previous: previous, ExpectedHead: revision.Head, ExpectedTree: revision.Tree})
+	if err := validateRejectedBundle(directory, journal.PushRepair); err != nil {
+		return Publication{}, err
+	}
+	response, err := publisher.invoke(ctx, directory, PublisherRequest{PushRepair: journal.PushRepair, Action: "publish", Plan: plan, Previous: previous, ExpectedHead: revision.Head, ExpectedTree: revision.Tree})
 	if err == nil && output != nil {
 		fmt.Fprintln(output, "Draft PR:", response.Publication.URL)
 	}
@@ -316,6 +322,9 @@ func (output *boundedPublisherOutput) Write(data []byte) (int, error) {
 	return output.buffer.Write(data)
 }
 func (publisher DockerPublisher) invoke(ctx context.Context, directory string, request PublisherRequest) (result PublisherResponse, resultErr error) {
+	// This runs after credential/container/request/controller cleanup. A receipt
+	// is durable only when the typed rejection is the sole remaining error.
+	defer func() { result, resultErr = finishPushAuthority(ctx, directory, result, resultErr) }()
 	fail := func(message string) (PublisherResponse, error) { return PublisherResponse{}, fmt.Errorf("%s", message) }
 	if request.Plan.PublicationIdentity == nil {
 		return fail("run lacks frozen publication identity; create a new run")
@@ -333,10 +342,26 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if canonicalErr != nil || realDirectory(directory) != nil || privatePublisherParent(directory) != nil {
 		return fail("invalid private publisher directory")
 	}
+	if request.Action == "publish" {
+		var pendingReceipt *PushProtectionRejection
+		if request.PushRepair != nil {
+			pendingReceipt = request.PushRepair.Pending
+		}
+		if _, err := loadPushReceipt(directory, request.Plan, request.Previous, request.ExpectedHead, request.ExpectedTree, pendingReceipt); err != nil {
+			return fail(err.Error())
+		}
+	}
+
 	previousDiagnostic := filepath.Join(directory, "publisher")
 	if _, err := os.Lstat(previousDiagnostic); err == nil {
 		if realDirectory(previousDiagnostic) != nil {
 			return fail("invalid publisher state")
+		}
+		if err = os.Remove(filepath.Join(previousDiagnostic, "push-rejection-pending.json")); err != nil && !os.IsNotExist(err) {
+			return fail("cannot invalidate previous provisional push receipt")
+		}
+		if err = os.Remove(filepath.Join(previousDiagnostic, "push-rejection.json")); err != nil && !os.IsNotExist(err) {
+			return fail("cannot invalidate previous push receipt")
 		}
 		if err = os.Remove(filepath.Join(previousDiagnostic, "failure.json")); err != nil && !os.IsNotExist(err) {
 			return fail("cannot invalidate previous publisher diagnostic")
@@ -464,6 +489,21 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 			return fail("cannot stage exported bundle")
 		}
 		args = append(args, "--mount", mount(bundlePath, "/source.bundle", true))
+		if request.PushRepair != nil && request.PushRepair.Pending != nil {
+			if err := validateRejectedBundle(directory, request.PushRepair); err != nil {
+				return fail("original rejected bundle unavailable or changed")
+			}
+			rejectedPath := filepath.Join(requestDirectory, "rejected.bundle")
+			if err := stagePublisherBundle(filepath.Join(private, request.PushRepair.Pending.KnownAuditBundle), rejectedPath); err != nil {
+				return fail("cannot stage original rejected bundle")
+			}
+			digest, err := rejectedBundleHash(rejectedPath)
+			if err != nil || digest != request.PushRepair.Pending.KnownAuditSHA256 {
+				return fail("staged rejected bundle hash mismatch")
+			}
+			args = append(args, "--mount", mount(rejectedPath, "/rejected.bundle", true))
+		}
+
 	}
 	args = append(args, "--mount", mount(helperPath, "/trusted/sdlc-publisher", true), "--entrypoint", "/trusted/sdlc-publisher", publisher.ImageID)
 	runner := publisher.Runner
@@ -497,16 +537,39 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if decoder.Decode(&extra) != io.EOF {
 		return fail("invalid isolated publisher response")
 	}
-	if response.Error == "" && (response.Diagnostic != nil || diagnostic.buffer.Len() != 0 || diagnostic.exceeded) {
+	if response.Error == "" && (response.HistoryIncomplete != nil || response.PushProtection != nil || response.Diagnostic != nil || diagnostic.buffer.Len() != 0 || diagnostic.exceeded) {
 		return fail("unexpected isolated publisher diagnostic response")
 	}
+	if response.HistoryIncomplete != nil {
+		var prior *PushProtectionRejection
+		if request.PushRepair != nil {
+			prior = request.PushRepair.Pending
+		}
+		if request.Action != "publish" || response.Error != "historical cleanup incomplete" || response.PushProtection != nil || response.Diagnostic != nil || diagnostic.buffer.Len() != 0 || diagnostic.exceeded || validateHistoryPacket(response.HistoryIncomplete, prior, request.Plan, request.Previous, request.ExpectedHead, request.ExpectedTree) != nil {
+			return fail("invalid history cleanup response")
+		}
+		return PublisherResponse{}, response.HistoryIncomplete
+	}
+
 	if response.Error != "" {
 		if diagnostic.exceeded || response.Diagnostic == nil {
 			return fail("isolated publication refused; diagnostic unavailable")
 		}
+		if response.PushProtection != nil {
+			if request.Action != "publish" || validatePushPacket(response.PushProtection, request.Plan, request.ExpectedHead, request.ExpectedTree) != nil || validatePushPublication(response.PushProtection, request.Previous) != nil || response.Diagnostic == nil || response.Diagnostic.Stage != "command" || response.Diagnostic.Code != "command_failed" || retainProvisionalPushReceipt(directory, response.PushProtection, response.Diagnostic.SHA256) != nil {
+				return fail("invalid provisional push protection response")
+			}
+		}
 		if response.Error != "publisher refused request" || response.Diagnostic == nil || retainPublicationDiagnostic(directory, *response.Diagnostic, diagnostic.buffer.Bytes()) != nil {
 			return fail("isolated publication refused; diagnostic unavailable; inspect frozen identity, source, signing and remote state")
 		}
+		if response.PushProtection != nil {
+			if request.Action != "publish" || response.Diagnostic.Stage != "command" || response.Diagnostic.Code != "command_failed" || validatePushPacket(response.PushProtection, request.Plan, request.ExpectedHead, request.ExpectedTree) != nil || validatePushPublication(response.PushProtection, request.Previous) != nil {
+				return fail("invalid push protection response")
+			}
+			return PublisherResponse{}, response.PushProtection
+		}
+
 		return fail(fmt.Sprintf("isolated publication refused at %s (%s); inspect private diagnostic %s", response.Diagnostic.Stage, response.Diagnostic.Code, filepath.Join(private, "failure.stderr")))
 	}
 	if request.Action == "publish" && request.Plan.Derived == nil && (response.Publication.Number < 1 || response.Publication.BaseSHA != request.Plan.BaseSHA || !objectID.MatchString(response.Publication.HeadSHA) || !strings.HasPrefix(response.Publication.URL, "https://github.com/"+request.Plan.Repository+"/pull/")) {

@@ -151,6 +151,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return err
 		}
 	}
+	if err := validateRejectedBundle(directory, journal.PushRepair); err != nil {
+		return err
+	}
 	if err := validatePersistedRunLimitOverride(journal); err != nil {
 		return err
 	}
@@ -474,6 +477,21 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err != nil || !revision.Clean || !journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head || !verificationCurrent(journal, revision.Head, revision.Tree) {
 				return runner.stop(directory, journal, "blocked", "source changed after verification; rerun checks before publishing")
 			}
+			var pendingReceipt *PushProtectionRejection
+			if journal.PushRepair != nil {
+				pendingReceipt = journal.PushRepair.Pending
+			}
+			receipt, receiptErr := loadPushReceipt(directory, journal.Plan, journal.Publication, revision.Head, revision.Tree, pendingReceipt)
+			if receiptErr != nil {
+				return runner.stop(directory, journal, "blocked", receiptErr.Error())
+			}
+			if receipt != nil && (journal.PushRepair == nil || journal.PushRepair.Pending == nil || journal.PushRepair.Pending.Head != receipt.Head) {
+				if err := runner.grantPushRepair(directory, journal, receipt); err != nil {
+					return err
+				}
+				continue
+			}
+
 			path := filepath.Join(directory, "source.bundle")
 			if info, err := os.Lstat(path); err == nil {
 				if !info.Mode().IsRegular() {
@@ -490,7 +508,29 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			publication, err := runner.Publisher.Publish(ctx, journal.Plan, journal.Workspace, directory, journal.Publication, runner.Output)
 			if err != nil {
+				if history, ok := err.(*HistoricalCleanupIncomplete); ok {
+					var prior *PushProtectionRejection
+					if journal.PushRepair != nil {
+						prior = journal.PushRepair.Pending
+					}
+					if validateHistoryPacket(history, prior, journal.Plan, journal.Publication, revision.Head, revision.Tree) != nil {
+						return runner.stop(directory, journal, "blocked", "invalid history cleanup feedback")
+					}
+					if err := runner.grantPushRepair(directory, journal, &history.Candidate); err != nil {
+						return err
+					}
+					continue
+				}
+				if rejection, ok := err.(*PushProtectionRejection); ok {
+					if err := runner.grantPushRepair(directory, journal, rejection); err != nil {
+						return err
+					}
+					continue
+				}
 				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+			if journal.PushRepair != nil {
+				journal.PushRepair.Pending = nil
 			}
 			journal.Publication = publication
 			if err := runner.replyPRFeedback(ctx, directory, journal); err != nil {

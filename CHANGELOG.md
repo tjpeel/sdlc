@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.51 - 2026-10-13
+
+### Added
+
+- Recognise a verified GitHub push-protection rejection at the actual push operation and return bounded original commit, file and line locations to the saved implementation session. Keep raw diagnostics, detected values and exemption URLs private.
+- Repair the unpublished implementation history before another protected push, retaining rejected source evidence and published history. Require a meaningful historical correction and fresh checks, signing, CI and independent review; unrelated publication failures retain their existing holds.
+
+### Changed
+
+- Run journals containing push-protection repair evidence require beta.51 or newer. Older saved runs remain readable; an old generic publication diagnostic requires a fresh trusted push result before it can authorise a repair cycle.
+
 ## 0.1.0-beta.50 - 2026-10-13
 
 ### Added

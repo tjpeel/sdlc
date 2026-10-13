@@ -58,6 +58,8 @@ type GitHubPublisher struct {
 	SigningKeyPath, AllowedSignersPath string
 	BundlePath                         string
 	AfterSigning                       func() error
+	PushRepair                         *PushProtectionRepair
+	RejectedBundlePath                 string
 }
 
 // Snapshot reads one canonical GitHub branch into the publisher's private
@@ -198,13 +200,16 @@ func (publisher GitHubPublisher) command(ctx context.Context, name string, args 
 }
 
 func (publisher GitHubPublisher) git(ctx context.Context, directory string, args ...string) (string, error) {
+	data, err := publisher.command(ctx, "git", publisher.gitArgs(directory, args...)...)
+	return strings.TrimSpace(string(data)), err
+}
+func (publisher GitHubPublisher) gitArgs(directory string, args ...string) []string {
 	helper := "!gh auth git-credential"
 	if publisher.Frozen != nil {
 		helper = "!/usr/local/bin/gh auth git-credential"
 	}
 	base := []string{"-C", directory, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "credential.https://github.com.helper=" + helper}
-	data, err := publisher.command(ctx, "git", append(base, args...)...)
-	return strings.TrimSpace(string(data)), err
+	return append(base, args...)
 }
 
 var githubRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -300,6 +305,14 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 	commits, err := publisher.git(ctx, local, "rev-list", "--reverse", "--first-parent", plan.SourceSHA+".."+candidate)
 	if err != nil || commits == "" {
 		return Publication{}, fmt.Errorf("ticket produced no implementation commit")
+	}
+	if publisher.PushRepair != nil && publisher.PushRepair.Pending != nil {
+		if err := validatePushPublication(publisher.PushRepair.Pending, previous); err != nil {
+			return Publication{}, err
+		}
+	}
+	if err := publisher.validatePushRepair(ctx, plan, local, candidate, strings.Fields(commits)); err != nil {
+		return Publication{}, err
 	}
 	mapping := map[string]string{}
 	mapPath := filepath.Join(directory, "signed-commits.json")
@@ -476,8 +489,9 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		// An exact lease also rejects a competing fast-forward between the
 		// last inspection and push. An empty expected value requires absence.
 		lease := "--force-with-lease=refs/heads/" + plan.Branch + ":" + remoteHead
-		if _, err := publisher.git(ctx, local, "push", "--porcelain", lease, "https://github.com/"+plan.Repository+".git", parent+":refs/heads/"+plan.Branch); err != nil {
-			return Publication{}, err
+		pushArgs := []string{"push", "--porcelain", lease, "https://github.com/" + plan.Repository + ".git", parent + ":refs/heads/" + plan.Branch}
+		if _, err := publisher.git(ctx, local, pushArgs...); err != nil {
+			return Publication{}, publisher.rejectedPush(ctx, plan, previous, local, candidate, parent, remoteHead, mapping, strings.Fields(commits), publisher.gitArgs(local, pushArgs...), err)
 		}
 	}
 	confirmed, err := publisher.git(ctx, local, "ls-remote", "https://github.com/"+plan.Repository+".git", "refs/heads/"+plan.Branch)

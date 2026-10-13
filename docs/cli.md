@@ -663,6 +663,37 @@ publication, CI and another fresh review. The normal repair bound is three round
 A complete review with no findings reaches `ready` and prints the PR URL. The PR
 remains draft; SDLC never approves, marks it ready or merges automatically.
 
+### Recover a push-protection rejection
+
+When GitHub rejects an actual publication push for detected secrets, SDLC can
+return verified original commit, repository-relative file and line locations to
+the same implementation session. GitHub names the publisher's signed commits;
+the trusted publisher maps them back to the original source history and checks
+each location at that exact revision. Current file line numbers may differ.
+Raw diagnostics, detected values, scanner titles and exemption URLs remain in
+private storage.
+
+The implementer assesses the reported content and corrects every affected
+unpublished commit. A later deletion or a change to commit IDs alone does not
+establish historical cleanup. The controller retains the rejected source
+evidence, protects the inherited source and any verified published prefix, and
+requires a meaningful correction before another push. A detection outside that
+unpublished suffix or an uncertain credential decision needs human resolution.
+SDLC does not request an exemption or bypass push protection.
+
+The corrected candidate repeats full checks, local review, signing and protected
+publication, followed by current CI and independent review. Separate persisted
+publication-repair accounting preserves existing sessions, identities, history
+and all other budgets. Transport, authentication, lease, signing, malformed
+metadata, overflow and cleanup failures retain operational holds.
+
+Continue the same saved run with `sdlc resume --run RUN_ID` after installing a
+version supporting this recovery. A legacy generic `command_failed` diagnostic
+does not prove which command failed; a fresh trusted push result must establish
+the rejection before it can authorise a repair handoff. GitHub's
+[command-line push-protection guide](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/work-with-leak-prevention/push-protection-on-the-command-line)
+explains why removal must cover every affected commit.
+
 ### Logs, questions and resume
 
 Every executing controller registers its private run directory in the installation's
