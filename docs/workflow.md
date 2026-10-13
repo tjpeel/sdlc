@@ -102,6 +102,30 @@ The delivery sequence is:
    Unchanged requests reuse completed evidence; temporary runtime failures can
    retry after recovery. Changed trees or requests need fresh checks. A third
    request for identical evidence without progress blocks with a diagnostic.
+   To obtain a formatter correction without running repository tools in the
+   authenticated worker, request a source artifact:
+
+   ```json
+   {"id":"format-source","purpose":"review the formatter correction","commands":[["dotnet","tool","restore"],["dotnet","csharpier","format","src/Example.cs"]],"baseline":null,"source_patch":{"paths":["src/Example.cs"]}}
+   ```
+
+   Commands run on a fresh source-only copy and HOME without private inputs,
+   credentials, shared build state or a Docker daemon. A fixed network-disabled
+   collector returns a private unified diff, committed head/tree and content
+   hashes for up to 16 selected committed UTF-8 text files. Each file is limited
+   to 256 KiB, each diff to 32 KiB and artifact JSON in the journal to 128 KiB.
+   Frozen inputs, private/configuration paths, unselected committed changes,
+   mode changes, links, deletions and binary files are refused. Source artifacts
+   cannot be combined with regression baselines; ordinary requests omit
+   `source_patch` or use `null`.
+   A nonempty artifact is unapplied data, not passing evidence. The original
+   worker first matches the current committed head/tree and selected source
+   hashes to the artifact and its `before_sha256` values. It discards stale
+   artifacts, reviews and applies the intended correction, commits it and requests
+   the full configured suite again. The controller never changes implementation
+   source. Empty corrections can pass the persistent request for the current
+   committed candidate. Failed commands, failed cleanup and stale candidates
+   cannot export artifacts. Raw logs remain private.
 3. After local review and `tjpeel-pr-draft` metadata, new runs validate the exact
    reference in the title and an explicit body field, plus all seven description
    headings in order with non-empty content. A default Markdown PR template in

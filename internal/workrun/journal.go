@@ -57,6 +57,9 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validateSourcePatchJournal(journal); err != nil {
+		return err
+	}
 	if err := journal.Plan.ValidateSidecarImages(); err != nil {
 		return err
 	}
@@ -109,6 +112,9 @@ func Load(directory string) (Journal, error) {
 		}
 	}
 	if err := validateVerificationRequests(requests, &journal.Plan); err != nil {
+		return Journal{}, err
+	}
+	if err := validateSourcePatchJournal(&journal); err != nil {
 		return Journal{}, err
 	}
 	if err := validateVerificationRequests(journal.Outcome.VerificationRequests, &journal.Plan); err != nil {

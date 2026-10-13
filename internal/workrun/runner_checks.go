@@ -32,6 +32,7 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 		journal.Evidence.Passed = false
 		for i := range journal.Verification {
 			journal.Verification[i].Key = ""
+			discardSourcePatchFeedback(journal, &journal.Verification[i])
 		}
 	}
 	phase, supported := runner.Checker.(CandidatePhaseChecker)
@@ -77,6 +78,7 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 		journal.Evidence.Passed = false
 		for i := range journal.Verification {
 			journal.Verification[i].Key = ""
+			discardSourcePatchFeedback(journal, &journal.Verification[i])
 		}
 		journal.State = "checking"
 		return runner.stop(directory, journal, "blocked", errors.Join(err, closeErr).Error())
@@ -93,6 +95,12 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 
 func (runner Runner) checkCandidate(ctx context.Context, directory string, journal *Journal, revision Revision) error {
 	configuredFeedback := ""
+	for i := range journal.Verification {
+		evidence := &journal.Verification[i]
+		if evidence.SourcePatch != nil && (evidence.Head != revision.Head || evidence.Tree != revision.Tree) {
+			discardSourcePatchFeedback(journal, evidence)
+		}
+	}
 	if journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed {
 		journal.CheckAttempt++
 		if err := runner.save(directory, journal); err != nil {
@@ -138,9 +146,11 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" still fails on the unchanged candidate; change the candidate or request before resuming")
 		}
 		checker, ok := runner.Checker.(VerificationChecker)
-		if !ok {
+		patchChecker, patchOK := runner.Checker.(SourcePatchChecker)
+		if evidence.Request.SourcePatch != nil && !patchOK || evidence.Request.SourcePatch == nil && !ok {
 			return runner.stop(directory, journal, "blocked", "selected check runtime does not support additional verification")
 		}
+		evidence.SourcePatch = nil
 		journal.CheckAttempt++
 		if err := runner.save(directory, journal); err != nil {
 			return err
@@ -151,7 +161,30 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			return err
 		}
 		checkOutput := runprogress.NewStream(runner.progress, runprogress.Event{RunID: journal.ID, Source: "checks", Stage: journal.State, Attempt: journal.CheckAttempt}, false)
-		checkErr := checker.Verify(ctx, journal.Workspace, evidence.Request, io.MultiWriter(log, runner.rawOutput, checkOutput))
+		var checkErr error
+		var patch *SourcePatchResult
+		patchCollected := false
+		output := io.MultiWriter(log, runner.rawOutput, checkOutput)
+		if evidence.Request.SourcePatch != nil {
+			patch, checkErr = patchChecker.VerifySourcePatch(ctx, journal.Workspace, evidence.Request, revision.Head, revision.Tree, output)
+			if checkErr == nil {
+				checkErr = validateSourcePatchResult(patch, evidence.Request, revision.Head, revision.Tree)
+			}
+			if checkErr == nil {
+				current, inspectErr := runner.Repository.Inspect(ctx, journal.Workspace)
+				if inspectErr != nil || !current.Clean || current.Head != revision.Head || current.Tree != revision.Tree {
+					checkErr = errors.New("source correction candidate revision changed before feedback")
+				}
+			}
+			if checkErr == nil && patch.Diff != "" {
+				patchCollected = true
+				checkErr = fmt.Errorf("%w: source correction requires review and a committed repair", ErrCheckFailed)
+			} else if checkErr == nil {
+				patchCollected = true
+			}
+		} else {
+			checkErr = checker.Verify(ctx, journal.Workspace, evidence.Request, output)
+		}
 		progressErr := checkOutput.Finish()
 		var diagnosticLogErr error
 		if checkErr != nil {
@@ -171,9 +204,19 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 		if closeErr != nil {
 			return runner.stop(directory, journal, "blocked", "cannot retain additional verification evidence")
 		}
+		if patchCollected {
+			evidence.SourcePatch = patch
+			if err := validateSourcePatchJournal(journal); err != nil {
+				evidence.SourcePatch, evidence.Key = nil, ""
+				return runner.stop(directory, journal, "blocked", "source correction artifacts exceed their validation bound")
+			}
+		}
 		if checkErr != nil {
 			// Detailed process output stays in the private log. Repair feedback is bounded controller metadata.
 			evidence.Diagnostic = verificationDiagnostic(evidence.Request, revision.Tree, checkErr)
+			if evidence.SourcePatch != nil && evidence.SourcePatch.Diff != "" {
+				evidence.Diagnostic = "Source correction commands completed. Review the private source_patch artifact as data, apply the intended correction in the implementation workspace, commit it, and request the full configured suite again. Do not treat the unapplied artifact as passing evidence."
+			}
 			if !errors.Is(checkErr, ErrCheckFailed) {
 				return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" could not complete; inspect its private log")
 			}

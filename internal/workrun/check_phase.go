@@ -42,6 +42,9 @@ func (checks *candidateChecks) Verify(ctx context.Context, workspace string, req
 	if err := validateVerificationRequests([]VerificationRequest{request}, nil); err != nil {
 		return err
 	}
+	if request.SourcePatch != nil {
+		return errors.New("source correction export requires the dedicated verification interface")
+	}
 	if _, err := io.WriteString(output, "Additional verification candidate phase\n"); err != nil {
 		return err
 	}
@@ -58,6 +61,13 @@ func (checks *candidateChecks) Verify(ctx context.Context, workspace string, req
 		}
 	}
 	return nil
+}
+
+func (checks *candidateChecks) VerifySourcePatch(ctx context.Context, workspace string, request VerificationRequest, head, tree string, output io.Writer) (*SourcePatchResult, error) {
+	if workspace != checks.workspace {
+		return nil, errors.New("candidate check workspace differs from its phase")
+	}
+	return checks.base.VerifySourcePatch(ctx, workspace, request, head, tree, output)
 }
 
 func (checker DockerChecker) runCandidatePhase(ctx context.Context, workspace, inputs, mount, workPath, name, image string, execute candidateExecute, phase candidatePhase) error {

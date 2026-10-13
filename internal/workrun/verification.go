@@ -17,10 +17,11 @@ import (
 
 // VerificationRequest asks the controller for machine verification in its existing isolated worker.
 type VerificationRequest struct {
-	ID       string                `json:"id"`
-	Purpose  string                `json:"purpose"`
-	Commands [][]string            `json:"commands"`
-	Baseline *VerificationBaseline `json:"baseline"`
+	ID          string                `json:"id"`
+	Purpose     string                `json:"purpose"`
+	Commands    [][]string            `json:"commands"`
+	Baseline    *VerificationBaseline `json:"baseline"`
+	SourcePatch *SourcePatchRequest   `json:"source_patch,omitempty"`
 }
 type VerificationBaseline struct {
 	Revision         string   `json:"revision"`
@@ -29,13 +30,14 @@ type VerificationBaseline struct {
 	FailureContains  []string `json:"failure_contains"`
 }
 type VerificationResult struct {
-	Request    VerificationRequest `json:"request"`
-	Key        string              `json:"key,omitempty"`
-	Head       string              `json:"head,omitempty"`
-	Tree       string              `json:"tree,omitempty"`
-	Passed     bool                `json:"passed"`
-	Log        string              `json:"log,omitempty"`
-	Diagnostic string              `json:"diagnostic,omitempty"`
+	Request     VerificationRequest `json:"request"`
+	Key         string              `json:"key,omitempty"`
+	Head        string              `json:"head,omitempty"`
+	Tree        string              `json:"tree,omitempty"`
+	Passed      bool                `json:"passed"`
+	Log         string              `json:"log,omitempty"`
+	Diagnostic  string              `json:"diagnostic,omitempty"`
+	SourcePatch *SourcePatchResult  `json:"source_patch,omitempty"`
 }
 type VerificationChecker interface {
 	Verify(context.Context, string, VerificationRequest, io.Writer) error
@@ -71,6 +73,9 @@ func validateVerificationRequests(requests []VerificationRequest, plan *Plan) er
 		}
 		if total > 8192 {
 			return fmt.Errorf("verification commands exceed bound")
+		}
+		if err := validateSourcePatchRequest(r, plan); err != nil {
+			return err
 		}
 		b := r.Baseline
 		if b == nil {

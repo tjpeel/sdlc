@@ -39,6 +39,7 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 type DockerChecker struct {
 	onTiming       func(CheckTiming)
 	workerSequence *int
+	sourcePatch    *sourcePatchCapture
 	NugetCache     *project.NugetCacheBudget
 	Runtime        runtimeimage.Manager
 	Runner         CheckCommandRunner
@@ -172,6 +173,9 @@ func (checker DockerChecker) Check(ctx context.Context, workspace string, comman
 func (checker DockerChecker) Verify(ctx context.Context, workspace string, request VerificationRequest, output io.Writer) error {
 	if err := validateVerificationRequests([]VerificationRequest{request}, nil); err != nil {
 		return err
+	}
+	if request.SourcePatch != nil {
+		return errors.New("source correction export requires the dedicated verification interface")
 	}
 	if output == nil {
 		output = io.Discard
@@ -329,6 +333,10 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 	copyArgs := checkContainerEnvironment([]string{"run", "--name", name + "-copy", "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly", "--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace"})
 	copyArgs = append(copyArgs, "--mount", "type=volume,src="+name+"-home,dst=/check-home", "--env", "SDLC_CHECK_HOME=/check-home")
 	copyArgs = append(copyArgs, "--entrypoint", "python3", state.ImageID, "-c", copyCheckWorkspace)
+	if checker.sourcePatch != nil {
+		// Keep repository Python modules out of the fixed source copier's imports.
+		copyArgs = append(copyArgs[:len(copyArgs)-2], append([]string{"-I"}, copyArgs[len(copyArgs)-2:]...)...)
+	}
 	if baseline != nil {
 		data, _ := json.Marshal(baseline)
 		copyArgs = append(copyArgs, string(data))
@@ -390,6 +398,12 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 		workerNetwork = "container:" + name + "-daemon"
 	}
 	workspaceMount := "type=volume,src=" + volumes[0] + ",dst=/workspace"
+	if checker.sourcePatch != nil {
+		cleanups = append(cleanups, []string{"rm", "--force", name + "-source-patch-validate"})
+		if err := checker.collectSourcePatch(ctx, workspace, workspaceMount, name, state.ImageID, false); err != nil {
+			return err
+		}
+	}
 	execute := func(batch [][]string, batchOutput io.Writer) error {
 		return checker.executeChecks(ctx, workspace, batch, batchOutput, baseline, name, state.ImageID, workerNetwork, "type=volume,src="+volumes[0]+",dst=/workspace", []string{"type=volume,src=" + name + "-home,dst=/tmp/check-home"}, func() string {
 			if checker.DockerTests {
@@ -402,7 +416,14 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 		cleanups = append(cleanups, []string{"rm", "--force", name + "-fingerprint"})
 		return checker.runCandidatePhase(ctx, workspace, inputs, workspaceMount, "/workspace", name, state.ImageID, execute, phase)
 	}
-	return execute(commands, output)
+	if err := execute(commands, output); err != nil {
+		return err
+	}
+	if checker.sourcePatch != nil {
+		cleanups = append(cleanups, []string{"rm", "--force", name + "-source-patch-capture"})
+		return checker.collectSourcePatch(ctx, workspace, workspaceMount, name, state.ImageID, true)
+	}
+	return nil
 }
 
 func (checker DockerChecker) executeChecks(ctx context.Context, workspace string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name, imageID, workerNetwork, workspaceMount string, homeMounts []string, socketMount string, prefix []string, onWorker func(string)) error {

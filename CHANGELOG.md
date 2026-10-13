@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.31 - 2026-10-13
+
+### Fixed
+
+- Return bounded source corrections from explicitly requested isolated formatter work to the original implementation session. Compare selected files with their committed originals, keep raw output and frozen check inputs private, and require review, a new commit and passing checks before publication.
+
 ## 0.1.0-beta.30 - 2026-10-13
 
 ### Fixed

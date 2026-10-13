@@ -119,6 +119,17 @@ native implementation session; each independent review starts fresh. A reported
 model mismatch stops execution; a missing model report cannot establish the
 requested identity. Effort is a request that providers may cap.
 
+An implementation worker may explicitly request a bounded source correction
+artifact through `verification_requests.source_patch`. Its formatter commands
+run in a fresh source-only check copy and HOME with no provider authentication,
+publication credentials, private inputs or Docker daemon. A fixed network-disabled
+collector exports only selected committed text as a private diff with revision
+and content hashes. It does not forward tool output. The authenticated worker
+treats that code as data, reviews and applies the intended correction, commits
+it and requests full verification. This artifact channel does not authorise raw
+log access, credential export or execution of repository tools in the provider
+worker; failed commands, failed cleanup and stale candidates cannot export.
+
 Native provider caches remain accessible inside authenticated workers. Separate
 check workers have no provider caches or host publication credentials, but a
 prompt cannot prevent the provider's shell from running repository code or
