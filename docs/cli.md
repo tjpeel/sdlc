@@ -927,6 +927,13 @@ stop/remove those containers deliberately before retrying. A container label alo
 does not establish that its controller remains alive.
 External Docker operations remain outside SDLC's coordination.
 
+When upgrading from the serialized provider implementation, finish older
+controllers and their container cleanup before starting new calls to that
+provider. Their containers have no operation ownership record and cannot safely
+share the cache with the new implementation. A retained refresh from an older
+Claude session also requires private inspection before resume; the upgrade
+preserves that file rather than guessing its relationship to the current cache.
+
 Each `--docker-tests` check invocation receives a distinct daemon and network
 namespace without publishing ports on the host. Separate invocations can use the
 same API or database ports inside their own daemons. Commands within one invocation
