@@ -18,11 +18,13 @@ type SubscriptionUsage struct {
 }
 
 type SubscriptionSnapshot struct {
-	Source     string                        `json:"source"`
-	ObservedAt time.Time                     `json:"observed_at"`
-	Status     string                        `json:"status"`
-	Reason     string                        `json:"reason,omitempty"`
-	Windows    map[string]SubscriptionWindow `json:"windows,omitempty"`
+	ProbeShutdown string                        `json:"probe_shutdown,omitempty"`
+	ProbeExitCode *int                          `json:"probe_exit_code,omitempty"`
+	Source        string                        `json:"source"`
+	ObservedAt    time.Time                     `json:"observed_at"`
+	Status        string                        `json:"status"`
+	Reason        string                        `json:"reason,omitempty"`
+	Windows       map[string]SubscriptionWindow `json:"windows,omitempty"`
 }
 
 type SubscriptionWindow struct {
@@ -54,6 +56,18 @@ func subscriptionSource(provider string) string {
 func validateSubscriptionSnapshot(snapshot *SubscriptionSnapshot) error {
 	if snapshot == nil {
 		return nil
+	}
+	switch snapshot.ProbeShutdown {
+	case "", "not_started":
+		if snapshot.ProbeExitCode != nil {
+			return fmt.Errorf("subscription probe has an exit code without a child")
+		}
+	case "natural", "terminated", "killed":
+		if snapshot.ProbeExitCode == nil || *snapshot.ProbeExitCode < -255 || *snapshot.ProbeExitCode > 255 {
+			return fmt.Errorf("invalid subscription probe exit code")
+		}
+	default:
+		return fmt.Errorf("invalid subscription probe shutdown")
 	}
 	if (snapshot.Source != subscriptionSource("codex") && snapshot.Source != subscriptionSource("claude")) || snapshot.ObservedAt.IsZero() || len(snapshot.Windows) > 32 {
 		return fmt.Errorf("invalid subscription snapshot")

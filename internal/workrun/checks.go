@@ -505,7 +505,7 @@ func (checker DockerChecker) executeChecks(ctx context.Context, workspace string
 			if baseline != nil && i == len(commands)-1 && status.ExitCode == baseline.ExpectedExitCode && matcher.complete() && diagnostic.compiler == nil && !diagnostic.styleIssues && !diagnostic.csharpier && !diagnostic.dockerUnavailable {
 				return nil
 			}
-			failure := &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, csharpier: diagnostic.csharpier, paths: diagnostic.paths, formatterLocations: diagnostic.formatterLocations, compiler: diagnostic.compiler, stackFrame: diagnostic.stackFrame}
+			failure := &CheckFailure{Command: i + 1, ExitCode: status.ExitCode, formatter: diagnostic.styleIssues, csharpier: diagnostic.csharpier, paths: diagnostic.paths, formatterLocations: diagnostic.formatterLocations, compiler: diagnostic.compiler, stackFrame: diagnostic.stackFrame, verifySnapshot: diagnostic.verifySnapshot}
 			if baseline != nil {
 				reason := "earlier baseline command failed; only the final command may fail"
 				if i == len(commands)-1 {

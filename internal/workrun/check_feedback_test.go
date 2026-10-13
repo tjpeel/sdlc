@@ -638,3 +638,37 @@ func TestDotNetStackFramePreservesCompilerAndFormatterPrecedence(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifySnapshotFeedbackKeepsAssertionTextPrivate(t *testing.T) {
+	for _, tc := range []struct {
+		name, output string
+		compiler     bool
+		want         bool
+	}{
+		{"snapshot", "  VerifyException : Directory: /workspace/tests\n  Received: private-value.received.json\n  {private-assertion}\n  at Private.Method(secret) in /workspace/tests/Example.cs:line 12\n", false, true},
+		{"unapproved frame", "  VerifyException : Directory: /workspace/tests\n  at Private.Method(secret) in /workspace/tests/Other.cs:line 12\n", false, true},
+		{"MTP wrapper without frame", "  Xunit.MicrosoftTestingPlatform.XunitException: VerifyException : Directory: /workspace/tests/private-directory\n  Received: private-value.received.json\n  {private-assertion}\n", false, true},
+		{"unrecognized wrapper", "  PrivateException: VerifyException : Directory: /workspace/tests\n", false, false},
+		{"compiler precedence", "  VerifyException : Directory: /workspace/tests\n  at Private.Method(secret) in /workspace/tests/Example.cs:line 12\n", true, false},
+		{"later exception", "  at Private.Method(secret) in /workspace/tests/Example.cs:line 12\n  VerifyException : Directory: /workspace/tests\n", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &formatterDiagnostic{approved: map[string]bool{"tests/Example.cs": true}}
+			d.Write([]byte(tc.output))
+			d.finish()
+			f := &CheckFailure{Command: 1, ExitCode: 1, stackFrame: d.stackFrame, verifySnapshot: d.verifySnapshot}
+			if tc.compiler {
+				f.compiler = &compilerDiagnostic{code: "CS1002", path: "tests/Example.cs", line: "1", column: "1"}
+			}
+			feedback := checkRepairFeedback(testTree, f, [][]string{{"dotnet", "test"}})
+			if strings.Contains(feedback, "Failure kind: Verify snapshot comparison") != tc.want {
+				t.Fatal(feedback)
+			}
+			for _, private := range []string{"Private.Method", "secret", "private-value", "private-assertion", "private-directory", "tests/Other.cs"} {
+				if strings.Contains(feedback, private) {
+					t.Fatalf("private diagnostic leaked: %s", private)
+				}
+			}
+		})
+	}
+}

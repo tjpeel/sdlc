@@ -176,3 +176,49 @@ func TestControllerConfiguredImmediateStopsSkipPendingVerification(t *testing.T)
 		})
 	}
 }
+
+func TestControllerConfiguredFailureReusesCompletedSuiteForFreshDiagnostic(t *testing.T) {
+	directory, journal := testRun(t)
+	first := testOutcome("checks_requested")
+	first.VerificationRequests = []VerificationRequest{regressionRequest()}
+	next := first
+	next.VerificationRequests = []VerificationRequest{{ID: "new-diagnostic", Purpose: "inspect another assertion", Commands: [][]string{{"tests", "diagnostic"}}}}
+	provider := &fakeProvider{outcomes: []Outcome{first, next, testOutcome("waiting_for_human")}}
+	checker := &controllerPhaseChecker{}
+	checker.fakeChecker.err = &CheckFailure{Command: 1, ExitCode: 1, csharpier: true, paths: []string{"src/Example.cs"}, formatterLocations: map[string]csharpierLocation{"src/Example.cs": {kind: "Expected", line: "42"}}}
+	checker.err = ErrCheckFailed
+	publisher := &fakePublisher{}
+	runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
+	runner.Checker = checker
+	if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	if checker.calls != 1 || len(checker.requests) != 2 || checker.requests[1].ID != "new-diagnostic" || publisher.calls != 0 || journal.Evidence.Passed || journal.Rounds != 2 {
+		t.Fatalf("fresh diagnostic repeated failed suite or bypassed failure: suites=%d diagnostics=%d publications=%d rounds=%d", checker.calls, len(checker.requests), publisher.calls, journal.Rounds)
+	}
+	if len(provider.calls) != 3 || !strings.Contains(provider.calls[2].Prompt, "src/Example.cs (CSharpier Expected around line 42)") || !strings.Contains(provider.calls[2].Prompt, regressionRequest().ID) || journal.Verification[0].Passed || journal.Verification[1].Passed {
+		t.Fatal("prior configured or additional failure evidence disappeared")
+	}
+}
+
+func TestControllerFreshDiagnosticsRetainConfiguredRepairBound(t *testing.T) {
+	directory, journal := testRun(t)
+	outcomes := make([]Outcome, 6)
+	for i := range outcomes {
+		outcomes[i] = testOutcome("checks_requested")
+		outcomes[i].VerificationRequests = []VerificationRequest{{ID: "diagnostic", Purpose: "inspect assertion", Commands: [][]string{{"tests", fmt.Sprint(i)}}}}
+	}
+	provider := &fakeProvider{outcomes: outcomes}
+	checker := &controllerPhaseChecker{}
+	checker.fakeChecker.err = ErrCheckFailed
+	publisher := &fakePublisher{}
+	runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
+	runner.Checker = checker
+	runner.MaxRounds = 3
+	if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	if !strings.Contains(journal.StopReason, configuredCheckRepairBound) || journal.Rounds != 4 || checker.calls != 1 || len(checker.requests) != 3 || len(provider.calls) != 4 || publisher.calls != 0 || journal.Evidence.Passed {
+		t.Fatalf("diagnostics evaded repair bound: rounds=%d suite=%d diagnostics=%d provider=%d stop=%s", journal.Rounds, checker.calls, len(checker.requests), len(provider.calls), journal.StopReason)
+	}
+}

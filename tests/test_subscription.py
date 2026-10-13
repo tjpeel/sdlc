@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / 'internal/providerauth/subscription.py'
 spec = importlib.util.spec_from_file_location('subscription_test', SOURCE)
@@ -49,6 +50,8 @@ for line in sys.stdin:
     def test_native_control_only_and_numeric_projection(self):
         result = subscription.codex_snapshot(self.env)
         self.assertEqual(result['status'], 'observed')
+        self.assertEqual(result['probe_shutdown'], 'natural')
+        self.assertEqual(result['probe_exit_code'], 0)
         self.assertEqual(result['windows']['codex/primary']['remaining_percent'], 75)
         self.assertEqual(result['windows']['codex/secondary']['remaining_percent'], 30)
         self.assertEqual(set(result['windows']), {'codex/primary','codex/secondary'})
@@ -69,6 +72,37 @@ for line in sys.stdin:
         with patch.object(subscription, 'SNAPSHOT_TIMEOUT', .1):
             result = subscription.codex_snapshot(dict(self.env, PROTOCOL_MODE='timeout'))
         self.assertEqual(result['reason'], 'timeout')
+
+    def test_probe_shutdown_records_only_fixed_lifecycle_metadata(self):
+        for mode, polled, waits, code in [
+            ('natural', 0, [0], 0),
+            ('natural', None, [0, 0], 0),
+            ('terminated', None, [subprocess.TimeoutExpired('fake-client', 1), -15, -15], -15),
+            ('killed', None, [subprocess.TimeoutExpired('fake-client', 1), subprocess.TimeoutExpired('fake-client', .25), -9], -9),
+        ]:
+            with self.subTest(mode=mode):
+                child = Mock()
+                child.poll.return_value = polled
+                child.wait.side_effect = waits
+                selector = Mock()
+                selector.select.return_value = []
+                context = Mock()
+                context.__enter__ = Mock(return_value=selector)
+                context.__exit__ = Mock(return_value=False)
+                with patch.object(subscription.subprocess, 'Popen', return_value=child), patch.object(subscription.selectors, 'DefaultSelector', return_value=context):
+                    result = subscription.claude_snapshot(self.env)
+                self.assertEqual(result['reason'], 'timeout')
+                self.assertEqual(result['probe_shutdown'], mode)
+                self.assertEqual(result['probe_exit_code'], code)
+                self.assertEqual(child.terminate.call_count, int(mode != 'natural'))
+                self.assertEqual(child.kill.call_count, int(mode == 'killed'))
+                child.stdin.close.assert_called_once()
+                child.stdout.close.assert_called_once()
+        with patch.object(subscription.subprocess, 'Popen', side_effect=OSError('fake-private-error')):
+            result = subscription.claude_snapshot(self.env)
+        self.assertEqual(result['probe_shutdown'], 'not_started')
+        self.assertNotIn('probe_exit_code', result)
+        self.assertNotIn('fake-private-error', json.dumps(result))
 
     def test_legacy_windows_and_missing_percentages(self):
         result = subscription.codex_windows({'rateLimits':{'primary':{'usedPercent':0},'secondary':{'usedPercent':None}}})

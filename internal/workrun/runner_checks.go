@@ -30,6 +30,8 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 		// A previous controller did not checkpoint successful phase cleanup.
 		// Its evidence is provisional even if every command completed.
 		journal.Evidence.Passed = false
+		journal.Evidence.CompletedFailureKey = ""
+		journal.Evidence.CompletedFailureFeedback = ""
 		for i := range journal.Verification {
 			journal.Verification[i].Key = ""
 			discardSourcePatchFeedback(journal, &journal.Verification[i])
@@ -76,6 +78,8 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 		// Cleanup/setup failure must be resolved before publication, including on
 		// resume. It cannot leave the candidate's successful evidence reusable.
 		journal.Evidence.Passed = false
+		journal.Evidence.CompletedFailureKey = ""
+		journal.Evidence.CompletedFailureFeedback = ""
 		for i := range journal.Verification {
 			journal.Verification[i].Key = ""
 			discardSourcePatchFeedback(journal, &journal.Verification[i])
@@ -95,13 +99,28 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 
 func (runner Runner) checkCandidate(ctx context.Context, directory string, journal *Journal, revision Revision) error {
 	configuredFeedback := ""
+	pendingDiagnostic := false
 	for i := range journal.Verification {
 		evidence := &journal.Verification[i]
+		if evidence.Key != verificationKey(journal, evidence.Request, revision.Head, revision.Tree) {
+			pendingDiagnostic = true
+		}
 		if evidence.SourcePatch != nil && (evidence.Head != revision.Head || evidence.Tree != revision.Tree) {
 			discardSourcePatchFeedback(journal, evidence)
 		}
 	}
-	if journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed {
+	failureKey := verificationKey(journal, VerificationRequest{}, revision.Head, revision.Tree)
+	reuseFailure := pendingDiagnostic && !journal.Evidence.Passed && journal.Evidence.Head == revision.Head && journal.Evidence.Tree == revision.Tree && journal.Evidence.CompletedFailureKey == failureKey
+	if reuseFailure {
+		// Saving a redundant suite execution does not grant extra repair turns.
+		journal.Rounds++
+		if journal.Rounds-journal.RepairWindowStart > runner.MaxRounds {
+			return runner.stop(directory, journal, "blocked", configuredCheckRepairBound)
+		}
+		configuredFeedback = journal.Evidence.CompletedFailureFeedback + "\nConfigured checks remain failed for this unchanged candidate. Fresh diagnostic results do not clear the failed suite. Commit a source repair before requesting the full configured suite again."
+	} else if journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed {
+		journal.Evidence.CompletedFailureKey = ""
+		journal.Evidence.CompletedFailureFeedback = ""
 		journal.CheckAttempt++
 		if err := runner.save(directory, journal); err != nil {
 			return err
@@ -127,8 +146,10 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 			return runner.stop(directory, journal, "blocked", checkErr.Error())
 		}
 		if checkErr != nil {
+			journal.Evidence.CompletedFailureKey = failureKey
 			journal.Rounds++
 			configuredFeedback = checkRepairFeedback(revision.Tree, checkErr, journal.Plan.Checks)
+			journal.Evidence.CompletedFailureFeedback = configuredFeedback
 			journal.Feedback = configuredFeedback
 			if journal.Rounds-journal.RepairWindowStart > runner.MaxRounds {
 				return runner.stop(directory, journal, "blocked", configuredCheckRepairBound)
@@ -196,6 +217,8 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 		}
 		closeErr := errors.Join(diagnosticLogErr, log.Close())
 		if progressErr != nil {
+			journal.Evidence.CompletedFailureKey = ""
+			journal.Evidence.CompletedFailureFeedback = ""
 			return errors.Join(checkErr, progressErr, closeErr)
 		}
 		evidence.Key, evidence.Head, evidence.Tree, evidence.Log, evidence.Passed = key, revision.Head, revision.Tree, name, checkErr == nil && closeErr == nil
@@ -203,6 +226,8 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 		// allow the unchanged candidate to retry after infrastructure recovery.
 		if closeErr != nil || (checkErr != nil && !errors.Is(checkErr, ErrCheckFailed)) {
 			evidence.Key = ""
+			journal.Evidence.CompletedFailureKey = ""
+			journal.Evidence.CompletedFailureFeedback = ""
 		}
 		evidence.Diagnostic = ""
 		if closeErr != nil {

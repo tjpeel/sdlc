@@ -166,3 +166,37 @@ func TestMalformedQuotaCannotBecomeZeroRemaining(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSubscriptionProbeLifecycleRetainsOnlyBoundedMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		mode  string
+		code  *int
+		valid bool
+	}{
+		{"", nil, true}, {"not_started", nil, true},
+		{"natural", probeExitCode(0), true}, {"terminated", probeExitCode(-15), true}, {"killed", probeExitCode(-9), true},
+		{"private-error", probeExitCode(0), false}, {"", probeExitCode(0), false}, {"not_started", probeExitCode(0), false},
+		{"natural", nil, false}, {"killed", probeExitCode(256), false}, {"terminated", probeExitCode(-256), false},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			snapshot := SubscriptionSnapshot{Source: subscriptionSource("claude"), ObservedAt: time.Now().UTC(), Status: "unavailable", Reason: "timeout", ProbeShutdown: tc.mode, ProbeExitCode: tc.code}
+			if (validateSubscriptionSnapshot(&snapshot) == nil) != tc.valid {
+				t.Fatalf("lifecycle validation: %s", tc.mode)
+			}
+			if !tc.valid {
+				return
+			}
+			body, err := json.Marshal(map[string]any{"type": "sdlc.subscription_snapshot", "provider": "claude", "phase": "before", "snapshot": snapshot})
+			if err != nil {
+				t.Fatal(err)
+			}
+			o := NewObserver("claude", "example-model")
+			read(o, string(body))
+			observed := o.Snapshot().Subscription
+			if observed == nil || observed.Before.ProbeShutdown != tc.mode {
+				t.Fatal("probe lifecycle lost during observation")
+			}
+		})
+	}
+}
+func probeExitCode(value int) *int { return &value }

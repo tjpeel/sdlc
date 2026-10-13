@@ -81,7 +81,8 @@ def native_snapshot(env, provider):
     sources = {'codex': 'codex.app_server.rate_limits', 'claude': 'claude.control.get_usage'}
     source = sources[provider]
     snapshot = {'source': source, 'observed_at': now(),
-                'status': 'unavailable', 'reason': 'native_error'}
+                'status': 'unavailable', 'reason': 'native_error',
+                'probe_shutdown': 'not_started'}
     child = None
     try:
         # Run outside the repository and use the worker's guarded native HOME.
@@ -177,14 +178,28 @@ def native_snapshot(env, provider):
         snapshot['reason'] = reason if reason in {'timeout', 'unsupported_client', 'invalid_response', 'native_error', 'native_rejected'} else 'native_error'
     finally:
         if child is not None:
+            shutdown = 'natural'
+            # End the official client's input stream before sending signals.
+            # A completed control probe should be allowed to exit cleanly.
+            try:
+                child.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
             if child.poll() is None:
-                child.terminate()
                 try:
-                    child.wait(timeout=0.25)
+                    child.wait(timeout=1)
                 except subprocess.TimeoutExpired:
-                    child.kill()
-            child.wait()
-            child.stdin.close()
+                    shutdown = 'terminated'
+                    child.terminate()
+                    try:
+                        child.wait(timeout=0.25)
+                    except subprocess.TimeoutExpired:
+                        shutdown = 'killed'
+                        child.kill()
+            exit_code = child.wait()
+            snapshot['probe_shutdown'] = shutdown
+            if isinstance(exit_code, int) and not isinstance(exit_code, bool) and -255 <= exit_code <= 255:
+                snapshot['probe_exit_code'] = exit_code
             child.stdout.close()
     return snapshot
 

@@ -19,6 +19,7 @@ type CheckFailure struct {
 	formatterLocations map[string]csharpierLocation
 	compiler           *compilerDiagnostic
 	stackFrame         *dotNetStackFrame
+	verifySnapshot     bool
 }
 
 func (f *CheckFailure) Error() string {
@@ -64,6 +65,7 @@ type formatterDiagnostic struct {
 	csharpierPath      string
 	compiler           *compilerDiagnostic
 	stackFrame         *dotNetStackFrame
+	verifySnapshot     bool
 	dockerUnavailable  bool
 }
 
@@ -118,6 +120,11 @@ func (d *formatterDiagnostic) consume() {
 		d.compiler = parseCompilerDiagnostic(line, d.approved)
 	}
 	if d.stackFrame == nil {
+		message := strings.TrimLeft(formatterOutput, " ")
+		message = strings.TrimPrefix(message, "Xunit.MicrosoftTestingPlatform.XunitException: ")
+		if strings.HasPrefix(message, "VerifyException : Directory: /workspace/") || strings.HasPrefix(message, "VerifyException : Directory: /src/") {
+			d.verifySnapshot = true
+		}
 		d.stackFrame = parseDotNetStackFrame(formatterOutput, d.approved)
 	}
 	path, warning := strings.CutPrefix(line, "[warn] ")
@@ -344,6 +351,11 @@ func checkRepairFeedback(tree string, err error, commands [][]string) string {
 		}
 		if frame := failure.stackFrame; frame != nil && failure.compiler == nil && !failure.formatter && !failure.csharpier && !formatterCheck(commands[failure.Command-1]) {
 			feedback += fmt.Sprintf("\nFailure phase: .NET execution. First recognised stack location at committed source %s:%s. Inspect the stack source location and repair the execution failure before rerunning checks.", frame.path, frame.line)
+
+		}
+
+		if failure.verifySnapshot && failure.compiler == nil && !failure.formatter && !failure.csharpier && !formatterCheck(commands[failure.Command-1]) {
+			feedback += "\nFailure kind: Verify snapshot comparison. Inspect the committed verified snapshots and generate the received snapshot in an isolated focused check. Compare exact bytes, including final newline, BOM and newline style, before changing expectations; identical rendered JSON does not establish byte equality. Generate and inspect the received file in one command or retain it under private HOME or /workspace. Repair the snapshot only when the comparison establishes the intended output; do not weaken assertions or accept changed values just to pass."
 		}
 
 		// Compound checks may invoke Prettier through a shell. A fixed output

@@ -104,6 +104,14 @@ func Load(directory string) (Journal, error) {
 	if decoder.Decode(&journal) != nil || decoder.Decode(new(any)) != io.EOF || journal.Version != 1 || journal.ID != filepath.Base(directory) || !objectID.MatchString(journal.Plan.StartingSHA) || !objectID.MatchString(journal.Plan.SourceSHA) {
 		return Journal{}, fmt.Errorf("invalid run journal")
 	}
+	if key := journal.Evidence.CompletedFailureKey; key != "" {
+		if len(key) != 64 || journal.Evidence.Passed || len(journal.Evidence.CompletedFailureFeedback) > 8192 {
+			return Journal{}, fmt.Errorf("invalid completed check failure evidence")
+		}
+		if _, err := hex.DecodeString(key); err != nil {
+			return Journal{}, fmt.Errorf("invalid completed check failure evidence")
+		}
+	}
 	if filepath.Clean(journal.Workspace) != filepath.Join(directory, "workspace") {
 		return Journal{}, fmt.Errorf("run journal points outside its captured workspace")
 	}

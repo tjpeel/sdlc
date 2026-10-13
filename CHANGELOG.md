@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.38 - 2026-10-13
+
+### Fixed
+
+- Identify Verify snapshot comparisons, including wrapped test-platform exceptions without source frames, and return fixed byte-comparison guidance while keeping assertion data private. Explain that each check command receives a fresh temporary directory and that reports must be inspected in the same command or retained in the request's private HOME or workspace.
+- Run fresh diagnostics against unchanged candidates without repeating a completed failed configured suite. Preserve its safe repair feedback and failed evidence, invalidate reuse when the verification boundary changes or cleanup fails, and charge each diagnostic cycle to the existing repair bound.
+- Close the official native quota-probe input stream and allow a bounded natural exit before termination. Retain fixed shutdown modes and bounded exit codes in private usage records so natural exit, termination and forced termination can be distinguished without retaining provider messages or account data.
+
 ## 0.1.0-beta.37 - 2026-10-13
 
 ### Fixed

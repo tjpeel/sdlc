@@ -185,11 +185,15 @@ type Provider interface {
 }
 
 type CheckEvidence struct {
-	Head     string     `json:"head,omitempty"`
-	Tree     string     `json:"tree"`
-	Passed   bool       `json:"passed"`
-	Commands [][]string `json:"commands"`
-	Log      string     `json:"log"`
+	// Only completed semantic failure on this frozen boundary may be reused
+	// while a new diagnostic runs. Legacy and operational failures have no key.
+	CompletedFailureKey      string     `json:"completed_failure_key,omitempty"`
+	CompletedFailureFeedback string     `json:"completed_failure_feedback,omitempty"`
+	Head                     string     `json:"head,omitempty"`
+	Tree                     string     `json:"tree"`
+	Passed                   bool       `json:"passed"`
+	Commands                 [][]string `json:"commands"`
+	Log                      string     `json:"log"`
 }
 
 type Checker interface {

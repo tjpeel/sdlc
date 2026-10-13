@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tjpeel/sdlc/internal/runprogress"
 )
 
 func regressionRequest() VerificationRequest {
@@ -94,6 +96,49 @@ func TestAdditionalVerificationLifecycleAndCache(t *testing.T) {
 	loaded, err := Load(dir)
 	if err != nil || len(loaded.Verification) != 1 || !loaded.Verification[0].Passed {
 		t.Fatalf("persisted evidence missing: %v", err)
+	}
+}
+
+func TestFreshDiagnosticDoesNotRepeatUnchangedFailedSuite(t *testing.T) {
+	dir, j := testRun(t)
+	j.State = "checking"
+	j.Outcome = testOutcome("checks_requested")
+	c := &supplementaryChecker{fakeChecker: fakeChecker{failures: 10}}
+	pub := &fakePublisher{}
+	r := fakeRunner(&fakeProvider{}, &c.fakeChecker, pub, &fakeRepository{})
+	r.Checker = c
+	r.MaxRounds = 3
+	r.rawOutput = io.Discard
+	var err error
+	r.progress, err = runprogress.Open(dir, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.progress.Close()
+	revision := Revision{Head: testHead, Tree: testTree, Clean: true}
+	if err := r.checkCandidate(context.Background(), dir, j, revision); err != nil {
+		t.Fatal(err)
+	}
+	failedLog, rounds := j.Evidence.Log, j.Rounds
+	j.Verification = []VerificationResult{{Request: regressionRequest()}}
+	if err := r.checkCandidate(context.Background(), dir, j, revision); err != nil {
+		t.Fatal(err)
+	}
+	if c.calls != 1 || len(c.requests) != 1 || j.Evidence.Passed || j.Evidence.Log != failedLog || j.Rounds != rounds+1 || j.State != "repairing" || pub.calls != 0 {
+		t.Fatalf("fresh diagnostic repeated suite or cleared failed evidence: suite=%d diagnostic=%d state=%s rounds=%d", c.calls, len(c.requests), j.State, j.Rounds)
+	}
+	loaded, err := Load(dir)
+	if err != nil || loaded.Evidence.Passed || loaded.Evidence.Log != failedLog || !loaded.Verification[0].Passed {
+		t.Fatal("diagnostic result lost failed configured evidence at checkpoint")
+	}
+	// Once source changes, the full suite and diagnostic must run on that source.
+	c.failures = 0
+	revision.Head, revision.Tree = testBase, testBase
+	if err := r.checkCandidate(context.Background(), dir, &loaded, revision); err != nil {
+		t.Fatal(err)
+	}
+	if c.calls != 2 || len(c.requests) != 2 || !loaded.Evidence.Passed || loaded.Evidence.Head != testBase {
+		t.Fatal("changed source did not receive fresh full-suite verification")
 	}
 }
 func TestFailedAdditionalRequestSurvivesOmissionAndResume(t *testing.T) {
