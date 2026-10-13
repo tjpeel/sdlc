@@ -40,7 +40,7 @@ retain their existing independent-review gates until this feature is implemented
 
 ## F002: Resume a run to address human PR comments
 
-Added: 2026-10-13. Status: deferred; implementation has not started.
+Added: 2026-10-13. Status: implemented in `0.1.0-beta.43`.
 
 Allow the user to resume a saved run whose PR is awaiting human review or input
 after comments have been added. The original implementation agent should assess
@@ -77,8 +77,13 @@ Expected behaviour:
   human merge decision. Receiving comments must not reset limits or bypass an
   implementation failure, and this feature must not automatically merge the PR.
 
-Implementation should define the supported resume action and how comment
-processing and outstanding replies are shown to the user.
+Implemented action: `sdlc resume --run RUN_ID --pr-feedback` starts from a ready
+saved PR. Ordinary resume continues an interrupted cycle; explicit feedback
+resume also recovers its recorded fetch or changed-comment reply hold. Existing
+human questions still use `sdlc answer`. The dashboard and private checkpoint
+report show pending feedback, unresolved comments and outstanding replies.
+Original sessions, selected roles and cumulative budgets are retained; F001
+remains deferred. See [the CLI guide](cli.md#address-human-pr-feedback).
 
 ## F003: Start dependent tickets from a tested combined base
 

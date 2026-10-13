@@ -21,6 +21,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	ProcessPRFeedback            bool
 	CompanionCloner              CompanionRepositoryCloner
 	Provider                     Provider
 	Checker                      Checker
@@ -125,6 +126,14 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
 		}
 	}
+	if runner.ProcessPRFeedback {
+		if answer != "" || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
+			return fmt.Errorf("PR feedback cannot be combined with recovery actions")
+		}
+		if err := ValidatePRFeedbackResume(*journal); err != nil {
+			return err
+		}
+	}
 	if runner.InitializeCIRepairBudget {
 		if err := ValidateCIRepairInitialization(*journal); err != nil {
 			return err
@@ -217,6 +226,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	if runner.ProcessPRFeedback {
+		if err := runner.beginPRFeedback(ctx, directory, journal); err != nil {
+			return err
+		}
+	}
 	if journal.State == "waiting_for_human" {
 		if answer == "" {
 			return runner.stop(directory, journal, "waiting_for_human", "answer the recorded questions with --answer-file before resuming")
@@ -272,6 +286,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return runner.stop(directory, journal, "blocked", err.Error())
 		}
 		switch journal.State {
+		case "pr_feedback":
+			if err := runner.beginPRFeedback(ctx, directory, journal); err != nil {
+				return err
+			}
+			continue
 		case "ready":
 			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
 			if err == nil {
@@ -287,6 +306,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 			fmt.Fprintln(runner.Output, "Ready for human review:", journal.Publication.URL)
+			if status := PRFeedbackStatus(*journal); status.Summary != "" {
+				fmt.Fprintln(runner.Output, status.Summary)
+			}
 			return nil
 		case "prepared", "implementing", "repairing":
 			if a := journal.ReviewAssessment; a != nil && a.Pending && !a.Acknowledged {
@@ -314,6 +336,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", implementationTurnBound)
 			}
 			if err := runner.transition(directory, journal, "implementing"); err != nil {
+				return err
+			}
+			if err := runner.feedbackPrompt(directory, journal); err != nil {
 				return err
 			}
 			result, err := runner.session(ctx, directory, journal, "implementation", journal.Workspace, journal.SessionID)
@@ -344,6 +369,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if result.Outcome.Status == "blocked" || result.Outcome.Status == "failed" {
 				return runner.stop(directory, journal, result.Outcome.Status, result.Outcome.Summary)
 			}
+			moreFeedback, err := runner.acceptPRFeedback(ctx, directory, journal, result.Outcome)
+			if err != nil {
+				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+
 			if len(result.Outcome.RepositoryRequests) > 0 {
 				if err := validateCompanionRepositoryRequests(result.Outcome.RepositoryRequests, &journal.Plan); err != nil {
 					return runner.stop(directory, journal, "blocked", "implementation requested an invalid companion repository")
@@ -368,6 +398,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				}
 				journal.Feedback = feedback
 				if err := runner.save(directory, journal); err != nil {
+					return err
+				}
+				continue
+			}
+			if moreFeedback && (result.Outcome.Status == "checks_requested" || result.Outcome.Status == "implemented") {
+				if err := runner.transition(directory, journal, "repairing"); err != nil {
 					return err
 				}
 				continue
@@ -437,6 +473,14 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			journal.Publication = publication
+			if err := runner.replyPRFeedback(ctx, directory, journal); err != nil {
+				message := err.Error()
+				var changed *FeedbackRevisionChangedError
+				if errors.As(err, &changed) {
+					message = prFeedbackReplyHold + message
+				}
+				return runner.stop(directory, journal, "blocked", message)
+			}
 			journal.CI = CIResult{}
 			if journal.Plan.Restack != nil {
 				journal.RestackAudit = append(journal.RestackAudit, *journal.Plan.Restack)
@@ -519,10 +563,20 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err != nil || checks.Status != "passed" {
 				return runner.stop(directory, journal, "blocked", "PR or CI changed during independent review")
 			}
+			if feedbackStatus := PRFeedbackStatus(*journal); feedbackStatus.Pending > 0 || feedbackStatus.OutstandingReplies > 0 {
+				return runner.stop(directory, journal, "blocked", "human PR feedback assessments or replies remain outstanding")
+			}
+			if journal.PRFeedback != nil && journal.PRFeedback.Active {
+				journal.PRFeedback.Active = false
+				journal.PRFeedback.CompletedHead = journal.Publication.HeadSHA
+			}
 			if err := runner.transition(directory, journal, "ready"); err != nil {
 				return err
 			}
 			fmt.Fprintln(runner.Output, "Ready for human review:", journal.Publication.URL)
+			if status := PRFeedbackStatus(*journal); status.Summary != "" {
+				fmt.Fprintln(runner.Output, status.Summary)
+			}
 			return nil
 		default:
 			return fmt.Errorf("unknown recorded run stage %q", journal.State)
@@ -690,9 +744,10 @@ func (runner Runner) prompt(journal Journal, role string) string {
 		Publication Publication          `json:"publication"`
 		Evidence    CheckEvidence        `json:"verification"`
 		Additional  []VerificationResult `json:"additional_verification"`
+		PRFeedback  *PRFeedbackHistory   `json:"human_pr_feedback,omitempty"`
 		Assessment  *ReviewAssessment    `json:"prior_review_assessment,omitempty"`
 		HumanInput  *ReviewHumanInput    `json:"recorded_review_human_input,omitempty"`
-	}{journal.Plan, journal.Publication, packetEvidence, packetAdditional, journal.ReviewAssessment, journal.ReviewHumanInput}, "", "  ")
+	}{journal.Plan, journal.Publication, packetEvidence, packetAdditional, journal.PRFeedback, journal.ReviewAssessment, journal.ReviewHumanInput}, "", "  ")
 	// Shared instructions are already supplied once through the native global
 	// instruction file. Do not duplicate their body in the conversation.
 	shared := "Follow the native global shared instructions.\n" + contextDiscipline + "Selected launch context:\n" + string(packet) + "\n\n"

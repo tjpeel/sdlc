@@ -47,6 +47,7 @@ type Report struct {
 	Findings          []workrun.Finding          `json:"findings"`
 	Limitations       []string                   `json:"limitations"`
 	Questions         []string                   `json:"questions"`
+	PRFeedback        *workrun.PRFeedbackSummary `json:"pr_feedback,omitempty"`
 	StopReason        string                     `json:"stop_reason,omitempty"`
 	Rounds            int                        `json:"repair_rounds"`
 	Attempts          int                        `json:"provider_attempts"`
@@ -70,6 +71,11 @@ func reportSnapshot(v View) (Report, error) {
 		return Report{}, fmt.Errorf("a valid available run checkpoint is required for export")
 	}
 	j := v.Journal
+	var feedback *workrun.PRFeedbackSummary
+	if j.PRFeedback != nil {
+		summary := workrun.PRFeedbackStatus(*j)
+		feedback = &summary
+	}
 	questions := []string(nil)
 	if j.State == "waiting_for_human" {
 		questions = j.Outcome.Questions
@@ -87,7 +93,8 @@ func reportSnapshot(v View) (Report, error) {
 		Evidence:    ReportEvidence{j.Evidence.Head, j.Evidence.Tree, j.Evidence.Passed, j.Evidence.Commands},
 		Publication: j.Publication, CI: ReportCI{Status: j.CI.Status}, Summary: j.Outcome.Summary, LocalReview: j.Outcome.LocalReview,
 		Findings: j.Outcome.Findings, Limitations: j.Outcome.Limitations, Questions: questions, StopReason: j.StopReason,
-		Rounds: j.Rounds, Attempts: j.Attempt, CheckAttempts: j.CheckAttempt,
+		PRFeedback: feedback,
+		Rounds:     j.Rounds, Attempts: j.Attempt, CheckAttempts: j.CheckAttempt,
 		Retention: "Checkpoint summary only. Raw logs, native session data, private input contents and workspace are excluded. Keep this report private; summaries and check commands can contain sensitive material.",
 	}, nil
 }

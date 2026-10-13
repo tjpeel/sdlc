@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.43 - 2026-10-13
+
+### Added
+
+- Resume a ready saved PR with `--pr-feedback` to assess new or changed human comments in the original implementation session. Retain comment context, correction commits, signed commit mappings and reply acknowledgements; show unresolved feedback in the handoff. Corrections pass repository checks, signing, publication, CI and a fresh independent review before returning for human review, with saved accounts, models and budgets preserved.
+
+### Changed
+
+- Feedback-cycle journals require beta.43 or newer. Existing journals remain readable; keep the newer CLI when resuming a run that has begun PR feedback processing.
+
 ## 0.1.0-beta.42 - 2026-10-13
 
 ### Added

@@ -226,11 +226,19 @@ func verificationFeedback(j *Journal) string {
 	return "Controller verification evidence: " + string(data)
 }
 func verificationFeedbackKey(j *Journal, head, tree string) string {
+	cycle := 0
+	feedbackVersion := 0
+	if j.PRFeedback != nil && j.PRFeedback.Active {
+		cycle = j.PRFeedback.Cycle
+		feedbackVersion = len(j.PRFeedback.Entries)
+	}
 	data, _ := json.Marshal(struct {
-		Head, Tree string
-		SuiteKey   string
-		Results    []VerificationResult
-	}{head, tree, j.Evidence.Key, j.Verification})
+		Head, Tree      string
+		SuiteKey        string
+		Results         []VerificationResult
+		FeedbackCycle   int `json:"feedback_cycle,omitempty"`
+		FeedbackVersion int `json:"feedback_version,omitempty"`
+	}{head, tree, j.Evidence.Key, j.Verification, cycle, feedbackVersion})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -248,6 +256,9 @@ func (o *Outcome) UnmarshalJSON(data []byte) error {
 	}
 	if raw, ok := fields["repository_requests"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return fmt.Errorf("repository_requests must be an array")
+	}
+	if raw, ok := fields["pr_feedback_assessments"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("pr_feedback_assessments must be an array")
 	}
 	var value plain
 	decoder := json.NewDecoder(bytes.NewReader(data))

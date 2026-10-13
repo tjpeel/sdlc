@@ -38,6 +38,13 @@ variables before executing the original command. This also supports libraries
 that interpret an empty proxy value as a configured URL. Docker integration
 checks retain their dedicated daemon connection.
 
+Human PR feedback resumed with `--pr-feedback` retains comment revisions,
+original inline context, implementation assessments, correction commit IDs and
+reply acknowledgements in the private journal. Repeated resumes recognise
+already assessed feedback and reconcile an interrupted reply before retrying
+it. The dashboard reports pending comments, outstanding replies and unresolved
+feedback alongside the PR's current check and review state.
+
 ## Timing and runtime provenance
 
 `sdlc usage --run RECORDED_RUN_ID` shows command and cache operation durations,

@@ -49,6 +49,10 @@ if sys.argv[1]=='inspect':
   parts=path.lower().split('/')
   if path.lower().startswith('.sdlc/work/') or '.secrets' in parts or 'profiles.local.json' in parts: raise ValueError('private inputs are tracked')
  print(json.dumps({'head':head,'tree':tree,'clean':not bool(status)}))
+elif sys.argv[1].startswith('feedback_commits:'):
+ _,base,head=sys.argv[1].split(':')
+ git('merge-base','--is-ancestor',base,head)
+ print(json.dumps(git('rev-list','--reverse','--first-parent',base+'..'+head).decode().split()))
 elif sys.argv[1]=='bundle':
  git('bundle','create','/export/source.bundle','HEAD')
  os.chmod('/export/source.bundle',0o644)

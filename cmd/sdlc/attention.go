@@ -30,13 +30,13 @@ type runAction struct {
 
 func resumableStage(state string) bool {
 	switch state {
-	case "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing":
+	case "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback":
 		return true
 	}
 	return false
 }
 
-func inspectRunAction(ctx context.Context, id string) (runAction, error) {
+func inspectRunAction(ctx context.Context, id string, feedback ...bool) (runAction, error) {
 	if err := ctx.Err(); err != nil {
 		return runAction{}, err
 	}
@@ -85,16 +85,21 @@ func inspectRunAction(ctx context.Context, id string) (runAction, error) {
 		if stage == "blocked" || stage == "failed" {
 			stage = journal.ResumeState
 		}
-		if !resumableStage(stage) {
+		if !resumableStage(stage) && !(stage == "ready" && len(feedback) > 0 && feedback[0]) {
 			return runAction{}, fmt.Errorf("run state %q has no supported resumable stage", journal.State)
+		}
+	}
+	if len(feedback) > 0 && feedback[0] {
+		if err := workrun.ValidatePRFeedbackResume(journal); err != nil {
+			return runAction{}, err
 		}
 	}
 	view.Journal = &journal
 	return runAction{view, journal.UpdatedAt.Format(time.RFC3339Nano)}, nil
 }
 
-func resolveRunAction(ctx context.Context, id string, answer bool) (runAction, error) {
-	action, err := inspectRunAction(ctx, id)
+func resolveRunAction(ctx context.Context, id string, answer bool, feedback ...bool) (runAction, error) {
+	action, err := inspectRunAction(ctx, id, feedback...)
 	if err != nil {
 		return runAction{}, err
 	}
@@ -241,8 +246,10 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var text, path string
 	var stdin bool
 	var extension int
+	var feedback bool
 	if !answer {
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
+		flags.BoolVar(&feedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
 	}
 	if answer {
 		flags.StringVar(&text, "text", "", "literal answer")
@@ -253,7 +260,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--extend-session-turn-budget 1..24] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--pr-feedback | --extend-session-turn-budget 1..24] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -270,6 +277,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	})
 	if extensionSupplied && (extension < 1 || extension > 24) {
 		return fmt.Errorf("--extend-session-turn-budget must be 1-24")
+	}
+	if feedback && extensionSupplied {
+		return fmt.Errorf("--pr-feedback cannot grant or extend a budget")
 	}
 	sources := 0
 	suppliedText := false
@@ -291,7 +301,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	if sources == 1 && !suppliedText && !stdin && path == "" {
 		return fmt.Errorf("--answer-file cannot be empty")
 	}
-	action, err := resolveRunAction(ctx, *id, answer)
+	action, err := resolveRunAction(ctx, *id, answer, feedback)
 	if err != nil {
 		return err
 	}
@@ -347,7 +357,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			return err
 		}
 	}
-	current, err := resolveRunAction(ctx, action.View.ID, answer)
+	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback)
 	if err != nil {
 		return err
 	}
@@ -355,6 +365,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if feedback {
+		runArgs = append(runArgs, "--pr-feedback")
+	}
 	if extensionSupplied {
 		runArgs = append(runArgs, "--extend-session-turn-budget", strconv.Itoa(extension))
 	}
@@ -376,6 +389,17 @@ func printResumePlan(output io.Writer, journal workrun.Journal, answer string, s
 }
 
 func jsonResumePlan(output io.Writer, journal workrun.Journal, hash string, extension ...int) error {
+	return jsonResumePlanAction(output, journal, hash, false, extension...)
+}
+
+func printPRFeedbackResumePlan(output io.Writer, journal workrun.Journal, structured bool) error {
+	if !structured {
+		fmt.Fprintln(output, "Offline PR feedback resume plan; comments, authentication and model access have not been checked.")
+	}
+	return jsonResumePlanAction(output, journal, "", true)
+}
+
+func jsonResumePlanAction(output io.Writer, journal workrun.Journal, hash string, feedback bool, extension ...int) error {
 	requestedTurns := 0
 	if len(extension) > 0 {
 		requestedTurns = extension[0]
@@ -394,6 +418,7 @@ func jsonResumePlan(output io.Writer, journal workrun.Journal, hash string, exte
 		Questions             []string     `json:"questions"`
 		AnswerSHA256          string       `json:"answer_sha256,omitempty"`
 		RequestedSessionTurns int          `json:"requested_session_turns,omitempty"`
+		PRFeedback            bool         `json:"pr_feedback,omitempty"`
 		Plan                  workrun.Plan `json:"plan"`
-	}{1, "resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), journal.State, questions, hash, requestedTurns, journal.Plan})
+	}{1, "resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), journal.State, questions, hash, requestedTurns, feedback, journal.Plan})
 }

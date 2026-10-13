@@ -152,16 +152,17 @@ type Finding struct {
 }
 
 type Outcome struct {
-	RepositoryRequests   []CompanionRepositoryRequest `json:"repository_requests,omitempty"`
-	VerificationRequests []VerificationRequest        `json:"verification_requests,omitempty"`
-	Status               string                       `json:"status"`
-	Summary              string                       `json:"summary"`
-	Questions            []string                     `json:"questions"`
-	Findings             []Finding                    `json:"findings"`
-	LocalReview          bool                         `json:"local_review"`
-	Limitations          []string                     `json:"limitations"`
-	PRTitle              string                       `json:"pr_title"`
-	PRBody               string                       `json:"pr_body"`
+	PRFeedbackAssessments []PRFeedbackAssessment       `json:"pr_feedback_assessments,omitempty"`
+	RepositoryRequests    []CompanionRepositoryRequest `json:"repository_requests,omitempty"`
+	VerificationRequests  []VerificationRequest        `json:"verification_requests,omitempty"`
+	Status                string                       `json:"status"`
+	Summary               string                       `json:"summary"`
+	Questions             []string                     `json:"questions"`
+	Findings              []Finding                    `json:"findings"`
+	LocalReview           bool                         `json:"local_review"`
+	Limitations           []string                     `json:"limitations"`
+	PRTitle               string                       `json:"pr_title"`
+	PRBody                string                       `json:"pr_body"`
 }
 
 type Session struct {
@@ -225,6 +226,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	PRFeedback                *PRFeedbackHistory    `json:"pr_feedback,omitempty"`
 	SessionTurnExtension      *SessionTurnExtension `json:"session_turn_extension,omitempty"`
 	EffectiveChecks           [][]string            `json:"effective_checks,omitempty"`
 	ConfiguredFeedbackKey     string                `json:"configured_feedback_key,omitempty"`

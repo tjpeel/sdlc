@@ -700,6 +700,21 @@ sdlc resume --run RUN_ID
 
 These commands recover the recorded project, reference and ticket. They work
 outside that checkout and preserve its frozen settings and metrics history.
+
+After human reviewers comment on a ready PR, start a feedback cycle with:
+
+```sh
+sdlc resume --run RUN_ID --pr-feedback
+```
+
+The original implementation session assesses new or changed comments, commits
+corrections and supplies replies for comments it cannot address. The controller
+retains comment and reply history, publishes through the signing workflow, runs
+current checks and CI, and obtains a fresh independent review. The dashboard
+keeps unresolved feedback visible for the next human review. Use `--dry-run`
+to preview this action offline. Feedback resume preserves every remaining
+budget and leaves the merge decision with you.
+
 Answers become provider input and private run history. The shell offers
 `/attention`, `/answer RUN_ID` and `/resume RUN_ID`; its free-text answer editor
 submits with Ctrl+S. A changed checkpoint requires a new answer, and an active

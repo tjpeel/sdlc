@@ -317,7 +317,7 @@ func NextAction(v runstatus.View) string {
 		return "Resolve the stop reason, then sdlc resume --run " + v.ID
 	case "ready":
 		if v.PR.URL != "" {
-			return "Review PR: " + v.PR.URL
+			return "Review PR: " + v.PR.URL + "; after comments, sdlc resume --run " + v.ID + " --pr-feedback"
 		}
 	}
 	return ""
@@ -490,6 +490,13 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 			}
 		}
 		fmt.Fprintf(&text, "Local checks: %s | sessions: %d | repair rounds: %d\n", checks, j.Attempt, j.Rounds)
+		if j.PRFeedback != nil {
+			feedback := workrun.PRFeedbackStatus(*j)
+			fmt.Fprintf(&text, "PR feedback cycle: %d | pending: %d | unresolved: %d | outstanding replies: %d\n", feedback.Cycle, feedback.Pending, feedback.Unresolved, feedback.OutstandingReplies)
+			if feedback.Summary != "" {
+				fmt.Fprintln(&text, "PR feedback: "+feedback.Summary)
+			}
+		}
 		if j.Timings.Recorded() != nil {
 			fmt.Fprintf(&text, "Observed controller time: %s | check worker time: %s | CI polling wait: %s\n", durationText(time.Duration(j.Timings.ControllerMS)*time.Millisecond), durationText(time.Duration(j.Timings.ChecksMS)*time.Millisecond), durationText(time.Duration(j.Timings.CIWaitMS)*time.Millisecond))
 		}

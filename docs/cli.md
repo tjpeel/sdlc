@@ -1669,6 +1669,58 @@ Use `sdlc storage` from a project repository to report retained `.sdlc` sizes, c
 
 A single-ticket run can select `--runtime NAME`. Resume recovers that selection from its journal. Named runtimes have their own image tag and state while retaining the installation's account caches and build lock. To test committed local skill changes without replacing a paused run's default image, build with `sdlc runtime build --name reviewed-skills --source . --skills-source /path/to/skills`, then select `--runtime reviewed-skills` on the new ticket run. See [runtime variants](runtime-variants.md) for provenance, rebuild options and limitations.
 
+### Address human PR feedback
+
+After adding comments to a ready PR, resume its saved run:
+
+```sh
+sdlc resume --run RUN_ID --pr-feedback
+sdlc resume --run RUN_ID --pr-feedback --dry-run
+```
+
+The same action is available on the explicit single-ticket command:
+
+```sh
+sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-feature.md \
+  --resume RUN_ID --pr-feedback
+```
+
+The controller reads inline review threads, review summaries and general PR
+comments. It sends new or changed feedback to the original implementation
+session in order. The implementor commits each correction separately, records
+the comments it addresses, and supplies a reason when a comment cannot be
+addressed. The controller posts that reason to the original thread or PR,
+retaining reply acknowledgements so an interrupted resume can recover without
+posting it twice. Human threads remain open for the reviewer to resolve.
+
+Comment revisions, original inline context, assessments, candidate and signed
+commit IDs, and replies stay in the private run journal. The dashboard shows
+pending feedback, unanswered replies and unresolved comments. A later explicit
+feedback resume handles new or edited comments; unchanged assessed feedback
+does not start another provider turn.
+
+Corrections use the existing repository checks, signing, publication and CI
+gates. The final published head needs a fresh independent review, including
+when assessment needs no source change. The original accounts, models, session,
+history and all remaining budgets are retained. The action cannot be combined
+with a budget extension, recovery initializer or answer file. If the controller
+asks a human question, use `sdlc answer`; for an interrupted active cycle, use
+ordinary `sdlc resume` after resolving its stop reason. Missing reviewer access
+continues to stop at `awaiting_reviewer`.
+
+If a comment changes before its reply is posted, the controller withholds the
+stale reply. Use `--pr-feedback` again for that recorded feedback hold to fetch
+the changed comment and continue the same review cycle.
+
+`--dry-run` only previews the saved selection; it does not read GitHub feedback,
+grant capacity, post replies or start a provider. This workflow does not merge
+the PR. It starts from a ready saved PR and cannot bypass an earlier
+implementation or independent-review failure.
+
+Use beta.43 or newer for a run that has started feedback processing; earlier
+CLIs cannot read its added feedback history. Saved runs without that history
+remain compatible with this CLI.
+
 ### Recover a legacy completed-review hold
 
 `--initialize-review-repair-budget N` is available only for a single saved-run

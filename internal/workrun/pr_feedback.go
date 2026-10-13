@@ -1,0 +1,487 @@
+package workrun
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
+)
+
+const maxPRFeedbackComments = 100
+const prFeedbackReplyHold = "PR feedback reply needs reconciliation: "
+
+// PRFeedbackPublisher is optional so publication-only adapters retain their contract.
+type PRFeedbackPublisher interface {
+	Feedback(context.Context, Plan, Publication) ([]PRFeedbackComment, error)
+	ReplyFeedback(context.Context, Plan, Publication, PRFeedbackComment, string, string) (PRFeedbackReply, error)
+}
+
+type PRFeedbackComment struct {
+	ID               string `json:"id"`
+	Kind             string `json:"kind"`
+	ThreadID         string `json:"thread_id,omitempty"`
+	ReplyID          int64  `json:"reply_id,omitempty"`
+	Author           string `json:"author"`
+	Body             string `json:"body"`
+	UpdatedAt        string `json:"updated_at"`
+	Path             string `json:"path,omitempty"`
+	Line             int    `json:"line,omitempty"`
+	OriginalLine     int    `json:"original_line,omitempty"`
+	OriginalPosition int    `json:"original_position,omitempty"`
+	OriginalCommit   string `json:"original_commit,omitempty"`
+	DiffHunk         string `json:"diff_hunk,omitempty"`
+	Outdated         bool   `json:"outdated,omitempty"`
+	Resolved         bool   `json:"resolved,omitempty"`
+	Deleted          bool   `json:"deleted,omitempty"`
+}
+
+type PRFeedbackAssessment struct {
+	ID          string   `json:"id"`
+	Fingerprint string   `json:"fingerprint"`
+	Disposition string   `json:"disposition"` // addressed, unaddressable, no_change
+	Reason      string   `json:"reason"`
+	Commits     []string `json:"commits"`
+}
+
+// FeedbackRevisionChangedError admits only a stale-comment reconciliation,
+// never a signing, remote-head, identity or provider failure.
+type FeedbackRevisionChangedError struct{}
+
+func (*FeedbackRevisionChangedError) Error() string {
+	return "comment changed or disappeared after assessment; retrieve current feedback"
+}
+
+type PRFeedbackReply struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+type PRFeedbackEntry struct {
+	Occurrence     int                   `json:"occurrence"`
+	Comment        PRFeedbackComment     `json:"comment"`
+	Fingerprint    string                `json:"fingerprint"`
+	StartedAttempt int                   `json:"started_attempt,omitempty"`
+	Assessment     *PRFeedbackAssessment `json:"assessment,omitempty"`
+	Marker         string                `json:"marker,omitempty"`
+	ReplyBody      string                `json:"reply_body,omitempty"`
+	Reply          *PRFeedbackReply      `json:"reply,omitempty"`
+	SignedCommits  map[string]string     `json:"signed_commits,omitempty"`
+}
+
+type PRFeedbackHistory struct {
+	FetchResumeState string            `json:"fetch_resume_state,omitempty"`
+	Version          int               `json:"version"`
+	Cycle            int               `json:"cycle"`
+	Active           bool              `json:"active"`
+	CandidateStart   string            `json:"candidate_start"`
+	FetchPending     bool              `json:"fetch_pending,omitempty"`
+	CompletedHead    string            `json:"completed_head,omitempty"`
+	Entries          []PRFeedbackEntry `json:"entries"`
+}
+
+func feedbackFingerprint(c PRFeedbackComment) string {
+	data, _ := json.Marshal(c)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func ValidatePRFeedbackResume(j Journal) error {
+	if j.SessionID == "" || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) {
+		return fmt.Errorf("PR feedback requires an existing PR and its original implementation session")
+	}
+	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && j.Outcome.Status == "reviewed" && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && len(j.Outcome.Limitations) == 0 && j.CI.Status == "passed" && j.Evidence.Passed {
+		return validatePRFeedbackJournal(&j)
+	}
+	if j.PRFeedback != nil && j.PRFeedback.Active && j.State == "blocked" && j.ResumeState == "publishing" && strings.HasPrefix(j.StopReason, prFeedbackReplyHold) && j.Outcome.Status == "implemented" && j.Evidence.Passed && pendingFeedback(&j) == nil {
+		return validatePRFeedbackJournal(&j)
+	}
+	if j.PRFeedback != nil && j.PRFeedback.Active && j.PRFeedback.FetchPending && (j.State == "pr_feedback" || j.State == "blocked" && j.ResumeState == "pr_feedback") {
+		if j.PRFeedback.FetchResumeState == "ready" && (j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || len(j.Outcome.Limitations) > 0 || j.CI.Status != "passed") {
+			return fmt.Errorf("feedback fetch lost its ready boundary")
+		}
+		if j.PRFeedback.FetchResumeState == "publishing" && (j.Outcome.Status != "implemented" || pendingFeedback(&j) != nil) {
+			return fmt.Errorf("feedback fetch lost its completed implementation boundary")
+		}
+		if !j.Evidence.Passed || j.PRFeedback.FetchResumeState == "" {
+			return fmt.Errorf("feedback fetch requires retained current check evidence")
+		}
+		return validatePRFeedbackJournal(&j)
+	}
+	return fmt.Errorf("PR feedback requires a ready PR; it cannot bypass an implementation or independent-review failure")
+}
+
+func validatePRFeedbackJournal(j *Journal) error {
+	h := j.PRFeedback
+	if h == nil {
+		return nil
+	}
+	data, err := json.Marshal(h)
+	if err != nil || len(data) > 384*1024 || h.Version != 1 || h.Cycle < 1 || len(h.Entries) > 300 || !objectID.MatchString(h.CandidateStart) {
+		return fmt.Errorf("invalid bounded PR feedback history")
+	}
+	if h.FetchResumeState != "" && h.FetchResumeState != "ready" && h.FetchResumeState != "publishing" {
+		return fmt.Errorf("invalid feedback fetch recovery stage")
+	}
+	if h.CompletedHead != "" && !objectID.MatchString(h.CompletedHead) {
+		return fmt.Errorf("invalid PR feedback completion head")
+	}
+	latest := map[string]PRFeedbackEntry{}
+	for _, e := range h.Entries {
+		if err := validateFeedbackComment(e.Comment); err != nil {
+			return err
+		}
+		previous, exists := latest[e.Comment.ID]
+		if e.Occurrence < 0 || !exists && e.Occurrence != 0 || exists && (e.Occurrence != previous.Occurrence+1 || e.Fingerprint == previous.Fingerprint) || e.Fingerprint != feedbackFingerprint(e.Comment) || e.StartedAttempt < 0 || e.StartedAttempt > j.Attempt+1 {
+			return fmt.Errorf("invalid feedback revision identity")
+		}
+		latest[e.Comment.ID] = e
+		if e.Assessment != nil {
+			if err := validateFeedbackAssessment(*e.Assessment); err != nil {
+				return err
+			}
+			if e.Assessment.ID != e.Comment.ID || e.Assessment.Fingerprint != e.Fingerprint {
+				return fmt.Errorf("assessment differs from feedback revision")
+			}
+		}
+		if len(e.ReplyBody) > 10000 || (e.Marker != "" && e.Marker != feedbackEntryMarker(j.ID, e)) || e.Reply != nil && (e.Marker == "" || e.Reply.ID == "") {
+			return fmt.Errorf("invalid retained feedback reply")
+		}
+		for original, signed := range e.SignedCommits {
+			if !objectID.MatchString(original) || !objectID.MatchString(signed) {
+				return fmt.Errorf("invalid feedback signed mapping")
+			}
+		}
+	}
+	return nil
+}
+func validateFeedbackComment(c PRFeedbackComment) error {
+	if !utf8.ValidString(c.Body) || !utf8.ValidString(c.DiffHunk) || !utf8.ValidString(c.ID) || c.ID == "" || len(c.ID) > 100 || c.Author == "" || len(c.Author) > 100 || len(c.Body) > 8192 || len(c.DiffHunk) > 8192 || len(c.UpdatedAt) > 64 || len(c.ThreadID) > 100 || len(c.Path) > 240 || c.Line < 0 || c.OriginalLine < 0 || c.OriginalPosition < 0 {
+		return fmt.Errorf("PR feedback exceeds bounded comment contract")
+	}
+	if c.Kind != "inline" && c.Kind != "review" && c.Kind != "comment" {
+		return fmt.Errorf("unsupported feedback kind")
+	}
+	if c.Kind == "inline" && (c.ThreadID == "" || c.ReplyID < 1 || c.Path == "" || !safeRelative(c.Path)) {
+		return fmt.Errorf("inline feedback requires original thread context")
+	}
+	if c.OriginalCommit != "" && !objectID.MatchString(c.OriginalCommit) {
+		return fmt.Errorf("invalid feedback original commit")
+	}
+	return nil
+}
+func validateFeedbackAssessment(a PRFeedbackAssessment) error {
+	if !utf8.ValidString(a.Reason) || a.ID == "" || len(a.Fingerprint) != 64 || strings.TrimSpace(a.Reason) == "" || len(a.Reason) > 8192 || len(a.Commits) > 32 {
+		return fmt.Errorf("invalid feedback assessment")
+	}
+	if a.Disposition != "addressed" && a.Disposition != "unaddressable" && a.Disposition != "no_change" {
+		return fmt.Errorf("unknown feedback disposition")
+	}
+	if a.Disposition == "addressed" && len(a.Commits) == 0 || a.Disposition != "addressed" && len(a.Commits) != 0 {
+		return fmt.Errorf("feedback disposition must match correction commits")
+	}
+	for _, sha := range a.Commits {
+		if !objectID.MatchString(sha) {
+			return fmt.Errorf("feedback correction requires exact commit IDs")
+		}
+	}
+	return nil
+}
+func feedbackMarker(run, id, fingerprint string) string {
+	sum := sha256.Sum256([]byte(run + "\x00" + id + "\x00" + fingerprint))
+	return "<!-- sdlc-pr-feedback:" + hex.EncodeToString(sum[:]) + " -->"
+}
+func pendingFeedback(j *Journal) *PRFeedbackEntry {
+	if j.PRFeedback == nil || !j.PRFeedback.Active {
+		return nil
+	}
+	for i := range j.PRFeedback.Entries {
+		e := &j.PRFeedback.Entries[i]
+		if e.Assessment == nil && !e.Comment.Deleted && !e.Comment.Resolved {
+			latest := true
+			for k := i + 1; k < len(j.PRFeedback.Entries); k++ {
+				if j.PRFeedback.Entries[k].Comment.ID == e.Comment.ID {
+					latest = false
+					break
+				}
+			}
+			if latest {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) error {
+	p, ok := r.Publisher.(PRFeedbackPublisher)
+	if !ok {
+		return fmt.Errorf("publisher does not support PR feedback")
+	}
+	if err := ValidatePRFeedbackResume(*j); err != nil {
+		return err
+	}
+	h := j.PRFeedback
+	revision, inspectErr := r.Repository.Inspect(ctx, j.Workspace)
+	if inspectErr != nil || !revision.Clean || revision.Head != j.Evidence.Head || revision.Tree != j.Evidence.Tree {
+		return fmt.Errorf("feedback requires the unchanged previously tested candidate")
+	}
+	if j.State == "ready" || j.State == "blocked" && j.ResumeState == "publishing" {
+		resumeState := "ready"
+		if j.State == "blocked" {
+			resumeState = "publishing"
+		}
+		if h == nil {
+			h = &PRFeedbackHistory{Version: 1, Cycle: 1, CandidateStart: revision.Head, Entries: []PRFeedbackEntry{}}
+			j.PRFeedback = h
+		}
+		h.FetchResumeState = resumeState
+		h.FetchPending = true
+		h.Active = true
+		if err := r.transition(dir, j, "pr_feedback"); err != nil {
+			return err
+		}
+	}
+	comments, err := p.Feedback(ctx, j.Plan, j.Publication)
+	if err != nil {
+		return r.stop(dir, j, "blocked", err.Error())
+	}
+	if len(comments) > maxPRFeedbackComments {
+		return r.stop(dir, j, "blocked", "too many PR comments for bounded feedback processing")
+	}
+
+	for _, c := range comments {
+		if err := validateFeedbackComment(c); err != nil {
+			return r.stop(dir, j, "blocked", err.Error())
+		}
+		fp := feedbackFingerprint(c)
+		var previous *PRFeedbackEntry
+		for i := range h.Entries {
+			if h.Entries[i].Comment.ID == c.ID {
+				previous = &h.Entries[i]
+			}
+		}
+		if previous != nil && previous.Fingerprint == fp {
+			continue
+		}
+		occurrence := 0
+		if previous != nil {
+			occurrence = previous.Occurrence + 1
+		}
+
+		if len(h.Entries) >= 300 {
+			return r.stop(dir, j, "blocked", "PR feedback history reached its bound; retained history requires human review")
+		}
+		h.Entries = append(h.Entries, PRFeedbackEntry{Occurrence: occurrence, Comment: c, Fingerprint: fp})
+		if err := validatePRFeedbackJournal(j); err != nil {
+			h.Entries = h.Entries[:len(h.Entries)-1]
+			return r.stop(dir, j, "blocked", "PR feedback history exceeds its byte bound")
+		}
+	}
+	// Retain vanished comments as new tombstone revisions.
+	present := map[string]bool{}
+	for _, c := range comments {
+		present[c.ID] = true
+	}
+	latest := map[string]PRFeedbackEntry{}
+	for _, e := range h.Entries {
+		latest[e.Comment.ID] = e
+	}
+	for id, previous := range latest {
+		c := previous.Comment
+		if !present[id] && !c.Deleted {
+			c.Deleted = true
+			if len(h.Entries) >= 300 {
+				return r.stop(dir, j, "blocked", "PR feedback history reached its bound")
+			}
+			h.Entries = append(h.Entries, PRFeedbackEntry{Occurrence: previous.Occurrence + 1, Comment: c, Fingerprint: feedbackFingerprint(c)})
+			if err := validatePRFeedbackJournal(j); err != nil {
+				h.Entries = h.Entries[:len(h.Entries)-1]
+				return r.stop(dir, j, "blocked", "PR feedback history exceeds its byte bound")
+			}
+		}
+	}
+	h.FetchPending = false
+	if pendingFeedback(j) == nil {
+		if h.FetchResumeState == "publishing" {
+			h.FetchResumeState = ""
+			return r.transition(dir, j, "publishing")
+		}
+		h.FetchResumeState = ""
+		h.Active = false
+		return r.transition(dir, j, "ready")
+	}
+	if h.CompletedHead != "" {
+		h.Cycle++
+		revision, err := r.Repository.Inspect(ctx, j.Workspace)
+		if err != nil {
+			return err
+		}
+		h.CandidateStart = revision.Head
+	}
+
+	h.FetchResumeState = ""
+	h.Active = true
+	h.CompletedHead = ""
+	j.CI = CIResult{}
+	j.Evidence = CheckEvidence{}
+	j.ConfiguredFeedbackKey = ""
+	for i := range j.Verification {
+		j.Verification[i].Key = ""
+	}
+	return r.transition(dir, j, "repairing")
+}
+
+func (r Runner) feedbackPrompt(dir string, j *Journal) error {
+	e := pendingFeedback(j)
+	if e == nil {
+		return nil
+	}
+	if e.StartedAttempt == 0 {
+		e.StartedAttempt = j.Attempt + 1
+		if err := r.save(dir, j); err != nil {
+			return err
+		}
+	}
+	data, _ := json.MarshalIndent(e, "", "  ")
+	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess only this comment revision before moving to the next. Interpret outdated inline feedback using its original commit, line and diff context and the current source. Return one pr_feedback_assessments entry with this exact id and fingerprint, disposition addressed/unaddressable/no_change, reason and full original commit IDs. Commit each correction separately, or group only logically related corrections. Do not post replies or resolve threads; the controller owns replies. If a prior interrupted turn already committed a correction, inspect existing history and reuse that commit rather than duplicating it. Request controller checks when needed. For an unaddressable comment explain the clarification or decision needed."
+	return nil
+}
+
+type FeedbackCommitRepository interface {
+	FeedbackCommits(context.Context, string, string, string) ([]string, error)
+}
+
+func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, out Outcome) (bool, error) {
+	e := pendingFeedback(j)
+	if e == nil {
+		if len(out.PRFeedbackAssessments) > 0 {
+			return false, fmt.Errorf("no pending human feedback revision")
+		}
+		return false, nil
+	}
+	if len(out.PRFeedbackAssessments) == 0 {
+		if out.Status == "implemented" {
+			return false, fmt.Errorf("pending PR feedback requires a structured assessment")
+		}
+		return false, nil
+	}
+	if len(out.PRFeedbackAssessments) != 1 {
+		return false, fmt.Errorf("assess the pending comment revision in order")
+	}
+	a := out.PRFeedbackAssessments[0]
+	if err := validateFeedbackAssessment(a); err != nil {
+		return false, err
+	}
+	if a.ID != e.Comment.ID || a.Fingerprint != e.Fingerprint {
+		return false, fmt.Errorf("assessment does not match pending feedback revision")
+	}
+	if len(a.Commits) > 0 {
+		repo, ok := r.Repository.(FeedbackCommitRepository)
+		if !ok {
+			return false, fmt.Errorf("repository cannot verify feedback correction history")
+		}
+		rev, err := r.Repository.Inspect(ctx, j.Workspace)
+		if err != nil || !rev.Clean {
+			return false, fmt.Errorf("feedback correction must be committed")
+		}
+		commits, err := repo.FeedbackCommits(ctx, j.Workspace, j.PRFeedback.CandidateStart, rev.Head)
+		if err != nil {
+			return false, err
+		}
+		known := map[string]bool{}
+		for _, sha := range commits {
+			known[sha] = true
+		}
+		for _, sha := range a.Commits {
+			if !known[sha] {
+				return false, fmt.Errorf("claimed feedback commit is absent from candidate history")
+			}
+		}
+	}
+	e.Assessment = &a
+	e.Marker = feedbackEntryMarker(j.ID, *e)
+	e.ReplyBody = a.Reason
+	if err := r.save(dir, j); err != nil {
+		return false, err
+	}
+	return pendingFeedback(j) != nil, nil
+}
+
+func (r Runner) replyPRFeedback(ctx context.Context, dir string, j *Journal) error {
+	if j.PRFeedback == nil || !j.PRFeedback.Active {
+		return nil
+	}
+	p, ok := r.Publisher.(PRFeedbackPublisher)
+	if !ok {
+		return fmt.Errorf("publisher cannot acknowledge PR feedback")
+	}
+	latest := map[string]int{}
+	for i, e := range j.PRFeedback.Entries {
+		latest[e.Comment.ID] = i
+	}
+	for i := range j.PRFeedback.Entries {
+		e := &j.PRFeedback.Entries[i]
+		if latest[e.Comment.ID] != i || e.Assessment == nil || e.Reply != nil || e.Comment.Deleted {
+			continue
+		}
+		// Original-to-signed mappings are saved by the trusted signing publisher.
+		if len(e.Assessment.Commits) > 0 {
+			mapping, err := readFeedbackSigningMap(dir)
+			if err != nil {
+				return err
+			}
+			e.SignedCommits = map[string]string{}
+			for _, sha := range e.Assessment.Commits {
+				signed := mapping[sha]
+				if !objectID.MatchString(signed) {
+					return fmt.Errorf("feedback commit has no retained signed mapping")
+				}
+				e.SignedCommits[sha] = signed
+			}
+			e.ReplyBody = e.Assessment.Reason + "\n\nCorrection commits:"
+			for _, sha := range e.Assessment.Commits {
+				e.ReplyBody += "\n- " + e.SignedCommits[sha]
+			}
+		}
+		if err := r.save(dir, j); err != nil {
+			return err
+		}
+		reply, err := p.ReplyFeedback(ctx, j.Plan, j.Publication, e.Comment, e.Marker, e.ReplyBody)
+		if err != nil {
+			return err
+		}
+		e.Reply = &reply
+		if err := r.save(dir, j); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readFeedbackSigningMap(dir string) (map[string]string, error) {
+	mapping := map[string]string{}
+	for _, path := range []string{filepath.Join(dir, "publisher", "signed-commits.json"), filepath.Join(dir, "signed-commits.json")} {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 512*1024 {
+			return nil, fmt.Errorf("invalid retained signing map")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || json.Unmarshal(data, &mapping) != nil {
+			return nil, fmt.Errorf("invalid retained signing map")
+		}
+		return mapping, nil
+	}
+	return nil, fmt.Errorf("feedback publication signing map is unavailable")
+}
+
+func feedbackEntryMarker(run string, e PRFeedbackEntry) string {
+	return feedbackMarker(run, fmt.Sprintf("%s:%d", e.Comment.ID, e.Occurrence), e.Fingerprint)
+}
