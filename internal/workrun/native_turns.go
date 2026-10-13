@@ -30,7 +30,7 @@ func validateSessionTurnExtension(j *Journal) error {
 	if e == nil {
 		return nil
 	}
-	if e.GrantedAt.IsZero() || e.GrantedAttempt != defaultNativeTurnLimit || e.OriginalLimit != defaultNativeTurnLimit || e.Additional < 1 || e.Additional > defaultNativeTurnLimit || e.OriginalSessionID == "" || e.OriginalSessionID != j.SessionID || j.Attempt < e.GrantedAttempt || j.Attempt > effectiveNativeTurnLimit(j) {
+	if e.GrantedAt.IsZero() || e.GrantedAttempt != defaultNativeTurnLimit || e.OriginalLimit != defaultNativeTurnLimit || e.Additional < 1 || e.Additional > defaultNativeTurnLimit || e.OriginalSessionID == "" || e.OriginalSessionID != j.SessionID || j.Attempt < e.GrantedAttempt || !runLimitsOverridden(j) && j.Attempt > effectiveNativeTurnLimit(j) {
 		return fmt.Errorf("invalid persisted session-turn extension")
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 // Explicit projection avoids copying authentication metadata, prompts, session
 // identifiers, raw logs, private input bytes or the captured source workspace.
 type Report struct {
+	RunLimitOverride  *RunLimitOverrideSummary   `json:"run_limit_override,omitempty"`
 	RuntimeProvenance *workrun.RuntimeProvenance `json:"runtime_provenance"`
 	Timings           *workrun.Timings           `json:"timings,omitempty"`
 	Metrics           *runusage.Summary          `json:"metrics,omitempty"`
@@ -93,8 +94,8 @@ func reportSnapshot(v View) (Report, error) {
 		Evidence:    ReportEvidence{j.Evidence.Head, j.Evidence.Tree, j.Evidence.Passed, j.Evidence.Commands},
 		Publication: j.Publication, CI: ReportCI{Status: j.CI.Status}, Summary: j.Outcome.Summary, LocalReview: j.Outcome.LocalReview,
 		Findings: j.Outcome.Findings, Limitations: j.Outcome.Limitations, Questions: questions, StopReason: j.StopReason,
-		PRFeedback: feedback,
-		Rounds:     j.Rounds, Attempts: j.Attempt, CheckAttempts: j.CheckAttempt,
+		PRFeedback: feedback, RunLimitOverride: RunLimitOverrideStatus(j.RunLimitOverride),
+		Rounds: j.Rounds, Attempts: j.Attempt, CheckAttempts: j.CheckAttempt,
 		Retention: "Checkpoint summary only. Raw logs, native session data, private input contents and workspace are excluded. Keep this report private; summaries and check commands can contain sensitive material.",
 	}, nil
 }
@@ -160,4 +161,33 @@ func ExportReport(v View, destination string) (string, error) {
 	}
 	complete = true
 	return filepath.Join(destination, name), nil
+}
+
+// RunLimitOverrideSummary exposes override audit data without native session IDs.
+type RunLimitOverrideSummary struct {
+	GrantedAt                 time.Time `json:"granted_at"`
+	CheckpointUpdatedAt       time.Time `json:"checkpoint_updated_at"`
+	GrantedAttempt            int       `json:"granted_attempt"`
+	GrantedRounds             int       `json:"granted_rounds"`
+	LimitKind                 string    `json:"limit_kind"`
+	OriginalLimit             int       `json:"original_limit"`
+	PendingVerificationReplay bool      `json:"pending_verification_replay,omitempty"`
+}
+
+// RunLimitOverrideStatus projects optional checkpoint audit data for display.
+func RunLimitOverrideStatus(o *workrun.RunLimitOverride) *RunLimitOverrideSummary {
+	if o == nil {
+		return nil
+	}
+	kind := "unknown"
+	switch o.LimitKind {
+	case "native_turns", "configured_repairs", "ci_repairs", "review_handoffs", "verification_feedback", "verification_requests", "pr_metadata":
+		kind = o.LimitKind
+	}
+	return &RunLimitOverrideSummary{
+		GrantedAt: o.GrantedAt, CheckpointUpdatedAt: o.CheckpointUpdatedAt,
+		GrantedAttempt: o.GrantedAttempt, GrantedRounds: o.GrantedRounds,
+		LimitKind: kind, OriginalLimit: o.OriginalLimit,
+		PendingVerificationReplay: o.PendingVerificationReplay,
+	}
 }

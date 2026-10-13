@@ -406,6 +406,10 @@ func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, ou
 	e.Assessment = &a
 	e.Marker = feedbackEntryMarker(j.ID, *e)
 	e.ReplyBody = a.Reason
+	// Persist replay progress with the assessment before any later outcome checkpoints.
+	if override := j.RunLimitOverride; override != nil && override.PendingVerificationReplay {
+		override.VerificationReplayFeedbackProcessed = true
+	}
 	if err := r.save(dir, j); err != nil {
 		return false, err
 	}

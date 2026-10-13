@@ -352,3 +352,35 @@ func TestDashboardWatchCancelsWithoutControllingRunsOrMutatingFiles(t *testing.T
 	}
 	assertDashboardReadOnly(t, root, marker, before)
 }
+
+func TestDashboardJSONRunLimitOverrideProjection(t *testing.T) {
+	j := workrun.Journal{RunLimitOverride: &workrun.RunLimitOverride{
+		GrantedAt: time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC), GrantedAttempt: 24, GrantedRounds: 3,
+		OriginalSessionID: "excluded-original-session", LimitKind: "native_turns", OriginalLimit: 24, PendingVerificationReplay: true,
+	}}
+	var output bytes.Buffer
+	if err := writeDashboardJSON(&output, []runstatus.View{{Journal: &j}, {}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	var audit map[string]any
+	legacy := false
+	for _, row := range document.Runs {
+		if value, ok := row["run_limit_override"]; ok {
+			audit = value.(map[string]any)
+		} else {
+			legacy = true
+		}
+	}
+	if !legacy || audit == nil || audit["limit_kind"] != "native_turns" || audit["original_limit"] != float64(24) || audit["granted_attempt"] != float64(24) || audit["granted_rounds"] != float64(3) || audit["pending_verification_replay"] != true || audit["granted_at"] != "2026-10-13T10:00:00Z" {
+		t.Fatalf("audit projection lost: %s", output.String())
+	}
+	if strings.Contains(output.String(), "excluded-original-session") || strings.Contains(output.String(), "original_session_id") {
+		t.Fatal("dashboard JSON leaked private session")
+	}
+}

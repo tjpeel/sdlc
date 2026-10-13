@@ -52,7 +52,7 @@ func validateReviewJournal(j *Journal) error {
 	}
 
 	if b := j.ReviewRepairBudget; b != nil {
-		if b.Limit < 1 || b.Limit > 3 || b.Used < 0 || b.Used > b.Limit || b.StartRound < 0 || b.StartRound > j.Rounds || j.Rounds-b.StartRound < b.Used || (b.Used == 0) != (b.LastGrantedHead == "") || b.LastGrantedHead != "" && !objectID.MatchString(b.LastGrantedHead) {
+		if b.Limit < 1 || b.Limit > 3 || b.Used < 0 || !runLimitsOverridden(j) && b.Used > b.Limit || b.StartRound < 0 || b.StartRound > j.Rounds || j.Rounds-b.StartRound < b.Used || (b.Used == 0) != (b.LastGrantedHead == "") || b.LastGrantedHead != "" && !objectID.MatchString(b.LastGrantedHead) {
 			return fmt.Errorf("invalid review handoff accounting")
 		}
 	}
@@ -79,7 +79,7 @@ func validateReviewJournal(j *Journal) error {
 // ValidateReviewRepairInitialization admits only the exact old completed-review
 // hold. Live source and publication checks are repeated under controller ownership.
 func ValidateReviewRepairInitialization(j Journal, limit int) error {
-	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || j.Attempt >= effectiveNativeTurnLimit(&j) || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
+	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || !runLimitsOverridden(&j) && j.Attempt >= effectiveNativeTurnLimit(&j) || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
 		return fmt.Errorf("review repair initialization requires an uninitialized completed-findings hold with its original session, passing evidence and remaining native capacity")
 	}
 	copy := j
@@ -104,7 +104,7 @@ func (runner Runner) grantReviewAssessment(directory string, j *Journal, finding
 	if countRound {
 		j.Rounds++
 	}
-	if j.Attempt >= effectiveNativeTurnLimit(j) {
+	if !runLimitsOverridden(j) && j.Attempt >= effectiveNativeTurnLimit(j) {
 		return runner.stop(directory, j, "blocked", implementationTurnBound)
 	}
 	b := j.ReviewRepairBudget
@@ -114,7 +114,7 @@ func (runner Runner) grantReviewAssessment(directory string, j *Journal, finding
 	if b.LastGrantedHead == j.Publication.HeadSHA {
 		return runner.stop(directory, j, "blocked", reviewUnchangedBound)
 	}
-	if b.Used >= b.Limit {
+	if !runLimitsOverridden(j) && b.Used >= b.Limit {
 		return runner.stop(directory, j, "blocked", reviewRepairBound)
 	}
 	a := &ReviewAssessment{Publication: j.Publication, Findings: append([]Finding(nil), findings...), Pending: true}

@@ -33,7 +33,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--runtime NAME] [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--pr-feedback | --answer-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--runtime NAME] [--docker-tests] [--timeout 2h] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--override-run-limits | --pr-feedback | --answer-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -47,6 +47,7 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	overrideRunLimits                                                                                                                  bool
 	processPRFeedback                                                                                                                  bool
 	extendSessionTurnBudget                                                                                                            int
 	runtimeName, headroomMode                                                                                                          string
@@ -100,6 +101,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
 	flags.StringVar(&options.resume, "resume", "", "recorded run ID or unique prefix of at least three characters")
 	flags.BoolVar(&options.processPRFeedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
+	flags.BoolVar(&options.overrideRunLimits, "override-run-limits", false, "persistently lift SDLC numeric run allowances on a saved run")
 	flags.IntVar(&options.extendSessionTurnBudget, "extend-session-turn-budget", 0, "one-time additional native session turns for a bound saved run (1-24)")
 	flags.IntVar(&options.initializeReviewRepairBudget, "initialize-review-repair-budget", 0, "one-time legacy completed-review handoff allowance (1-3)")
 	flags.BoolVar(&options.initializeCIRepairBudget, "initialize-ci-repair-budget", false, "one-time recovery for a legacy published CI-bound hold")
@@ -129,6 +131,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.supplied["override-run-limits"] && (!options.overrideRunLimits || options.resume == "" || options.all || options.supplied["answer-file"] || options.supplied["pr-feedback"] || options.supplied["initialize-ci-repair-budget"] || options.supplied["initialize-review-repair-budget"] || options.supplied["extend-session-turn-budget"]) {
+		return options, fmt.Errorf("--override-run-limits requires a single --resume without an answer, PR feedback initiation or budget recovery action")
+	}
 	if options.supplied["pr-feedback"] && (!options.processPRFeedback || options.resume == "" || options.all || options.answerFile != "" || options.initializeCIRepairBudget || options.supplied["initialize-review-repair-budget"] || options.supplied["extend-session-turn-budget"]) {
 		return options, fmt.Errorf("--pr-feedback requires a single --resume without an answer or budget recovery action")
 	}
@@ -219,7 +224,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -262,6 +267,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		return err
 	}
 	observe := runNotifications(ctx, output, sender)
+	parentContext := ctx
 	ctx, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	current := options.root
@@ -332,6 +338,15 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		if journal.Plan.Root != work.Root || journal.Plan.Reference != options.reference || filepath.Base(journal.Plan.Ticket) != ticket {
 			return fmt.Errorf("run journal does not match selected work")
+		}
+		if options.overrideRunLimits {
+			if err := workrun.ValidateRunLimitOverride(journal); err != nil {
+				return err
+			}
+		}
+		if !options.supplied["timeout"] && (options.overrideRunLimits || journal.RunLimitOverride != nil) {
+			cancel()
+			ctx = parentContext
 		}
 		runtime, err = runtimeimage.NewNamed(output, io.Discard, journal.Plan.RuntimeName)
 		if err != nil {
@@ -583,6 +598,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 
 	if options.dryRun {
 		if options.resume != "" {
+			if options.overrideRunLimits || journal.RunLimitOverride != nil {
+				return printRunLimitOverridePlan(output, journal, options.jsonOutput, options.overrideRunLimits, ctx, answer, options.processPRFeedback, options.extendSessionTurnBudget)
+			}
 			if options.processPRFeedback {
 				return printPRFeedbackResumePlan(output, journal, options.jsonOutput)
 			}
@@ -644,7 +662,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	githubManager.OnAcquired = manager.OnAcquired
 	resolver := signing.Resolver{Profile: profile, Image: journal.Plan.SigningImage}
 	publisher := workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve, ValidatePair: func() error { _, err := runSigningProfile(runtime, journal.Plan); return err }}
-	runner := workrun.Runner{ProcessPRFeedback: options.processPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	runner := workrun.Runner{OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)

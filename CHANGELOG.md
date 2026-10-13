@@ -7,6 +7,21 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.45 - 2026-10-13
+
+### Added
+
+- Resume one saved run at a corroborated local numeric hold with `--override-run-limits`. Persist permission to continue past native-call, configured-check repair, CI repair, review-handoff, repeated-feedback, retained-verification-ID and PR metadata correction ceilings, preserving the original session, accounts, models, history, evidence and cumulative accounting.
+- Remove the implicit two-hour controller deadline for overridden runs and later ordinary resumes. Explicit timeouts, parent deadlines, cancellation, provider holds, verification, signing, exact-head CI, fresh review, human merge and same-head guards remain enforced, along with per-response and journal resource bounds.
+
+### Fixed
+
+- Admit verification batches atomically, including replacements and baseline-downgrade failures. Recover a saved outcome stopped only by the retained request limit without another model call, preserving already admitted stable IDs and ordinary companion-source and PR feedback handling.
+
+### Changed
+
+- Journals with a persisted run-limit override require beta.45 or newer. Saved runs without an override remain readable and keep their existing defaults; unknown prior configured ceilings remain unknown in the audit.
+
 ## 0.1.0-beta.44 - 2026-10-13
 
 ### Added

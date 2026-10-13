@@ -490,6 +490,16 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 			}
 		}
 		fmt.Fprintf(&text, "Local checks: %s | sessions: %d | repair rounds: %d\n", checks, j.Attempt, j.Rounds)
+		if override := runstatus.RunLimitOverrideStatus(j.RunLimitOverride); override != nil {
+			limit := "unknown"
+			if override.OriginalLimit > 0 {
+				limit = fmt.Sprint(override.OriginalLimit)
+			}
+			fmt.Fprintf(&text, "Run limit override: granted %s | limit: %s (%s) | sessions: %d | repair rounds: %d\n", override.GrantedAt.UTC().Format(time.RFC3339), override.LimitKind, limit, override.GrantedAttempt, override.GrantedRounds)
+			if override.PendingVerificationReplay {
+				fmt.Fprintln(&text, "Run limit override: verification replay pending")
+			}
+		}
 		if j.PRFeedback != nil {
 			feedback := workrun.PRFeedbackStatus(*j)
 			fmt.Fprintf(&text, "PR feedback cycle: %d | pending: %d | unresolved: %d | outstanding replies: %d\n", feedback.Cycle, feedback.Pending, feedback.Unresolved, feedback.OutstandingReplies)

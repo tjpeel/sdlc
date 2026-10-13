@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
@@ -152,5 +153,45 @@ func TestReportSizeIsBoundedBeforeCreatingFile(t *testing.T) {
 	files, err := os.ReadDir(destination)
 	if err != nil || len(files) != 0 {
 		t.Fatal("oversized report created an artifact")
+	}
+}
+
+func TestReportRunLimitOverrideAuditProjection(t *testing.T) {
+	view := reportView()
+	report, err := reportSnapshot(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "run_limit_override") {
+		t.Fatal("legacy report included override")
+	}
+	granted := time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC)
+	view.Journal.RunLimitOverride = &workrun.RunLimitOverride{
+		GrantedAt: granted, CheckpointUpdatedAt: granted.Add(-time.Minute),
+		GrantedAttempt: 24, GrantedRounds: 3, OriginalSessionID: "excluded-original-session",
+		LimitKind: "native_turns", OriginalLimit: 24, PendingVerificationReplay: true,
+	}
+	report, err = reportSnapshot(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := report.RunLimitOverride
+	if audit == nil || !audit.GrantedAt.Equal(granted) || !audit.CheckpointUpdatedAt.Equal(granted.Add(-time.Minute)) || audit.GrantedAttempt != 24 || audit.GrantedRounds != 3 || audit.LimitKind != "native_turns" || audit.OriginalLimit != 24 || !audit.PendingVerificationReplay {
+		t.Fatalf("audit omitted: %+v", audit)
+	}
+	data, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "excluded-") || strings.Contains(string(data), "original_session_id") {
+		t.Fatal("report leaked private session data")
+	}
+	view.Journal.RunLimitOverride.LimitKind = "excluded-checkpoint-text"
+	if RunLimitOverrideStatus(view.Journal.RunLimitOverride).LimitKind != "unknown" {
+		t.Fatal("unknown limit kind was not sanitized")
 	}
 }

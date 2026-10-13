@@ -74,7 +74,7 @@ func validateCIJournal(j *Journal) error {
 		return err
 	}
 	if b := j.CIRepairBudget; b != nil {
-		if b.Used < 0 || b.Used > 3 || b.StartRound < 0 || b.StartRound > j.Rounds || j.Rounds-b.StartRound < b.Used || b.LastGrantedHead != "" && !objectID.MatchString(b.LastGrantedHead) || b.Used == 0 && b.LastGrantedHead != "" || b.Used > 0 && b.LastGrantedHead == "" {
+		if b.Used < 0 || !runLimitsOverridden(j) && b.Used > 3 || b.StartRound < 0 || b.StartRound > j.Rounds || j.Rounds-b.StartRound < b.Used || b.LastGrantedHead != "" && !objectID.MatchString(b.LastGrantedHead) || b.Used == 0 && b.LastGrantedHead != "" || b.Used > 0 && b.LastGrantedHead == "" {
 			return fmt.Errorf("invalid CI repair accounting")
 		}
 	}

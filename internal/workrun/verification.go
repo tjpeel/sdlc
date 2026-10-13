@@ -47,7 +47,11 @@ type VerificationChecker interface {
 var verificationID = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 func validateVerificationRequests(requests []VerificationRequest, plan *Plan) error {
-	if len(requests) > 16 {
+	return validateVerificationRequestSet(requests, plan, 16)
+}
+
+func validateVerificationRequestSet(requests []VerificationRequest, plan *Plan, limit int) error {
+	if limit > 0 && len(requests) > limit {
 		return fmt.Errorf("too many verification requests")
 	}
 	ids := map[string]bool{}
@@ -115,29 +119,32 @@ func mergeVerification(j *Journal, requests []VerificationRequest) error {
 	if err := validateVerificationRequests(requests, &j.Plan); err != nil {
 		return err
 	}
+	nextJournal := *j
+	nextJournal.Verification = append([]VerificationResult(nil), j.Verification...)
 	for _, request := range requests {
 		found := false
-		for i := range j.Verification {
-			if j.Verification[i].Request.ID == request.ID {
+		for i := range nextJournal.Verification {
+			if nextJournal.Verification[i].Request.ID == request.ID {
 				found = true
-				if j.Verification[i].Request.Baseline != nil && request.Baseline == nil {
+				if nextJournal.Verification[i].Request.Baseline != nil && request.Baseline == nil {
 					return fmt.Errorf("baseline verification %s cannot be downgraded to a generic check", request.ID)
 				}
-				old, _ := json.Marshal(j.Verification[i].Request)
+				old, _ := json.Marshal(nextJournal.Verification[i].Request)
 				next, _ := json.Marshal(request)
 				if string(old) != string(next) {
-					j.Verification[i] = VerificationResult{Request: request}
+					nextJournal.Verification[i] = VerificationResult{Request: request}
 				}
 				break
 			}
 		}
 		if !found {
-			if len(j.Verification) >= 16 {
-				return fmt.Errorf("outstanding verification request bound exceeded")
+			if !runLimitsOverridden(j) && len(nextJournal.Verification) >= 16 {
+				return fmt.Errorf("%s", retainedVerificationBound)
 			}
-			j.Verification = append(j.Verification, VerificationResult{Request: request})
+			nextJournal.Verification = append(nextJournal.Verification, VerificationResult{Request: request})
 		}
 	}
+	j.Verification = nextJournal.Verification
 	return nil
 }
 func verificationKey(j *Journal, request VerificationRequest, head, tree string) string {

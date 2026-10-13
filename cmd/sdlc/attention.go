@@ -247,9 +247,13 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var stdin bool
 	var extension int
 	var feedback bool
+	var override bool
+	var timeout time.Duration
 	if !answer {
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
 		flags.BoolVar(&feedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
+		flags.BoolVar(&override, "override-run-limits", false, "persistently lift SDLC numeric run allowances")
+		flags.DurationVar(&timeout, "timeout", 2*time.Hour, "explicit controller deadline (1m-24h)")
 	}
 	if answer {
 		flags.StringVar(&text, "text", "", "literal answer")
@@ -260,7 +264,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--pr-feedback | --extend-session-turn-budget 1..24] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24] [--timeout 2h] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -280,6 +284,12 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if feedback && extensionSupplied {
 		return fmt.Errorf("--pr-feedback cannot grant or extend a budget")
+	}
+	if override && (feedback || extensionSupplied) {
+		return fmt.Errorf("--override-run-limits cannot be combined with another recovery action")
+	}
+	if !answer && (timeout < time.Minute || timeout > 24*time.Hour) {
+		return fmt.Errorf("timeout must be between 1m and 24h")
 	}
 	sources := 0
 	suppliedText := false
@@ -304,6 +314,11 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	action, err := resolveRunAction(ctx, *id, answer, feedback)
 	if err != nil {
 		return err
+	}
+	if override {
+		if err := workrun.ValidateRunLimitOverride(*action.View.Journal); err != nil {
+			return err
+		}
 	}
 	if answer {
 		fmt.Fprintf(output, "Run %s | project %s\nTicket: %s/%s\nRecorded questions:\n", action.View.ID, dashboard.SafeText(action.View.Root), dashboard.SafeText(action.View.Reference), dashboard.SafeText(filepath.Base(action.View.Ticket)))
@@ -365,6 +380,14 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if override {
+		runArgs = append(runArgs, "--override-run-limits")
+	}
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" {
+			runArgs = append(runArgs, "--timeout", timeout.String())
+		}
+	})
 	if feedback {
 		runArgs = append(runArgs, "--pr-feedback")
 	}
@@ -404,6 +427,22 @@ func jsonResumePlanAction(output io.Writer, journal workrun.Journal, hash string
 	if len(extension) > 0 {
 		requestedTurns = extension[0]
 	}
+	return encodeResumePlan(output, journal, hash, feedback, requestedTurns, false, nil)
+}
+
+func printRunLimitOverridePlan(output io.Writer, journal workrun.Journal, structured, requested bool, ctx context.Context, answer string, feedback bool, requestedTurns int) error {
+	if !structured {
+		fmt.Fprintln(output, "Offline run-limit override plan; no allowance has been changed and no work has started.")
+	}
+	hash := ""
+	if answer != "" {
+		hash = fmt.Sprintf("%x", sha256.Sum256([]byte(answer)))
+	}
+	_, deadline := ctx.Deadline()
+	return encodeResumePlan(output, journal, hash, feedback, requestedTurns, requested, &deadline)
+}
+
+func encodeResumePlan(output io.Writer, journal workrun.Journal, hash string, feedback bool, requestedTurns int, override bool, deadline *bool) error {
 	questions := journal.Outcome.Questions
 	if journal.State != "waiting_for_human" {
 		questions = nil
@@ -419,6 +458,9 @@ func jsonResumePlanAction(output io.Writer, journal workrun.Journal, hash string
 		AnswerSHA256          string       `json:"answer_sha256,omitempty"`
 		RequestedSessionTurns int          `json:"requested_session_turns,omitempty"`
 		PRFeedback            bool         `json:"pr_feedback,omitempty"`
+		OverrideRunLimits     bool         `json:"override_run_limits,omitempty"`
+		RunLimitsOverridden   bool         `json:"run_limits_overridden,omitempty"`
+		ExecutionHasDeadline  *bool        `json:"execution_has_deadline,omitempty"`
 		Plan                  workrun.Plan `json:"plan"`
-	}{1, "resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), journal.State, questions, hash, requestedTurns, feedback, journal.Plan})
+	}{1, "resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), journal.State, questions, hash, requestedTurns, feedback, override, journal.RunLimitOverride != nil, deadline, journal.Plan})
 }

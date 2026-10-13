@@ -62,7 +62,7 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 		return nil
 	case "failed":
-		if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+		if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
 			return runner.stop(directory, journal, "blocked", implementationTurnBound)
 		}
 		budget := journal.CIRepairBudget
@@ -76,7 +76,7 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		if limit <= 0 || limit > 3 {
 			limit = 3
 		}
-		if budget.Used >= limit {
+		if !runLimitsOverridden(journal) && budget.Used >= limit {
 			return runner.stop(directory, journal, "blocked", ciRepairBound)
 		}
 		budget.Used++

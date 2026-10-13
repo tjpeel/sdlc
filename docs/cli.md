@@ -448,8 +448,9 @@ metadata and ambiguous selection fail even during dry-run.
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
 | `--docker-tests` | Override the project `docker_tests` default; enable the separate privileged integration-test daemon. Use `--docker-tests=false` to disable it for a new run. |
-| `--timeout` | `2h` per controller invocation; accepts `1m` through `24h`. |
+| `--timeout` | `2h` per controller invocation; accepts `1m` through `24h`. Runs with a persisted limit override have no implicit deadline; explicit timeouts and parent deadlines still apply. |
 | `--resume` | Continue a recorded run ID with its original settings. |
+| `--override-run-limits` | Admit a single saved-run resume at a corroborated local numeric hold and persist permission to continue past controller numeric ceilings. |
 | `--answer-file` | Bounded nonempty UTF-8 human answer, only with `--resume`. |
 | `--dry-run` | Print an offline plan. |
 
@@ -696,7 +697,7 @@ usage/access limits and policy refusals retain a stopped checkpoint. Fix the
 reported cause before resuming; never restart or change identities to evade
 provider restrictions. Journals and native storage must remain intact for resume.
 
-Explicitly resuming a run stopped by the repository-check repair limit begins
+Without a persisted override, explicitly resuming a run stopped by the repository-check repair limit begins
 another finite repair window. The controller rechecks the candidate and returns
 fresh failure metadata to the same implementation session when repair is needed.
 Cumulative repair and turn counts remain recorded. The native-turn ceiling defaults to 24; a single explicit extension is described below.
@@ -1772,3 +1773,55 @@ configured-check, CI or review repair allowances or bypass provider failures,
 human questions, changed inputs or unfinished cleanup. It cannot be combined with
 an answer file or another recovery initializer. `--dry-run` previews admission
 without granting turns.
+
+
+### Continue a saved run past local numeric limits
+
+Use beta.45 or newer to grant a durable override for one saved run:
+
+```sh
+sdlc resume --run RUN_ID --override-run-limits
+sdlc resume --run RUN_ID --override-run-limits --dry-run
+```
+
+The same flag is available with a single `sdlc run --reference REFERENCE
+--ticket TICKET --resume RUN_ID`. Admission requires the exact supported local
+numeric hold, its matching saved stage and corroborating accounting. It does not
+admit provider access or usage failures, policy refusals, human questions, missing
+inputs, unfinished cleanup or other operational holds. Legacy missing CI or
+review budgets still require their existing explicit recovery initializer.
+The flag cannot be combined with an answer file, PR feedback, a recovery
+initializer or the finite session-turn extension. Dry-run previews admission
+without saving a grant or executing work.
+
+Once granted, ordinary resumes retain the override without repeating the flag.
+It lifts the controller ceilings on native calls, configured-check repair rounds,
+CI repairs, independent-review handoffs, repeated verification feedback, retained
+verification request IDs and PR metadata correction attempts. The original
+implementation session, selected accounts and models, existing turn extension,
+history, evidence and cumulative counters remain intact. The audit records the
+original checkpoint and accounting; an unrecorded prior configured ceiling is
+shown as unknown rather than inferred.
+
+An overridden run has no implicit two-hour controller deadline. An explicit
+`--timeout` still applies to that invocation, and a parent deadline or
+cancellation still stops the controller with its checkpoint retained. This also
+applies to later ordinary resumes of the overridden run.
+
+When the saved native outcome was rejected only because the retained verification
+ID limit was reached, resume admits and processes that saved batch without another
+model call. Stable IDs preserve requests already admitted by an older controller;
+companion source requests and PR feedback assessments receive their ordinary
+handling. Failed batch admission leaves retained requests and evidence unchanged.
+
+Provider authentication, access and usage holds remain enforced. Checks must
+still verify the current clean committed source; signing, CI on the exact
+published head, fresh independent review and human merge remain required.
+Same-head repair and unchanged-failure guards still stop work, and PR metadata
+must still satisfy the publication contract. Per-response verification batches
+remain limited to 16 requests, request commands and bytes remain bounded, and the
+private journal remains limited to 1 MiB. The override does not authorize account
+switching, session restarts or bypassing provider restrictions.
+
+Journals with an override require beta.45 or newer. Saved runs without an override
+remain compatible, and their existing default ceilings remain in force.

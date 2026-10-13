@@ -226,6 +226,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	RunLimitOverride          *RunLimitOverride     `json:"run_limit_override,omitempty"`
 	FormatterPreparation      []VerificationResult  `json:"formatter_preparation,omitempty"`
 	PRFeedback                *PRFeedbackHistory    `json:"pr_feedback,omitempty"`
 	SessionTurnExtension      *SessionTurnExtension `json:"session_turn_extension,omitempty"`

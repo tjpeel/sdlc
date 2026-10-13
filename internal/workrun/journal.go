@@ -57,6 +57,12 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validatePersistedRunLimitOverride(journal); err != nil {
+		return err
+	}
+	if err := validateRetainedVerification(journal); err != nil {
+		return err
+	}
 	if err := validateCommandEvidence(journal); err != nil {
 		return err
 	}
@@ -116,6 +122,9 @@ func Load(directory string) (Journal, error) {
 	if decoder.Decode(&journal) != nil || decoder.Decode(new(any)) != io.EOF || journal.Version != 1 || journal.ID != filepath.Base(directory) || !objectID.MatchString(journal.Plan.StartingSHA) || !objectID.MatchString(journal.Plan.SourceSHA) {
 		return Journal{}, fmt.Errorf("invalid run journal")
 	}
+	if err := validatePersistedRunLimitOverride(&journal); err != nil {
+		return Journal{}, err
+	}
 	if err := validateCommandEvidence(&journal); err != nil {
 		return Journal{}, err
 	}
@@ -137,7 +146,11 @@ func Load(directory string) (Journal, error) {
 			return Journal{}, fmt.Errorf("invalid additional verification evidence")
 		}
 	}
-	if err := validateVerificationRequests(requests, &journal.Plan); err != nil {
+	limit := 16
+	if runLimitsOverridden(&journal) {
+		limit = 0
+	}
+	if err := validateVerificationRequestSet(requests, &journal.Plan, limit); err != nil {
 		return Journal{}, err
 	}
 	if err := validateSessionTurnExtension(&journal); err != nil {

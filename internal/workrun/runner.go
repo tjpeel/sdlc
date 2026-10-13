@@ -21,6 +21,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	OverrideRunLimits            bool
 	ProcessPRFeedback            bool
 	CompanionCloner              CompanionRepositoryCloner
 	Provider                     Provider
@@ -127,10 +128,27 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 	}
 	if runner.ProcessPRFeedback {
-		if answer != "" || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
+		if answer != "" || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
 			return fmt.Errorf("PR feedback cannot be combined with recovery actions")
 		}
 		if err := ValidatePRFeedbackResume(*journal); err != nil {
+			return err
+		}
+	}
+	if err := validatePersistedRunLimitOverride(journal); err != nil {
+		return err
+	}
+	if runner.OverrideRunLimits {
+		if runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 || answer != "" {
+			return fmt.Errorf("run limit override cannot be combined with other recovery actions")
+		}
+		if err := ValidateRunLimitOverride(*journal); err != nil {
+			return err
+		}
+		if err := verifyInputs(journal.Workspace, journal.Plan.Inputs); err != nil {
+			return err
+		}
+		if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
 			return err
 		}
 	}
@@ -176,6 +194,16 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 	// State reporting depends on the tracker opened by OnStart. Register its
 	// cleanup before persisting initialization through the reporting save path.
+	if runner.OverrideRunLimits && journal.RunLimitOverride == nil {
+		kind, limit, err := admittedRunLimit(*journal)
+		if err != nil {
+			return err
+		}
+		journal.RunLimitOverride = &RunLimitOverride{GrantedAt: time.Now().UTC(), CheckpointUpdatedAt: journal.UpdatedAt, GrantedAttempt: journal.Attempt, GrantedRounds: journal.Rounds, OriginalSessionID: journal.SessionID, LimitKind: kind, OriginalLimit: limit, PendingVerificationReplay: kind == "verification_requests"}
+		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+	}
 	if runner.ExtendSessionTurnBudget != 0 {
 		journal.SessionTurnExtension = &SessionTurnExtension{GrantedAt: time.Now().UTC(), GrantedAttempt: journal.Attempt, OriginalLimit: defaultNativeTurnLimit, Additional: runner.ExtendSessionTurnBudget, OriginalSessionID: journal.SessionID}
 		if err := runner.save(directory, journal); err != nil {
@@ -257,7 +285,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if journal.ResumeState == "" {
 			return fmt.Errorf("stopped run has no resumable stage")
 		}
-		if journal.State == "blocked" && journal.ResumeState == "checking" && journal.StopReason == configuredCheckRepairBound && journal.SessionID != "" {
+		if !runLimitsOverridden(journal) && journal.State == "blocked" && journal.ResumeState == "checking" && journal.StopReason == configuredCheckRepairBound && journal.SessionID != "" {
 			journal.RepairWindowStart = journal.Rounds
 		}
 		journal.State = journal.ResumeState
@@ -311,6 +339,15 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			return nil
 		case "prepared", "implementing", "repairing":
+			if journal.RunLimitOverride != nil && journal.RunLimitOverride.PendingVerificationReplay {
+				if err := runner.validateSourcePatchResume(ctx, directory, journal); err != nil {
+					return err
+				}
+				if err := runner.acceptImplementationOutcome(ctx, directory, journal); err != nil {
+					return err
+				}
+				continue
+			}
 			if a := journal.ReviewAssessment; a != nil && a.Pending && !a.Acknowledged {
 				var err error
 				if a.StartedAttempt == 0 {
@@ -332,7 +369,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if status != "stored" {
 				return runner.stop(directory, journal, "blocked", "selected implementer has no usable stored login")
 			}
-			if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+			if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
 				return runner.stop(directory, journal, "blocked", implementationTurnBound)
 			}
 			if err := runner.transition(directory, journal, "implementing"); err != nil {
@@ -355,73 +392,8 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "failed", err.Error())
 			}
 			journal.Outcome = result.Outcome
-			if a := journal.ReviewAssessment; a != nil && (result.Outcome.Status == "checks_requested" || result.Outcome.Status == "implemented" || result.Outcome.Status == "waiting_for_human") {
-				a.Acknowledged = true
-			}
-			if journal.ReviewAssessment != nil && journal.ReviewAssessment.Pending && result.Outcome.Status == "implemented" {
-				journal.ReviewAssessment.Summary = boundedReviewSummary(result.Outcome.Summary)
-				journal.ReviewAssessment.Pending = false
-			}
-			if err := mergeVerification(journal, result.Outcome.VerificationRequests); err != nil {
-				return runner.stop(directory, journal, "blocked", err.Error())
-			}
-			journal.Feedback = ""
-			if result.Outcome.Status == "blocked" || result.Outcome.Status == "failed" {
-				return runner.stop(directory, journal, result.Outcome.Status, result.Outcome.Summary)
-			}
-			moreFeedback, err := runner.acceptPRFeedback(ctx, directory, journal, result.Outcome)
-			if err != nil {
-				return runner.stop(directory, journal, "blocked", err.Error())
-			}
-
-			if len(result.Outcome.RepositoryRequests) > 0 {
-				if err := validateCompanionRepositoryRequests(result.Outcome.RepositoryRequests, &journal.Plan); err != nil {
-					return runner.stop(directory, journal, "blocked", "implementation requested an invalid companion repository")
-				}
-				if runner.CompanionCloner == nil {
-					return runner.stop(directory, journal, "blocked", "the configured GitHub source reader is unavailable in this controller")
-				}
-				feedback, err := runner.stageCompanionRepositories(ctx, directory, journal, result.Outcome.RepositoryRequests)
-				if err != nil {
-					var access *companionSourceAccessError
-					if errors.As(err, &access) {
-						question := "The configured GitHub profile could not clone " + access.repository + ". Confirm that the selected account has read access, then answer and resume this run."
-						journal.PendingRole = "implementation"
-						journal.Outcome.Questions = []string{question}
-						return runner.stop(directory, journal, "waiting_for_human", question)
-					}
-					var stage companionSourceStageError
-					if errors.As(err, &stage) {
-						return runner.stop(directory, journal, "blocked", "The controller could not stage companion source: "+stage.Error())
-					}
-					return runner.stop(directory, journal, "blocked", "the controller could not stage companion source")
-				}
-				journal.Feedback = feedback
-				if err := runner.save(directory, journal); err != nil {
-					return err
-				}
-				continue
-			}
-			if moreFeedback && (result.Outcome.Status == "checks_requested" || result.Outcome.Status == "implemented") {
-				if err := runner.transition(directory, journal, "repairing"); err != nil {
-					return err
-				}
-				continue
-			}
-			switch result.Outcome.Status {
-			case "waiting_for_human":
-				journal.PendingRole = "implementation"
-				return runner.stop(directory, journal, "waiting_for_human", strings.Join(result.Outcome.Questions, "\n"))
-			case "checks_requested", "implemented":
-				if result.Outcome.Status == "implemented" {
-					journal.Plan.PRTitle = result.Outcome.PRTitle
-					journal.Plan.PRBody = result.Outcome.PRBody
-				}
-				if err := runner.transition(directory, journal, "checking"); err != nil {
-					return err
-				}
-			default:
-				return runner.stop(directory, journal, "failed", "implementation returned an invalid stage")
+			if err := runner.acceptImplementationOutcome(ctx, directory, journal); err != nil {
+				return err
 			}
 		case "checking":
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
@@ -495,7 +467,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "awaiting_reviewer", "reviewing":
-			if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+			if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
 				return runner.stop(directory, journal, "blocked", reviewTurnBound)
 			}
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)
@@ -626,7 +598,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		defer func() { resultErr = errors.Join(resultErr, recorder.Close()) }()
 	}
 
-	if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+	if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
 		reason := implementationTurnBound
 		if role == "review" {
 			reason = reviewTurnBound
@@ -813,4 +785,94 @@ func PrepareReview(ctx context.Context, journal Journal, directory string) (stri
 		return "", err
 	}
 	return workspace, nil
+}
+
+func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory string, journal *Journal) error {
+	if a := journal.ReviewAssessment; a != nil && (journal.Outcome.Status == "checks_requested" || journal.Outcome.Status == "implemented" || journal.Outcome.Status == "waiting_for_human") {
+		a.Acknowledged = true
+	}
+	if journal.ReviewAssessment != nil && journal.ReviewAssessment.Pending && journal.Outcome.Status == "implemented" {
+		journal.ReviewAssessment.Summary = boundedReviewSummary(journal.Outcome.Summary)
+		journal.ReviewAssessment.Pending = false
+	}
+	if err := mergeVerification(journal, journal.Outcome.VerificationRequests); err != nil {
+		return runner.stop(directory, journal, "blocked", err.Error())
+	}
+	journal.Feedback = ""
+	if journal.Outcome.Status == "blocked" || journal.Outcome.Status == "failed" {
+		return runner.stop(directory, journal, journal.Outcome.Status, journal.Outcome.Summary)
+	}
+	moreFeedback := pendingFeedback(journal) != nil
+	override := journal.RunLimitOverride
+	if override == nil || !override.PendingVerificationReplay || !override.VerificationReplayFeedbackProcessed {
+		var err error
+		moreFeedback, err = runner.acceptPRFeedback(ctx, directory, journal, journal.Outcome)
+		if err != nil {
+			return runner.stop(directory, journal, "blocked", err.Error())
+		}
+		if override != nil && override.PendingVerificationReplay {
+			override.VerificationReplayFeedbackProcessed = true
+		}
+	}
+
+	if len(journal.Outcome.RepositoryRequests) > 0 {
+		if err := validateCompanionRepositoryRequests(journal.Outcome.RepositoryRequests, &journal.Plan); err != nil {
+			return runner.stop(directory, journal, "blocked", "implementation requested an invalid companion repository")
+		}
+		if runner.CompanionCloner == nil {
+			return runner.stop(directory, journal, "blocked", "the configured GitHub source reader is unavailable in this controller")
+		}
+		feedback, err := runner.stageCompanionRepositories(ctx, directory, journal, journal.Outcome.RepositoryRequests)
+		if err != nil {
+			var access *companionSourceAccessError
+			if errors.As(err, &access) {
+				question := "The configured GitHub profile could not clone " + access.repository + ". Confirm that the selected account has read access, then answer and resume this run."
+				journal.PendingRole = "implementation"
+				journal.Outcome.Questions = []string{question}
+				return runner.stop(directory, journal, "waiting_for_human", question)
+			}
+			var stage companionSourceStageError
+			if errors.As(err, &stage) {
+				return runner.stop(directory, journal, "blocked", "The controller could not stage companion source: "+stage.Error())
+			}
+			return runner.stop(directory, journal, "blocked", "the controller could not stage companion source")
+		}
+		journal.Feedback = feedback
+		completeVerificationReplay(journal)
+		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+		return nil
+	}
+	if moreFeedback && (journal.Outcome.Status == "checks_requested" || journal.Outcome.Status == "implemented") {
+		completeVerificationReplay(journal)
+		if err := runner.transition(directory, journal, "repairing"); err != nil {
+			return err
+		}
+		return nil
+	}
+	switch journal.Outcome.Status {
+	case "waiting_for_human":
+		journal.PendingRole = "implementation"
+		return runner.stop(directory, journal, "waiting_for_human", strings.Join(journal.Outcome.Questions, "\n"))
+	case "checks_requested", "implemented":
+		if journal.Outcome.Status == "implemented" {
+			journal.Plan.PRTitle = journal.Outcome.PRTitle
+			journal.Plan.PRBody = journal.Outcome.PRBody
+		}
+		completeVerificationReplay(journal)
+		if err := runner.transition(directory, journal, "checking"); err != nil {
+			return err
+		}
+	default:
+		return runner.stop(directory, journal, "failed", "implementation returned an invalid stage")
+	}
+	return nil
+}
+
+func completeVerificationReplay(journal *Journal) {
+	if override := journal.RunLimitOverride; override != nil {
+		override.PendingVerificationReplay = false
+		override.VerificationReplayFeedbackProcessed = false
+	}
 }
