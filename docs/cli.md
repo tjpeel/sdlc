@@ -580,6 +580,13 @@ Stop reasons and the latest CI result are saved in the journal for later inspect
 Resuming an older run registers it when the controller starts. Dry runs create
 neither registry entries nor heartbeats. These records are private local state.
 
+Within the repair bound, a configured check failure still allows pending structured
+verification requests to run in the isolated check worker. Failed commands prevent
+reuse of their source copy and HOME. Passing an additional request does not replace
+the failed configured checks or permit publication. Command output remains in
+private logs; repair feedback includes only bounded diagnostic metadata, including
+CSharpier's approximate Expected/Actual line locations for committed files.
+
 Native structured JSONL streams to the terminal and is retained privately under:
 
 ```text
@@ -627,6 +634,13 @@ review starts fresh. Cancellation, timeout, invalid handoffs, missing inputs,
 usage/access limits and policy refusals retain a stopped checkpoint. Fix the
 reported cause before resuming; never restart or change identities to evade
 provider restrictions. Journals and native storage must remain intact for resume.
+
+Explicitly resuming a run stopped by the repository-check repair limit begins
+another finite repair window. The controller rechecks the candidate and returns
+fresh failure metadata to the same implementation session when repair is needed.
+Cumulative repair and turn counts remain recorded, including the 24-turn ceiling.
+This renewal applies only to that check-limit stop, not provider, CI or independent
+review holds.
 
 ### Missing requirement files
 

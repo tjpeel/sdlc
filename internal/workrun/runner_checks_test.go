@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -90,5 +91,88 @@ func TestControllerCandidateCleanupFailureInvalidatesEvidenceBeforeResume(t *tes
 	}
 	if checker.phases != 2 || checker.calls != 2 || publisher.calls != 1 {
 		t.Fatal("resume skipped fresh verification after cleanup failure")
+	}
+}
+
+func TestControllerConfiguredFailureRunsPendingVerificationBeforeRepair(t *testing.T) {
+	for _, additionalFailed := range []bool{false, true} {
+		t.Run(fmt.Sprint(additionalFailed), func(t *testing.T) {
+			directory, journal := testRun(t)
+			asked := testOutcome("checks_requested")
+			asked.VerificationRequests = []VerificationRequest{regressionRequest()}
+			provider := &fakeProvider{outcomes: []Outcome{asked, testOutcome("waiting_for_human")}}
+			checker := &controllerPhaseChecker{}
+			checker.fakeChecker.err = &CheckFailure{Command: 1, ExitCode: 1, csharpier: true, paths: []string{"src/Example.cs"}, formatterLocations: map[string]csharpierLocation{"src/Example.cs": {kind: "Expected", line: "42"}}}
+			if additionalFailed {
+				checker.err = &VerificationFailure{Phase: "candidate", Err: &CheckFailure{Command: 1, ExitCode: 2, compiler: &compilerDiagnostic{code: "CS0104", path: "src/Other.cs", line: "7", column: "3"}}}
+			}
+			publisher := &fakePublisher{}
+			runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
+			runner.Checker = checker
+			if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) {
+				t.Fatal(err)
+			}
+			if checker.calls != 1 || len(checker.requests) != 1 || journal.Evidence.Passed || publisher.calls != 0 || len(provider.calls) != 2 || provider.calls[1].ResumeID != testNative {
+				t.Fatalf("pending diagnostic skipped or failed suite bypassed: suite=%d requested=%d publish=%d sessions=%d", checker.calls, len(checker.requests), publisher.calls, len(provider.calls))
+			}
+			prompt := provider.calls[1].Prompt
+			if !strings.Contains(prompt, "src/Example.cs (CSharpier Expected around line 42)") || !strings.Contains(prompt, `"additional"`) || journal.Verification[0].Passed == additionalFailed {
+				t.Fatal("configured or additional evidence missing", prompt)
+			}
+			if additionalFailed && !strings.Contains(prompt, "src/Other.cs:7:3") {
+				t.Fatal("mixed failure lost compiler location", prompt)
+			}
+			if strings.Contains(prompt, "private test output") {
+				t.Fatal("private log reached feedback")
+			}
+		})
+	}
+}
+
+func TestControllerConfiguredFailureStopsOnAdditionalOperationalFailure(t *testing.T) {
+	directory, journal := testRun(t)
+	asked := testOutcome("checks_requested")
+	asked.VerificationRequests = []VerificationRequest{regressionRequest()}
+	provider := &fakeProvider{outcomes: []Outcome{asked}}
+	checker := &controllerPhaseChecker{}
+	checker.fakeChecker.err = ErrCheckFailed
+	checker.err = errors.New("disposable transport failure")
+	publisher := &fakePublisher{}
+	runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
+	runner.Checker = checker
+	if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) || journal.State != "blocked" || journal.ResumeState != "checking" || journal.Evidence.Passed || publisher.calls != 0 || len(provider.calls) != 1 || len(checker.requests) != 1 {
+		t.Fatal("additional operational failure reached repair or publication", err)
+	}
+	if journal.Verification[0].Key != "" || !strings.Contains(journal.Feedback, "Configured checks failed") {
+		t.Fatal("operational failure cached or configured feedback lost")
+	}
+}
+
+func TestControllerConfiguredImmediateStopsSkipPendingVerification(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failure error
+		rounds  int
+	}{
+		{"exhausted bound", ErrCheckFailed, 1},
+		{"operational failure", errors.New("disposable transport failure"), 0},
+		{"cancellation", context.Canceled, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			directory, journal := testRun(t)
+			journal.Rounds = tc.rounds
+			asked := testOutcome("checks_requested")
+			asked.VerificationRequests = []VerificationRequest{regressionRequest()}
+			provider := &fakeProvider{outcomes: []Outcome{asked}}
+			checker := &supplementaryChecker{}
+			checker.fakeChecker.err = tc.failure
+			publisher := &fakePublisher{}
+			runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
+			runner.Checker = checker
+			runner.MaxRounds = 1
+			if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) || journal.Evidence.Passed || publisher.calls != 0 || len(provider.calls) != 1 || len(checker.requests) != 0 {
+				t.Fatal("immediate stop ran pending verification or repair", err)
+			}
+		})
 	}
 }

@@ -234,6 +234,7 @@ type Journal struct {
 	Evidence                  CheckEvidence         `json:"evidence"`
 	Outcome                   Outcome               `json:"outcome"`
 	Rounds                    int                   `json:"rounds"`
+	RepairWindowStart         int                   `json:"repair_window_start,omitempty"`
 	Attempt                   int                   `json:"attempt"`
 	CheckAttempt              int                   `json:"check_attempt"`
 	CandidatePhasePending     bool                  `json:"candidate_phase_pending,omitempty"`

@@ -11,12 +11,13 @@ import (
 
 // CheckFailure describes a completed command, without exposing its arguments or logs.
 type CheckFailure struct {
-	Command   int
-	ExitCode  int
-	formatter bool
-	csharpier bool
-	paths     []string
-	compiler  *compilerDiagnostic
+	Command            int
+	ExitCode           int
+	formatter          bool
+	csharpier          bool
+	paths              []string
+	formatterLocations map[string]csharpierLocation
+	compiler           *compilerDiagnostic
 }
 
 func (f *CheckFailure) Error() string {
@@ -52,14 +53,16 @@ func diagnosticSourcePaths(ctx context.Context, workspace string) map[string]boo
 // Only fixed diagnostic metadata and exact committed file names may cross into
 // repair feedback. This is deliberately not a general purpose log redactor.
 type formatterDiagnostic struct {
-	approved          map[string]bool
-	line              []byte
-	dropping          bool
-	styleIssues       bool
-	csharpier         bool
-	paths             []string
-	compiler          *compilerDiagnostic
-	dockerUnavailable bool
+	approved           map[string]bool
+	line               []byte
+	dropping           bool
+	styleIssues        bool
+	csharpier          bool
+	paths              []string
+	formatterLocations map[string]csharpierLocation
+	csharpierPath      string
+	compiler           *compilerDiagnostic
+	dockerUnavailable  bool
 }
 
 func (d *formatterDiagnostic) Write(p []byte) (int, error) {
@@ -75,6 +78,7 @@ func (d *formatterDiagnostic) Write(p []byte) (int, error) {
 			d.dropping = false
 		} else if len(d.line) >= 2048 {
 			d.dropping = true
+			d.csharpierPath = ""
 		} else if !d.dropping {
 			d.line = append(d.line, b)
 		}
@@ -85,8 +89,26 @@ func (d *formatterDiagnostic) Write(p []byte) (int, error) {
 func (d *formatterDiagnostic) consume() {
 	line, safe := formatterLine(d.line)
 	if !safe {
+		d.csharpierPath = ""
 		return
 	}
+	formatterOutput := dockerOutputPrefix.ReplaceAllString(line, "")
+	if d.csharpierPath != "" {
+		if match := csharpierLineHeader.FindStringSubmatch(formatterOutput); match != nil {
+			if d.formatterLocations == nil {
+				d.formatterLocations = make(map[string]csharpierLocation)
+			}
+			if d.formatterLocations[d.csharpierPath].line == "" {
+				d.formatterLocations[d.csharpierPath] = csharpierLocation{kind: match[1], line: match[2]}
+			}
+			d.csharpierPath = ""
+			return
+		}
+		if formatterOutput == "" {
+			return
+		}
+	}
+	d.csharpierPath = ""
 	if dockerDaemonUnavailable(line) {
 		d.dockerUnavailable = true
 	}
@@ -97,7 +119,7 @@ func (d *formatterDiagnostic) consume() {
 	if !warning {
 		// CSharpier reports only a fixed file-level diagnostic. Admit it only
 		// when its resolved path is part of the approved committed source tree.
-		path, ok := strings.CutPrefix(dockerOutputPrefix.ReplaceAllString(line, ""), "Error ")
+		path, ok := strings.CutPrefix(formatterOutput, "Error ")
 		if !ok {
 			return
 		}
@@ -111,6 +133,12 @@ func (d *formatterDiagnostic) consume() {
 		}
 		d.csharpier = true
 		d.appendPath(path)
+		for _, admitted := range d.paths {
+			if admitted == path {
+				d.csharpierPath = path
+				break
+			}
+		}
 		return
 	}
 	if path == "Code style issues found in the above file(s). Run Prettier with --write to fix." {
@@ -132,6 +160,15 @@ func (d *formatterDiagnostic) consume() {
 
 // Strip only the bounded step/time prefix emitted by Docker build output.
 var dockerOutputPrefix = regexp.MustCompile(`^(?:#[0-9]{1,6} [0-9]{1,6}(?:\.[0-9]{1,6})? |[0-9]{1,6}(?:\.[0-9]{1,6})? )`)
+
+// Only the fixed CSharpier header may supply a positive, bounded location.
+// Diff content is never retained; another line ends the file association.
+var csharpierLineHeader = regexp.MustCompile(`^  ----------------------------- (Expected|Actual): Around Line ([1-9][0-9]{0,6}) -----------------------------$`)
+
+type csharpierLocation struct {
+	kind string
+	line string
+}
 
 func csharpierSourcePath(path string, approved map[string]bool) string {
 	path = strings.TrimPrefix(path, "./")
@@ -284,6 +321,9 @@ func checkRepairFeedback(tree string, err error, commands [][]string) string {
 			}
 			for _, path := range failure.paths {
 				feedback += "\nFormatting warning in committed source: " + path
+				if location := failure.formatterLocations[path]; location.line != "" {
+					feedback += fmt.Sprintf(" (CSharpier %s around line %s)", location.kind, location.line)
+				}
 			}
 		}
 	}

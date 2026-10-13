@@ -105,6 +105,29 @@ func TestCandidatePhaseUsesFreshCopyAfterSourceMutation(t *testing.T) {
 	}
 }
 
+func TestCandidatePhaseUsesFreshCopyAfterFailedCommand(t *testing.T) {
+	checker, docker, runner, workspace := checkFixture(t)
+	// Model source mutation during a failed command. Its post-command
+	// fingerprint is unavailable because execution exits before that probe.
+	docker.fingerprints = []string{strings.Repeat("a", 64), strings.Repeat("b", 64)}
+	runner.fail = true
+	err := checker.WithCandidate(context.Background(), workspace, io.Discard, func(scoped Checker) error {
+		if err := scoped.Check(context.Background(), workspace, [][]string{{"dotnet", "format"}}, io.Discard); !errors.Is(err, ErrCheckFailed) {
+			t.Fatalf("expected semantic failure: %v", err)
+		}
+		runner.fail = false
+		request := regressionRequest()
+		request.Baseline = nil
+		return scoped.(VerificationChecker).Verify(context.Background(), workspace, request, io.Discard)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 2 || checkMount(runner.calls[0], "/workspace") == checkMount(runner.calls[1], "/workspace") || checkMount(runner.calls[0], "/tmp/check-home") == checkMount(runner.calls[1], "/tmp/check-home") {
+		t.Fatal("failed command state was reused by requested verification")
+	}
+}
+
 func TestCandidateFingerprintTracksSourceAndFrozenInputs(t *testing.T) {
 	source, copy, inputs := t.TempDir(), t.TempDir(), t.TempDir()
 	for _, root := range []*string{&source, &copy, &inputs} {

@@ -56,7 +56,7 @@ func TestCSharpierFailureFeedsRepairFeedback(t *testing.T) {
 	if _, err := SafeGit(context.Background(), workspace, "commit", "-m", "Add C sharp source"); err != nil {
 		t.Fatal(err)
 	}
-	checker.Runner = &failingFormatterRunner{failAt: 1, output: "private-token=disposable-secret\nError src/ExampleTests.cs - Was not formatted.\nError /host/private.cs - Was not formatted.\n"}
+	checker.Runner = &failingFormatterRunner{failAt: 1, output: "private-token=disposable-secret\n#22 0.123 \x1b[31mError src/ExampleTests.cs - Was not formatted.\x1b[0m\n#22 0.124   ----------------------------- Expected: Around Line 42 -----------------------------\nprivate source fragment\nError /host/private.cs - Was not formatted.\n"}
 	commands := [][]string{{"sh", "-c", "dotnet csharpier check .; private-command-argument"}}
 	var log bytes.Buffer
 	err := checker.Check(context.Background(), workspace, commands, &log)
@@ -65,10 +65,10 @@ func TestCSharpierFailureFeedsRepairFeedback(t *testing.T) {
 		t.Fatalf("missing CSharpier evidence: %v", err)
 	}
 	feedback := checkRepairFeedback(testTree, failure, commands)
-	if !strings.Contains(feedback, "CSharpier reported") || !strings.Contains(feedback, "src/ExampleTests.cs") {
+	if !strings.Contains(feedback, "CSharpier reported") || !strings.Contains(feedback, "src/ExampleTests.cs (CSharpier Expected around line 42)") {
 		t.Fatal(feedback)
 	}
-	for _, private := range []string{"disposable-secret", "/host/", "private-command-argument", "Was not formatted."} {
+	for _, private := range []string{"disposable-secret", "/host/", "private-command-argument", "Was not formatted.", "private source fragment", "#22", "Expected:"} {
 		if strings.Contains(feedback, private) {
 			t.Fatalf("private diagnostic reached feedback (%q): %s", private, feedback)
 		}
@@ -128,6 +128,62 @@ func TestCSharpierDiagnosticRejectsUnresolvedRelativePaths(t *testing.T) {
 			d.finish()
 			if d.csharpier || len(d.paths) != 0 {
 				t.Fatalf("unapproved diagnostic admitted: %+v", d)
+			}
+		})
+	}
+}
+
+func TestCSharpierDiagnosticLineAssociation(t *testing.T) {
+	const file = "Error ./tests/ExampleTests.cs - Was not formatted.\n"
+	const header = "  ----------------------------- Expected: Around Line 42 -----------------------------\n"
+	approved := map[string]bool{
+		"tests/ExampleTests.cs":   true,
+		"src/Other.cs":            true,
+		"src/Example/Cursor.cs":   true,
+		"other/Example/Cursor.cs": true,
+	}
+	for _, tc := range []struct {
+		name, output, want string
+	}{
+		{"chunked coloured docker", "#22 0.123 \x1b[31m" + strings.TrimSuffix(file, "\n") + "\x1b[0m\r\n#22 0.124 \x1b[32m" + strings.TrimSuffix(header, "\n") + "\x1b[0m\r\nprivate source fragment\n", "tests/ExampleTests.cs (CSharpier Expected around line 42)"},
+		{"actual header", file + strings.Replace(header, "Expected", "Actual", 1), "tests/ExampleTests.cs (CSharpier Actual around line 42)"},
+		{"blank line", file + "\n" + header, "tests/ExampleTests.cs (CSharpier Expected around line 42)"},
+		{"upper bound", file + strings.Replace(header, "42", "9999999", 1), "tests/ExampleTests.cs (CSharpier Expected around line 9999999)"},
+		{"new approved file", file + "Error src/Other.cs - Was not formatted.\n" + header, "src/Other.cs (CSharpier Expected around line 42)"},
+		{"orphan header", header, ""},
+		{"unapproved file", file + "Error /host/Unknown.cs - Was not formatted.\n" + header, ""},
+		{"ambiguous file", file + "Error ../Example/Cursor.cs - Was not formatted.\n" + header, ""},
+		{"unknown error", file + "Error private failure\n" + header, ""},
+		{"source intervenes", file + "private source fragment\n" + header, ""},
+		{"unknown marker", file + "  --- Expected: Around Line 7 ---\n" + header, ""},
+		{"zero", file + strings.Replace(header, "42", "0", 1) + header, ""},
+		{"negative", file + strings.Replace(header, "42", "-1", 1) + header, ""},
+		{"oversized number", file + strings.Replace(header, "42", "10000000", 1) + header, ""},
+		{"header suffix", file + strings.TrimSuffix(header, "\n") + " private suffix\n" + header, ""},
+		{"unsupported control", file + "\x1b]0;private-token\x07\n" + header, ""},
+		{"overlong intervening line", file + strings.Repeat("x", 2049) + "\n" + header, ""},
+		{"first header wins", file + header + strings.Replace(header, "42", "99", 1), "tests/ExampleTests.cs (CSharpier Expected around line 42)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &formatterDiagnostic{approved: approved}
+			for _, b := range []byte(tc.output) {
+				d.Write([]byte{b})
+			}
+			d.finish()
+			feedback := checkRepairFeedback(testTree, &CheckFailure{Command: 1, ExitCode: 1, csharpier: d.csharpier, paths: d.paths, formatterLocations: d.formatterLocations}, [][]string{{"docker", "build", "."}})
+			if tc.want != "" && !strings.Contains(feedback, "Formatting warning in committed source: "+tc.want) {
+				t.Fatalf("missing formatter location: %s", feedback)
+			}
+			if tc.want == "" && len(d.formatterLocations) != 0 {
+				t.Fatalf("unassociated formatter location: %s", feedback)
+			}
+			if tc.want == "src/Other.cs (CSharpier Expected around line 42)" && strings.Contains(feedback, "tests/ExampleTests.cs (CSharpier Expected around line 42)") {
+				t.Fatalf("formatter location crossed files: %s", feedback)
+			}
+			for _, private := range []string{"/host/", "#22", "Expected:", "Actual:", "\x1b", "around line 99)", "private source", "private-token", "private suffix"} {
+				if strings.Contains(feedback, private) {
+					t.Fatalf("diagnostic content reached feedback: %s", feedback)
+				}
 			}
 		})
 	}

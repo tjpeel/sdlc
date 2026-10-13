@@ -183,6 +183,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if journal.ResumeState == "" {
 			return fmt.Errorf("stopped run has no resumable stage")
 		}
+		if journal.State == "blocked" && journal.ResumeState == "checking" && journal.StopReason == configuredCheckRepairBound && journal.SessionID != "" {
+			journal.RepairWindowStart = journal.Rounds
+		}
 		journal.State = journal.ResumeState
 	}
 	journal.StopReason = ""
@@ -403,7 +406,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if len(result.Outcome.Findings) > 0 {
 				journal.Rounds++
-				if journal.Rounds > runner.MaxRounds {
+				if journal.Rounds-journal.RepairWindowStart > runner.MaxRounds {
 					return runner.stop(directory, journal, "blocked", "independent review still has findings after the repair bound")
 				}
 				data, _ := json.Marshal(result.Outcome.Findings)

@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.29 - 2026-10-13
+
+### Fixed
+
+- Include bounded CSharpier Expected/Actual line locations in repair feedback for approved committed files, keeping source excerpts and other check output private.
+- Run pending isolated verification requests after configured check failures within the repair bound. Failed commands invalidate shared source and HOME reuse; configured failures still prevent publication.
+- Let an explicit resume after the repository-check repair limit begin another finite repair window, preserving cumulative repair history, native sessions and the implementation-turn limit. Other stops retain their existing recovery rules.
+
 ## 0.1.0-beta.28 - 2026-10-13
 
 ### Fixed

@@ -12,6 +12,8 @@ import (
 	"github.com/tjpeel/sdlc/internal/runprogress"
 )
 
+const configuredCheckRepairBound = "repository checks still fail after the repair bound"
+
 func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, journal *Journal, revision Revision) error {
 	firstAttempt := journal.CheckAttempt + 1
 	if timed, ok := runner.Checker.(TimingChecker); ok {
@@ -90,6 +92,7 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 }
 
 func (runner Runner) checkCandidate(ctx context.Context, directory string, journal *Journal, revision Revision) error {
+	configuredFeedback := ""
 	if journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed {
 		journal.CheckAttempt++
 		if err := runner.save(directory, journal); err != nil {
@@ -117,14 +120,11 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 		}
 		if checkErr != nil {
 			journal.Rounds++
-			if journal.Rounds > runner.MaxRounds {
-				return runner.stop(directory, journal, "blocked", "repository checks still fail after the repair bound")
+			configuredFeedback = checkRepairFeedback(revision.Tree, checkErr, journal.Plan.Checks)
+			journal.Feedback = configuredFeedback
+			if journal.Rounds-journal.RepairWindowStart > runner.MaxRounds {
+				return runner.stop(directory, journal, "blocked", configuredCheckRepairBound)
 			}
-			journal.Feedback = checkRepairFeedback(revision.Tree, checkErr, journal.Plan.Checks)
-			if err := runner.transition(directory, journal, "repairing"); err != nil {
-				return err
-			}
-			return nil
 		}
 	}
 	repaired := false
@@ -178,6 +178,9 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 				return runner.stop(directory, journal, "blocked", "additional verification "+evidence.Request.ID+" could not complete; inspect its private log")
 			}
 			journal.Feedback = verificationFeedback(journal)
+			if configuredFeedback != "" {
+				journal.Feedback = configuredFeedback + "\n" + journal.Feedback
+			}
 			if err := runner.transition(directory, journal, "repairing"); err != nil {
 				return err
 			}
@@ -187,6 +190,13 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 	}
 	if repaired {
 		return nil
+	}
+	if configuredFeedback != "" {
+		journal.Feedback = configuredFeedback
+		if len(journal.Verification) > 0 {
+			journal.Feedback += "\n" + verificationFeedback(journal)
+		}
+		return runner.transition(directory, journal, "repairing")
 	}
 	if journal.Outcome.Status == "checks_requested" {
 		key := verificationFeedbackKey(journal, revision.Head, revision.Tree)

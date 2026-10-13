@@ -105,6 +105,9 @@ func (checker DockerChecker) runCandidatePhase(ctx context.Context, workspace, i
 			}
 		}
 		if err := execute(commands, output); err != nil {
+			// Failed commands may have changed source or HOME before exiting.
+			// Their state cannot be trusted by subsequent diagnostic requests.
+			reusable = false
 			return err
 		}
 		current, err := fingerprint()

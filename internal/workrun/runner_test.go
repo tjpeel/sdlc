@@ -279,6 +279,51 @@ func TestRunnerCheckRepairBound(t *testing.T) {
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.State != "blocked" || c.calls != 2 || pub.calls != 0 {
 		t.Fatalf("bound not enforced: %v %+v", err, j)
 	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Rounds != 2 || loaded.Attempt != 2 || loaded.SessionID != testNative || !strings.Contains(loaded.Feedback, "Configured checks failed") {
+		t.Fatal("bounded stop lost history, session, or safe feedback")
+	}
+	p.outcomes = []Outcome{testOutcome("checks_requested")}
+	if err := r.Run(context.Background(), dir, &loaded, ""); !errors.Is(err, ErrStopped) || loaded.State != "blocked" || loaded.StopReason != configuredCheckRepairBound || c.calls != 4 || pub.calls != 0 {
+		t.Fatalf("explicit resume did not enforce fresh finite window: %v %+v", err, loaded)
+	}
+	if loaded.RepairWindowStart != 2 || loaded.Rounds != 4 || loaded.Attempt != 3 || loaded.CheckAttempt != 4 || loaded.SessionID != testNative || len(p.calls) != 3 || p.calls[2].ResumeID != testNative {
+		t.Fatal("explicit resume reset history or lost native session")
+	}
+	if saved, err := Load(dir); err != nil || saved.RepairWindowStart != 2 || saved.Rounds != 4 {
+		t.Fatal("renewed repair window was not persisted", err)
+	}
+}
+
+func TestRunnerOtherStopsDoNotRenewRepairWindow(t *testing.T) {
+	for _, tc := range []struct{ name, state, resume, reason, session string }{
+		{"review hold", "blocked", "reviewing", "independent review still has findings after the repair bound", testNative},
+		{"CI hold", "blocked", "ci", configuredCheckRepairBound, testNative},
+		{"provider failure", "failed", "checking", configuredCheckRepairBound, testNative},
+		{"different check hold", "blocked", "checking", configuredCheckRepairBound + "; other failure", testNative},
+		{"missing session", "blocked", "checking", configuredCheckRepairBound, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, journal := testRun(t)
+			journal.State, journal.ResumeState, journal.StopReason, journal.SessionID = tc.state, tc.resume, tc.reason, tc.session
+			journal.Rounds = 4
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			runner := fakeRunner(&fakeProvider{}, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
+			runner.OnState = func(j Journal) error {
+				if j.StopReason == "" {
+					cancel()
+				}
+				return nil
+			}
+			if err := runner.Run(ctx, dir, journal, ""); !errors.Is(err, ErrStopped) || journal.RepairWindowStart != 0 || journal.Rounds != 4 {
+				t.Fatalf("unrelated hold renewed repair window: %v %+v", err, journal)
+			}
+		})
+	}
 }
 func TestRunnerPublicationTreeMustMatchChecks(t *testing.T) {
 	dir, j := testRun(t)
@@ -397,14 +442,17 @@ func TestRunnerCIFailureBoundStopsRepair(t *testing.T) {
 	}
 }
 func TestRunnerReviewFailureBoundStopsRepair(t *testing.T) {
-	dir, j := testRun(t)
-	finding := testOutcome("reviewed")
-	finding.Findings = []Finding{{Priority: "P1", Path: "app.go", Line: 1, Scenario: "bad input crashes", Recommendation: "handle bad input"}}
-	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), finding, testOutcome("implemented"), finding}}
-	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
-	r.MaxRounds = 1
-	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.State != "blocked" || j.Rounds != 2 || len(p.calls) != 4 {
-		t.Fatalf("review repair not bounded: %v %+v", err, j)
+	for _, windowStart := range []int{0, 5} {
+		dir, j := testRun(t)
+		j.Rounds, j.RepairWindowStart = windowStart, windowStart
+		finding := testOutcome("reviewed")
+		finding.Findings = []Finding{{Priority: "P1", Path: "app.go", Line: 1, Scenario: "bad input crashes", Recommendation: "handle bad input"}}
+		p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), finding, testOutcome("implemented"), finding}}
+		r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
+		r.MaxRounds = 1
+		if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.State != "blocked" || j.Rounds != windowStart+2 || len(p.calls) != 4 {
+			t.Fatalf("review repair not bounded: %v %+v", err, j)
+		}
 	}
 }
 func TestRunnerUncommittedCandidateCannotCheckOrPublish(t *testing.T) {
