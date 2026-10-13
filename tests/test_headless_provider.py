@@ -95,8 +95,8 @@ class HeadlessTests(unittest.TestCase):
             self.assertNotIn("CLAUDE_CODE_RESTRICTED", env)
             config = Path(env.get("CODEX_HOME", env.get("CLAUDE_CONFIG_DIR")))
             path = config / native.FILES[provider]
-            self.assertTrue(path.is_symlink())
-            self.assertEqual(path.readlink(), self.cache / native.FILES[provider])
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(path.read_bytes(), (self.cache / native.FILES[provider]).read_bytes())
             if before_transcript:
                 before_transcript(config)
             else:
@@ -404,6 +404,7 @@ class HeadlessTests(unittest.TestCase):
     def test_claude_changed_refresh_does_not_replace_saved_cache(self):
         config = self.session / "claude"
         config.mkdir(mode=0o700)
+        native.snapshot_auth(config, "claude", self.cache)
         path = config / native.FILES["claude"]
         path.write_bytes(b"fake-native-refresh")
         path.chmod(0o600)
@@ -433,9 +434,10 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), b"fake-native-second-generation")
         self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
                          b"fake-native-first-generation")
-        self.run_client("claude", ID)
+        with self.assertRaises(ValueError):
+            self.run_client("claude", ID)
         self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
-                         b"fake-native-second-generation")
+                         b"fake-native-first-generation")
 
     def test_cached_customizations_stop_before_native_client(self):
         for name in ("config.toml", "settings.json", "hooks.json", "plugins",

@@ -2,7 +2,7 @@
 
 SDLC must respect provider terms, supported authentication routes and usage
 limits. Review the current official rules when changing provider integration;
-this document records the boundary reviewed on 6 October 2026. No implementation
+this document records the boundary reviewed on 13 October 2026. No implementation
 can guarantee that a provider will never restrict an account.
 
 ## Codex
@@ -118,6 +118,23 @@ uses the implementation account as a substitute. Repairs resume the original
 native implementation session; each independent review starts fresh. A reported
 model mismatch stops execution; a missing model report cannot establish the
 requested identity. Effort is a request that providers may cap.
+
+Independent local ticket sessions may invoke the same provider concurrently.
+SDLC does not reserve Codex or Claude for a ticket's lifetime. Each unmodified
+native client receives a private writable snapshot of its owner's authentication;
+it still performs its own login checks, service requests and refresh. Brief
+transactions protect shared-cache snapshots and opaque refresh persistence.
+Unchanged snapshots never overwrite a later login or refresh. A conflicting
+refresh retains the private candidate and stops the affected invocation rather
+than guessing which credential generation remains valid. Native authentication
+errors and account usage limits stop work without automatic re-authentication,
+identity switching or restarting to evade the limit.
+
+Offline tests establish concurrent execution and storage protection, not provider
+tolerance of simultaneous token rotation. The reviewed official documentation
+describes native file-backed caching and container persistence; it does not
+guarantee every concurrent refresh succeeds. Connected account trials require
+separate authorisation.
 
 An implementation worker may explicitly request a bounded source correction
 artifact through `verification_requests.source_patch`. Its formatter commands

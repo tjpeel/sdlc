@@ -83,7 +83,8 @@ class InteractiveTests(unittest.TestCase):
             homes.append(home)
             config = Path(env["CODEX_HOME"])
             self.assertEqual(config / "auth.json", home / ".codex/auth.json")
-            self.assertEqual((config / "auth.json").readlink(), path)
+            self.assertFalse((config / "auth.json").is_symlink())
+            self.assertEqual((config / "auth.json").read_bytes(), path.read_bytes())
             self.assertEqual((config / "AGENTS.md").readlink(), self.instructions)
             self.assertTrue((home / ".agents/skills").is_dir())
             self.assertEqual(env["PATH"], "/opt/dotnet:/usr/local/bin:/usr/bin:/bin")
@@ -103,7 +104,7 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(installer.call_count, 1)
         self.assertEqual(native.call_count, 1)
         self.assertTrue(all(not home.exists() for home in homes))
-        self.assertEqual(list(self.cache.iterdir()), [path])
+        self.assertEqual({p.name for p in self.cache.iterdir()}, {"auth.json", ".native-auth.lock"})
 
     def test_codex_native_refresh_writes_through_credential_link(self):
         path = self.codex_cache()
@@ -111,12 +112,12 @@ class InteractiveTests(unittest.TestCase):
         def client(command, env):
             scratch = Path(env["CODEX_HOME"]) / "auth.json"
             scratch.write_bytes(b'{"fake":"disposable-native-refresh"}')
-            self.assertEqual(path.read_bytes(), scratch.read_bytes())
+            self.assertNotEqual(path.read_bytes(), scratch.read_bytes())
             return 0
 
         with patch.object(auth.subprocess, "run", side_effect=self.installer), \
                 patch.object(auth, "interactive_process", side_effect=client), \
-                patch.object(auth, "persist", side_effect=AssertionError("copied linked cache")):
+                patch.object(auth, "cache_epoch", wraps=auth.cache_epoch):
             self.assertEqual(auth.run("codex", "interactive", self.cache), 0)
         self.assertEqual(path.read_bytes(), b'{"fake":"disposable-native-refresh"}')
 
@@ -180,7 +181,7 @@ class InteractiveTests(unittest.TestCase):
 
                 with patch.object(auth.subprocess, "run", side_effect=self.installer), \
                         patch.object(auth, "interactive_process", side_effect=client):
-                    with self.assertRaises(ValueError):
+                    with self.assertRaises((ValueError, OSError)):
                         auth.run("codex", "interactive", self.cache)
                 self.assertEqual(path.read_bytes(), original)
 
@@ -189,7 +190,7 @@ class InteractiveTests(unittest.TestCase):
                 patch.object(auth, "interactive_process") as native:
             for provider in ("codex", "claude"):
                 with self.subTest(provider=provider):
-                    with self.assertRaises(ValueError):
+                    with self.assertRaises((ValueError, OSError)):
                         auth.run(provider, "interactive", self.cache)
             self.codex_cache()
             self.instructions.unlink()
@@ -218,7 +219,8 @@ class InteractiveTests(unittest.TestCase):
                                        "--strict-mcp-config", "--mcp-config",
                                        '{"mcpServers":{}}'])
             homes.append(Path(env["HOME"]))
-            self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(self.cache))
+            config = Path(env["CLAUDE_CONFIG_DIR"])
+            self.assertNotEqual(config, self.cache)
             self.assertEqual(env["CLAUDE_CODE_SKIP_PROMPT_HISTORY"], "1")
             self.assertEqual(env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"], "1")
             self.assertEqual(env["ENABLE_CLAUDEAI_MCP_SERVERS"], "false")
@@ -232,7 +234,7 @@ class InteractiveTests(unittest.TestCase):
             self.assertTrue((self.cache / "CLAUDE.md").samefile(self.instructions))
             self.assertTrue((self.cache / "settings.json").samefile(self.settings))
             for name in ("skills", "agents"):
-                self.assertEqual((self.cache / name).readlink(), self.catalogues / name)
+                self.assertEqual((config / name).readlink(), self.catalogues / name)
             return 4
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-disposable-key",
@@ -240,8 +242,8 @@ class InteractiveTests(unittest.TestCase):
                                      "CLAUDE_CODE_USE_BEDROCK": "1",
                                      "GITHUB_TOKEN": "fake-disposable-token"}), \
                 patch.object(auth, "interactive_process", side_effect=client), \
-                patch.object(auth, "credential", side_effect=AssertionError("cache read")), \
-                patch.object(auth, "persist", side_effect=AssertionError("cache copy")), \
+                patch.object(auth, "cache_epoch", wraps=auth.cache_epoch), \
+                patch.object(auth, "opaque_cache", wraps=auth.opaque_cache), \
                 patch.object(Path, "open", side_effect=AssertionError("opened native cache")):
             self.assertEqual(auth.run("claude", "interactive", self.cache), 4)
         self.assertEqual(path.read_text(), "disposable opaque native account cache")
@@ -251,7 +253,7 @@ class InteractiveTests(unittest.TestCase):
         path = self.claude_cache()
 
         def logout(command, env):
-            path.unlink()
+            (Path(env["CLAUDE_CONFIG_DIR"]) / ".credentials.json").unlink()
             return 0
 
         with patch.object(auth, "interactive_process", side_effect=logout):
@@ -261,7 +263,7 @@ class InteractiveTests(unittest.TestCase):
         path.chmod(0o600)
 
         def unsafe_change(command, env):
-            path.chmod(0o644)
+            (Path(env["CLAUDE_CONFIG_DIR"]) / ".credentials.json").chmod(0o644)
             return 0
 
         with patch.object(auth, "interactive_process", side_effect=unsafe_change):

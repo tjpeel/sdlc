@@ -69,121 +69,24 @@ def safe_directory(path, shared=False):
 
 
 def auth_link(config, provider, directory):
-    path = config / native.FILES[provider]
-    target = directory / native.FILES[provider]
-    if path.exists() or path.is_symlink():
-        if provider == "claude" and not path.is_symlink():
-            # Retry storage of a retained native refresh before another turn.
-            require_refresh_base(config, target)
-            generation = persist_claude_refresh(path, directory)
-            remove_claude_refresh(path, generation)
-        elif not path.is_symlink() or path.readlink() != target:
-            raise ValueError("unexpected session authentication state")
-        else:
-            path.unlink()
-    if provider == "claude":
-        save_refresh_base(config, target)
-    path.symlink_to(target)
-    return path, target
-
-
-def refresh_generation(info):
-    return (info.st_dev, info.st_ino, info.st_uid, info.st_mode,
-            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-
-
-def save_refresh_base(config, target):
-    native.claude_credential_metadata(target, os.getuid())
-    record = {"generation": refresh_generation(target.lstat())}
-    native.persist(config, CLAUDE_REFRESH_BASE, json.dumps(record).encode())
-
-
-def require_refresh_base(config, target):
-    data = native.credential(config / CLAUDE_REFRESH_BASE, os.getuid())
-    if data is None:
-        raise ValueError("missing native refresh baseline")
-    record = json.loads(data)
-    native.claude_credential_metadata(target, os.getuid())
-    if record != {"generation": list(refresh_generation(target.lstat()))}:
-        raise ValueError("saved native cache changed; retained refresh needs inspection")
-
-
-def remove_claude_refresh(path, generation):
-    if refresh_generation(path.lstat()) != generation:
-        raise ValueError("native refresh changed before removal")
-    path.unlink()
-
-
-def persist_claude_refresh(path, directory):
-    """Atomically retain opaque native state across distinct Docker mounts."""
-    target = directory / native.FILES["claude"]
-    native.claude_credential_metadata(path, os.getuid())
-    native.claude_credential_metadata(target, os.getuid())
-    if (path.parent / CLAUDE_REFRESH_BASE).exists():
-        require_refresh_base(path.parent, target)
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    temporary = None
-    try:
-        with os.fdopen(descriptor, "rb") as source:
-            before = os.fstat(source.fileno())
-            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
-                    or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o600
-                    or not 0 < before.st_size <= native.LIMIT
-                    or not os.path.samestat(before, path.lstat())):
-                raise ValueError("unsafe native refresh")
-            output, temporary = tempfile.mkstemp(prefix=".native-refresh-", dir=directory)
-            with os.fdopen(output, "wb") as destination:
-                remaining = before.st_size
-                while remaining:
-                    block = source.read(min(remaining, 65536))
-                    if not block:
-                        raise ValueError("changed native refresh")
-                    destination.write(block)
-                    remaining -= len(block)
-                if source.read(1):
-                    raise ValueError("changed native refresh")
-                destination.flush()
-                os.fsync(destination.fileno())
-            after = os.fstat(source.fileno())
-            current = path.lstat()
-            generation = refresh_generation(before)
-            if generation != refresh_generation(after) or generation != refresh_generation(current):
-                raise ValueError("changed native refresh")
-        # Both paths are on the auth volume. No token fields are decoded or
-        # used for custom provider requests.
-        os.replace(temporary, target)
-        handle = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(handle)
-        finally:
-            os.close(handle)
-        if (path.parent / CLAUDE_REFRESH_BASE).exists():
-            save_refresh_base(path.parent, target)
-        return generation
-    finally:
-        if temporary is not None and os.path.exists(temporary):
-            os.unlink(temporary)
+    if (config / CLAUDE_REFRESH_BASE).exists():
+        raise ValueError("retained legacy native refresh needs inspection before migration")
+    path = native.snapshot_auth(config, provider, directory)
+    return path, directory / native.FILES[provider]
 
 
 def finish_auth(config, provider, directory):
-    path = config / native.FILES[provider]
+    native.finish_snapshot(config, provider, directory)
+
+
+def persist_claude_refresh(path, directory):
+    # Retained legacy copies without a transaction baseline require inspection.
     try:
-        if provider == "codex":
-            native.finish_codex_interactive(config, directory)
-        elif path.is_symlink():
-            if path.readlink() != directory / native.FILES[provider]:
-                raise ValueError("unexpected native cache link")
-            native.claude_credential_metadata(directory / native.FILES[provider], os.getuid())
-        elif path.exists():
-            generation = persist_claude_refresh(path, directory)
-            remove_claude_refresh(path, generation)
-    finally:
-        # Preserve a regular refresh on failure: it may be the only valid
-        # native credential generation. Resume retries persistence first.
-        if path.is_symlink() or (provider == "codex" and path.exists()):
-            path.unlink()
-        if provider == "claude" and not path.exists():
-            (config / CLAUDE_REFRESH_BASE).unlink(missing_ok=True)
+        native.finish_snapshot(path.parent, "claude", directory)
+    except OSError as error:
+        if error.errno == 62 or error.errno == 40:
+            raise ValueError("unsafe native cache") from None
+        raise
 
 
 def native_command(provider, model, effort, resume, readonly):

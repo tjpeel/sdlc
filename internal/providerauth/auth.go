@@ -201,11 +201,16 @@ func (manager Manager) guardVolume(ctx context.Context, volume, id, provider str
 	for _, container := range strings.Fields(string(output)) {
 		data, err := manager.Docker.Output(ctx, "container", "inspect", container)
 		if err != nil {
+			remaining, checkErr := manager.Docker.Output(ctx, "ps", "--all", "--no-trunc", "--filter", "id="+container, "--format", "{{.ID}}")
+			if checkErr == nil && strings.TrimSpace(string(remaining)) == "" {
+				continue
+			}
 			return fmt.Errorf("cannot inspect authentication storage container ownership")
 		}
 		var records []struct {
-			Config struct{ Labels map[string]string }
-			State  struct {
+			Name, Image string
+			Config      struct{ Labels map[string]string }
+			State       struct {
 				Status                      string
 				Running, Paused, Restarting bool
 			}
@@ -214,6 +219,7 @@ func (manager Manager) guardVolume(ctx context.Context, volume, id, provider str
 		if json.Unmarshal(data, &records) != nil || len(records) != 1 || records[0].State.Status == "" {
 			return fmt.Errorf("cannot verify authentication storage container ownership")
 		}
+		verified := false
 		for _, mount := range records[0].Mounts {
 			if mount.Type != "volume" || mount.Name != volume {
 				continue
@@ -224,9 +230,22 @@ func (manager Manager) guardVolume(ctx context.Context, volume, id, provider str
 					return fmt.Errorf("authentication storage is held by an unmanaged container; inspect Docker before retrying")
 				}
 			}
+			operation := records[0].Config.Labels["io.sdlc.operation"]
+			safeTransition := records[0].State.Status == "created" || records[0].State.Status == "running" || records[0].State.Status == "exited" || records[0].State.Status == "removing"
+			if safeTransition && !records[0].State.Paused && !records[0].State.Restarting && strings.TrimPrefix(records[0].Name, "/") == operation && manager.liveOperation(operation, id, provider, records[0].Image) {
+				verified = true
+				continue
+			}
+			remaining, checkErr := manager.Docker.Output(ctx, "ps", "--all", "--no-trunc", "--filter", "id="+container, "--format", "{{.ID}}")
+			if checkErr == nil && strings.TrimSpace(string(remaining)) == "" {
+				verified = true
+				continue
+			}
 			return fmt.Errorf("authentication storage is held by a surviving provider container; inspect Docker before retrying")
 		}
-		return fmt.Errorf("cannot verify authentication storage container mounts")
+		if !verified {
+			return fmt.Errorf("cannot verify authentication storage container mounts")
+		}
 	}
 	return nil
 }
@@ -245,6 +264,7 @@ func containerArgs(image, name, volume, provider, action string) []string {
 	for _, key := range []string{"io.sdlc.managed", "io.sdlc.kind", "io.sdlc.installation", "io.sdlc.provider"} {
 		args = append(args, "--label", key+"="+labels(installation, provider)[key])
 	}
+	args = append(args, "--label", "io.sdlc.operation="+name)
 	// Docker's client can inject proxies from its host config. Empty overrides prevent that.
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "ALL_PROXY",
 		"http_proxy", "https_proxy", "ftp_proxy", "no_proxy", "all_proxy"} {
@@ -272,6 +292,11 @@ func (manager Manager) container(ctx context.Context, image, volume, provider, a
 		return nil, fmt.Errorf("cannot name authentication container")
 	}
 	name := "sdlc-auth-" + id
+	operation, err := manager.registerOperation(name, volume, provider, image)
+	if err != nil {
+		return nil, err
+	}
+	defer operation.Close()
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -296,15 +321,21 @@ func (manager Manager) container(ctx context.Context, image, volume, provider, a
 	return output, nil
 }
 
-type operationLease struct{ provider, runtime *os.File }
+type operationLease struct{ runtime *os.File }
 
 func (lease *operationLease) Close() error {
-	return errors.Join(lease.runtime.Close(), lease.provider.Close())
+	return lease.runtime.Close()
 }
 
 func (manager Manager) begin(ctx context.Context, provider string) (runtimeimage.State, *operationLease, error) {
 	if err := os.MkdirAll(manager.Runtime.Directory, 0700); err != nil {
 		return runtimeimage.State{}, nil, fmt.Errorf("cannot open SDLC state directory")
+	}
+	if !validOperationDirectory(manager.Runtime.Directory) {
+		return runtimeimage.State{}, nil, fmt.Errorf("unsafe SDLC operation state directory")
+	}
+	if err := os.Chmod(manager.Runtime.Directory, 0700); err != nil {
+		return runtimeimage.State{}, nil, fmt.Errorf("cannot protect SDLC operation state directory")
 	}
 	wait := func(reason string) func() {
 		return func() {
@@ -313,16 +344,11 @@ func (manager Manager) begin(ctx context.Context, provider string) (runtimeimage
 			}
 		}
 	}
-	providerLock, err := filelock.AcquireContext(ctx, filepath.Join(manager.Runtime.Directory, "provider-"+provider+".lock"), filelock.Exclusive, wait("provider_busy"))
-	if err != nil {
-		return runtimeimage.State{}, nil, fmt.Errorf("provider lease unavailable: %w", err)
-	}
 	runtimeLock, err := filelock.AcquireContext(ctx, filepath.Join(manager.Runtime.Directory, "runtime-build.lock"), filelock.Shared, wait("runtime_busy"))
 	if err != nil {
-		providerLock.Close()
 		return runtimeimage.State{}, nil, fmt.Errorf("runtime lease unavailable: %w", err)
 	}
-	lease := &operationLease{providerLock, runtimeLock}
+	lease := &operationLease{runtimeLock}
 	state, err := manager.Runtime.Status(ctx)
 	if err != nil {
 		lease.Close()

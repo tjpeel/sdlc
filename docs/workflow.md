@@ -267,9 +267,11 @@ to validate a new account/key setup, including organisation OAuth/SSO policy.
 ## Progress and resume
 
 Controllers can overlap in one repository using separate captured workspaces and
-branches. Codex and Claude use separate cache leases; the same provider's native
-operations queue through cleanup. Queue waiting is cancellable and appears in
-the dashboard. GitHub profiles have independent cache leases, with authentication/publication
+branches, or operate independently from different folders. Codex and Claude calls
+have no provider execution reservation: multiple calls to the same provider can
+overlap. Each client writes its own native cache, with brief transactions for
+snapshot and refresh persistence. Conflicting refreshes retain recovery material
+and stop only the affected invocation. GitHub profiles have independent cache leases, with authentication/publication
 serialized within each profile on the same runtime image. Runtime builds require
 exclusive ownership of the shared runtime.
 Each integration check invocation uses its own Docker daemon and namespace,
@@ -352,7 +354,8 @@ interrupted attachment must be completed before answer or resume.
 one durable feature checkpoint. Add `--watch` to keep the foreground controller
 observing human merges; otherwise it completes currently unblocked work and
 exits. Repeat the command to continue. `--parallel` defaults to `1` and accepts
-`1` through `8`; same-provider cache locks can still queue. Optional
+`1` through `8`. Free slots take the next eligible ticket while other tickets
+remain active; provider calls can overlap across tickets and features. Optional
 `--alternate-providers` alternates implementers in planned ticket order, retaining
 an opposite-provider reviewer for every ticket.
 

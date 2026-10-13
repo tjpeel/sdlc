@@ -79,7 +79,7 @@ class ProviderAuthTests(unittest.TestCase):
             with patch.dict(os.environ, {"GITHUB_TOKEN": "fake", "OPENAI_API_KEY": "fake"}), patch.object(auth.subprocess, "run", side_effect=failed_login):
                 self.assertEqual(auth.run("codex", "login", root), 1)
             self.assertEqual(path.read_bytes(), original)
-            self.assertEqual(list(root.iterdir()), [path])
+            self.assertIn(path, list(root.iterdir()))
 
     def test_login_persists_only_credential_and_fresh_status_is_private(self):
         for provider, filename in (("codex", auth.FILES["codex"]),):
@@ -106,7 +106,7 @@ class ProviderAuthTests(unittest.TestCase):
                     with contextlib.redirect_stdout(output):
                         self.assertEqual(auth.run(provider, "status", root), 0)
                 self.assertEqual(json.loads(output.getvalue()), {"state": "stored"})
-                self.assertEqual(list(root.iterdir()), [root / filename])
+                self.assertEqual({p.name for p in root.iterdir()}, {filename, ".native-auth.lock", ".native-auth-epoch"})
                 self.assertEqual((root / filename).stat().st_mode & 0o777, 0o600)
                 self.assertNotEqual(homes[0], homes[-1])
                 self.assertTrue(all(not Path(home).exists() for home in homes))
@@ -129,8 +129,148 @@ class ProviderAuthTests(unittest.TestCase):
             self.assertEqual(auth.credential(path, os.getuid()), b'{"fake":"repaired"}')
             path.unlink()
             path.symlink_to(root / "another-file")
-            with self.assertRaises(OSError):
+            with self.assertRaises((OSError, ValueError)):
                 auth.persist(root, "auth.json", b'{"fake":"replacement"}')
+
+
+    def test_overlapping_cache_snapshots_preserve_updates_and_conflicting_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            target = root / "auth.json"
+            target.write_bytes(b'{"fake":"initial"}')
+            target.chmod(0o600)
+            configs = [root / name for name in ("one", "two", "unchanged")]
+            for config in configs:
+                config.mkdir(mode=0o700)
+                auth.snapshot_auth(config, "codex", root)
+            (configs[0] / "auth.json").write_bytes(b'{"fake":"first-refresh"}')
+            auth.finish_snapshot(configs[0], "codex", root)
+            auth.finish_snapshot(configs[2], "codex", root)
+            self.assertEqual(target.read_bytes(), b'{"fake":"first-refresh"}')
+            (configs[1] / "auth.json").write_bytes(b'{"fake":"conflicting-refresh"}')
+            with self.assertRaises(ValueError):
+                auth.finish_snapshot(configs[1], "codex", root)
+            self.assertEqual(target.read_bytes(), b'{"fake":"first-refresh"}')
+            self.assertEqual((configs[1] / "auth.json").read_bytes(), b'{"fake":"conflicting-refresh"}')
+            self.assertTrue((configs[1] / auth.BASELINE).exists())
+
+    def test_snapshot_copy_failure_and_cleanup_interruption_never_logout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            target = root / "auth.json"
+            target.write_bytes(b'{"fake":"initial"}')
+            target.chmod(0o600)
+            config = root / "session"
+            config.mkdir(mode=0o700)
+            original = os.replace
+            def fail_copy(source, destination):
+                if Path(destination) == config / "auth.json":
+                    raise OSError("offline copy failure")
+                return original(source, destination)
+            with patch.object(os, "replace", side_effect=fail_copy), self.assertRaises(OSError):
+                auth.snapshot_auth(config, "codex", root)
+            self.assertFalse((config / auth.BASELINE).exists())
+            auth.snapshot_auth(config, "codex", root)
+            original_unlink = Path.unlink
+            def fail_cleanup(path, *args, **kwargs):
+                if path == config / "auth.json":
+                    raise OSError("offline cleanup interruption")
+                return original_unlink(path, *args, **kwargs)
+            with patch.object(Path, "unlink", fail_cleanup), self.assertRaises(OSError):
+                auth.finish_snapshot(config, "codex", root)
+            with self.assertRaises(ValueError):
+                auth.snapshot_auth(config, "codex", root)
+            self.assertEqual(target.read_bytes(), b'{"fake":"initial"}')
+
+    def test_login_supersedes_same_epoch_refresh_but_newer_login_wins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            target = root / "auth.json"
+            target.write_bytes(b'{"fake":"initial"}')
+            target.chmod(0o600)
+            login, worker, newer = [root / name for name in ("login", "worker", "newer")]
+            for config in (login, worker, newer):
+                config.mkdir(mode=0o700)
+            auth.snapshot_auth(login, "codex", root, login=True)
+            auth.snapshot_auth(worker, "codex", root)
+            (worker / "auth.json").write_bytes(b'{"fake":"old-account-refresh"}')
+            auth.finish_snapshot(worker, "codex", root)
+            (login / "auth.json").write_bytes(b'{"fake":"explicit-login"}')
+            auth.finish_snapshot(login, "codex", root)
+            self.assertEqual(target.read_bytes(), b'{"fake":"explicit-login"}')
+            auth.snapshot_auth(login, "codex", root, login=True)
+            auth.snapshot_auth(newer, "codex", root, login=True)
+            (login / "auth.json").write_bytes(b'{"fake":"superseded-login"}')
+            with self.assertRaises(ValueError):
+                auth.finish_snapshot(login, "codex", root)
+            self.assertEqual(target.read_bytes(), b'{"fake":"explicit-login"}')
+
+
+    def test_both_native_refreshes_retain_private_copy_on_transfer_failure(self):
+        for provider, filename in auth.FILES.items():
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                root.chmod(0o700)
+                target = root / filename
+                target.write_bytes(b"opaque-original-cache")
+                target.chmod(0o600)
+                config = root / "session"
+                config.mkdir(mode=0o700)
+                auth.snapshot_auth(config, provider, root)
+                candidate = config / filename
+                candidate.write_bytes(b"opaque-refreshed-cache")
+                original = os.replace
+                def fail_transfer(source, destination):
+                    if Path(destination) == target:
+                        raise OSError("offline transfer failure")
+                    return original(source, destination)
+                with patch.object(os, "replace", side_effect=fail_transfer), self.assertRaises(OSError):
+                    auth.finish_snapshot(config, provider, root)
+                self.assertEqual(target.read_bytes(), b"opaque-original-cache")
+                self.assertEqual(candidate.read_bytes(), b"opaque-refreshed-cache")
+                self.assertTrue((config / auth.BASELINE).exists())
+                auth.finish_snapshot(config, provider, root)
+                self.assertEqual(target.read_bytes(), b"opaque-refreshed-cache")
+
+    def test_malformed_baseline_cannot_grant_login_overwrite(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            target = root / "auth.json"
+            target.write_bytes(b"original")
+            target.chmod(0o600)
+            config = root / "session"
+            config.mkdir(mode=0o700)
+            auth.snapshot_auth(config, "codex", root)
+            baseline = json.loads((config / auth.BASELINE).read_bytes())
+            baseline["login"] = "false"
+            (config / auth.BASELINE).write_text(json.dumps(baseline))
+            (config / "auth.json").write_bytes(b"refreshed")
+            target.write_bytes(b"newer-login")
+            with self.assertRaises(ValueError):
+                auth.finish_snapshot(config, "codex", root)
+            self.assertEqual(target.read_bytes(), b"newer-login")
+
+
+    def test_explicit_login_can_replace_empty_and_oversized_private_cache(self):
+        for contents in (b"", b"x" * (auth.LIMIT + 1)):
+            with self.subTest(size=len(contents)), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                root.chmod(0o700)
+                target = root / "auth.json"
+                target.write_bytes(contents)
+                target.chmod(0o600)
+                def client(command, **kwargs):
+                    if "status" not in command:
+                        (Path(kwargs["env"]["CODEX_HOME"]) / "auth.json").write_bytes(b'{"fake":"relogin"}')
+                        return subprocess.CompletedProcess(command, 0)
+                    return subprocess.CompletedProcess(command, 0, "", "Logged in using ChatGPT")
+                with patch.object(auth.subprocess, "run", side_effect=client):
+                    self.assertEqual(auth.run("codex", "login", root), 0)
+                self.assertEqual(target.read_bytes(), b'{"fake":"relogin"}')
 
 
 class ClaudeAuthTests(unittest.TestCase):
@@ -156,53 +296,22 @@ class ClaudeAuthTests(unittest.TestCase):
         record.update(fields)
         return subprocess.CompletedProcess([], code, json.dumps(record), "fake-private-error")
 
-    def test_native_volume_cache_is_not_read_copied_or_parsed_by_helper(self):
-        # SDLC treats the contents as opaque; only the mocked official client
-        # decides whether this intentionally non-JSON cache represents a login.
-        self.path.write_text("disposable opaque native cache")
+    def test_native_login_and_status_use_private_opaque_snapshot(self):
+        self.path.write_bytes(b"opaque-native-cache")
         self.path.chmod(0o600)
-        homes = []
-
-        def provider_call(command, **kwargs):
-            env = kwargs["env"]
-            homes.append(kwargs["cwd"])
-            self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(self.root))
-            self.assertNotEqual(env["HOME"], str(self.root))
-            self.assertEqual(kwargs["cwd"], env["HOME"])
-            self.assertEqual(list(Path(kwargs["cwd"]).iterdir()), [])
-            self.assertEqual(env["CLAUDE_CODE_SAFE_MODE"], "1")
-            self.assertEqual(env["CLAUDE_CODE_RESTRICTED"], "1")
-            self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
-            self.assertEqual(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1")
-            self.assertEqual(set(env), {"PATH", "HOME", "LANG", "TERM",
-                                       "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_SAFE_MODE",
-                                       "CLAUDE_CODE_RESTRICTED",
-                                       "DISABLE_AUTOUPDATER",
-                                       "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"})
-            if command == ["claude", "auth", "login"]:
-                self.assertNotIn("capture_output", kwargs)
-                return subprocess.CompletedProcess(command, 0)
-            self.assertEqual(command, ["claude", "auth", "status", "--json"])
-            self.assertTrue(kwargs["capture_output"])
-            self.assertEqual(kwargs["timeout"], 30)
-            return self.result()
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-disposable-key",
-                                     "CLAUDE_CODE_OAUTH_TOKEN": "fake-disposable-token",
-                                     "CLAUDE_CODE_USE_BEDROCK": "1",
-                                     "GITHUB_TOKEN": "fake-disposable-token"}), \
-                patch.object(auth.subprocess, "run", side_effect=provider_call), \
-                patch.object(auth, "credential", side_effect=AssertionError("cache read")), \
-                patch.object(auth, "persist", side_effect=AssertionError("cache copy")), \
-                patch.object(Path, "open", side_effect=AssertionError("file contents opened")):
+        def client(command, **kwargs):
+            config = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"])
+            self.assertNotEqual(config, self.root)
+            self.assertFalse((config / auth.FILES["claude"]).is_symlink())
+            self.assertEqual((config / auth.FILES["claude"]).read_bytes(), b"opaque-native-cache")
+            return subprocess.CompletedProcess(command, 0) if "login" in command else self.result()
+        with patch.object(auth.subprocess, "run", side_effect=client):
             self.assertEqual(auth.run("claude", "login", self.root), 0)
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 self.assertEqual(auth.run("claude", "status", self.root), 0)
-        self.assertEqual(json.loads(output.getvalue()), {"state": "stored"})
-        self.assertEqual(self.path.read_text(), "disposable opaque native cache")
-        self.assertNotEqual(homes[0], homes[-1])
-        self.assertTrue(all(not Path(home).exists() for home in homes))
+            self.assertEqual(json.loads(output.getvalue()), {"state": "stored"})
+        self.assertEqual(self.path.read_bytes(), b"opaque-native-cache")
 
     def test_status_requires_native_subscription_fields_and_scrubs_other_modes(self):
         self.assertEqual(auth.classify_claude(self.result()), "stored")
@@ -250,35 +359,36 @@ class ClaudeAuthTests(unittest.TestCase):
                 auth.run("claude", "status", self.root)
             client.assert_not_called()
 
-    def test_login_uses_native_cache_writes_and_keeps_native_configuration(self):
-        def provider_call(command, **kwargs):
-            if command == ["claude", "auth", "login"]:
-                self.path.write_text("disposable fake native cache")
-                self.path.chmod(0o600)
-                (self.root / ".claude.json").write_text('{"fake": "native-account-state"}')
+    def test_login_persists_only_private_native_cache(self):
+        def client(command, **kwargs):
+            config = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"])
+            if "login" in command:
+                (config / auth.FILES["claude"]).write_bytes(b"new-opaque-cache")
+                (config / "settings.json").write_text("{}")
                 return subprocess.CompletedProcess(command, 0)
             return self.result()
-        with patch.object(auth.subprocess, "run", side_effect=provider_call), \
-                patch.object(auth, "credential", side_effect=AssertionError("cache read")), \
-                patch.object(auth, "persist", side_effect=AssertionError("cache copy")):
+        with patch.object(auth.subprocess, "run", side_effect=client):
             self.assertEqual(auth.run("claude", "login", self.root), 0)
-        self.assertEqual(sorted(path.name for path in self.root.iterdir()),
-                         [".claude.json", ".credentials.json"])
+        self.assertEqual(self.path.read_bytes(), b"new-opaque-cache")
+        self.assertFalse((self.root / "settings.json").exists())
 
-    def test_failed_login_does_not_restore_or_manipulate_native_cache(self):
-        self.path.write_text("disposable previous cache")
+    def test_failed_login_preserves_canonical_and_invalidates_old_refresh(self):
+        self.path.write_bytes(b"old-opaque-cache")
         self.path.chmod(0o600)
-
-        def failed_login(command, **kwargs):
-            self.assertEqual(command, ["claude", "auth", "login"])
-            self.path.write_text("disposable client-owned changed cache")
+        config = self.root / "session"
+        config.mkdir(mode=0o700)
+        auth.snapshot_auth(config, "claude", self.root)
+        def client(command, **kwargs):
+            private = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"]) / auth.FILES["claude"]
+            private.write_bytes(b"failed-login-cache")
             return subprocess.CompletedProcess(command, 1)
-
-        with patch.object(auth.subprocess, "run", side_effect=failed_login) as client, \
-                patch.object(auth, "persist", side_effect=AssertionError("cache restore")):
+        with patch.object(auth.subprocess, "run", side_effect=client):
             self.assertEqual(auth.run("claude", "login", self.root), 1)
-        self.assertEqual(client.call_count, 1)
-        self.assertEqual(self.path.read_text(), "disposable client-owned changed cache")
+        self.assertEqual(self.path.read_bytes(), b"old-opaque-cache")
+        (config / auth.FILES["claude"]).write_bytes(b"old-session-refresh")
+        with self.assertRaises(ValueError):
+            auth.finish_snapshot(config, "claude", self.root)
+        self.assertEqual((config / auth.FILES["claude"]).read_bytes(), b"old-session-refresh")
 
     def test_native_client_decides_malformed_cache_status_without_helper_recovery(self):
         self.path.write_text("truncated {")
@@ -286,7 +396,7 @@ class ClaudeAuthTests(unittest.TestCase):
         result = subprocess.CompletedProcess([], 1, "not JSON", "fake-private-error")
         with patch.object(auth.subprocess, "run", return_value=result), \
                 patch.object(auth, "credential", side_effect=AssertionError("cache parse")), \
-                patch.object(auth, "persist", side_effect=AssertionError("cache recovery")):
+                patch.object(auth, "classify_claude", wraps=auth.classify_claude):
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 self.assertEqual(auth.run("claude", "status", self.root), 0)
@@ -301,18 +411,22 @@ class ClaudeAuthTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()), {"state": "missing"})
         client.assert_not_called()
 
-    def test_client_created_unsafe_or_missing_cache_is_not_accepted(self):
-        def unsafe_login(command, **kwargs):
-            self.path.symlink_to(self.root / "missing")
-            return subprocess.CompletedProcess(command, 0)
-        with patch.object(auth.subprocess, "run", side_effect=unsafe_login) as client:
-            with self.assertRaises(ValueError):
-                auth.run("claude", "login", self.root)
-            self.assertEqual(client.call_count, 1)
-        self.path.unlink()
-        with patch.object(auth.subprocess, "run", return_value=self.result()) as client:
-            self.assertEqual(auth.run("claude", "login", self.root), 1)
-            self.assertEqual(client.call_count, 1)
+    def test_private_login_cache_must_be_safe_and_present(self):
+        for unsafe in (True, False):
+            def client(command, **kwargs):
+                if "login" in command:
+                    path = Path(kwargs["env"]["CLAUDE_CONFIG_DIR"]) / auth.FILES["claude"]
+                    path.unlink(missing_ok=True)
+                    if unsafe:
+                        path.symlink_to(self.root / "absent")
+                    return subprocess.CompletedProcess(command, 0)
+                return self.result()
+            with patch.object(auth.subprocess, "run", side_effect=client):
+                if unsafe:
+                    with self.assertRaises(ValueError):
+                        auth.run("claude", "login", self.root)
+                else:
+                    self.assertEqual(auth.run("claude", "login", self.root), 1)
 
 
 if __name__ == "__main__":

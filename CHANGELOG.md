@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.41 - 2026-10-13
+
+### Changed
+
+- Allow independent ticket sessions to call the same provider concurrently across folders and work references. Remove provider execution reservations while retaining runtime protection and ownership checks for live versus orphaned containers.
+- Give native clients private writable authentication snapshots. Protect shared snapshots and opaque refresh persistence with brief transactions; preserve recovery material on conflicting refreshes, failed transfers or later login changes.
+- Refill feature ticket capacity as work finishes, preserving priority, dependency and path-overlap rules. Keep ready-ticket repairs coordinated with active work so reconciliation cannot exceed the feature limit or start children from stale parent evidence.
+
 ## 0.1.0-beta.40 - 2026-10-13
 
 ### Fixed

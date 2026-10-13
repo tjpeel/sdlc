@@ -133,6 +133,12 @@ func seriesDirectoryMatches(directory string, p Plan) error {
 }
 
 func (r Runner) observe(ctx context.Context, s *State, save func() error, write func(string, ...any)) error {
+	_, err := r.observeReady(ctx, s, save, write, true)
+	return err
+}
+
+func (r Runner) observeReady(ctx context.Context, s *State, save func() error, write func(string, ...any), allowReconcile bool) (bool, error) {
+	deferred := false
 	for _, t := range s.Plan.Tickets {
 		key := filepath.Base(t.File)
 		result, ok := s.Results[key]
@@ -141,7 +147,7 @@ func (r Runner) observe(ctx context.Context, s *State, save func() error, write 
 		}
 		o, err := r.Driver.Observe(ctx, result)
 		if err != nil {
-			return err
+			return deferred, err
 		}
 		switch strings.ToUpper(o.State) {
 		case "OPEN", "READY", "":
@@ -151,13 +157,13 @@ func (r Runner) observe(ctx context.Context, s *State, save func() error, write 
 				s.Results[key] = result
 				write("%s blocked: %s\n", key, result.StopReason)
 				if err := save(); err != nil {
-					return err
+					return deferred, err
 				}
 				continue
 			}
 			target, wait, err := r.target(ctx, *s, t)
 			if err != nil {
-				return err
+				return deferred, err
 			}
 			if o.Base != "" && o.Base != result.Base && !knownAutomaticRetarget(*s, t, result, target, o.Base) {
 				result.State = "blocked"
@@ -165,17 +171,21 @@ func (r Runner) observe(ctx context.Context, s *State, save func() error, write 
 				s.Results[key] = result
 				write("%s blocked: %s\n", key, result.StopReason)
 				if err := save(); err != nil {
-					return err
+					return deferred, err
 				}
 				continue
 			}
 			if ciNeedsAction(o.CI) {
+				if !allowReconcile {
+					deferred = true
+					continue
+				}
 				result.StopReason = o.Details
 				next, e := r.Driver.Reconcile(ctx, t, target, result)
 				if e != nil {
 					r.reconcileFailed(s, key, result, next, e)
 					if saveErr := save(); saveErr != nil {
-						return saveErr
+						return deferred, saveErr
 					}
 					continue
 				}
@@ -185,16 +195,20 @@ func (r Runner) observe(ctx context.Context, s *State, save func() error, write 
 				}
 				s.Results[key] = next
 				if err := save(); err != nil {
-					return err
+					return deferred, err
 				}
 				continue
 			}
 			if !wait && (target.Base != result.Base || target.SHA != result.BaseSHA || (o.BaseSHA != "" && o.BaseSHA != result.BaseSHA)) {
+				if !allowReconcile {
+					deferred = true
+					continue
+				}
 				next, e := r.Driver.Reconcile(ctx, t, target, result)
 				if e != nil {
 					r.reconcileFailed(s, key, result, next, e)
 					if saveErr := save(); saveErr != nil {
-						return saveErr
+						return deferred, saveErr
 					}
 					continue
 				}
@@ -203,7 +217,7 @@ func (r Runner) observe(ctx context.Context, s *State, save func() error, write 
 				}
 				s.Results[key] = next
 				if err := save(); err != nil {
-					return err
+					return deferred, err
 				}
 				write("%s reconciled\n", key)
 			}
@@ -217,25 +231,25 @@ func (r Runner) observe(ctx context.Context, s *State, save func() error, write 
 			}
 			s.Results[key] = result
 			if err := save(); err != nil {
-				return err
+				return deferred, err
 			}
 		case "CLOSED":
 			result.State = "blocked"
 			result.StopReason = "pull request was closed"
 			s.Results[key] = result
 			if err := save(); err != nil {
-				return err
+				return deferred, err
 			}
 		default:
 			result.State = "blocked"
 			result.StopReason = "unknown pull request state"
 			s.Results[key] = result
 			if err := save(); err != nil {
-				return err
+				return deferred, err
 			}
 		}
 	}
-	return nil
+	return deferred, nil
 }
 
 func ciNeedsAction(ci string) bool {
@@ -252,112 +266,150 @@ func knownAutomaticRetarget(s State, t Ticket, result Result, target Target, obs
 
 func (r Runner) launch(ctx context.Context, s *State, save func() error, write func(string, ...any), attempted map[string]bool) (bool, error) {
 	jobs := []seriesJob{}
-	for _, t := range s.Plan.Tickets {
-		key := filepath.Base(t.File)
-		old, exists := s.Results[key]
-		if exists && !resumable(old.State) {
-			continue
-		}
-		if attempted[key] {
-			continue
-		}
-		if conflicts(t, s.Plan, s.Results, jobs) {
-			continue
-		}
-		target, wait, err := r.target(ctx, *s, t)
-		if err != nil {
-			return false, err
-		}
-		if wait {
-			continue
-		}
-		if exists && (old.Base != "" || old.BaseSHA != "") && (old.Base != target.Base || old.BaseSHA != target.SHA) {
-			if old.Directory == "" && old.HeadSHA == "" {
-				old.Base, old.BaseSHA = target.Base, target.SHA
-				s.Results[key] = old
-				if err := save(); err != nil {
-					return false, err
-				}
-			} else {
-				next, e := r.Driver.Reconcile(ctx, t, target, old)
-				if e != nil {
-					r.reconcileFailed(s, key, old, next, e)
-					if saveErr := save(); saveErr != nil {
-						return false, saveErr
-					}
-					continue
-				}
-				if next.RunID == "" {
-					next.RunID = old.RunID
-				}
-				s.Results[key] = next
-				if err := save(); err != nil {
-					return false, err
-				}
-				old = next
-			}
-		}
-		if !exists {
-			old = Result{RunID: runID(s.Plan, t), State: "prepared", Base: target.Base, BaseSHA: target.SHA}
-			s.Results[key] = old
-			if err := save(); err != nil {
-				return false, err
-			}
-		}
-		old.State = "running"
-		old.StopReason = ""
-		s.Results[key] = old
-		if err := save(); err != nil {
-			return false, err
-		}
-		jobs = append(jobs, seriesJob{t, target, old})
-		attempted[key] = true
-		if len(jobs) >= r.Parallel {
-			break
-		}
-	}
-	if len(jobs) == 0 {
-		return false, nil
-	}
 	jobCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	completed := make(chan completion, len(jobs))
-	for _, job := range jobs {
-		go func(job seriesJob) {
-			result, err := r.Driver.Execute(jobCtx, job.ticket, job.target, &job.result)
-			completed <- completion{job.ticket, result, err}
-		}(job)
+	completed := make(chan completion, r.Parallel)
+	fill := func() error {
+		for _, t := range s.Plan.Tickets {
+			if len(jobs) >= r.Parallel {
+				break
+			}
+			key := filepath.Base(t.File)
+			old, exists := s.Results[key]
+			if exists && !resumable(old.State) {
+				continue
+			}
+			if attempted[key] {
+				continue
+			}
+			if conflicts(t, s.Plan, s.Results, jobs) {
+				continue
+			}
+			target, wait, err := r.target(ctx, *s, t)
+			if err != nil {
+				return err
+			}
+			if wait {
+				continue
+			}
+			if exists && (old.Base != "" || old.BaseSHA != "") && (old.Base != target.Base || old.BaseSHA != target.SHA) {
+				if old.Directory == "" && old.HeadSHA == "" {
+					old.Base, old.BaseSHA = target.Base, target.SHA
+					s.Results[key] = old
+					if err := save(); err != nil {
+						return err
+					}
+				} else {
+					next, e := r.Driver.Reconcile(ctx, t, target, old)
+					if e != nil {
+						r.reconcileFailed(s, key, old, next, e)
+						if saveErr := save(); saveErr != nil {
+							return saveErr
+						}
+						continue
+					}
+					if next.RunID == "" {
+						next.RunID = old.RunID
+					}
+					s.Results[key] = next
+					if err := save(); err != nil {
+						return err
+					}
+					old = next
+				}
+			}
+			if !exists {
+				old = Result{RunID: runID(s.Plan, t), State: "prepared", Base: target.Base, BaseSHA: target.SHA}
+				s.Results[key] = old
+				if err := save(); err != nil {
+					return err
+				}
+			}
+			old.State = "running"
+			old.StopReason = ""
+			s.Results[key] = old
+			if err := save(); err != nil {
+				return err
+			}
+			jobs = append(jobs, seriesJob{t, target, old})
+			attempted[key] = true
+			go func(job seriesJob) {
+				result, err := r.Driver.Execute(jobCtx, job.ticket, job.target, &job.result)
+				completed <- completion{job.ticket, result, err}
+			}(jobs[len(jobs)-1])
+		}
+		return nil
 	}
 	var firstErr error
-	for range jobs {
-		item := <-completed
-		if firstErr != nil {
-			continue
-		}
-		key := filepath.Base(item.ticket.File)
-		current := s.Results[key]
-		if item.err != nil {
-			r.reconcileFailed(s, key, current, item.result, item.err)
-			write("%s %s: %v\n", key, s.Results[key].State, item.err)
-		} else {
-			item.result = completeResult(current, item.result)
-			if !knownState(item.result.State) {
-				firstErr = fmt.Errorf("%s returned an invalid run state", key)
+	if err := fill(); err != nil {
+		firstErr = err
+		cancel()
+	}
+	launched := len(jobs) > 0
+	var ticks <-chan time.Time
+	if r.Watch {
+		ticker := time.NewTicker(r.PollInterval)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
+	for len(jobs) > 0 {
+		var item completion
+		select {
+		case item = <-completed:
+			key := filepath.Base(item.ticket.File)
+			for i, job := range jobs {
+				if filepath.Base(job.ticket.File) == key {
+					jobs = append(jobs[:i], jobs[i+1:]...)
+					break
+				}
+			}
+			if firstErr != nil {
+				continue
+			}
+			current := s.Results[key]
+			if item.err != nil {
+				r.reconcileFailed(s, key, current, item.result, item.err)
+				write("%s %s: %v\n", key, s.Results[key].State, item.err)
+			} else {
+				item.result = completeResult(current, item.result)
+				if !knownState(item.result.State) {
+					firstErr = fmt.Errorf("%s returned an invalid run state", key)
+					cancel()
+					continue
+				}
+				s.Results[key] = item.result
+				write("%s %s\n", key, item.result.State)
+			}
+			if err := save(); err != nil {
+				firstErr = err
 				cancel()
 				continue
 			}
-			s.Results[key] = item.result
-			write("%s %s\n", key, item.result.State)
+		case <-ticks:
+			if firstErr != nil {
+				continue
+			}
 		}
-		if err := save(); err != nil {
+		if err := ctx.Err(); err != nil {
 			firstErr = err
 			cancel()
+			continue
+		}
+		// Reconcile can execute a worker, so defer repairs until active jobs drain.
+		deferred, err := r.observeReady(ctx, s, save, write, len(jobs) == 0)
+		if err != nil {
+			firstErr = err
+			cancel()
+			continue
+		}
+		if !deferred && attention(*s) == nil {
+			if err := fill(); err != nil {
+				firstErr = err
+				cancel()
+			}
 		}
 	}
-	if firstErr != nil {
-		return true, firstErr
-	}
-	return true, nil
+	return launched, firstErr
 }
 
 func completeResult(current, returned Result) Result {

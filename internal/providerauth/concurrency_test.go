@@ -25,40 +25,18 @@ func await(t *testing.T, ch <-chan string) string {
 	}
 }
 
-func TestProvidersShareRuntimeWhileSameProviderWaits(t *testing.T) {
+func TestProvidersShareRuntimeWithoutProviderGate(t *testing.T) {
 	manager, _ := fixture(t)
-	_, first, err := manager.begin(context.Background(), "codex")
-	if err != nil {
-		t.Fatal(err)
+	for _, provider := range []string{"codex", "claude", "codex"} {
+		_, lease, err := manager.begin(context.Background(), provider)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lease.Close()
 	}
-	defer first.Close()
-	_, other, err := manager.begin(context.Background(), "claude")
-	if err != nil {
-		t.Fatal("different provider blocked", err)
-	}
-	defer other.Close()
 	if build, err := filelock.Acquire(filepath.Join(manager.Runtime.Directory, "runtime-build.lock")); err == nil {
 		build.Close()
 		t.Fatal("build overlapped providers")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	waited := make(chan string, 1)
-	manager.OnWait = func(provider, reason string) { waited <- provider + ":" + reason }
-	done := make(chan error, 1)
-	go func() {
-		_, lease, err := manager.begin(ctx, "codex")
-		if lease != nil {
-			lease.Close()
-		}
-		done <- err
-	}()
-	if value := await(t, waited); value != "codex:provider_busy" {
-		t.Fatal(value)
-	}
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
 	}
 }
 
@@ -94,7 +72,7 @@ func TestQueuedProviderRechecksRuntimeAfterBuild(t *testing.T) {
 
 func TestCancelledQueuedLoginDoesNotLaunchContainer(t *testing.T) {
 	manager, docker := fixture(t)
-	lock, err := filelock.Acquire(filepath.Join(manager.Runtime.Directory, "provider-codex.lock"))
+	lock, err := filelock.Acquire(filepath.Join(manager.Runtime.Directory, "runtime-build.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +143,7 @@ func (docker *cleanupDocker) Output(ctx context.Context, args ...string) ([]byte
 	return docker.fakeDocker.Output(ctx, args...)
 }
 
-func TestSameProviderWaitsThroughContainerCleanup(t *testing.T) {
+func TestSameProviderStatusOverlapsContainerCleanup(t *testing.T) {
 	manager, fake := readyInteractive(t, "codex")
 	docker := &cleanupDocker{fakeDocker: fake, entered: make(chan string, 1), cleanup: make(chan string, 1), releaseSession: make(chan struct{}), releaseCleanup: make(chan struct{})}
 	manager.Docker = docker
@@ -177,41 +155,32 @@ func TestSameProviderWaitsThroughContainerCleanup(t *testing.T) {
 	await(t, docker.entered)
 	close(docker.releaseSession)
 	await(t, docker.cleanup)
-	waited := make(chan string, 1)
-	waiter := manager
-	waiter.OnWait = func(provider, reason string) { waited <- reason }
-	acquired := make(chan string, 1)
-	waiter.OnAcquired = func(provider string) { acquired <- provider }
 	statusDone := make(chan error, 1)
-	go func() { _, err := waiter.Status(ctx, "codex"); statusDone <- err }()
-	if await(t, waited) != "provider_busy" {
-		t.Fatal("same provider did not queue during cleanup")
-	}
+	go func() { _, err := manager.Status(ctx, "codex"); statusDone <- err }()
 	select {
-	case <-acquired:
-		t.Fatal("lease released before cleanup")
-	default:
+	case err := <-statusDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("status blocked during independent cleanup")
 	}
 	close(docker.releaseCleanup)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if await(t, acquired) != "codex" {
-		t.Fatal("wrong provider resumed")
-	}
-	if err := <-statusDone; err != nil {
-		t.Fatal(err)
-	}
+
 }
 
 type survivorDocker struct {
 	*fakeDocker
-	volume  string
-	managed bool
+	volume                   string
+	managed                  bool
+	operation, status, image string
 }
 
 func (docker survivorDocker) Output(ctx context.Context, args ...string) ([]byte, error) {
-	if args[0] == "ps" && has(args, "volume="+docker.volume) {
+	if args[0] == "ps" && (has(args, "volume="+docker.volume) || has(args, "id=survivor")) {
 		return []byte("survivor"), nil
 	}
 	if args[0] == "container" {
@@ -219,7 +188,14 @@ func (docker survivorDocker) Output(ctx context.Context, args ...string) ([]byte
 		if !docker.managed {
 			owner = nil
 		}
-		return json.Marshal([]any{map[string]any{"Config": map[string]any{"Labels": owner}, "State": map[string]any{"Status": "running", "Running": true}, "Mounts": []any{map[string]any{"Type": "volume", "Name": docker.volume}}}})
+		if docker.operation != "" {
+			owner["io.sdlc.operation"] = docker.operation
+		}
+		status := docker.status
+		if status == "" {
+			status = "running"
+		}
+		return json.Marshal([]any{map[string]any{"Name": "/" + docker.operation, "Image": docker.image, "Config": map[string]any{"Labels": owner}, "State": map[string]any{"Status": status, "Running": status == "running"}, "Mounts": []any{map[string]any{"Type": "volume", "Name": docker.volume}}}})
 	}
 	return docker.fakeDocker.Output(ctx, args...)
 }
@@ -230,7 +206,7 @@ func TestSurvivingCacheContainerBlocksNextOperation(t *testing.T) {
 		for name := range docker.volumes {
 			volume = name
 		}
-		manager.Docker = survivorDocker{docker, volume, managed}
+		manager.Docker = survivorDocker{fakeDocker: docker, volume: volume, managed: managed}
 		if _, err := manager.Status(context.Background(), "codex"); err == nil {
 			t.Fatal("survivor did not block cache")
 		}
@@ -274,5 +250,63 @@ func TestDifferentProvidersEnterHeadlessTogether(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestIndependentManagersEnterSameProviderTogether(t *testing.T) {
+	manager, fake := readyInteractive(t, "codex")
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	docker := streamDocker{fake, func(ctx context.Context, _ io.Reader, _, _ io.Writer, args []string) error {
+		entered <- args[len(args)-5]
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	manager.Docker = docker
+	other := New(manager.Runtime)
+	other.Docker = docker
+	first, second := headlessFixture(t), headlessFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 2)
+	go func() { done <- manager.Headless(ctx, first, nil, nil) }()
+	go func() { done <- other.Headless(ctx, second, nil, nil) }()
+	if await(t, entered) != "codex" || await(t, entered) != "codex" {
+		t.Fatal("same provider did not overlap")
+	}
+	close(release)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestLiveRegisteredContainerTransitionsPermitConcurrentCacheAccess(t *testing.T) {
+	manager, docker := readyInteractive(t, "codex")
+	volume := ""
+	for name := range docker.volumes {
+		volume = name
+	}
+	operation := "sdlc-headless-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	lock, err := manager.registerOperation(operation, volume, "codex", testOperationImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	installation := strings.TrimSuffix(strings.TrimPrefix(volume, "sdlc-auth-"), "-codex")
+	for _, state := range []string{"created", "running", "exited", "removing"} {
+		manager.Docker = survivorDocker{fakeDocker: docker, volume: volume, managed: true, operation: operation, status: state, image: testOperationImage}
+		if err := manager.guardVolume(context.Background(), volume, installation, "codex"); err != nil {
+			t.Fatalf("live %s transition blocked: %v", state, err)
+		}
+	}
+	lock.Close()
+	if err := manager.guardVolume(context.Background(), volume, installation, "codex"); err == nil {
+		t.Fatal("orphan transition accepted")
 	}
 }

@@ -227,6 +227,11 @@ func (manager Manager) Headless(ctx context.Context, request HeadlessRequest, st
 		return fmt.Errorf("cannot name headless container")
 	}
 	name := "sdlc-headless-" + token
+	operation, err := manager.registerOperation(name, volume, request.Provider, state.ImageID)
+	if err != nil {
+		return err
+	}
+	defer operation.Close()
 	proxy, err := headroom.Start(ctx, manager.Docker, request.Headroom, name+"-headroom")
 	if err != nil {
 		return err

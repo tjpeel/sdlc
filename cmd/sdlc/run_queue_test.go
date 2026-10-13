@@ -22,7 +22,6 @@ import (
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
 	"github.com/tjpeel/sdlc/internal/signing"
-	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 // Runtime identity and GitHub identity freezing use offline fake Docker responses.
@@ -129,7 +128,7 @@ esac
 	if err := os.WriteFile(filepath.Join(state, "runtime.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	return state, marker, filepath.Join(state, "provider-codex.lock")
+	return state, marker, filepath.Join(state, "runtime-build.lock")
 }
 
 func waitForQueuedRun(t *testing.T, state string, completed <-chan error) runstatus.View {
@@ -143,7 +142,7 @@ func waitForQueuedRun(t *testing.T, state string, completed <-chan error) runsta
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(views) == 1 && views[0].Live && views[0].Activity.WaitReason == "provider_busy" {
+		if len(views) == 1 && views[0].Live && views[0].Activity.WaitReason == "runtime_busy" {
 			identity := views[0].Journal.Plan.PublicationIdentity
 			if identity == nil || identity.GitHubID != 1 || identity.GitHubLogin != "testuser" || identity.ProfileID != "queue-fixture" || identity.RepositoryID != 99 || identity.RepositoryName != "example/project" {
 				t.Fatalf("queued run lost frozen fixture identity: %+v", identity)
@@ -185,117 +184,31 @@ func assertQueuedRunNoConnectedCalls(t *testing.T, state, marker string) {
 	}
 }
 
-func TestRunCommandRegistersProviderQueueBeforeCheckingProviderAuthentication(t *testing.T) {
-	state, marker, providerPath := queuedRunFixture(t)
-	held, err := filelock.Acquire(providerPath)
+func TestRunCommandRuntimeBuildContentionCancelsBeforeProviderAuthentication(t *testing.T) {
+	state, marker, runtimePath := queuedRunFixture(t)
+	held, err := filelock.Acquire(runtimePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	var output bytes.Buffer
-	completed := make(chan error, 1)
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		completed <- runCommand(ctx, runArgs("--repo", "example/project"), &output)
-	}()
-	defer func() {
-		cancel()
-		select {
-		case <-finished:
-		case <-time.After(5 * time.Second):
-			t.Error("queued run did not exit during test cleanup")
-		}
-	}()
-	queued := waitForQueuedRun(t, state, completed)
-	if queued.State != "prepared" || queued.Activity.WaitingProvider != "codex" || queued.Activity.WaitingSince.IsZero() || queued.Stopped || queued.Journal == nil {
-		t.Fatalf("incorrect queued lifecycle: %+v", queued)
-	}
-	if build, err := filelock.Acquire(filepath.Join(state, "runtime-build.lock")); err == nil {
-		build.Close()
-		t.Fatal("runtime build entered while the controller waited between provider phases")
-	}
-	assertQueuedRunNoConnectedCalls(t, state, marker)
-	if err := held.Close(); err != nil {
-		t.Fatal(err)
-	}
-	err = waitForQueuedRunExit(t, completed)
-	if !errors.Is(err, workrun.ErrStopped) {
-		t.Fatalf("missing auth did not retain a stopped checkpoint: %v\n%s", err, output.String())
+	err = runCommand(ctx, runArgs("--repo", "example/project"), &output)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runtime queue cancellation: %v", err)
 	}
 	views, err := runstatus.New(state).List(time.Now().UTC())
-	if err != nil || len(views) != 1 {
-		t.Fatalf("registered run lost after queue: %+v %v", views, err)
+	if err != nil || len(views) != 0 {
+		t.Fatalf("runtime contention launched a run: %+v %v", views, err)
 	}
-	stopped := views[0]
-	if stopped.ID != queued.ID || stopped.State != "blocked" || !stopped.Stopped || stopped.Live || !strings.Contains(stopped.StopReason, "login") || stopped.Activity.WaitReason != "" {
-		t.Fatalf("missing-auth lifecycle: %+v", stopped)
+	if data, err := os.ReadFile(marker); !os.IsNotExist(err) {
+		t.Fatalf("runtime contention made connected call: %s %v", data, err)
 	}
-	if !strings.Contains(output.String(), "codex") || !strings.Contains(strings.ToLower(output.String()), "waiting") {
-		t.Fatalf("queue was not reported to the terminal: %s", output.String())
-	}
-	assertQueuedRunNoConnectedCalls(t, state, marker)
-	lease, err := filelock.Acquire(providerPath)
+	held.Close()
+	released, err := filelock.Acquire(runtimePath)
 	if err != nil {
-		t.Fatalf("provider lease leaked after missing authentication: %v", err)
+		t.Fatal("runtime queue leaked lock", err)
 	}
-	lease.Close()
-	build, err := filelock.Acquire(filepath.Join(state, "runtime-build.lock"))
-	if err != nil {
-		t.Fatal("stopped controller retained its runtime lease", err)
-	}
-	build.Close()
-}
-
-func TestRunCommandCancelsQueuedProviderAndRetainsRegisteredCheckpoint(t *testing.T) {
-	state, marker, providerPath := queuedRunFixture(t)
-	held, err := filelock.Acquire(providerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer held.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var output bytes.Buffer
-	completed := make(chan error, 1)
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		completed <- runCommand(ctx, runArgs("--repo", "example/project"), &output)
-	}()
-	defer func() {
-		cancel()
-		select {
-		case <-finished:
-		case <-time.After(5 * time.Second):
-			t.Error("queued run did not exit during test cleanup")
-		}
-	}()
-	queued := waitForQueuedRun(t, state, completed)
-	cancel()
-	err = waitForQueuedRunExit(t, completed)
-	if !errors.Is(err, workrun.ErrStopped) {
-		t.Fatalf("queue cancellation lost resumable checkpoint: %v\n%s", err, output.String())
-	}
-	views, err := runstatus.New(state).List(time.Now().UTC())
-	if err != nil || len(views) != 1 {
-		t.Fatalf("cancelled queue lost registration: %+v %v", views, err)
-	}
-	stopped := views[0]
-	if stopped.ID != queued.ID || stopped.State != "blocked" || !stopped.Stopped || stopped.Live || !strings.Contains(stopped.StopReason, "cancel") {
-		t.Fatalf("cancelled queue lifecycle: %+v", stopped)
-	}
-	assertQueuedRunNoConnectedCalls(t, state, marker)
-	if err := held.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{providerPath, filepath.Join(queued.Directory, "run.lock"), filepath.Join(state, "runtime-build.lock")} {
-		lease, err := filelock.Acquire(path)
-		if err != nil {
-			t.Fatalf("cancelled controller leaked lease %s: %v", filepath.Base(path), err)
-		}
-		lease.Close()
-	}
+	released.Close()
 }

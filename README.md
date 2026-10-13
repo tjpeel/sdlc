@@ -17,7 +17,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.40`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.41`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -244,9 +244,9 @@ dashboard. Closing the dashboard leaves controllers working. Headless
 controllers remain attached to their original terminal; detached execution is
 future work. See the [dashboard guide](docs/cli.md#watch-local-runs).
 
-Concurrent controllers use separate workspaces. Codex and Claude can overlap;
-operations using the same provider cache wait until its prior operation and cleanup
-finish. Waiting runs remain visible in the dashboard. See the
+Concurrent controllers use separate workspaces and native sessions. Calls to the
+same provider can overlap across tickets, folders and feature runs. Brief cache
+transactions protect login state without reserving a provider for model execution. See the
 [concurrency guide](docs/cli.md#concurrent-runs-and-account-caches).
 
 ## Security boundary and risks

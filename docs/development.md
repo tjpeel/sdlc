@@ -260,11 +260,15 @@ Usage fixtures cover chunked native events, optional counters, repeated events,
 subagent exclusion, model matching and oversized/malformed input. These remain
 offline; no reported metric establishes real model access or connected-run success.
 
-Scoped-concurrency tests cover different-provider overlap, same-cache waits through
-cleanup, cancellation, exclusive-build/shared-session exclusion, simultaneous
-installation identity creation, runtime changes while queued, process-crash lock
-release and surviving Docker cache users. They use fake Docker clients and no
-provider account calls. Queue reporting retains heartbeat and optional usage data.
+Scoped-concurrency tests cover same-provider and different-provider overlap across
+independent controllers, cancellation, exclusive-build/shared-session exclusion,
+simultaneous installation identity creation, runtime changes while queued and
+live versus orphaned Docker cache users. Opaque-cache tests exercise atomic
+snapshot and persistence, concurrent refresh conflicts, login changes and retained
+recovery state. Feature tests cover rolling capacity, priority, dependencies and
+conflicting paths. These checks use disposable fixtures and no provider account
+calls; they do not establish connected refresh success. Runtime queue reporting
+retains heartbeat and optional usage data.
 
 The [disposable .NET example](../examples/dotnet-smoke/README.md) matches the target
 repository shape: a .NET 10 `.slnx`, an API, unit tests and Docker integration

@@ -157,6 +157,11 @@ func (manager Manager) Interactive(ctx context.Context, provider, mode string) (
 		return fmt.Errorf("cannot name interactive container")
 	}
 	name := "sdlc-interactive-" + nameID
+	operation, err := manager.registerOperation(name, volume, provider, state.ImageID)
+	if err != nil {
+		return err
+	}
+	defer operation.Close()
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()

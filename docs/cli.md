@@ -319,8 +319,9 @@ integration revision (`main` by default, or the selected `--base`).
 Without `--watch`, the controller runs all currently unblocked work and exits;
 repeat the command after merging or resolving a stop. `--watch` requires a live
 host process and does not provide detached supervision. The parallel limit
-bounds ticket controllers: operations sharing a provider's authentication cache
-can still queue. Host stream lines carry ticket labels; each private native event
+bounds ticket controllers within that feature. A free slot starts the next
+eligible ticket without waiting for other active tickets to finish. Provider
+calls have no separate SDLC concurrency limit. Host stream lines carry ticket labels; each private native event
 file retains its original bytes. The dashboard continues to show individual ticket runs.
 
 ### Private feature plan
@@ -893,15 +894,21 @@ contacted.
 
 ## Concurrent runs and account caches
 
-Multiple controllers can operate in the same repository using separate captured
-workspaces and branches. Codex and Claude operations can overlap. Operations
-using the same provider's account cache wait for one another, including login and
-offline status checks; native refresh and cleanup finish before the next user of
-that cache starts. This permits at most one native operation per provider per
-installation. Waiting is cancellable and makes no FIFO or fairness guarantee.
-`sdlc run --timeout` includes setup and queued waits. Authentication is checked
-inside the registered controller before implementation, so queued runs remain
-visible in the dashboard. Reviewer authentication is checked at the review stage.
+Multiple controllers can operate in the same repository or different folders
+using separate captured workspaces, branches and native sessions. Each ticket
+engages its selected implementer and then the opposite reviewer independently.
+Two Codex calls or two Claude calls can run together; SDLC does not reserve a
+provider or impose a provider concurrency limit. Feature `--parallel` controls
+ticket scheduling within one work reference, not other commands or folders.
+
+Each native client receives a private writable copy of the same user's stored
+authentication. Brief cache transactions protect snapshots and refreshed-cache
+persistence without locking model execution. An unchanged session cache does not
+overwrite a later login or refresh. A conflicting refresh stops the affected
+invocation and retains its private cache for inspection; native authentication
+errors and provider usage limits still stop work. Authentication is checked
+inside the registered controller before implementation and at the review stage
+for the reviewer. `sdlc run --timeout` includes setup and runtime waits.
 
 GitHub profiles such as `personal` and `work` use separate native caches and
 leases while sharing the runtime image. Authentication and publication serialize
@@ -913,10 +920,11 @@ Provider and GitHub operations hold a shared runtime lease. Runtime builds need 
 ownership and retain their existing immediate failure when the runtime is in use.
 A provider waiting behind a build checks runtime identity after acquiring its
 lease; an existing run still rejects an image that differs from its recorded image.
-Installation identity creation has a separate short lock. If Docker reports any
-surviving container using the selected provider volume, SDLC blocks reuse. Inspect
-and stop/remove that container deliberately before retrying; lock files alone
-cannot establish whether a Docker container survived a controller interruption.
+Installation identity creation has a separate short lock. Each provider operation
+has its own controller ownership record. Matching live operations can share the
+provider volume; unmanaged or orphaned containers still block reuse. Inspect and
+stop/remove those containers deliberately before retrying. A container label alone
+does not establish that its controller remains alive.
 External Docker operations remain outside SDLC's coordination.
 
 Each `--docker-tests` check invocation receives a distinct daemon and network

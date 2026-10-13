@@ -596,8 +596,8 @@ open while it runs. Closing a separate dashboard terminal does not stop it. Deta
 execution is not implemented.
 
 Two independent calls can use separate captured workspaces and generated branches from the same unchanged
-baseline. Start them in separate terminals and avoid conflicting or dependent changes. Same-provider native
-operations queue on their cache leases; Codex and Claude can overlap. Integration daemons remain separate.
+baseline. Start them in separate terminals and avoid conflicting or dependent changes. Native provider
+calls can overlap, including calls to the same provider from different folders. Integration daemons remain separate.
 Host capacity, account limits and external movement of the base still apply.
 
 To schedule a whole feature, start from a clean checkout at the published integration revision:
@@ -608,8 +608,9 @@ sdlc run --reference YOUR_WORK_REFERENCE --all --parallel 2 --watch
 ```
 
 `--parallel` defaults to `1` and accepts `1` through `8`. Add `--alternate-providers` to alternate
-implementers in planned ticket order; the opposite provider reviews each ticket. Same-provider cache
-leases can still queue. Supply common requirements with the same repeatable `--input` flags.
+implementers in planned ticket order; the opposite provider reviews each ticket. As a ticket finishes,
+its free slot starts the next eligible ticket while other tickets remain active. Provider calls have
+no separate SDLC concurrency limit. Supply common requirements with the same repeatable `--input` flags.
 
 An optional private `.sdlc/work/YOUR_WORK_REFERENCE/plan.json` maps exact ticket filenames to lower-first
 `priority`, `depends_on` filenames and `touches` path prefixes. Overlapping prefixes serialize work.
@@ -829,7 +830,7 @@ remains. The [history guide](run-history.md) lists artifacts and report limits.
 | Organisation or ambiguous profile cannot be inferred | Run `github use --profile NAME`; use explicit `--repo OWNER/REPO` for unsupported origin aliases. |
 | Checks fail in Docker despite passing on the host | Verify image SDK/dependencies, check argument arrays, check-only inputs, service readiness and mounts. Host tools/files are not automatically supplied. |
 | CI missing or reviewer unavailable | Configure PR-triggered CI or authenticate the opposite reviewer, then resume the original ID. |
-| Queued operation appears idle | Inspect cache-wait state and the owning operation. Finish it and its cleanup; do not delete volumes or locks to bypass the lease. |
+| Queued operation appears idle | Inspect the runtime or GitHub-profile wait and its owning operation. Provider model calls do not reserve a provider. Do not delete volumes or locks to bypass an active operation. |
 | History entry cannot be removed/exported | Restore a real private directory or repair unsafe metadata; stop any controller first. Windows ownership checks remain unsupported. |
 
 Do not restart all setup after one failure. Reinstallation, runtime rebuild, provider login, signing setup and

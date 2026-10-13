@@ -309,6 +309,247 @@ func TestRunnerUsesPriorityAndSerializesOverlappingResources(t *testing.T) {
 	}
 }
 
+type controlledSeriesDriver struct {
+	fakeDriver
+	started chan string
+	release map[string]chan struct{}
+}
+
+func (d *controlledSeriesDriver) Execute(ctx context.Context, ticket Ticket, target Target, result *Result) (Result, error) {
+	name := filepath.Base(ticket.File)
+	d.started <- name
+	select {
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	case <-d.release[name]:
+		return Result{RunID: result.RunID, State: "ready", Branch: "branch-" + name, Base: target.Base, BaseSHA: target.SHA, HeadSHA: sha("head-" + name)}, nil
+	}
+}
+
+type repairWatchDriver struct {
+	controlledSeriesDriver
+	needsRepair chan struct{}
+	observed    chan struct{}
+	reconciled  chan struct{}
+	baseDrift   bool
+}
+
+func (d *repairWatchDriver) Observe(_ context.Context, result Result) (Observation, error) {
+	o := Observation{State: "OPEN", CI: "passed", Base: result.Base, BaseSHA: result.BaseSHA, HeadSHA: result.HeadSHA}
+	if result.Branch == "parent" {
+		select {
+		case <-d.needsRepair:
+			if d.baseDrift {
+				o.BaseSHA = sha("changed-base")
+			} else {
+				o.CI = "failed"
+			}
+			select {
+			case d.observed <- struct{}{}:
+			default:
+			}
+		default:
+		}
+	}
+	return o, nil
+}
+
+func (d *repairWatchDriver) Reconcile(_ context.Context, _ Ticket, _ Target, result Result) (Result, error) {
+	d.reconciled <- struct{}{}
+	result.State = "blocked"
+	result.StopReason = "repair requires attention"
+	return result, nil
+}
+
+func TestRunnerDefersWatchRepairUntilActiveJobsDrain(t *testing.T) {
+	for _, baseDrift := range []bool{false, true} {
+		name := "failed CI"
+		if baseDrift {
+			name = "changed base"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir, state := testState(t,
+				Ticket{File: "01-parent.md", Touches: []string{"src"}},
+				Ticket{File: "02-fast.md", Touches: []string{"src"}},
+				Ticket{File: "03-slow.md"},
+				Ticket{File: "04-child.md", DependsOn: []string{"01-parent.md"}, Touches: []string{"src"}},
+			)
+			state.Results["01-parent.md"] = Result{RunID: "111111111111111111111111", State: "ready", Branch: "parent", Base: "main", BaseSHA: sha("main"), HeadSHA: sha("parent-head")}
+			driver := &repairWatchDriver{
+				controlledSeriesDriver: controlledSeriesDriver{
+					fakeDriver: fakeDriver{bases: map[string]Target{"parent": {Base: "parent", SHA: sha("parent-head")}}},
+					started:    make(chan string, 3),
+					release:    map[string]chan struct{}{"02-fast.md": make(chan struct{}), "03-slow.md": make(chan struct{}), "04-child.md": make(chan struct{})},
+				},
+				needsRepair: make(chan struct{}), observed: make(chan struct{}, 100), reconciled: make(chan struct{}, 1), baseDrift: baseDrift,
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			fastCheckpoint := make(chan struct{}, 1)
+			go func() {
+				done <- (Runner{Driver: driver, Parallel: 2, Watch: true, PollInterval: time.Millisecond, OnChange: func(s State) error {
+					if s.Results["02-fast.md"].State == "ready" {
+						select {
+						case fastCheckpoint <- struct{}{}:
+						default:
+						}
+					}
+					return nil
+				}}).Run(ctx, dir, state)
+			}()
+			finished := false
+			defer func() {
+				cancel()
+				if !finished {
+					select {
+					case <-done:
+					case <-time.After(5 * time.Second):
+						t.Error("runner did not stop")
+					}
+				}
+			}()
+			for i := 0; i < 2; i++ {
+				select {
+				case <-driver.started:
+				case <-time.After(5 * time.Second):
+					t.Fatal("parallel jobs did not start")
+				}
+			}
+			close(driver.needsRepair)
+			// A second observation proves the previous tick completed without repair.
+			for i := 0; i < 2; i++ {
+				select {
+				case <-driver.observed:
+				case <-driver.reconciled:
+					t.Fatal("repair ran before active jobs drained")
+				case <-time.After(5 * time.Second):
+					t.Fatal("watch did not observe the ready parent")
+				}
+			}
+			select {
+			case <-driver.reconciled:
+				t.Fatal("repair ran with full, conflicting jobs")
+			default:
+			}
+			close(driver.release["02-fast.md"])
+			select {
+			case <-fastCheckpoint:
+			case <-time.After(5 * time.Second):
+				t.Fatal("fast job did not checkpoint")
+			}
+			for len(driver.observed) > 0 {
+				<-driver.observed
+			}
+			for i := 0; i < 2; i++ {
+				select {
+				case <-driver.observed:
+				case <-driver.reconciled:
+					t.Fatal("repair ran before active jobs drained")
+				case <-time.After(5 * time.Second):
+					t.Fatal("watch stopped observing with one active job")
+				}
+			}
+			select {
+			case <-driver.started:
+				t.Fatal("child started from a parent awaiting repair")
+			default:
+			}
+			select {
+			case <-driver.reconciled:
+				t.Fatal("repair ran before active jobs drained")
+			default:
+			}
+			close(driver.release["03-slow.md"])
+			select {
+			case err := <-done:
+				finished = true
+				if err == nil {
+					t.Fatal("repair attention was not returned")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("runner did not finish after repair")
+			}
+			select {
+			case <-driver.reconciled:
+			default:
+				t.Fatal("deferred repair never ran")
+			}
+			select {
+			case <-driver.started:
+				t.Fatal("child started despite repair attention")
+			default:
+			}
+		})
+	}
+}
+
+func TestRunnerRefillsCapacityWithNewlyReadyChild(t *testing.T) {
+	dir, state := testState(t,
+		Ticket{File: "01-parent.md"},
+		Ticket{File: "02-slow.md"},
+		Ticket{File: "03-child.md", DependsOn: []string{"01-parent.md"}},
+	)
+	driver := &controlledSeriesDriver{
+		fakeDriver: fakeDriver{bases: map[string]Target{"branch-01-parent.md": {Base: "branch-01-parent.md", SHA: sha("head-01-parent.md")}}},
+		started:    make(chan string, 3),
+		release: map[string]chan struct{}{
+			"01-parent.md": make(chan struct{}),
+			"02-slow.md":   make(chan struct{}),
+			"03-child.md":  make(chan struct{}),
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- (Runner{Driver: driver, Parallel: 2}).Run(ctx, dir, state) }()
+	finished := false
+	defer func() {
+		cancel()
+		if finished {
+			return
+		}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("runner did not stop after cancellation")
+		}
+	}()
+	started := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case name := <-driver.started:
+			started[name] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("initial parallel tickets did not start")
+		}
+	}
+	if !started["01-parent.md"] || !started["02-slow.md"] {
+		t.Fatalf("initial tickets = %v", started)
+	}
+	close(driver.release["01-parent.md"])
+	select {
+	case name := <-driver.started:
+		if name != "03-child.md" {
+			t.Fatalf("refilled ticket = %s", name)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("child did not start while the independent ticket remained active")
+	}
+	close(driver.release["03-child.md"])
+	close(driver.release["02-slow.md"])
+	select {
+	case err := <-done:
+		finished = true
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not finish")
+	}
+	if got := state.Results["03-child.md"]; got.State != "ready" || got.Base != "branch-01-parent.md" || got.BaseSHA != sha("head-01-parent.md") {
+		t.Fatalf("child checkpoint = %+v", got)
+	}
+}
+
 func TestRunnerWaitsForSingleReadyParentAtItsHead(t *testing.T) {
 	dir, s := testState(t, Ticket{File: "01-parent.md"}, Ticket{File: "02-child.md", DependsOn: []string{"01-parent.md"}})
 	d := &fakeDriver{bases: map[string]Target{"branch-01-parent.md": {Base: "branch-01-parent.md", SHA: sha("head-01-parent.md")}}}
@@ -407,21 +648,54 @@ func TestRunnerMultipleParentsWaitUntilBothMerge(t *testing.T) {
 
 func TestRunnerIndependentTicketsRunConcurrentlyAndDoNotDuplicate(t *testing.T) {
 	dir, s := testState(t, Ticket{File: "01-one.md"}, Ticket{File: "02-two.md"})
-	driver := &fakeDriver{}
+	driver := &controlledSeriesDriver{
+		started: make(chan string, 2),
+		release: map[string]chan struct{}{"01-one.md": make(chan struct{}), "02-two.md": make(chan struct{})},
+	}
 	runner := Runner{Driver: driver, Parallel: 2}
-	if err := runner.Run(context.Background(), dir, s); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx, dir, s) }()
+	finished := false
+	defer func() {
+		cancel()
+		if !finished {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("runner did not stop after cancellation")
+			}
+		}
+	}()
+	started := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case name := <-driver.started:
+			started[name] = true
+		case <-ctx.Done():
+			t.Fatal("both independent jobs must start before either finishes")
+		}
+	}
+	if !started["01-one.md"] || !started["02-two.md"] {
+		t.Fatalf("parallel jobs = %v", started)
+	}
+	close(driver.release["01-one.md"])
+	close(driver.release["02-two.md"])
+	if err := <-done; err != nil {
+		finished = true
 		t.Fatal(err)
 	}
-	if driver.max != 2 || len(driver.executed) != 2 {
-		t.Fatalf("parallel capacity unused: active=%d jobs=%v", driver.max, driver.executed)
-	}
+	finished = true
 	if s.Results["01-one.md"].RunID == s.Results["02-two.md"].RunID {
 		t.Fatal("concurrent jobs shared an identity")
 	}
-	if err := runner.Run(context.Background(), dir, s); err != nil {
+	if err := runner.Run(ctx, dir, s); err != nil {
 		t.Fatal(err)
 	}
-	if len(driver.executed) != 2 {
-		t.Fatalf("repeated feature duplicated ready jobs: %v", driver.executed)
+	select {
+	case name := <-driver.started:
+		t.Fatalf("repeated feature duplicated ready job: %s", name)
+	default:
 	}
 }
