@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.52 - 2026-10-13
+
+### Fixed
+
+- Accept trailing space padding in GitHub's push-protection diagnostics before validating the exact rejection grammar. Padded commit, file and line locations now reach the original implementation session through the existing verified recovery path.
+
 ## 0.1.0-beta.51 - 2026-10-13
 
 ### Added

@@ -190,6 +190,18 @@ func parsePushProtection(data []byte, branch string) ([]PushProtectionLocation, 
 		return nil, fmt.Errorf("invalid push rejection")
 	}
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	for _, r := range text {
+		if unicode.IsControl(r) && r != '\n' {
+			return nil, fmt.Errorf("invalid push diagnostic control character")
+		}
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "remote:") {
+			lines[i] = strings.TrimRight(line, " ")
+		}
+	}
+	text = strings.Join(lines, "\n")
 	header := "remote: error: GH013: Repository rule violations found for refs/heads/" + branch + "."
 	if strings.Count(text, "GH013:") != 1 || !strings.Contains(text, header+"\n") || strings.Count(text, "remote: - GITHUB PUSH PROTECTION\n") != 1 || !strings.Contains(text, "remote:     - Push cannot contain secrets\n") {
 		return nil, fmt.Errorf("not a secret push rejection")

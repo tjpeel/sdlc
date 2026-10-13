@@ -267,6 +267,41 @@ func TestPushProtectionParserAcceptsExactExemptionDiagnosticVariant(t *testing.T
 		}
 	}
 }
+
+func TestPushProtectionParserAcceptsOnlyASCIISpaceTransportPadding(t *testing.T) {
+	first := string(fakePushDiagnostic("TASK-1", testHead, "config.txt", 2))
+	first = strings.Replace(first, "remote:        (?) To push,", "remote:          - commit: "+testSigned+"\nremote:            path: other.txt:3\nremote:        (?) To push,", 1)
+	second := string(fakePushDiagnostic("TASK-1", testBase, "third.txt", 4))
+	second = "remote:       ——" + strings.SplitN(second, "remote:       ——", 2)[1]
+	second = strings.ReplaceAll(second, "to allow the secret.", "to request an exemption.")
+	plain := first + second + "error: failed to push some refs to 'https://github.com/example/project.git'\n"
+	pad := func(suffix string) string {
+		lines := strings.Split(plain, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "remote:") {
+				lines[i] += suffix
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+	locations, err := parsePushProtection([]byte(pad("        ")), "TASK-1")
+	if err != nil || len(locations) != 3 || locations[0].Commit != testHead || locations[0].Path != "config.txt" || locations[0].Line != 2 || locations[1].Commit != testSigned || locations[1].Path != "other.txt" || locations[1].Line != 3 || locations[2].Commit != testBase || locations[2].Path != "third.txt" || locations[2].Line != 4 {
+		t.Fatal("transport padding changed complete locations", locations, err)
+	}
+	for name, raw := range map[string]string{
+		"tab padding":           pad("\t"),
+		"control padding":       pad("\x01"),
+		"unicode padding":       pad("\u00a0"),
+		"internal header space": strings.Replace(pad("        "), "remote: error: GH013:", "remote: error:  GH013:", 1),
+		"nonremote location":    strings.Replace(pad("        "), "remote:            path: other.txt:3", "            path: other.txt:3", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parsePushProtection([]byte(raw), "TASK-1"); err == nil {
+				t.Fatal("unsupported transport grammar accepted")
+			}
+		})
+	}
+}
 func TestPushRejectionRequiresExactTrustedOperationAndOwnCommit(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
