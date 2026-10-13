@@ -127,12 +127,6 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if err := ValidateCIRepairInitialization(*journal); err != nil {
 			return err
 		}
-		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
-		if err := runner.save(directory, journal); err != nil {
-			return err
-		}
-	} else if journal.CIRepairBudget == nil && journal.Publication.Number == 0 && journal.Publication.URL == "" {
-		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
 	}
 
 	if journal.PendingInputs != nil {
@@ -150,6 +144,17 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 		}()
 	}
+	// State reporting depends on the tracker opened by OnStart. Register its
+	// cleanup before persisting initialization through the reporting save path.
+	if runner.InitializeCIRepairBudget {
+		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
+		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+	} else if journal.CIRepairBudget == nil && journal.Publication.Number == 0 && journal.Publication.URL == "" {
+		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
+	}
+
 	if runner.Output == nil {
 		runner.Output = io.Discard
 	}

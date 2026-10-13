@@ -919,3 +919,87 @@ func TestRunnerCIAnnotationRepairsSameSessionThenReviewsNewHead(t *testing.T) {
 		t.Fatal("CI metadata/session or opposite review boundary lost")
 	}
 }
+
+func TestRunnerCIInitializationReportingStartsBeforeStateUpdates(t *testing.T) {
+	dir, j := testRun(t)
+	j.State = "blocked"
+	j.ResumeState = "ci"
+	j.StopReason = ciRepairBound
+	j.SessionID = testNative
+	j.Publication = annotationPublication()
+	j.CI = CIResult{Status: "failed"}
+	j.Rounds = 11
+	j.Attempt = 12
+	if err := Save(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("blocked")}}
+	runner := fakeRunner(p, &fakeChecker{}, &fakePublisher{failures: 100}, &fakeRepository{})
+	runner.InitializeCIRepairBudget = true
+	started, finished, updates := false, false, 0
+	runner.OnStart = func(snapshot Journal) error {
+		if snapshot.CIRepairBudget != nil || snapshot.Rounds != 11 || snapshot.Attempt != 12 {
+			t.Fatal("initialization changed history before reporting started")
+		}
+		started = true
+		return nil
+	}
+	runner.OnState = func(snapshot Journal) error {
+		if !started {
+			return errors.New("state update before reporting tracker was ready")
+		}
+		updates++
+		if snapshot.CIRepairBudget == nil {
+			t.Fatal("state update lost initialized accounting")
+		}
+		return nil
+	}
+	runner.OnFinish = func() error { finished = true; return nil }
+	err := runner.Run(context.Background(), dir, j, "")
+	if !errors.Is(err, ErrStopped) || !started || !finished || updates == 0 {
+		t.Fatalf("CI initialization bypassed reporting lifecycle: err=%v started=%t finished=%t updates=%d", err, started, finished, updates)
+	}
+	loaded, err := Load(dir)
+	if err != nil || loaded.CIRepairBudget == nil || loaded.CIRepairBudget.StartRound != 11 || loaded.CIRepairBudget.Used != 1 || loaded.Rounds != 12 || loaded.Attempt != 13 || loaded.SessionID != testNative || len(p.calls) != 1 || p.calls[0].ResumeID != testNative {
+		t.Fatal("reporting repair lost accounting/history/original session", err)
+	}
+}
+
+func TestRunnerInitializedCIBudgetOrdinaryResumeRetainsHistory(t *testing.T) {
+	dir, j := testRun(t)
+	j.State = "blocked"
+	j.ResumeState = "ci"
+	j.StopReason = ciRepairBound
+	j.SessionID = testNative
+	j.Publication = annotationPublication()
+	j.CI = CIResult{Status: "failed"}
+	j.Rounds = 11
+	j.Attempt = 12
+	j.CIRepairBudget = &CIRepairBudget{StartRound: 11}
+	if err := Save(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("blocked")}}
+	runner := fakeRunner(p, &fakeChecker{}, &fakePublisher{failures: 100}, &fakeRepository{})
+	ready := false
+	runner.OnStart = func(snapshot Journal) error {
+		if snapshot.CIRepairBudget == nil || snapshot.CIRepairBudget.StartRound != 11 || snapshot.CIRepairBudget.Used != 0 {
+			t.Fatal("ordinary resume reset persisted CI initialization")
+		}
+		ready = true
+		return nil
+	}
+	runner.OnState = func(Journal) error {
+		if !ready {
+			return errors.New("state update before tracker was ready")
+		}
+		return nil
+	}
+	if err := runner.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil || loaded.CIRepairBudget.StartRound != 11 || loaded.CIRepairBudget.Used != 1 || loaded.Rounds != 12 || loaded.Attempt != 13 || loaded.SessionID != testNative || len(p.calls) != 1 || p.calls[0].ResumeID != testNative {
+		t.Fatal("ordinary resume lost existing budget/history/session", err)
+	}
+}

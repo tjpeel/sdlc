@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.37 - 2026-10-13
+
+### Fixed
+
+- Start status reporting before saving an explicitly initialized CI repair budget, so legacy CI recovery can reach the original worker without a startup panic. Preserve a budget already saved by an interrupted initialization and continue through ordinary resume.
+
 ## 0.1.0-beta.36 - 2026-10-13
 
 ### Fixed
