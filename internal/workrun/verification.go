@@ -311,6 +311,10 @@ func verificationDiagnostic(request VerificationRequest, tree string, err error)
 		phase = failure.Phase
 	}
 	prefix := "Additional verification " + request.ID + " " + phase + " phase failed. "
+	var budget *sourcePatchDiffBudgetError
+	if errors.As(err, &budget) {
+		return prefix + "The source correction diff exceeds the 32 KiB request budget; no artifact was exported. Reduce source_patch.paths and the formatter arguments to the same smaller named file selection, or split the work into separate requests. Commit reviewed corrections before requesting full checks. The unchanged request will not be retried automatically; raw logs remain private."
+	}
 	var mismatch *baselineMismatch
 	if errors.As(err, &mismatch) {
 		prefix += mismatch.Reason + ". "

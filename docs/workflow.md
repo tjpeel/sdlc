@@ -126,6 +126,11 @@ The delivery sequence is:
    source. Empty corrections can pass the persistent request for the current
    committed candidate. Failed commands, failed cleanup and stale candidates
    cannot export artifacts. Raw logs remain private.
+   A diff-budget overflow returns a bounded refinement diagnostic without an
+   artifact. Reduce both `source_patch.paths` and formatter arguments to the
+   same named files, or split the selection into smaller requests. The controller
+   does not retry an unchanged request automatically; other collection errors
+   retain their operational stop behavior.
 3. After local review and `tjpeel-pr-draft` metadata, new runs validate the exact
    reference in the title and an explicit body field, plus all seven description
    headings in order with non-empty content. A default Markdown PR template in

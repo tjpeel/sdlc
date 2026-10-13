@@ -329,7 +329,11 @@ func sourcePatchCollectorFixture(t *testing.T, before string) (string, string, s
 }
 func runSourcePatchCollector(t *testing.T, root, copy, head, tree string) (*SourcePatchResult, error) {
 	t.Helper()
-	selection, _ := json.Marshal(map[string]any{"paths": []string{"src/Example.cs"}, "head": head, "tree": tree, "capture": true})
+	return runSourcePatchCollectorSelection(t, root, copy, head, tree, []string{"src/Example.cs"})
+}
+func runSourcePatchCollectorSelection(t *testing.T, root, copy, head, tree string, paths []string) (*SourcePatchResult, error) {
+	t.Helper()
+	selection, _ := json.Marshal(map[string]any{"paths": paths, "head": head, "tree": tree, "capture": true})
 	script := strings.NewReplacer("/source", root, "/workspace", copy).Replace(collectSourcePatchPython)
 	command := exec.Command("python3", "-I", "-c", script, string(selection))
 	command.Dir = t.TempDir()
@@ -338,9 +342,97 @@ func runSourcePatchCollector(t *testing.T, root, copy, head, tree string) (*Sour
 	if err != nil {
 		return nil, fmt.Errorf("collector fixture: %w: %s", err, data)
 	}
+	if failure, failureErr := sourcePatchCollectionFailure(data); failure {
+		return nil, failureErr
+	}
 	var result SourcePatchResult
 	err = json.Unmarshal(data, &result)
 	return &result, err
+}
+
+func sourcePatchBudgetFixture(t *testing.T) (string, string, string, string) {
+	t.Helper()
+	root, copy, _, _ := sourcePatchCollectorFixture(t, "before\n")
+	sourceWrite(t, root, "src/Other.cs", "before\n")
+	sourceWrite(t, copy, "src/Other.cs", "before\n")
+	if err := os.Chmod(filepath.Join(copy, "src/Other.cs"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "src"}, {"commit", "-m", "Add another disposable source"}} {
+		if _, err := SafeGit(context.Background(), root, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head, _ := SafeGit(context.Background(), root, "rev-parse", "HEAD")
+	tree, _ := SafeGit(context.Background(), root, "rev-parse", "HEAD^{tree}")
+	return root, copy, strings.TrimSpace(head), strings.TrimSpace(tree)
+}
+
+func TestSourcePatchCumulativeBudgetCanBeRefinedToNamedFiles(t *testing.T) {
+	root, copy, head, tree := sourcePatchBudgetFixture(t)
+	paths := []string{"src/Example.cs", "src/Other.cs"}
+	after := strings.Repeat("after\n", maxSourcePatchDiff/12)
+	for _, p := range paths {
+		if err := os.WriteFile(filepath.Join(copy, p), []byte(after), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if artifact, err := runSourcePatchCollectorSelection(t, root, copy, head, tree, paths); !errors.Is(err, ErrCheckFailed) || artifact != nil {
+		t.Fatal("cumulative overflow did not request refinement", err)
+	}
+	for _, selected := range paths {
+		for _, p := range paths {
+			data := "before\n"
+			if p == selected {
+				data = after
+			}
+			if err := os.WriteFile(filepath.Join(copy, p), []byte(data), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		artifact, err := runSourcePatchCollectorSelection(t, root, copy, head, tree, []string{selected})
+		if err != nil || len(artifact.Diff) == 0 || len(artifact.Diff) > maxSourcePatchDiff {
+			t.Fatal("smaller named selection failed", err)
+		}
+		command := exec.Command("git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-C", root, "apply", "--check", "-")
+		command.Stdin = strings.NewReader(artifact.Diff)
+		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+		if data, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("refined artifact is not applicable: %s %v", data, err)
+		}
+	}
+}
+
+func TestSourcePatchBudgetRefinementResumesSessionWithoutArtifactOrPublication(t *testing.T) {
+	directory, journal := testRun(t)
+	sourceWrite(t, journal.Workspace, "src/Example.cs", "before\n")
+	asked := testOutcome("checks_requested")
+	asked.VerificationRequests = []VerificationRequest{sourcePatchRequest()}
+	provider := &fakeProvider{outcomes: []Outcome{asked, testOutcome("waiting_for_human")}}
+	checker := &patchFixtureChecker{patchErr: &sourcePatchDiffBudgetError{}}
+	publisher := &fakePublisher{}
+	runner := fakeRunner(provider, &checker.fakeChecker, publisher, &fakeRepository{})
+	runner.Checker = checker
+	if err := runner.Run(context.Background(), directory, journal, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 2 || provider.calls[1].ResumeID != testNative || checker.patchCalls != 1 || publisher.calls != 0 || journal.Verification[0].Passed || journal.Verification[0].SourcePatch != nil {
+		t.Fatal("budget refinement bypassed review or became an operational hold")
+	}
+	if !strings.Contains(provider.calls[1].Prompt, "Reduce source_patch.paths and the formatter arguments") {
+		t.Fatal("safe split-request guidance missing")
+	}
+	if data, _ := os.ReadFile(filepath.Join(journal.Workspace, "src/Example.cs")); string(data) != "before\n" {
+		t.Fatal("budget failure changed implementation source")
+	}
+	loaded, err := Load(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.State, loaded.ResumeState = "blocked", "checking"
+	if err := runner.Run(context.Background(), directory, &loaded, ""); !errors.Is(err, ErrStopped) || checker.patchCalls != 1 || len(provider.calls) != 2 || publisher.calls != 0 {
+		t.Fatal("unchanged overflow retried automatically", err)
+	}
 }
 
 func TestSourcePatchCollectorRejectsSourceAndSizeViolations(t *testing.T) {

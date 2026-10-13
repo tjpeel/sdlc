@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"unicode"
@@ -38,6 +39,39 @@ type sourcePatchCapture struct {
 	request    VerificationRequest
 	head, tree string
 	result     *SourcePatchResult
+}
+
+type sourcePatchDiffBudgetError struct{}
+
+func (*sourcePatchDiffBudgetError) Error() string {
+	return "source correction diff exceeds the 32 KiB request budget"
+}
+func (*sourcePatchDiffBudgetError) Unwrap() error { return ErrCheckFailed }
+
+// Only the fixed collector's single-member failure envelope may request refinement.
+// Do not infer semantic failures from stderr, extra members or duplicate keys.
+func sourcePatchCollectionFailure(encoded []byte) (bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return false, nil
+	}
+	key, err := decoder.Token()
+	if err != nil || key != "failure" {
+		return false, nil
+	}
+	code, err := decoder.Token()
+	if err != nil || code != "source_patch_diff_budget_exceeded" || decoder.More() {
+		return true, errors.New("invalid source correction failure response")
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return true, errors.New("invalid source correction failure response")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return true, errors.New("invalid source correction failure response")
+	}
+	return true, &sourcePatchDiffBudgetError{}
 }
 
 func safeSourcePatchPath(p string) bool {
@@ -216,10 +250,16 @@ func (checker DockerChecker) collectSourcePatch(ctx context.Context, workspace, 
 	// Collection output is decoded privately, never forwarded to a log or stream.
 	encoded, err := checker.Runtime.Docker.Output(ctx, args...)
 	if err != nil {
-		return errors.New("source correction collection could not complete")
+		return fmt.Errorf("source correction collection could not complete: %w", err)
 	}
 	if len(encoded) > 128*1024 {
 		return errors.New("source correction collection exceeds bound")
+	}
+	if failure, failureErr := sourcePatchCollectionFailure(encoded); failure {
+		if !capture {
+			return errors.New("invalid source correction validation response")
+		}
+		return failureErr
 	}
 	var result SourcePatchResult
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
@@ -244,7 +284,7 @@ def identity():
     values=subprocess.check_output(git+['rev-parse','HEAD','HEAD^{tree}'],env=env).decode().splitlines()
     if values!=[selection['head'],selection['tree']]: raise ValueError('candidate identity changed')
 identity()
-requested=selection['paths']; selected=set(requested); files={}; patches=[]; total=0
+requested=selection['paths']; selected=set(requested); files={}; patches=[]; total=0; overflow=False
 def source_lines(data):
     parts=data.decode('utf-8').split('\n')
     return [part+'\n' for part in parts[:-1]]+([parts[-1]] if parts[-1] else [])
@@ -275,16 +315,20 @@ for entry in entries:
         text=data.decode('utf-8')
         if any(ord(c)<32 and c not in '\t\r\n' or ord(c)==127 for c in text): raise ValueError('selected source is not text')
     files[name]={'path':name,'before_sha256':hashlib.sha256(before).hexdigest(),'after_sha256':hashlib.sha256(after).hexdigest()}
-    if changed and selection['capture']:
+    if changed and selection['capture'] and not overflow:
         lines=difflib.unified_diff(source_lines(before),source_lines(after),fromfile='a/'+name,tofile='b/'+name,n=3)
         patch=''
         for line in lines:
             patch+=line if line.endswith('\n') else line+'\n\\ No newline at end of file\n'
-            if len(patch.encode())+total>32768: raise ValueError('source diff exceeds bound')
-        patches.append(patch); total+=len(patch.encode())
-    elif changed: raise ValueError('source changed before commands')
+            if len(patch.encode())+total>32768:
+                overflow=True; patch=''; break
+        if not overflow: patches.append(patch); total+=len(patch.encode())
+    elif changed and not selection['capture']: raise ValueError('source changed before commands')
 if set(files)!=selected: raise ValueError('selected source is not committed regular text')
 identity()
+if overflow:
+    print(json.dumps({'failure':'source_patch_diff_budget_exceeded'}))
+    sys.exit(0)
 diff=''.join(patches)
 print(json.dumps({'head':selection['head'],'tree':selection['tree'],'files':[files[p] for p in requested],'diff':diff,'diff_sha256':hashlib.sha256(diff.encode()).hexdigest()},ensure_ascii=False))
 `

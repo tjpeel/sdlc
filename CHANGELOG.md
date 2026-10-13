@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.33 - 2026-10-13
+
+### Fixed
+
+- Return fixed request-refinement guidance when a source correction exceeds the existing diff limit, so the original worker can split its named file selection. Keep oversized corrections unpublished and retain unexpected collection errors only in private diagnostic logs.
+
 ## 0.1.0-beta.32 - 2026-10-13
 
 ### Fixed

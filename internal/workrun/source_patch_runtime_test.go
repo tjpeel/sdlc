@@ -64,6 +64,84 @@ type patchCommandFake struct {
 	docker *patchDockerFake
 }
 
+type collectorResponseDocker struct {
+	*patchDockerFake
+	response    []byte
+	responseErr error
+}
+
+func (docker *collectorResponseDocker) Output(ctx context.Context, args ...string) ([]byte, error) {
+	data, err := docker.patchDockerFake.Output(ctx, args...)
+	if err == nil && slices.Contains(args, collectSourcePatchPython) {
+		var selection struct {
+			Capture bool `json:"capture"`
+		}
+		if json.Unmarshal([]byte(args[len(args)-1]), &selection) == nil && selection.Capture {
+			return docker.response, docker.responseErr
+		}
+	}
+	return data, err
+}
+
+func TestSourcePatchKnownDiffBudgetRequestsRefinement(t *testing.T) {
+	checker, _, _, _ := checkFixture(t)
+	root, _, head, tree := sourcePatchCollectorFixture(t, "before\n")
+	result := patchFixtureResult("")
+	result.Head, result.Tree = head, tree
+	base := &patchDockerFake{names: map[string]bool{}, result: result}
+	checker.Runtime.Docker = &collectorResponseDocker{patchDockerFake: base, response: []byte(`{"failure":"source_patch_diff_budget_exceeded"}`)}
+	checker.Runner = &patchCommandFake{docker: base}
+	artifact, err := checker.VerifySourcePatch(context.Background(), root, sourcePatchRequest(), head, tree, io.Discard)
+	if !errors.Is(err, ErrCheckFailed) || artifact != nil {
+		t.Fatalf("known budget overflow did not request safe refinement: %v", err)
+	}
+	feedback := verificationDiagnostic(sourcePatchRequest(), tree, err)
+	if !strings.Contains(feedback, "source_patch.paths") || !strings.Contains(feedback, "formatter arguments") {
+		t.Fatal("bounded request refinement guidance absent", feedback)
+	}
+}
+
+func TestSourcePatchRefinementMarkerIsStrictAndOperationalErrorsStayPrivate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		response  string
+		dockerErr error
+		cleanup   bool
+	}{
+		{"unknown code", `{"failure":"private-fixture-code"}`, nil, false},
+		{"extra source", `{"failure":"source_patch_diff_budget_exceeded","source":"private-fixture-source"}`, nil, false},
+		{"duplicate code", `{"failure":"private-fixture-code","failure":"source_patch_diff_budget_exceeded"}`, nil, false},
+		{"duplicate known code", `{"failure":"source_patch_diff_budget_exceeded","failure":"source_patch_diff_budget_exceeded"}`, nil, false},
+		{"trailing output", `{"failure":"source_patch_diff_budget_exceeded"} private-fixture-trace`, nil, false},
+		{"stderr substring", "private-fixture-trace source diff exceeds bound", nil, false},
+		{"Docker failure", `{"failure":"source_patch_diff_budget_exceeded"}`, errors.New("private-fixture-Docker-error"), false},
+		{"cancellation", `{"failure":"source_patch_diff_budget_exceeded"}`, context.Canceled, false},
+		{"cleanup failure", `{"failure":"source_patch_diff_budget_exceeded"}`, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checker, _, _, _ := checkFixture(t)
+			root, _, head, tree := sourcePatchCollectorFixture(t, "before\n")
+			result := patchFixtureResult("")
+			result.Head, result.Tree = head, tree
+			base := &patchDockerFake{names: map[string]bool{}, result: result}
+			base.cleanupFail = tc.cleanup
+			checker.Runtime.Docker = &collectorResponseDocker{patchDockerFake: base, response: []byte(tc.response), responseErr: tc.dockerErr}
+			checker.Runner = &patchCommandFake{docker: base}
+			artifact, err := checker.VerifySourcePatch(context.Background(), root, sourcePatchRequest(), head, tree, io.Discard)
+			if err == nil || errors.Is(err, ErrCheckFailed) || artifact != nil {
+				t.Fatal("unexpected collector failure became semantic or exported data", err)
+			}
+			if tc.dockerErr != nil && !errors.Is(err, tc.dockerErr) {
+				t.Fatal("underlying operational error lost", err)
+			}
+			feedback := verificationDiagnostic(sourcePatchRequest(), tree, err)
+			if strings.Contains(feedback, "private-fixture") || strings.Contains(feedback, "source_patch_diff_budget_exceeded") {
+				t.Fatal("collector source or raw error leaked", feedback)
+			}
+		})
+	}
+}
+
 func (runner *patchCommandFake) Run(ctx context.Context, output io.Writer, args ...string) error {
 	i := slices.Index(args, "--name")
 	if i >= 0 {
