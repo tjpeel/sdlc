@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.47 - 2026-10-13
+
+### Fixed
+
+- Allow check-only input capture for a saved feature run after the project's current check configuration changes. Use the run's frozen settings and retain every requirement and check-file hash; continue checking the configuration hash when that file is itself a recorded input. Provider input supplements and feature dispatch retain their existing configuration guard.
+
 ## 0.1.0-beta.46 - 2026-10-13
 
 ### Fixed

@@ -752,6 +752,12 @@ enter the provider workspace, review snapshot or published source. Existing
 captured files cannot be replaced; unsafe paths, linked files, conflicting
 destinations and resource-budget overflow are refused.
 
+For saved feature runs, beta.47 uses the frozen run settings for check-only
+capture even if the project's current check configuration has changed. Original
+requirements and check files must still match their saved hashes. The project
+configuration also remains hash-checked when it is a recorded input. This does
+not change the feature coordinator's configuration guard or select new checks.
+
 An interrupted capture retains immutable staged bytes and its check-only scope;
 complete that operation before resuming. Check-only recovery records require
 beta.46 or newer. `--json` returns metadata without file bodies. Provider, input,

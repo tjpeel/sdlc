@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/workrun"
+	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
 func capturedAttentionFixture(t *testing.T) (workrun.Journal, string, string) {
@@ -364,6 +366,170 @@ func TestSeriesCheckInputsPermitOnlyScopedAuditedAppends(t *testing.T) {
 			}
 			if err := validateSeriesCheckInputs(copy, directory, originals, hashes); err == nil {
 				t.Fatal("unaudited or changed frozen input admitted")
+			}
+		})
+	}
+}
+
+func featureCheckRecoveryFixture(t *testing.T, configInput string) (*seriesDriver, workrun.Journal, string) {
+	t.Helper()
+	driver, result := featureAdoptionFixture(t, "blocked")
+	directory, j, err := driver.loadRun("01-selected.md", result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.ResumeState, j.StopReason = "checking", "outstanding formatter numeric hold"
+	if configInput != "" {
+		data, err := os.ReadFile(filepath.Join(j.Plan.Root, project.ConfigPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := workrun.Input{Path: project.ConfigPath, SHA256: driver.settings.InputHashes[project.ConfigPath]}
+		if configInput == "requirement" {
+			driver.settings.Inputs = append(driver.settings.Inputs, project.ConfigPath)
+			j.Plan.Inputs = append(j.Plan.Inputs, in)
+			full := filepath.Join(j.Workspace, project.ConfigPath)
+			if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			driver.settings.Config.InputFiles = append(driver.settings.Config.InputFiles, project.ConfigPath)
+			j.Plan.CheckInputs = append(j.Plan.CheckInputs, in)
+		}
+	}
+	for _, in := range j.Plan.CheckInputs {
+		data, err := os.ReadFile(filepath.Join(j.Plan.Root, in.Path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		full := filepath.Join(directory, "check-inputs", in.Path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := workrun.Save(directory, &j); err != nil {
+		t.Fatal(err)
+	}
+	if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Register(directory, j); err != nil {
+		t.Fatal(err)
+	}
+	seriesDirectory, err := workseries.Directory(j.Plan.Root, j.Plan.Reference, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := json.Marshal(driver.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := workseries.State{Version: 1, Plan: driver.plan, Results: map[string]workseries.Result{"01-selected.md": result}, Settings: settings}
+	if err := workseries.Save(seriesDirectory, &state); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := filelock.Acquire(filepath.Join(seriesDirectory, "series.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock.Close()
+	marker := forbidConnectedRunCommands(t, j.Plan.Root)
+	if err := os.WriteFile(filepath.Join(j.Plan.Root, ".env"), []byte("TEST_MODE=offline\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return driver, j, marker
+}
+
+func TestFeatureCheckInputCaptureUsesFrozenConfiguration(t *testing.T) {
+	driver, j, marker := featureCheckRecoveryFixture(t, "")
+	directory := filepath.Dir(j.Workspace)
+	if err := os.WriteFile(filepath.Join(j.Plan.Root, project.ConfigPath), []byte(`{"version":1,"checks":[["changed","check"]],"input_files":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.checkInputs(); err == nil {
+		t.Fatal("feature coordinator accepted config drift")
+	}
+	before, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+	var output bytes.Buffer
+	if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env", "--dry-run", "--json"}, &output); err != nil {
+		t.Fatal("check-only preview rejected metadata drift", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("preview changed checkpoint")
+	}
+	if _, err := os.Stat(filepath.Join(directory, "check-inputs", ".env")); !os.IsNotExist(err) {
+		t.Fatal("preview materialized private input")
+	}
+	output.Reset()
+	if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add", "spec.md", "--dry-run"}, &output); err == nil {
+		t.Fatal("provider supplement ignored config drift")
+	}
+	if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env", "--json"}, &output); err != nil {
+		t.Fatal("check-only capture rejected metadata drift", err)
+	}
+	saved, err := workrun.Load(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(saved.Plan.Checks, j.Plan.Checks) || len(saved.Plan.CheckInputs) != len(j.Plan.CheckInputs)+1 || saved.State != j.State || saved.ResumeState != j.ResumeState || saved.StopReason != j.StopReason || saved.SessionID != j.SessionID || saved.Attempt != j.Attempt || saved.Rounds != j.Rounds {
+		t.Fatal("capture adopted mutable config or changed frozen execution checkpoint")
+	}
+	if _, err := os.Stat(filepath.Join(j.Workspace, ".env")); !os.IsNotExist(err) {
+		t.Fatal("check capture entered provider workspace")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("offline check capture invoked provider")
+	}
+}
+
+func TestFeatureCheckCaptureStillRejectsChangedFrozenInputsAndSettings(t *testing.T) {
+	for _, scenario := range []string{"ticket", "check-file", "plan-checks", "config-requirement", "config-check"} {
+		t.Run(scenario, func(t *testing.T) {
+			configInput := ""
+			if scenario == "config-requirement" {
+				configInput = "requirement"
+			}
+			if scenario == "config-check" {
+				configInput = "check"
+			}
+			_, j, _ := featureCheckRecoveryFixture(t, configInput)
+			directory := filepath.Dir(j.Workspace)
+			if err := os.WriteFile(filepath.Join(j.Plan.Root, project.ConfigPath), []byte(`{"version":1,"checks":[["changed","check"]],"input_files":[]}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "ticket":
+				if err := os.WriteFile(filepath.Join(j.Plan.Root, j.Plan.Ticket), []byte("Changed ticket"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "check-file":
+				if err := os.WriteFile(filepath.Join(j.Plan.Root, j.Plan.CheckInputs[0].Path), []byte("Changed check fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "plan-checks":
+				j.Plan.Checks = [][]string{{"changed", "check"}}
+				if err := workrun.Save(directory, &j); err != nil {
+					t.Fatal(err)
+				}
+				if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Register(directory, j); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+			var output bytes.Buffer
+			if err := inputsCommand(context.Background(), []string{"--run", j.ID, "--add-check-input", ".env"}, &output); err == nil {
+				t.Fatal("changed frozen input or setting admitted")
+			}
+			after, _ := os.ReadFile(filepath.Join(directory, "journal.json"))
+			if !bytes.Equal(before, after) {
+				t.Fatal("rejected capture changed checkpoint")
+			}
+			if _, err := os.Stat(filepath.Join(directory, "check-inputs", ".env")); !os.IsNotExist(err) {
+				t.Fatal("rejected capture materialized private input")
 			}
 		})
 	}

@@ -99,7 +99,7 @@ func inputsCommand(ctx context.Context, args []string, output io.Writer) error {
 		return errors.New("run checkpoint changed; select the run again")
 	}
 	if len(selected) > 0 {
-		if err := validateSupplementSeries(ctx, view, journal); err != nil {
+		if err := validateSupplementSeries(ctx, view, journal, checkOnly); err != nil {
 			return err
 		}
 	}
@@ -365,7 +365,7 @@ func validateSeriesRunInputs(ctx context.Context, journal workrun.Journal, origi
 
 func quoteInputPath(path string) string { return "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'" }
 
-func validateSupplementSeries(ctx context.Context, view runstatus.View, j workrun.Journal) error {
+func validateSupplementSeries(ctx context.Context, view runstatus.View, j workrun.Journal, checkOnly bool) error {
 	path := filepath.Join(view.Root, ".sdlc", "work", view.Reference, "series")
 	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return nil
@@ -388,11 +388,35 @@ func validateSupplementSeries(ctx context.Context, view runstatus.View, j workru
 	if err := driver.validateSettings(); err != nil {
 		return err
 	}
-	if err := driver.checkInputs(); err != nil {
+	if checkOnly {
+		// The run continues using its saved settings. A current project configuration
+		// is metadata here unless it was explicitly frozen as a requirement/check file.
+		configIsInput := false
+		for _, in := range append(append([]workrun.Input{}, j.Plan.Inputs...), j.Plan.CheckInputs...) {
+			configIsInput = configIsInput || in.Path == project.ConfigPath
+		}
+		for _, path := range append(append([]string{}, settings.Inputs...), settings.Config.InputFiles...) {
+			configIsInput = configIsInput || path == project.ConfigPath
+		}
+		for _, ticket := range state.Plan.Tickets {
+			for _, path := range settings.ticketInputs(state.Plan.Reference, ticket.File) {
+				configIsInput = configIsInput || path == project.ConfigPath
+			}
+		}
+		for path, expected := range settings.InputHashes {
+			if path == project.ConfigPath && !configIsInput {
+				continue
+			}
+			actual, err := seriesInputHash(view.Root, path)
+			if err != nil || actual != expected {
+				return errors.New("feature requirement or check input changed; restore frozen inputs before resuming")
+			}
+		}
+	} else if err := driver.checkInputs(); err != nil {
 		return err
 	}
 	roles, exists := settings.Roles[filepath.Base(view.Ticket)]
-	if !exists || j.ImageID != settings.ImageID || !reflect.DeepEqual(j.Plan.Roles, roles) || !reflect.DeepEqual(j.Plan.PublicationIdentity, settings.Identity) || j.Plan.Repository != settings.Repository || j.Plan.GitHubProfile != settings.GitHubProfile || j.Plan.SigningProfile != settings.SigningProfile || j.Plan.SigningImage != settings.SigningImage || j.Plan.DaemonImage != settings.DaemonImage || j.Instructions != settings.Instructions || !reflect.DeepEqual(j.Plan.Checks, settings.Config.Checks) || j.Plan.CheckSelection != settings.Config.CheckSelection || j.Plan.DockerTests != settings.DockerTests || !reflect.DeepEqual(j.Plan.Headroom, settings.Headroom) {
+	if !exists || j.ImageID != settings.ImageID || !reflect.DeepEqual(j.Plan.Roles, roles) || !reflect.DeepEqual(j.Plan.PublicationIdentity, settings.Identity) || j.Plan.Repository != settings.Repository || j.Plan.GitHubProfile != settings.GitHubProfile || j.Plan.SigningProfile != settings.SigningProfile || j.Plan.SigningImage != settings.SigningImage || j.Plan.DaemonImage != settings.DaemonImage || j.Plan.DaemonMode != settings.DaemonMode || j.Instructions != settings.Instructions || !reflect.DeepEqual(j.Plan.Checks, settings.Config.Checks) || j.Plan.CheckSelection != settings.Config.CheckSelection || j.Plan.DockerTests != settings.DockerTests || !reflect.DeepEqual(j.Plan.Headroom, settings.Headroom) {
 		return errors.New("feature run differs from frozen settings")
 	}
 	if len(j.Plan.CheckInputs) < len(settings.Config.InputFiles) {
