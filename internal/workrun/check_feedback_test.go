@@ -520,3 +520,121 @@ func TestBuildAnalyzerDiagnosticRetainsExistingSafetyBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestDotNetStackFrameSuppliesSafeConfiguredAndAdditionalFeedback(t *testing.T) {
+	checker, _, _, _ := checkFixture(t)
+	checker.DockerTests = false
+	workspace, _ := sourceFixture(t)
+	path := "tests/Example.Tests/ExampleTests.cs"
+	sourceWrite(t, workspace, path, "class ExampleTests {}\n")
+	for _, args := range [][]string{{"add", "tests"}, {"commit", "-m", "Add disposable stack source"}} {
+		if _, err := SafeGit(context.Background(), workspace, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commands := [][]string{{"dotnet", "test", "Example.slnx"}}
+	for _, frame := range []string{
+		"   at Example.Tests.ExampleTests.TestMethod() in /src/" + path + ":123",
+		"#22 0.123 \x1b[31m   at Example.Tests.ExampleTests.TestMethod(private-argument) in /workspace/" + path + ":line 123\x1b[0m\r",
+	} {
+		checker.Runner = &failingFormatterRunner{failAt: 1, output: "private assertion value and collection\n" + frame + "\n   at Private.LaterMethod() in /src/" + path + ":456\n"}
+		var log bytes.Buffer
+		checkErr := checker.Check(context.Background(), workspace, commands, &log)
+		var failure *CheckFailure
+		if !errors.As(checkErr, &failure) {
+			t.Fatalf("completed check lost classification: %v", checkErr)
+		}
+		request := regressionRequest()
+		request.Commands = commands
+		for _, feedback := range []string{
+			checkRepairFeedback(testTree, failure, commands),
+			verificationDiagnostic(request, testTree, &VerificationFailure{Phase: "candidate", Err: failure}),
+		} {
+			for _, wanted := range []string{path + ":123", ".NET execution", "Inspect the stack source location"} {
+				if !strings.Contains(feedback, wanted) {
+					t.Fatalf("stack repair evidence missing %q: %s", wanted, feedback)
+				}
+			}
+			for _, private := range []string{"TestMethod", "private-argument", "private assertion", "collection", "Private.LaterMethod", ":456", "/src/", "/workspace/", "#22", "\x1b"} {
+				if strings.Contains(feedback, private) {
+					t.Fatalf("raw or later stack text reached feedback: %s", feedback)
+				}
+			}
+		}
+	}
+}
+
+func TestDotNetStackFrameStreamingAndSafetyBoundaries(t *testing.T) {
+	path := "tests/Example.Tests/ExampleTests.cs"
+	approved := map[string]bool{path: true, "src/Example.js": true}
+	for _, location := range []string{path + ":1", "/src/" + path + ":123", "/workspace/" + path + ":line 9999999"} {
+		d := &formatterDiagnostic{approved: approved}
+		output := "at Private.Unknown() in /host/private.cs:1\n#22 0.123 \x1b[31m   at Private.TestMethod(private-argument) in " + location + "\x1b[0m\r\n" +
+			"at Private.Later() in " + path + ":456\n"
+		for _, b := range []byte(output) {
+			d.Write([]byte{b})
+		}
+		d.finish()
+		if d.stackFrame == nil || d.stackFrame.path != path || d.stackFrame.line == "456" {
+			t.Fatalf("first approved streamed frame missing: %#v", d.stackFrame)
+		}
+		wantLine := "123"
+		if strings.HasSuffix(location, ":1") {
+			wantLine = "1"
+		} else if strings.HasSuffix(location, "9999999") {
+			wantLine = "9999999"
+		}
+		if d.stackFrame.line != wantLine {
+			t.Fatalf("bounded line missing: %#v", d.stackFrame)
+		}
+	}
+	for _, frame := range []string{
+		"at Private.Test() in tests/Unknown.cs:123",
+		"at Private.Test() in /host/" + path + ":123",
+		"at Private.Test() in ../" + path + ":123",
+		"at Private.Test() in src/Example.js:123",
+		"at Private.Test() in " + path + ":0",
+		"at Private.Test() in " + path + ":0123",
+		"at Private.Test() in " + path + ":10000000",
+		"at Private.Test() in " + path + ":-1",
+		"at Private.Test() in " + path + ":line x",
+		"at Private.Test() in " + path + ":123:4",
+		"at Private.Test() in " + path + ":123 private assertion",
+		"private assertion in " + path + ":123",
+		"at Private.Test(\x07) in " + path + ":123",
+		"\x1b]0;private-token\x07at Private.Test() in " + path + ":123",
+		"\x1b[2Jat Private.Test() in " + path + ":123",
+		"at " + strings.Repeat("x", 2048) + " in " + path + ":123",
+	} {
+		d := &formatterDiagnostic{approved: approved}
+		d.Write([]byte(frame + "\n"))
+		d.finish()
+		if d.stackFrame != nil {
+			t.Fatalf("unsafe stack location admitted: %#v", d.stackFrame)
+		}
+	}
+}
+
+func TestDotNetStackFramePreservesCompilerAndFormatterPrecedence(t *testing.T) {
+	path := "src/Example.cs"
+	frame := "at Private.Test() in /src/" + path + ":123\n"
+	compiler := "/src/" + path + "(42,9): error CS0104: private compiler message\n"
+	for _, output := range []string{
+		frame + compiler,
+		compiler + frame,
+		frame + "[warn] Code style issues found in the above file(s). Run Prettier with --write to fix.\n",
+		frame + "Error " + path + " - Was not formatted.\n",
+	} {
+		d := &formatterDiagnostic{approved: map[string]bool{path: true}}
+		d.Write([]byte(output))
+		d.finish()
+		failure := &CheckFailure{Command: 1, ExitCode: 1, compiler: d.compiler, formatter: d.styleIssues, csharpier: d.csharpier, paths: d.paths, stackFrame: d.stackFrame}
+		feedback := checkRepairFeedback(testTree, failure, [][]string{{"dotnet", "test"}})
+		if strings.Contains(feedback, ".NET execution") || strings.Contains(feedback, ":123") {
+			t.Fatalf("stack metadata displaced compiler or formatter feedback: %s", feedback)
+		}
+		if d.compiler != nil && !strings.Contains(feedback, "CS0104") {
+			t.Fatalf("compiler evidence missing: %s", feedback)
+		}
+	}
+}

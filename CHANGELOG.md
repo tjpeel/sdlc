@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.35 - 2026-10-13
+
+### Fixed
+
+- Include approved committed C# source locations from .NET stack frames in check feedback, so workers can investigate test failures without receiving method arguments or private assertion messages. Preserve existing diagnostic precedence and operational failure handling.
+
 ## 0.1.0-beta.34 - 2026-10-13
 
 ### Fixed

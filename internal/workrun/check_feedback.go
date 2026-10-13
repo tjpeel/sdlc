@@ -18,6 +18,7 @@ type CheckFailure struct {
 	paths              []string
 	formatterLocations map[string]csharpierLocation
 	compiler           *compilerDiagnostic
+	stackFrame         *dotNetStackFrame
 }
 
 func (f *CheckFailure) Error() string {
@@ -62,6 +63,7 @@ type formatterDiagnostic struct {
 	formatterLocations map[string]csharpierLocation
 	csharpierPath      string
 	compiler           *compilerDiagnostic
+	stackFrame         *dotNetStackFrame
 	dockerUnavailable  bool
 }
 
@@ -114,6 +116,9 @@ func (d *formatterDiagnostic) consume() {
 	}
 	if d.compiler == nil {
 		d.compiler = parseCompilerDiagnostic(line, d.approved)
+	}
+	if d.stackFrame == nil {
+		d.stackFrame = parseDotNetStackFrame(formatterOutput, d.approved)
 	}
 	path, warning := strings.CutPrefix(line, "[warn] ")
 	if !warning {
@@ -250,6 +255,32 @@ func parseCompilerDiagnostic(line string, approved map[string]bool) *compilerDia
 	return &compilerDiagnostic{code: match[4], path: path, line: match[2], column: match[3]}
 }
 
+// Stack text stays private; retain only the first approved C# source location.
+type dotNetStackFrame struct {
+	path string
+	line string
+}
+
+var dotNetStackFrameLine = regexp.MustCompile(`^ *at .+ in ([^:]+):(?:line )?([1-9][0-9]{0,6})$`)
+
+func parseDotNetStackFrame(line string, approved map[string]bool) *dotNetStackFrame {
+	match := dotNetStackFrameLine.FindStringSubmatch(line)
+	if match == nil {
+		return nil
+	}
+	path := match[1]
+	for _, prefix := range []string{"/src/", "/workspace/"} {
+		if strings.HasPrefix(path, prefix) {
+			path = strings.TrimPrefix(path, prefix)
+			break
+		}
+	}
+	if len(path) > 240 || !strings.HasSuffix(path, ".cs") || !approved[path] {
+		return nil
+	}
+	return &dotNetStackFrame{path: path, line: match[2]}
+}
+
 // Formatters and compilers may colour output. Accept only bounded numeric SGR
 // sequences; cursor movement, OSC payloads and other controls discard the line.
 // The runtime publisher copies this package without third-party dependencies.
@@ -311,6 +342,10 @@ func checkRepairFeedback(tree string, err error, commands [][]string) string {
 				feedback += " Inspect that source location and repair the compiler error before rerunning checks."
 			}
 		}
+		if frame := failure.stackFrame; frame != nil && failure.compiler == nil && !failure.formatter && !failure.csharpier && !formatterCheck(commands[failure.Command-1]) {
+			feedback += fmt.Sprintf("\nFailure phase: .NET execution. First recognised stack location at committed source %s:%s. Inspect the stack source location and repair the execution failure before rerunning checks.", frame.path, frame.line)
+		}
+
 		// Compound checks may invoke Prettier through a shell. A fixed output
 		// marker identifies formatter evidence without interpreting shell text.
 		if failure.formatter || failure.csharpier || formatterCheck(commands[failure.Command-1]) {
