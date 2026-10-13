@@ -283,7 +283,7 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 			return Publication{}, fmt.Errorf("exported bundle verification failed")
 		}
 	}
-	if _, err := publisher.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", bundle, "HEAD:refs/sdlc/candidate"); err != nil {
+	if _, err := publisher.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", bundle, "+HEAD:refs/sdlc/candidate"); err != nil {
 		return Publication{}, err
 	}
 	candidate, err := publisher.git(ctx, local, "rev-parse", "refs/sdlc/candidate")

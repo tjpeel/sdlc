@@ -446,6 +446,27 @@ func TestPushRepairRequiresHistoricalCleanupWithIdenticalFinalTree(t *testing.T)
 	if err := p.validatePushRepair(ctx, plan, dir, final, []string{corrected, final}); err == nil {
 		t.Fatal("published cutoff rewrite accepted")
 	}
+	// A later genuine rejection has a different original audit graph. The
+	// private audit cache must replace its ref while proving the new boundary.
+	p.PushRepair.Pending.Cutoff = base
+	git("reset", "--hard", base)
+	secondRejected := write("base\nsecond disposable fake sensitive line\n", "Later offline rejected fixture")
+	secondTree := git("rev-parse", "HEAD^{tree}")
+	secondBlob := git("rev-parse", "HEAD:config.txt")
+	secondBundle := filepath.Join(t.TempDir(), "later-rejected.bundle")
+	git("bundle", "create", secondBundle, "HEAD")
+	git("reset", "--hard", base)
+	secondCorrection := write("base\nsecond safe fixture\n", "Correct later rejected history")
+	secondFinal := write("base\n", "Later final implementation")
+	p.RejectedBundlePath = secondBundle
+	p.PushRepair.Pending.Head, p.PushRepair.Pending.KnownHead, p.PushRepair.Pending.KnownTree = secondRejected, secondRejected, secondTree
+	p.PushRepair.Pending.Locations = []PushProtectionLocation{{Commit: secondRejected, Path: "config.txt", Line: 2, Blob: secondBlob}}
+	if err := p.validatePushRepair(ctx, plan, dir, secondFinal, []string{secondCorrection, secondFinal}); err != nil {
+		t.Fatal("later immutable audit failed to replace retained cache ref", err)
+	}
+	if git("rev-parse", "refs/sdlc/rejected") != secondRejected {
+		t.Fatal("new immutable audit head not retained")
+	}
 }
 
 func TestPushRepairRejectsOnlyEOLAndIndentationChanges(t *testing.T) {

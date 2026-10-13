@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.53 - 2026-10-13
+
+### Fixed
+
+- Replace the publisher's private candidate and rejected-audit import refs when verified unpublished history is rewritten. Keep bundle integrity, exact candidate identity, published history and remote lease checks enforced before another protected push.
+
 ## 0.1.0-beta.52 - 2026-10-13
 
 ### Fixed

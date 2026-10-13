@@ -582,7 +582,7 @@ func (p GitHubPublisher) validatePushRepair(ctx context.Context, plan Plan, loca
 		if err != nil || listing != rejected.KnownHead+" HEAD" {
 			return fmt.Errorf("original rejected bundle boundary changed")
 		}
-		if _, err := p.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", p.RejectedBundlePath, "HEAD:refs/sdlc/rejected"); err != nil {
+		if _, err := p.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", p.RejectedBundlePath, "+HEAD:refs/sdlc/rejected"); err != nil {
 			return fmt.Errorf("cannot import original rejected bundle")
 		}
 		head, err := p.git(ctx, local, "rev-parse", "refs/sdlc/rejected")
