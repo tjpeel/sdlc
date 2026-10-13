@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -48,6 +49,9 @@ func (docker *pairingRaceDocker) Output(_ context.Context, args ...string) ([]by
 	case "info":
 		return []byte(`{"id":"fake-engine","os":"linux"}`), nil
 	case "image":
+		if args[3] == "{{.Os}}/{{.Architecture}}" {
+			return []byte("linux/amd64"), nil
+		}
 		return []byte(docker.image), nil
 	case "volume":
 		if args[1] == "ls" {
@@ -57,6 +61,12 @@ func (docker *pairingRaceDocker) Output(_ context.Context, args ...string) ([]by
 	case "ps", "rm":
 		return nil, nil
 	case "run":
+		if args[len(args)-1] == "--identity" {
+			identity := buildinfo.Current()
+			identity.OS = "linux"
+			identity.Arch = "amd64"
+			return json.Marshal(identity)
+		}
 		if args[len(args)-1] == "status" {
 			docker.acquired = true
 			return []byte(`{"state":"stored"}`), nil
@@ -80,6 +90,14 @@ func (runner *forbiddenPairPublisher) Run(context.Context, io.Reader, io.Writer,
 }
 
 func TestDockerPublisherRechecksPairChangedDuringCredentialAcquisition(t *testing.T) {
+	oldProbe := controllerIdentityRunner
+	controllerIdentityRunner = identityProbeFixture{}
+	t.Cleanup(func() { controllerIdentityRunner = oldProbe })
+	oldStage := stagePublisherController
+	stagePublisherController = func(string) (string, func() error, error) {
+		return "/trusted/test-helper", func() error { return nil }, nil
+	}
+	t.Cleanup(func() { stagePublisherController = oldStage })
 	directory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -448,6 +466,85 @@ func TestDockerPublisherCurrentCollectorWorksWithFrozenLegacyImage(t *testing.T)
 			}
 			if err != nil || result.Status != "failed" || len(result.Diagnostics) != 2 || runner.calls < 8 || publisher.ImageID != docker.image || result.Diagnostics[0].Kind != "cognitive_complexity" {
 				t.Fatalf("legacy runtime did not execute current controller collector: %+v %v calls%d", result, err, runner.calls)
+			}
+		})
+	}
+}
+
+type identityProbeFixture struct {
+	data []byte
+	err  error
+	args *[]string
+}
+
+func (runner identityProbeFixture) Run(_ context.Context, input io.Reader, output io.Writer, args ...string) error {
+	if runner.args != nil {
+		*runner.args = append([]string(nil), args...)
+	}
+	if input != nil {
+		return errors.New("identity probe received credentials")
+	}
+	if runner.err != nil {
+		return runner.err
+	}
+	data := runner.data
+	if data == nil {
+		identity := buildinfo.Current()
+		identity.OS = "linux"
+		identity.Arch = "amd64"
+		data, _ = json.Marshal(identity)
+	}
+	_, err := output.Write(data)
+	return err
+}
+
+func TestPublisherControllerPreflightWithholdsCredentialsOnEveryRefusal(t *testing.T) {
+	oldStage, oldProbe := stagePublisherController, controllerIdentityRunner
+	t.Cleanup(func() { stagePublisherController = oldStage; controllerIdentityRunner = oldProbe })
+	expected := buildinfo.Current()
+	expected.OS = "linux"
+	expected.Arch = "amd64"
+	mismatch := expected
+	mismatch.Revision = "different-revision"
+	mismatchBytes, _ := json.Marshal(mismatch)
+	wrongArch := expected
+	wrongArch.Arch = "arm64"
+	wrongBytes, _ := json.Marshal(wrongArch)
+	for _, test := range []struct {
+		name     string
+		data     []byte
+		stageErr bool
+		probeErr error
+	}{{name: "missing-helper", stageErr: true}, {name: "revision", data: mismatchBytes}, {name: "wrong-arch", data: wrongBytes}, {name: "unknown-field", data: []byte(`{"unknown":true}`)}, {name: "overflow", data: []byte(strings.Repeat("x", 4097))}, {name: "exit", probeErr: errors.New("private actual originating error")}} {
+		t.Run(test.name, func(t *testing.T) {
+			directory, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Chmod(directory, 0700)
+			docker := &pairingRaceDocker{image: "sha256:" + strings.Repeat("a", 64), volume: "sdlc-github-auth-" + strings.Repeat("d", 32) + "-github"}
+			runtime := runtimeimage.Manager{Directory: directory, Docker: docker}
+			state, _ := json.Marshal(runtimeimage.State{Version: 1, Engine: "fake-engine", ImageID: docker.image})
+			os.WriteFile(filepath.Join(directory, "runtime.json"), state, 0600)
+			stagePublisherController = func(string) (string, func() error, error) {
+				if test.stageErr {
+					return "", nil, errors.New("missing helper")
+				}
+				return "/trusted/current-helper", func() error { return nil }, nil
+			}
+			var args []string
+			controllerIdentityRunner = identityProbeFixture{data: test.data, err: test.probeErr, args: &args}
+			keyCalls := 0
+			publisher := DockerPublisher{Runtime: runtime, ImageID: docker.image, Auth: githubauth.New(runtime), SigningKey: func(context.Context) ([]byte, error) { keyCalls++; return nil, errors.New("unexpected key") }}
+			_, err = publisher.invoke(context.Background(), directory, PublisherRequest{Action: "publish", Plan: Plan{PublicationIdentity: frozenTestIdentity()}})
+			if err == nil || docker.acquired || docker.identityCalls != 0 || keyCalls != 0 || strings.Contains(err.Error(), "private actual") {
+				t.Fatal("preflight leaked error or acquired credentials", err)
+			}
+			if len(args) > 0 {
+				joined := strings.Join(args, " ")
+				if !strings.Contains(joined, "--network none") || !strings.Contains(joined, "--read-only") || !strings.HasSuffix(joined, "--identity") || strings.Contains(joined, "github-auth") || strings.Contains(joined, "source.bundle") {
+					t.Fatal("identity probe boundary", joined)
+				}
 			}
 		})
 	}

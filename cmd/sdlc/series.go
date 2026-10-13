@@ -427,9 +427,12 @@ func printSeriesResults(output io.Writer, plan workseries.Plan, state workseries
 				if journalErr == nil && journal.ID == result.RunID && workrun.CanAttachInputs(journal) == nil {
 					fmt.Fprintf(output, "    Missing file? sdlc inputs --run %s\n", result.RunID)
 				}
+				if journalErr == nil && journal.ID == result.RunID {
+					_ = printRunAttention(output, journal)
+				}
 			case "blocked", "failed", "awaiting_reviewer":
 				if journalErr == nil && journal.ID == result.RunID {
-					fmt.Fprintf(output, "    After resolving the stop: sdlc resume --run %s\n", result.RunID)
+					_ = printRunAttention(output, journal)
 				} else {
 					fmt.Fprintln(output, "    Correct the preparation failure, then repeat the feature command.")
 				}

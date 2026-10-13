@@ -184,6 +184,24 @@ class Sdlc < Formula
     system "go", "build", "-trimpath", "-buildvcs=false",
            "-ldflags=-X github.com/tjpeel/sdlc/internal/buildinfo.Revision={revision}",
            "-o", bin/"sdlc", "./cmd/sdlc"
+    cli_hash = Digest::SHA256.file(bin/"sdlc").hexdigest
+    controllers = bin/".sdlc-controller-#{{cli_hash}}"
+    controllers.mkpath
+    helpers = {{}}
+    %w[amd64 arm64].each do |arch|
+      with_env("GOOS" => "linux", "GOARCH" => arch, "CGO_ENABLED" => "0") do
+        system "go", "build", "-trimpath", "-buildvcs=false",
+               "-ldflags=-X github.com/tjpeel/sdlc/internal/buildinfo.Revision={revision}",
+               "-o", controllers/"sdlc-publisher-linux-#{{arch}}", "./cmd/sdlc-publisher"
+      end
+      helper = controllers/"sdlc-publisher-linux-#{{arch}}"
+      helpers[arch] = Digest::SHA256.file(helper).hexdigest
+      helper.chmod 0555
+    end
+    (controllers/"manifest.json").write JSON.generate({{version: "{version}", revision: "{revision}",
+      dirty: false, cli_sha256: cli_hash, helpers: helpers}})
+    (controllers/"manifest.json").chmod 0444
+    controllers.chmod 0555
     (libexec/"source").install Dir["*", ".[^.]*"]
     manifest = {{schema_version: 1, formula: "{FORMULA}", version: "{version}",
                 revision: "{revision}", sha256: Digest::SHA256.file(bin/"sdlc").hexdigest}}

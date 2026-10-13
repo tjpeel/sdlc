@@ -54,6 +54,18 @@ already assessed feedback and reconcile an interrupted reply before retrying
 it. The dashboard reports pending comments, outstanding replies and unresolved
 feedback alongside the PR's current check and review state.
 
+Assessments accompanying check requests or human questions remain provisional.
+The journal retains their history as the same comment revision is refined after
+verification, companion-source inspection or a human answer. Only a final
+assessment can produce a reply, and SDLC leaves the original thread unresolved
+for its author.
+
+`sdlc diagnose --run RECORDED_RUN_ID --json` projects bounded state, counters,
+evidence identities and a next action without contacting services or starting
+work. Validated publication diagnostic metadata identifies a private artifact
+and its hash; the report never includes its raw contents. Publication stderr can
+contain sensitive data and must remain in private storage.
+
 ## Timing and runtime provenance
 
 `sdlc usage --run RECORDED_RUN_ID` shows command and cache operation durations,

@@ -1748,6 +1748,15 @@ addressed. The controller posts that reason to the original thread or PR,
 retaining reply acknowledgements so an interrupted resume can recover without
 posting it twice. Human threads remain open for the reviewer to resolve.
 
+Assessments returned with `checks_requested` remain provisional, including
+requests for the configured suite alone. The same implementation session can
+refine them after receiving verification or companion source. A final assessment
+must still match the current unreplied comment revision. Only then can SDLC post
+the reply; it does not resolve the thread.
+
+An assessment accompanying a human question also remains provisional until the
+session completes it after the answer.
+
 Comment revisions, original inline context, assessments, candidate and signed
 commit IDs, and replies stay in the private run journal. The dashboard shows
 pending feedback, unanswered replies and unresolved comments. A later explicit
@@ -1775,6 +1784,29 @@ implementation or independent-review failure.
 Use beta.43 or newer for a run that has started feedback processing; earlier
 CLIs cannot read its added feedback history. Saved runs without that history
 remain compatible with this CLI.
+
+Use beta.49 or newer once a journal contains provisional assessments or their
+retained history. An ordinary resume can recover the matching legacy
+`no pending human feedback revision` hold
+by validating its retained response and requests before starting another native
+turn. It preserves the original session, assessments, counters and limits.
+
+### Diagnose a stopped run
+
+```sh
+sdlc diagnose --run RUN_ID
+sdlc diagnose --run RUN_ID --json
+```
+
+This command reads saved state without resuming work or contacting a service.
+It reports fixed state and hold categories, counters, evidence identities and a
+suggested next action. Raw output, prompts, comment text, arbitrary commands,
+account identities and credentials are omitted. A publication failure can also
+identify a validated private diagnostic file by path, size and hash. Its raw
+contents remain private and are never sent to the implementation session.
+
+Stopped run commands show the next action and this diagnostic command. Inspect
+the reason before resuming; the command does not clear holds or change budgets.
 
 ### Recover a legacy completed-review hold
 

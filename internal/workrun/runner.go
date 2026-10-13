@@ -127,6 +127,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
 		}
 	}
+	savedFeedbackReplay := journal.State == "blocked" && journal.StopReason == noPendingFeedbackHold
+	if savedFeedbackReplay && !CanReplaySavedPRFeedback(*journal) {
+		return fmt.Errorf("saved feedback outcome is not eligible for replay; inspect the diagnostic snapshot")
+	}
 	if runner.ProcessPRFeedback {
 		if answer != "" || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
 			return fmt.Errorf("PR feedback cannot be combined with recovery actions")
@@ -259,6 +263,20 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}()
 	if runner.ProcessPRFeedback {
 		if err := runner.beginPRFeedback(ctx, directory, journal); err != nil {
+			return err
+		}
+	}
+	if savedFeedbackReplay {
+		if answer != "" || runner.ProcessPRFeedback || runner.OverrideRunLimits || runner.ExtendSessionTurnBudget != 0 || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 {
+			return fmt.Errorf("saved feedback replay requires ordinary resume")
+		}
+		if err := verifyInputs(journal.Workspace, journal.Plan.Inputs); err != nil {
+			return err
+		}
+		if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
+			return err
+		}
+		if err := runner.acceptImplementationOutcome(ctx, directory, journal); err != nil {
 			return err
 		}
 	}
@@ -842,12 +860,16 @@ func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory 
 		}
 		journal.Feedback = feedback
 		completeVerificationReplay(journal)
+		if journal.PRFeedback != nil && journal.PRFeedback.Active && journal.Outcome.Status == "checks_requested" {
+			return runner.transition(directory, journal, "checking")
+		}
+
 		if err := runner.save(directory, journal); err != nil {
 			return err
 		}
 		return nil
 	}
-	if moreFeedback && (journal.Outcome.Status == "checks_requested" || journal.Outcome.Status == "implemented") {
+	if moreFeedback && journal.Outcome.Status == "implemented" {
 		completeVerificationReplay(journal)
 		if err := runner.transition(directory, journal, "repairing"); err != nil {
 			return err

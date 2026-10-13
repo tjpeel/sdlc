@@ -7,6 +7,22 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.49 - 2026-10-13
+
+### Fixed
+
+- Keep PR-comment assessments provisional while the implementation session requests checks, companion source or human clarification. Accept the final assessment for the same current comment revision, retain assessment history, and post the reply only after completion. Recover the matching saved feedback hold without another provider turn or budget reset.
+- Retain bounded publication failure diagnostics in private host files. Deliver a verified publisher helper with the CLI so saved runs can use current diagnostics while preserving their frozen runtime, signing identity, remote guards and credential isolation.
+
+### Added
+
+- Show a concrete next action when a run stops. Inspect allowlisted state, counters, evidence identities and validated publication diagnostic metadata with `sdlc diagnose --run RUN_ID --json`; raw logs, comments, commands and credentials stay outside the report.
+
+### Changed
+
+- Journals containing provisional PR-feedback assessments or their retained history require beta.49 or newer. Existing feedback journals remain readable and retain their history.
+- CLI-only installation also delivers the matching publisher helper assets; it leaves the runtime image unchanged.
+
 ## 0.1.0-beta.48 - 2026-10-13
 
 ### Added

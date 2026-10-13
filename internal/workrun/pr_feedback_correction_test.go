@@ -133,7 +133,10 @@ func TestPRFeedbackRealCorrectionAndInterruptedResumePreserveCommitAndSignedRepl
 				assessed := assessedOutcome(comment, "addressed")
 				assessed.PRFeedbackAssessments[0].Commits = []string{correction}
 				assessed.PRFeedbackAssessments[0].Reason = "Added the requested correction."
-				provider.outcomes = []Outcome{assessed, testOutcome("implemented"), testOutcome("reviewed")}
+				assessed.Status = "checks_requested"
+				finalized := assessed
+				finalized.Status = "implemented"
+				provider.outcomes = []Outcome{assessed, finalized, testOutcome("reviewed")}
 			}
 			r.Provider = provider
 			r.ProcessPRFeedback = true

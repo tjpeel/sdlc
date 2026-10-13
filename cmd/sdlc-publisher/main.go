@@ -4,7 +4,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/buildinfo"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
@@ -29,8 +33,70 @@ func trustedCommand(ctx context.Context, name string, args ...string) ([]byte, e
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "GH_CONFIG_DIR=/github-auth", "GH_HOST=github.com", "GH_NO_UPDATE_NOTIFIER=1", "GH_NO_EXTENSION_UPDATE_NOTIFIER=1", "GH_PROMPT_DISABLED=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "LANG=C.UTF-8"}
-	command.Stderr = io.Discard
-	return trustedCommandOutput(command, name == "gh")
+	clear(failureOutput.buffer.Bytes())
+	failureOutput = diagnosticOutput{}
+	failureStage, failureCode, failureExit = "request", "request_refused", -1
+	command.Stderr = &failureOutput
+	data, err := trustedCommandOutput(command, name == "gh")
+	if err != nil {
+		failureStage = "command"
+		failureCode = "command_failed"
+		failureExit = -1
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			failureExit = exit.ExitCode()
+		}
+		if failureOutput.exceeded {
+			failureCode = "diagnostic_overflow"
+		}
+	}
+	if err == nil {
+		clear(failureOutput.buffer.Bytes())
+		failureOutput = diagnosticOutput{}
+	}
+	return data, err
+}
+
+var failureOutput diagnosticOutput
+var failureStage = "request"
+var failureCode = "request_refused"
+var failureExit = -1
+
+type diagnosticOutput struct {
+	buffer   bytes.Buffer
+	exceeded bool
+}
+
+func (output *diagnosticOutput) Write(data []byte) (int, error) {
+	n := len(data)
+	remaining := workrun.MaximumPublicationDiagnostic - output.buffer.Len()
+	if len(data) > remaining {
+		data = data[:remaining]
+		output.exceeded = true
+	}
+	_, _ = output.buffer.Write(data)
+	return n, nil
+}
+func failureResponse(err error, diagnostic io.Writer) workrun.PublisherResponse {
+	if err != nil {
+		if failureOutput.buffer.Len() > 0 {
+			_, _ = failureOutput.Write([]byte("\nOrigin: "))
+		}
+		_, _ = failureOutput.Write([]byte(err.Error()))
+	}
+	if failureOutput.exceeded {
+		failureCode = "diagnostic_overflow"
+	}
+	if failureOutput.buffer.Len() == 0 {
+		_, _ = failureOutput.Write([]byte("invalid publisher request"))
+	}
+	data := failureOutput.buffer.Bytes()
+	defer clear(data)
+	if _, err := diagnostic.Write(data); err != nil {
+		return workrun.PublisherResponse{Error: "publisher refused request"}
+	}
+	digest := sha256.Sum256(data)
+	return workrun.PublisherResponse{Error: "publisher refused request", Diagnostic: &workrun.PublicationDiagnostic{Stage: failureStage, Code: failureCode, ExitCode: failureExit, Path: "failure.stderr", SHA256: hex.EncodeToString(digest[:]), Bytes: len(data)}}
 }
 
 const maximumAPIOutput = 512 * 1024
@@ -88,14 +154,10 @@ func execute(ctx context.Context, request workrun.PublisherRequest, input io.Rea
 		return workrun.PublisherResponse{RemotePR: remote}, err
 	case "publish":
 		key, err := io.ReadAll(io.LimitReader(input, 65537))
+		defer clear(key)
 		if err != nil || len(key) == 0 || len(key) > 65536 {
 			return workrun.PublisherResponse{}, fmt.Errorf("invalid signing input")
 		}
-		defer func() {
-			for i := range key {
-				key[i] = 0
-			}
-		}()
 		if err := os.WriteFile("/tmp/signing-key", key, 0600); err != nil {
 			return workrun.PublisherResponse{}, err
 		}
@@ -131,6 +193,10 @@ func execute(ctx context.Context, request workrun.PublisherRequest, input io.Rea
 	}
 }
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--identity" {
+		_ = json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--capabilities" {
 		_, _ = os.Stdout.WriteString(`{"version":2,"actions":["publish","checks","branch","snapshot","observe","restack"]}` + "\n")
 		return
@@ -142,6 +208,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	response := workrun.PublisherResponse{Error: "publisher refused request"}
+	var executionError error
 	file, err := os.Open("/request.json")
 	var data []byte
 	if err == nil {
@@ -157,9 +224,14 @@ func main() {
 			if decoder.Decode(&extra) == io.EOF {
 				if result, err := execute(ctx, request, os.Stdin); err == nil {
 					response = result
+				} else {
+					executionError = err
 				}
 			}
 		}
+	}
+	if response.Error != "" {
+		response = failureResponse(executionError, os.Stderr)
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(response)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 )
@@ -62,15 +63,17 @@ type PRFeedbackReply struct {
 }
 
 type PRFeedbackEntry struct {
-	Occurrence     int                   `json:"occurrence"`
-	Comment        PRFeedbackComment     `json:"comment"`
-	Fingerprint    string                `json:"fingerprint"`
-	StartedAttempt int                   `json:"started_attempt,omitempty"`
-	Assessment     *PRFeedbackAssessment `json:"assessment,omitempty"`
-	Marker         string                `json:"marker,omitempty"`
-	ReplyBody      string                `json:"reply_body,omitempty"`
-	Reply          *PRFeedbackReply      `json:"reply,omitempty"`
-	SignedCommits  map[string]string     `json:"signed_commits,omitempty"`
+	Occurrence        int                    `json:"occurrence"`
+	Comment           PRFeedbackComment      `json:"comment"`
+	Fingerprint       string                 `json:"fingerprint"`
+	StartedAttempt    int                    `json:"started_attempt,omitempty"`
+	Assessment        *PRFeedbackAssessment  `json:"assessment,omitempty"`
+	Provisional       bool                   `json:"provisional,omitempty"`
+	AssessmentHistory []PRFeedbackAssessment `json:"assessment_history,omitempty"`
+	Marker            string                 `json:"marker,omitempty"`
+	ReplyBody         string                 `json:"reply_body,omitempty"`
+	Reply             *PRFeedbackReply       `json:"reply,omitempty"`
+	SignedCommits     map[string]string      `json:"signed_commits,omitempty"`
 }
 
 type PRFeedbackHistory struct {
@@ -148,6 +151,17 @@ func validatePRFeedbackJournal(j *Journal) error {
 				return fmt.Errorf("assessment differs from feedback revision")
 			}
 		}
+		if e.Provisional && (e.Assessment == nil || e.Reply != nil || len(e.SignedCommits) > 0) || len(e.AssessmentHistory) > 16 {
+			return fmt.Errorf("invalid provisional feedback history")
+		}
+		for _, previous := range e.AssessmentHistory {
+			if err := validateFeedbackAssessment(previous); err != nil {
+				return err
+			}
+			if previous.ID != e.Comment.ID || previous.Fingerprint != e.Fingerprint {
+				return fmt.Errorf("feedback assessment history differs from revision")
+			}
+		}
 		if len(e.ReplyBody) > 10000 || (e.Marker != "" && e.Marker != feedbackEntryMarker(j.ID, e)) || e.Reply != nil && (e.Marker == "" || e.Reply.ID == "") {
 			return fmt.Errorf("invalid retained feedback reply")
 		}
@@ -201,7 +215,7 @@ func pendingFeedback(j *Journal) *PRFeedbackEntry {
 	}
 	for i := range j.PRFeedback.Entries {
 		e := &j.PRFeedback.Entries[i]
-		if e.Assessment == nil && !e.Comment.Deleted && !e.Comment.Resolved {
+		if (e.Assessment == nil || e.Provisional) && !e.Comment.Deleted && !e.Comment.Resolved {
 			latest := true
 			for k := i + 1; k < len(j.PRFeedback.Entries); k++ {
 				if j.PRFeedback.Entries[k].Comment.ID == e.Comment.ID {
@@ -347,8 +361,12 @@ func (r Runner) feedbackPrompt(dir string, j *Journal) error {
 			return err
 		}
 	}
+	if len(j.CompanionRepositories) > 0 {
+		sources, _ := json.Marshal(j.CompanionRepositories)
+		j.Feedback += "\nController-staged companion source metadata (read-only):\n" + string(sources)
+	}
 	data, _ := json.MarshalIndent(e, "", "  ")
-	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess only this comment revision before moving to the next. Interpret outdated inline feedback using its original commit, line and diff context and the current source. Return one pr_feedback_assessments entry with this exact id and fingerprint, disposition addressed/unaddressable/no_change, reason and full original commit IDs. Commit each correction separately, or group only logically related corrections. Do not post replies or resolve threads; the controller owns replies. If a prior interrupted turn already committed a correction, inspect existing history and reuse that commit rather than duplicating it. Request controller checks when needed. For an unaddressable comment explain the clarification or decision needed."
+	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess only this comment revision before moving to the next. A non-implemented assessment remains provisional; after controller verification or a human answer, return the final assessment for this same revision with implemented. Interpret outdated inline feedback using its original commit, line and diff context and the current source. Return one pr_feedback_assessments entry with this exact id and fingerprint, disposition addressed/unaddressable/no_change, reason and full original commit IDs. Commit each correction separately, or group only logically related corrections. Do not post replies or resolve threads; the controller owns replies. If a prior interrupted turn already committed a correction, inspect existing history and reuse that commit rather than duplicating it. Request controller checks when needed. For an unaddressable comment explain the clarification or decision needed."
 	return nil
 }
 
@@ -358,6 +376,9 @@ type FeedbackCommitRepository interface {
 
 func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, out Outcome) (bool, error) {
 	e := pendingFeedback(j)
+	if e == nil && CanReplaySavedPRFeedback(*j) {
+		e = savedFeedbackTarget(j)
+	}
 	if e == nil {
 		if len(out.PRFeedbackAssessments) > 0 {
 			return false, fmt.Errorf("no pending human feedback revision")
@@ -403,7 +424,15 @@ func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, ou
 			}
 		}
 	}
+	if e.Assessment != nil && !reflect.DeepEqual(*e.Assessment, a) {
+		if len(e.AssessmentHistory) >= 16 {
+			return false, fmt.Errorf("feedback assessment history reached its bound")
+		}
+		e.AssessmentHistory = append(append([]PRFeedbackAssessment(nil), e.AssessmentHistory...), *e.Assessment)
+	}
 	e.Assessment = &a
+	e.Provisional = out.Status != "implemented"
+	e.SignedCommits = nil
 	e.Marker = feedbackEntryMarker(j.ID, *e)
 	e.ReplyBody = a.Reason
 	// Persist replay progress with the assessment before any later outcome checkpoints.
@@ -430,7 +459,7 @@ func (r Runner) replyPRFeedback(ctx context.Context, dir string, j *Journal) err
 	}
 	for i := range j.PRFeedback.Entries {
 		e := &j.PRFeedback.Entries[i]
-		if latest[e.Comment.ID] != i || e.Assessment == nil || e.Reply != nil || e.Comment.Deleted {
+		if latest[e.Comment.ID] != i || e.Assessment == nil || e.Provisional || e.Reply != nil || e.Comment.Deleted {
 			continue
 		}
 		// Original-to-signed mappings are saved by the trusted signing publisher.
@@ -488,4 +517,42 @@ func readFeedbackSigningMap(dir string) (map[string]string, error) {
 
 func feedbackEntryMarker(run string, e PRFeedbackEntry) string {
 	return feedbackMarker(run, fmt.Sprintf("%s:%d", e.Comment.ID, e.Occurrence), e.Fingerprint)
+}
+
+const noPendingFeedbackHold = "no pending human feedback revision"
+
+func savedFeedbackTarget(j *Journal) *PRFeedbackEntry {
+	if j.PRFeedback == nil || len(j.Outcome.PRFeedbackAssessments) != 1 {
+		return nil
+	}
+	a := j.Outcome.PRFeedbackAssessments[0]
+	for i := len(j.PRFeedback.Entries) - 1; i >= 0; i-- {
+		e := &j.PRFeedback.Entries[i]
+		if e.Comment.ID != a.ID {
+			continue
+		}
+		if e.Fingerprint != a.Fingerprint || e.Comment.Deleted || e.Comment.Resolved || e.Reply != nil || e.Assessment == nil || e.StartedAttempt < 1 || e.StartedAttempt >= j.Attempt {
+			return nil
+		}
+		if e.Provisional && reflect.DeepEqual(*e.Assessment, a) || e.Assessment.Disposition == "unaddressable" && len(e.Assessment.Commits) == 0 && a.Disposition == "addressed" && len(a.Commits) > 0 {
+			return e
+		}
+		return nil
+	}
+	return nil
+}
+
+// CanReplaySavedPRFeedback admits the corroborated legacy premature-finalisation
+// hold only. Commit ancestry and current candidate integrity are checked again
+// by acceptPRFeedback before any refinement is saved.
+func CanReplaySavedPRFeedback(j Journal) bool {
+	if j.State != "blocked" || j.ResumeState != "implementing" || j.StopReason != noPendingFeedbackHold || j.Outcome.Status != "checks_requested" || j.SessionID == "" || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.PRFeedback == nil || !j.PRFeedback.Active || j.PRFeedback.FetchPending || j.PRFeedback.CompletedHead != "" {
+		return false
+	}
+	target := savedFeedbackTarget(&j)
+	if target == nil {
+		return false
+	}
+	pending := pendingFeedback(&j)
+	return pending == nil || pending == target
 }

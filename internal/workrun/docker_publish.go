@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/buildinfo"
+	"github.com/tjpeel/sdlc/internal/controllerasset"
 	"github.com/tjpeel/sdlc/internal/githubauth"
 	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -28,11 +30,12 @@ type PublisherRequest struct {
 	SnapshotBranch string      `json:"snapshot_branch,omitempty"`
 }
 type PublisherResponse struct {
-	Publication Publication    `json:"publication"`
-	Checks      CIResult       `json:"checks"`
-	Snapshot    BranchSnapshot `json:"snapshot"`
-	RemotePR    RemotePR       `json:"remote_pr"`
-	Error       string         `json:"error,omitempty"`
+	Diagnostic  *PublicationDiagnostic `json:"diagnostic,omitempty"`
+	Publication Publication            `json:"publication"`
+	Checks      CIResult               `json:"checks"`
+	Snapshot    BranchSnapshot         `json:"snapshot"`
+	RemotePR    RemotePR               `json:"remote_pr"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 // Snapshot exports one verified remote branch into caller-private state.
@@ -125,15 +128,21 @@ type PublisherCommandRunner interface {
 }
 type publisherCommandRunner struct{}
 
-func (publisherCommandRunner) Run(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
+func (runner publisherCommandRunner) Run(ctx context.Context, input io.Reader, output io.Writer, args ...string) error {
+	return runner.RunDiagnostic(ctx, input, output, io.Discard, args...)
+}
+func (publisherCommandRunner) RunDiagnostic(ctx context.Context, input io.Reader, output, diagnostic io.Writer, args ...string) error {
 	command := exec.CommandContext(ctx, "docker", args...)
 	command.Stdin, command.Stdout = input, output
-	command.Stderr = io.Discard
+	command.Stderr = diagnostic
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("isolated publisher failed: %w", err)
 	}
 	return nil
 }
+
+var stagePublisherController = controllerasset.Stage
+var controllerIdentityRunner PublisherCommandRunner = publisherCommandRunner{}
 
 type DockerPublisher struct {
 	Runtime          runtimeimage.Manager
@@ -306,12 +315,44 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 			return PublisherResponse{}, err
 		}
 	}
+	// A new attempt must never expose a retained diagnostic from an earlier refusal.
+	directory, canonicalErr := filepath.Abs(directory)
+	if canonicalErr != nil || realDirectory(directory) != nil || privatePublisherParent(directory) != nil {
+		return fail("invalid private publisher directory")
+	}
+	previousDiagnostic := filepath.Join(directory, "publisher")
+	if _, err := os.Lstat(previousDiagnostic); err == nil {
+		if realDirectory(previousDiagnostic) != nil {
+			return fail("invalid publisher state")
+		}
+		if err = os.Remove(filepath.Join(previousDiagnostic, "failure.json")); err != nil && !os.IsNotExist(err) {
+			return fail("cannot invalidate previous publisher diagnostic")
+		}
+	}
+
 	if publisher.Runtime.Docker == nil || publisher.ImageID == "" {
 		return fail("publication requires pinned Docker runtime and GitHub credential volume")
 	}
 	state, err := publisher.Runtime.Status(ctx)
 	if err != nil || state.ImageID != publisher.ImageID {
 		return fail("publisher runtime differs from pinned image")
+	}
+	platformBytes, platformErr := publisher.Runtime.Docker.Output(ctx, "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", publisher.ImageID)
+	platform := strings.TrimSpace(string(platformBytes))
+	if platformErr != nil || platform != "linux/amd64" && platform != "linux/arm64" {
+		return fail("publisher runtime platform unavailable or unsupported")
+	}
+	helperPath, cleanupHelper, err := stagePublisherController(platform)
+	if err != nil {
+		return fail("trusted current publisher controller unavailable; reinstall SDLC CLI with matching Linux assets")
+	}
+	defer func() {
+		if cleanupHelper() != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("trusted publisher controller cleanup failed"))
+		}
+	}()
+	if err := publisher.verifyController(ctx, helperPath, platform); err != nil {
+		return fail("trusted publisher controller provenance or frozen runtime execution mismatch; reinstall SDLC CLI")
 	}
 	session, err := publisher.Auth.Acquire(ctx)
 	if err != nil {
@@ -378,14 +419,11 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 			return fail("publication requires external signing key resolver")
 		}
 		secret, err = publisher.SigningKey(ctx)
+		defer clear(secret)
 		if err != nil || len(secret) == 0 || len(secret) > 65536 {
 			return fail("publication signing key unavailable")
 		}
-		defer func() {
-			for i := range secret {
-				secret[i] = 0
-			}
-		}()
+
 	}
 	nameID, err := NewID()
 	if err != nil {
@@ -414,7 +452,7 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 		}
 		args = append(args, "--mount", mount(bundlePath, "/source.bundle", true))
 	}
-	args = append(args, "--entrypoint", "/usr/local/bin/sdlc-publisher", publisher.ImageID)
+	args = append(args, "--mount", mount(helperPath, "/trusted/sdlc-publisher", true), "--entrypoint", "/trusted/sdlc-publisher", publisher.ImageID)
 	runner := publisher.Runner
 	if runner == nil {
 		runner = publisherCommandRunner{}
@@ -423,7 +461,17 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if realDirectory(directory) != nil || privatePublisherParent(directory) != nil || realDirectory(private) != nil {
 		return fail("publisher directory boundary changed")
 	}
-	if err := runner.Run(ctx, clearingKeyReader{bytes.NewReader(secret), secret}, &output, args...); err != nil {
+	var diagnostic boundedPublisherDiagnostic
+	var runErr error
+	if diagnosticRunner, ok := runner.(interface {
+		RunDiagnostic(context.Context, io.Reader, io.Writer, io.Writer, ...string) error
+	}); ok {
+		runErr = diagnosticRunner.RunDiagnostic(ctx, clearingKeyReader{bytes.NewReader(secret), secret}, &output, &diagnostic, args...)
+	} else {
+		runErr = runner.Run(ctx, clearingKeyReader{bytes.NewReader(secret), secret}, &output, args...)
+	}
+	defer clear(diagnostic.buffer.Bytes())
+	if runErr != nil {
 		return fail("isolated publisher failed")
 	}
 	var response PublisherResponse
@@ -436,8 +484,17 @@ func (publisher DockerPublisher) invoke(ctx context.Context, directory string, r
 	if decoder.Decode(&extra) != io.EOF {
 		return fail("invalid isolated publisher response")
 	}
+	if response.Error == "" && (response.Diagnostic != nil || diagnostic.buffer.Len() != 0 || diagnostic.exceeded) {
+		return fail("unexpected isolated publisher diagnostic response")
+	}
 	if response.Error != "" {
-		return fail("isolated publication refused; check frozen identity, source, signing and remote state")
+		if diagnostic.exceeded || response.Diagnostic == nil {
+			return fail("isolated publication refused; diagnostic unavailable")
+		}
+		if response.Error != "publisher refused request" || response.Diagnostic == nil || retainPublicationDiagnostic(directory, *response.Diagnostic, diagnostic.buffer.Bytes()) != nil {
+			return fail("isolated publication refused; diagnostic unavailable; inspect frozen identity, source, signing and remote state")
+		}
+		return fail(fmt.Sprintf("isolated publication refused at %s (%s); inspect private diagnostic %s", response.Diagnostic.Stage, response.Diagnostic.Code, filepath.Join(private, "failure.stderr")))
 	}
 	if request.Action == "publish" && (response.Publication.Number < 1 || response.Publication.BaseSHA != request.Plan.BaseSHA || !objectID.MatchString(response.Publication.HeadSHA) || !strings.HasPrefix(response.Publication.URL, "https://github.com/"+request.Plan.Repository+"/pull/")) {
 		return fail("invalid isolated publication result")
@@ -505,4 +562,76 @@ func publisherArguments(image, name, volume, requestPath, statePath string) []st
 	installation = strings.TrimSuffix(installation, "-github")
 	args := checkContainerEnvironment([]string{"run", "--name", name, "--label", "io.sdlc.managed=true", "--label", "io.sdlc.kind=github-auth", "--label", "io.sdlc.provider=github", "--label", "io.sdlc.installation=" + installation, "--interactive", "--pull", "never", "--network", "bridge", "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--memory", "2g", "--cpus", "2", "--log-driver", "none", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777", "--mount", mount(requestPath, "/request.json", true), "--mount", mount(statePath, "/publisher", false), "--mount", "type=volume,src=" + volume + ",dst=/github-auth,readonly,volume-nocopy"})
 	return args
+}
+
+type boundedPublisherDiagnostic struct {
+	buffer   bytes.Buffer
+	exceeded bool
+}
+
+func (output *boundedPublisherDiagnostic) Write(data []byte) (int, error) {
+	n := len(data)
+	remaining := MaximumPublicationDiagnostic - output.buffer.Len()
+	if len(data) > remaining {
+		data = data[:remaining]
+		output.exceeded = true
+	}
+	_, _ = output.buffer.Write(data)
+	return n, nil
+}
+
+func (publisher DockerPublisher) verifyController(ctx context.Context, path, platform string) (resultErr error) {
+	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	id, err := NewID()
+	if err != nil {
+		return fmt.Errorf("cannot allocate trusted controller identity probe")
+	}
+	name := "sdlc-controller-proof-" + id
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		listed, err := publisher.Runtime.Docker.Output(cleanup, "ps", "--all", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+		if err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("controller identity probe cleanup inspection failed"))
+			return
+		}
+		if strings.TrimSpace(string(listed)) == name {
+			if _, err := publisher.Runtime.Docker.Output(cleanup, "rm", "--force", name); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("controller identity probe cleanup failed"))
+			}
+		}
+	}()
+	args := []string{"run", "--name", name, "--rm", "--pull", "never", "--network", "none", "--user", "1000:1000", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "16", "--memory", "128m", "--log-driver", "none", "--mount", mount(path, "/trusted/sdlc-publisher", true), "--entrypoint", "/trusted/sdlc-publisher", publisher.ImageID, "--identity"}
+	var output controllerIdentityOutput
+	if err := controllerIdentityRunner.Run(bounded, nil, &output, args...); err != nil || output.exceeded {
+		return fmt.Errorf("trusted controller identity probe failed")
+	}
+	var identity buildinfo.Identity
+	decoder := json.NewDecoder(bytes.NewReader(output.buffer.Bytes()))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&identity) != nil || decoder.Decode(new(any)) != io.EOF {
+		return fmt.Errorf("invalid trusted controller identity")
+	}
+	expected := buildinfo.Current()
+	if identity.Version != expected.Version || identity.Revision != expected.Revision || identity.Dirty != expected.Dirty || identity.OS != "linux" || "linux/"+identity.Arch != platform {
+		return fmt.Errorf("trusted controller identity mismatch")
+	}
+	return nil
+}
+
+type controllerIdentityOutput struct {
+	buffer   bytes.Buffer
+	exceeded bool
+}
+
+func (output *controllerIdentityOutput) Write(data []byte) (int, error) {
+	n := len(data)
+	remaining := 4096 - output.buffer.Len()
+	if len(data) > remaining {
+		data = data[:remaining]
+		output.exceeded = true
+	}
+	_, _ = output.buffer.Write(data)
+	return n, nil
 }

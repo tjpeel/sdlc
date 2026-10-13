@@ -34,6 +34,8 @@ func main() {
 			command = func() error { return dashboardCommand(ctx, append([]string{"--attention"}, os.Args[2:]...), os.Stdout) }
 		case "answer":
 			command = func() error { return answerCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
+		case "diagnose":
+			command = func() error { return diagnoseCommand(ctx, os.Args[2:], os.Stdout) }
 		case "inputs":
 			command = func() error { return inputsCommand(ctx, os.Args[2:], os.Stdout) }
 		case "resume":
@@ -110,6 +112,7 @@ func main() {
 		fmt.Println("         Offline plan: --dry-run --json; independent iTerm2 controller: --terminal background [--launch-id UUID] [--json]")
 		fmt.Println("       sdlc dashboard [--once | --json] [--scope project|installation] [--page N] [--run RUN_ID] [--logs]")
 		fmt.Println("       sdlc attention [--once | --json] | answer --run RUN_ID [--text TEXT | --stdin] | resume --run RUN_ID")
+		fmt.Println("       sdlc diagnose --run RUN_ID [--json] (offline saved-state and recovery action)")
 		fmt.Println("       sdlc inputs --run RUN_ID [--add RELATIVE_PATH] [--dry-run] (inspect or attach missing requirements offline)")
 		fmt.Println("       sdlc dashboard remove (--run RUN_ID | --all) [--yes] (hide entries; retain files)")
 		fmt.Println("       sdlc storage purge (--run RUN_ID | --all) [--yes] (preview or delete saved runs)")

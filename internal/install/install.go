@@ -258,6 +258,12 @@ func BuildWithOptions(ctx context.Context, source, binDir string, options Option
 			runtimeChanged = true
 		}
 	}
+	if revision == "" {
+		revision = "unknown"
+	}
+	if _, err := prepareControllers(ctx, root, path, destination, version, revision, dirty, stdout, stderr); err != nil {
+		return "", err
+	}
 	if err := os.Rename(path, destination); err != nil {
 		return "", fmt.Errorf("replace executable failed (runtime prepared: %t; close any running Windows sdlc first): %w", runtimeChanged, err)
 	}

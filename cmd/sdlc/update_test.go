@@ -24,6 +24,13 @@ func updateSourceFixture(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/tjpeel/sdlc\n\ngo 1.25.0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "sdlc-publisher"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cmd", "sdlc-publisher", "main.go"), []byte("package main\nfunc main(){}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
@@ -120,6 +127,13 @@ func TestUpdateLocatorCannotExecuteUnmanagedPATHCommand(t *testing.T) {
 func TestUpdateReceiptKeepsSourceVisibleFromAnotherProject(t *testing.T) {
 	root := updateSourceFixture(t)
 	bin := t.TempDir()
+	t.Cleanup(func() {
+		directories, _ := filepath.Glob(filepath.Join(bin, ".sdlc-controller-*"))
+		for _, directory := range directories {
+			_ = os.Chmod(directory, 0700)
+		}
+	})
+
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if err := os.WriteFile(filepath.Join(root, "cmd", "sdlc", "main.go"), []byte("package main\nimport \"fmt\"\nfunc main(){ fmt.Println(\"sdlc 0.1.0-test (unknown; test)\") }\n"), 0600); err != nil {
 		t.Fatal(err)

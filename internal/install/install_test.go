@@ -17,6 +17,7 @@ func fixture(t *testing.T) (string, string) {
 	t.Helper()
 	source := t.TempDir()
 	bin := t.TempDir()
+	cleanupControllers(t, bin)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("SDLC_STATE_DIR", t.TempDir())
 	t.Setenv("GOOS", "")
@@ -25,6 +26,12 @@ func fixture(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module github.com/tjpeel/sdlc\n\ngo 1.24.0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, "cmd", "sdlc-publisher"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "cmd", "sdlc-publisher", "main.go"), []byte("package main\nfunc main(){}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return source, bin
@@ -171,4 +178,14 @@ func TestUnmanagedCommandAndShadowedPathAreRejected(t *testing.T) {
 	if _, err := Build(context.Background(), source, bin, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "resolves first") {
 		t.Fatal("shadowed installation was accepted", err)
 	}
+}
+
+func cleanupControllers(t *testing.T, bin string) {
+	t.Helper()
+	t.Cleanup(func() {
+		directories, _ := filepath.Glob(filepath.Join(bin, ".sdlc-controller-*"))
+		for _, directory := range directories {
+			_ = os.Chmod(directory, 0700)
+		}
+	})
 }

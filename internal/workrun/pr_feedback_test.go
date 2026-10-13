@@ -63,7 +63,7 @@ func generalFeedback(id, body string) PRFeedbackComment {
 	return PRFeedbackComment{ID: id, Kind: "comment", Author: "reviewer", Body: body, UpdatedAt: "2026-10-13T12:00:00Z"}
 }
 func assessedOutcome(c PRFeedbackComment, disposition string) Outcome {
-	out := testOutcome("checks_requested")
+	out := testOutcome("implemented")
 	out.PRFeedbackAssessments = []PRFeedbackAssessment{{ID: c.ID, Fingerprint: feedbackFingerprint(c), Disposition: disposition, Reason: "The API contract requires a product decision.", Commits: []string{}}}
 	return out
 }
@@ -256,8 +256,9 @@ func TestPRFeedbackAssessmentDoesNotDropCompanionSourceRequest(t *testing.T) {
 	second := generalFeedback("comment:2", "Explain contract")
 	pub.comments = []PRFeedbackComment{first, second}
 	requested := assessedOutcome(first, "no_change")
+	requested.Status = "checks_requested"
 	requested.RepositoryRequests = []CompanionRepositoryRequest{{ID: "source", Repository: "example/companion", Purpose: "inspect contract"}}
-	provider := &feedbackScriptProvider{outcomes: []Outcome{requested, assessedOutcome(second, "no_change"), testOutcome("implemented"), testOutcome("reviewed")}}
+	provider := &feedbackScriptProvider{outcomes: []Outcome{requested, assessedOutcome(first, "no_change"), assessedOutcome(second, "no_change"), testOutcome("reviewed")}}
 	cloner := &fakeCompanionCloner{revision: testSigned}
 	r.CompanionCloner = cloner
 	r.Provider = provider

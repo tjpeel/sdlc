@@ -502,7 +502,7 @@ func TestSavedBatchReplayRecoversIntermediateOutcomeCheckpoints(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if final.RunLimitOverride.PendingVerificationReplay || final.RunLimitOverride.VerificationReplayFeedbackProcessed || len(final.CompanionRepositories) != 2 || final.PRFeedback.Entries[0].Marker != originalMarker || final.PRFeedback.Entries[1].Assessment != nil || pendingFeedback(&final).Comment.ID != next.ID || !strings.Contains(final.Feedback, "example/second") || final.Attempt != 26 || len(p.calls) != 0 {
+			if final.RunLimitOverride.PendingVerificationReplay || final.RunLimitOverride.VerificationReplayFeedbackProcessed || len(final.CompanionRepositories) != 2 || final.PRFeedback.Entries[0].Marker != originalMarker || final.PRFeedback.Entries[1].Assessment != nil || pendingFeedback(&final).Comment.ID != first.ID || final.State != "checking" || final.Attempt != 26 || len(p.calls) != 0 {
 				t.Fatal("recovery repeated assessment, dropped companion or consumed native turn")
 			}
 		})

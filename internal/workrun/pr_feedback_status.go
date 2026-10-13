@@ -30,7 +30,7 @@ func PRFeedbackStatus(j Journal) PRFeedbackSummary {
 		if latest[e.Comment.ID] != i || e.Comment.Deleted || e.Comment.Resolved {
 			continue
 		}
-		if e.Assessment == nil {
+		if e.Assessment == nil || e.Provisional {
 			result.Pending++
 			continue
 		}

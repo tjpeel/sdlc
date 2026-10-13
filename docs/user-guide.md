@@ -128,8 +128,10 @@ CLI. `--pull` first fast-forwards a clean checkout; omit it for committed local
 changes. `--dependencies` resolves newer public dependencies instead of
 resetting to source pins. `--agent-tools` refreshes Codex, Claude, skills and agents,
 retaining the other dependency pins. It still rebuilds the runtime and checks saved-work protection.
-`--sdlc-only` updates the host SDLC program and shell while keeping the entire runtime,
-including provider CLIs, catalogues and paused work. `--cli-only` remains a compatibility alias.
+`--sdlc-only` updates the host SDLC program, shell and matching trusted publisher
+helpers while keeping the entire runtime, including provider CLIs, catalogues
+and paused work. Saved runs use the verified helper inside their frozen image;
+signing and publication guards still apply. `--cli-only` remains a compatibility alias.
 Default `update` rebuilds the source baseline; `runtime status` only inspects it.
 Local refresh selections stay private unless `--agent-tools --update-dockerfile`
 is selected. That option writes exactly `CODEX_VERSION`, `CLAUDE_VERSION`,
@@ -678,6 +680,12 @@ The run list shows recorded questions and the next command. Inspect one run with
 `sdlc dashboard --run RUN_ID --once`; IDs may be full or a unique prefix of at least
 three characters.
 
+Stopped commands include a suggested next action. For a compact diagnostic
+report, use `sdlc diagnose --run RUN_ID --json`. It reads saved state without
+starting a controller or contacting a provider. The report includes bounded
+state, counters and evidence identities; it omits raw output, comment text,
+account details and credentials. Treat private diagnostic files as sensitive.
+
 For `waiting_for_human`, answer directly:
 
 ```sh
@@ -714,6 +722,11 @@ current checks and CI, and obtains a fresh independent review. The dashboard
 keeps unresolved feedback visible for the next human review. Use `--dry-run`
 to preview this action offline. Feedback resume preserves every remaining
 budget and leaves the merge decision with you.
+
+An assessment made while requesting checks or companion source remains
+provisional. After the session finishes its assessment, SDLC replies in the
+original comment thread with the resulting changes or the reason no change was
+made. It leaves the thread unresolved for its author to review and resolve.
 
 Answers become provider input and private run history. The shell offers
 `/attention`, `/answer RUN_ID` and `/resume RUN_ID`; its free-text answer editor
