@@ -613,6 +613,8 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	result := CIResult{Status: "passed"}
 	sonarNames := map[string]bool{}
+	// A name only selects a candidate; exact check-run app/head authority
+	// distinguishes native analysis from an Actions workflow mentioning Sonar.
 	if len(checks) == 0 {
 		result.Status = "missing"
 	}

@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.54 - 2026-10-13
+
+### Added
+
+- Amend only the dependencies of an unstarted ticket in a saved feature with `sdlc dependencies`. Preview the change offline, preserve parent jobs and frozen execution settings, and retain an audit record with interrupted-update recovery.
+- Reject amendments while a feature controller is active, after child preparation or execution has started, or when the saved plan has changed. Existing parent readiness, combined-base checks, signing, CI and review gates still control child execution.
+
+### Fixed
+
+- Treat failed GitHub Actions workflow checks that mention Sonar as pipeline failures rather than native Sonar analysis. Return them through the existing CI repair cycle while preserving exact-head checks and trusted app identity for analyzer annotations.
+
 ## 0.1.0-beta.53 - 2026-10-13
 
 ### Fixed

@@ -10,6 +10,23 @@ import (
 
 var ErrBusy = errors.New("another SDLC operation holds the lock")
 
+// AcquireExisting owns an existing operation lock without creating any file.
+func AcquireExisting(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	busy, err := tryLock(file, Exclusive)
+	if err != nil || busy {
+		file.Close()
+		if busy {
+			return nil, ErrBusy
+		}
+		return nil, err
+	}
+	return file, nil
+}
+
 // Mode selects a shared reader lease or an exclusive writer lease.
 type Mode bool
 

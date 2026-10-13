@@ -11,6 +11,7 @@ import (
 )
 
 type ciAnnotationFixture struct {
+	checkName       string
 	calls           []string
 	views           int
 	changeFinalHead bool
@@ -53,6 +54,10 @@ func (f *ciAnnotationFixture) command(_ context.Context, name string, args ...st
 		return json.Marshal(map[string]any{"baseRefOid": testBase, "headRefOid": head, "state": "OPEN"})
 	}
 	if args[0] == "pr" && args[1] == "checks" {
+		if f.checkName != "" {
+			data, _ := json.Marshal([]map[string]string{{"name": f.checkName, "bucket": "fail", "state": "COMPLETED", "link": "https://private.invalid"}})
+			return data, ciStatusExit(1)
+		}
 		return []byte(`[{"name":"SonarCloud Code Analysis","bucket":"fail","state":"COMPLETED","link":"https://private.invalid"}]`), ciStatusExit(1)
 	}
 	endpoint := args[len(args)-1]
@@ -68,6 +73,111 @@ func (f *ciAnnotationFixture) command(_ context.Context, name string, args ...st
 	}
 	return json.Marshal(value)
 }
+
+func workflowCIAnnotationFixture() *ciAnnotationFixture {
+	f := newCIAnnotationFixture()
+	f.checkName = "Example SonarCloud Scan / offline job"
+	run := f.responses["repos/example/project/check-runs/17"].(map[string]any)
+	run["name"] = f.checkName
+	run["app"] = map[string]any{"id": 15368, "slug": "github-actions"}
+	return f
+}
+
+func TestVerifiedActionsWorkflowMentioningSonarReturnsGenericFailedCI(t *testing.T) {
+	f := workflowCIAnnotationFixture()
+	result, err := (GitHubPublisher{Command: f.command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+	if err != nil || result.Status != "failed" || len(result.Diagnostics) != 0 || result.Details != "" || f.views != 2 {
+		t.Fatal("verified Actions failure was not generic CI", result, err)
+	}
+	for _, call := range f.calls {
+		if strings.Contains(call, "/annotations") || strings.Contains(call, "/git/commits") || strings.Contains(call, "/git/trees") {
+			t.Fatal("Actions workflow was treated as native source analysis", call)
+		}
+	}
+	encoded, _ := json.Marshal(result)
+	feedback := ciRepairFeedback(result, testHead)
+	for _, value := range []string{"offline job", "private warning operand", "private credential", "private.invalid", "SonarCloud"} {
+		if strings.Contains(string(encoded), value) || strings.Contains(feedback, value) {
+			t.Fatal("workflow metadata leaked into CI repair guidance", value)
+		}
+	}
+}
+
+func TestActionsSonarCandidateRequiresExactHeadAppAndDetailAuthority(t *testing.T) {
+	for _, scenario := range []string{"list ID", "detail ID", "detail slug", "stale head", "stale status", "changed conclusion", "API", "duplicate", "missing name", "native claimed name", "compact native claimed name", "final PR"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := workflowCIAnnotationFixture()
+			endpoint := "repos/example/project/check-runs/17"
+			original := f.responses[endpoint].(map[string]any)
+			detail := map[string]any{}
+			for k, v := range original {
+				detail[k] = v
+			}
+			detail["app"] = map[string]any{"id": 15368, "slug": "github-actions"}
+			f.responses[endpoint] = detail
+			switch scenario {
+			case "list ID":
+				original["app"] = map[string]any{"id": 1, "slug": "github-actions"}
+			case "detail ID":
+				detail["app"] = map[string]any{"id": 1, "slug": "github-actions"}
+			case "detail slug":
+				detail["app"] = map[string]any{"id": 15368, "slug": "unknown-app"}
+			case "stale head":
+				detail["head_sha"] = testBase
+			case "stale status":
+				detail["status"] = "in_progress"
+			case "changed conclusion":
+				detail["conclusion"] = "success"
+			case "API":
+				f.fail = endpoint
+			case "duplicate":
+				listing := f.responses["repos/example/project/commits/"+testHead+"/check-runs?per_page=100&page=1"].(map[string]any)
+				duplicate := map[string]any{}
+				for k, v := range original {
+					duplicate[k] = v
+				}
+				duplicate["id"] = 18
+				listing["check_runs"] = []any{original, duplicate}
+				listing["total_count"] = 2
+			case "missing name":
+				original["name"] = "Different SonarCloud Scan"
+			case "native claimed name":
+				f.checkName = "SonarCloud Code Analysis"
+				original["name"] = f.checkName
+				detail["name"] = f.checkName
+			case "compact native claimed name":
+				f.checkName = "SonarCloudAnalysis"
+				original["name"] = f.checkName
+				detail["name"] = f.checkName
+			case "final PR":
+				f.changeFinalHead = true
+			}
+			if _, err := (GitHubPublisher{Command: f.command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication()); err == nil {
+				t.Fatal("unverified workflow failure was granted generic repair authority")
+			}
+		})
+	}
+}
+func TestGitHubCIAnnotationsRejectChangedNativeAppID(t *testing.T) {
+	f := newCIAnnotationFixture()
+	details := 0
+	command := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if args[len(args)-1] == "repos/example/project/check-runs/17" {
+			details++
+			if details == 2 {
+				f.responses["repos/example/project/check-runs/17"].(map[string]any)["app"] = map[string]any{"id": 1, "slug": "sonarqubecloud"}
+			}
+		}
+		return f.command(ctx, name, args...)
+	}
+	if _, err := (GitHubPublisher{Command: command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication()); err == nil {
+		t.Fatal("changed native app ID was accepted after annotation collection")
+	}
+	if details != 2 {
+		t.Fatal("native check-run was not reread after annotation collection", details)
+	}
+}
+
 func annotationPublication() Publication {
 	return Publication{URL: "https://github.com/example/project/pull/1", Number: 1, BaseSHA: testBase, HeadSHA: testHead}
 }

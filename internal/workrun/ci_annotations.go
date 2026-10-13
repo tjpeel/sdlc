@@ -123,6 +123,7 @@ func (p GitHubPublisher) ciAPI(ctx context.Context, endpoint string, target any)
 
 type ciCheckRun struct {
 	App struct {
+		ID   int64  `json:"id"`
 		Slug string `json:"slug"`
 	} `json:"app"`
 	ID         int64  `json:"id"`
@@ -147,9 +148,15 @@ func failedCIConclusion(s string) bool {
 	return s == "failure" || s == "timed_out" || s == "cancelled" || s == "action_required" || s == "stale"
 }
 
+func nativeSonarAnalysisName(name string) bool {
+	return name == "SonarCloud Code Analysis" || name == "SonarCloudAnalysis"
+}
+
 func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr Publication, sonarNames map[string]bool) ([]CIAnnotation, error) {
 	root := "repos/" + plan.Repository
 	var runs []ciCheckRun
+	var workflows []ciCheckRun
+	matched := map[string]bool{}
 	total := -1
 	seen := map[int64]bool{}
 	for page := 1; page <= 2; page++ {
@@ -170,6 +177,14 @@ func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr
 			}
 			seen[run.ID] = true
 			if sonarNames[run.Name] && run.Status == "completed" && failedCIConclusion(run.Conclusion) {
+				if matched[run.Name] {
+					return nil, fmt.Errorf("failed Sonar candidate has ambiguous check-run identity")
+				}
+				matched[run.Name] = true
+				if run.App.ID == 15368 && run.App.Slug == "github-actions" && !nativeSonarAnalysisName(run.Name) {
+					workflows = append(workflows, run)
+					continue
+				}
 				if run.App.Slug != "sonarqubecloud" && run.App.Slug != "sonarcloud" && run.App.Slug != "sonarqube" {
 					return nil, fmt.Errorf("failed Sonar check has an unexpected app identity")
 				}
@@ -183,8 +198,22 @@ func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr
 			return nil, fmt.Errorf("incomplete CI check-run listing")
 		}
 	}
-	if len(runs) == 0 || len(runs) > 4 {
+	if len(runs)+len(workflows) == 0 || len(runs)+len(workflows) > 4 || len(matched) != len(sonarNames) {
 		return nil, fmt.Errorf("failed Sonar check-run could not be identified")
+	}
+	for _, listed := range workflows {
+		var run ciCheckRun
+		if err := p.ciAPI(ctx, fmt.Sprintf("%s/check-runs/%d", root, listed.ID), &run); err != nil {
+			return nil, err
+		}
+		if run.ID != listed.ID || run.Head != pr.HeadSHA || run.Name != listed.Name || run.App.ID != 15368 || run.App.Slug != "github-actions" || run.Status != "completed" || run.Conclusion != listed.Conclusion || !failedCIConclusion(run.Conclusion) {
+			return nil, fmt.Errorf("workflow check-run changed during CI inspection")
+		}
+	}
+	// Verified Actions jobs remain ordinary failed CI. Their name does not
+	// authorize native Sonar annotations, source details or log forwarding.
+	if len(runs) == 0 {
+		return nil, nil
 	}
 	var commit struct {
 		SHA  string `json:"sha"`
@@ -225,7 +254,7 @@ func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr
 		if err := p.ciAPI(ctx, fmt.Sprintf("%s/check-runs/%d", root, listed.ID), &run); err != nil {
 			return nil, err
 		}
-		if run.ID != listed.ID || run.Head != pr.HeadSHA || run.Name != listed.Name || run.App.Slug != listed.App.Slug || run.Status != "completed" || !failedCIConclusion(run.Conclusion) || run.Output.Count < 0 || run.Output.Count > 200 {
+		if run.ID != listed.ID || run.Head != pr.HeadSHA || run.Name != listed.Name || run.App.ID != listed.App.ID || run.App.Slug != listed.App.Slug || run.Status != "completed" || !failedCIConclusion(run.Conclusion) || run.Output.Count < 0 || run.Output.Count > 200 {
 			return nil, fmt.Errorf("CI check-run changed during annotation collection")
 		}
 		count := 0
@@ -273,7 +302,7 @@ func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr
 		if err := p.ciAPI(ctx, fmt.Sprintf("%s/check-runs/%d", root, run.ID), &after); err != nil {
 			return nil, err
 		}
-		if after.ID != run.ID || after.Head != run.Head || after.Name != run.Name || after.App.Slug != run.App.Slug || after.Status != run.Status || after.Conclusion != run.Conclusion || after.Output.Count != run.Output.Count {
+		if after.ID != run.ID || after.Head != run.Head || after.Name != run.Name || after.App.ID != run.App.ID || after.App.Slug != run.App.Slug || after.Status != run.Status || after.Conclusion != run.Conclusion || after.Output.Count != run.Output.Count {
 			return nil, fmt.Errorf("CI check-run changed after annotation collection")
 		}
 	}

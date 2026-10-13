@@ -23,7 +23,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.53`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.54`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -216,6 +216,9 @@ one dependency can start from its parent's signed, tested and reviewed draft PR.
 Tickets with multiple dependencies can start from a separately checked, signed
 combination of their ready parents and current integration. Their PRs target an
 immutable derived branch so reviewers see only the dependent ticket's changes.
+Use `sdlc dependencies` to amend the dependencies of an unstarted ticket in an
+existing saved feature. It preserves the parent jobs and frozen execution
+settings. See the [dependency amendment guide](docs/cli.md#amend-an-unstarted-tickets-dependencies).
 As parents merge, SDLC rebuilds the combination and restacks the dependent work;
 after all parents merge, it retargets the existing PR to integration. Restacking
 changes commit IDs, but unchanged contexts are reused. Review dependent PRs early,

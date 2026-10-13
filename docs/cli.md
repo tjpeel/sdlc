@@ -346,6 +346,37 @@ eligible ticket without waiting for other active tickets to finish. Provider
 calls have no separate SDLC concurrency limit. Host stream lines carry ticket labels; each private native event
 file retains its original bytes. The dashboard continues to show individual ticket runs.
 
+### Amend an unstarted ticket's dependencies
+
+Use the supported amendment command when a saved feature needs a different
+dependency set for a ticket that has not started:
+
+```sh
+sdlc dependencies --reference YOUR_WORK_REFERENCE --ticket 03-add-workflow.md \
+  --depends-on 01-add-api.md --depends-on 02-add-tests.md --dry-run
+sdlc dependencies --reference YOUR_WORK_REFERENCE --ticket 03-add-workflow.md \
+  --depends-on 01-add-api.md --depends-on 02-add-tests.md
+```
+
+Each `--depends-on` names an exact ticket filename. The supplied flags replace
+that ticket's complete dependency set; use `--depends-on ''` to clear it.
+`--json` prints the amendment result. The command runs offline and does not
+start a ticket or connect a provider.
+
+The feature controller must be stopped, and the child must have no prepared
+base or saved run. Unknown tickets, self-dependencies, cycles, changed plan
+inputs and unsafe paths are rejected. The amendment preserves ticket order,
+priorities, path declarations, parent results and all frozen execution settings.
+It updates the private plan and checkpoint together and records the change.
+If interrupted, repeat the same amendment command to complete its recorded
+transaction before continuing the feature.
+
+Continue with the ordinary `sdlc run --reference YOUR_WORK_REFERENCE --all`
+command. Every parent must reach its normal ready or merged checkpoint before
+the child can start. Multiple parents still require a checked and signed
+combined base; CI and independent review remain required for the child's PR.
+Avoid editing the saved plan or journal manually.
+
 ### Private feature plan
 
 Numeric filename discovery remains the same as `sdlc work`. Optional scheduling

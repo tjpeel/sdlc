@@ -38,6 +38,8 @@ func main() {
 			command = func() error { return diagnoseCommand(ctx, os.Args[2:], os.Stdout) }
 		case "inputs":
 			command = func() error { return inputsCommand(ctx, os.Args[2:], os.Stdout) }
+		case "dependencies":
+			command = func() error { return dependenciesCommand(ctx, os.Args[2:], os.Stdout) }
 		case "resume":
 			command = func() error { return resumeCommand(ctx, os.Args[2:], os.Stdout) }
 		case "usage":
@@ -105,6 +107,7 @@ func main() {
 		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
+		fmt.Println("       sdlc dependencies --reference REFERENCE --ticket NUMBERED_FILE --depends-on PARENT_FILE [--dry-run] [--json]")
 		fmt.Println("         Optional provider route: --headroom off|passthrough|optimize (default: off); ticket runtime: --runtime NAME")
 		fmt.Println("       sdlc usage [--since 7d] [--scope project|installation] [--run RUN_ID] [--json]")
 		fmt.Println("       sdlc progress --run RUN_ID | --launch-id UUID [--once | --follow] [--json]")

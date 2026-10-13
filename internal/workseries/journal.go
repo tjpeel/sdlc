@@ -53,6 +53,12 @@ func realDir(path string) error {
 }
 
 func Load(directory string) (State, error) {
+	if _, err := os.Lstat(filepath.Join(directory, amendmentPending)); !os.IsNotExist(err) {
+		return State{}, errors.New("dependency amendment is pending; repeat its dependencies command before running the feature")
+	}
+	return loadState(directory)
+}
+func loadState(directory string) (State, error) {
 	if err := privateSeriesDir(directory); err != nil {
 		return State{}, err
 	}
@@ -84,6 +90,9 @@ func Load(directory string) (State, error) {
 }
 
 func Save(directory string, state *State) error {
+	if _, err := os.Lstat(filepath.Join(directory, amendmentPending)); !os.IsNotExist(err) {
+		return errors.New("dependency amendment is pending; feature checkpoint is held")
+	}
 	if err := privateSeriesDir(directory); err != nil {
 		return err
 	}
@@ -142,6 +151,9 @@ func validateState(s *State) error {
 		return errors.New("invalid series state")
 	}
 	known := ticketMap(s.Plan.Tickets)
+	if err := validateAmendmentAudit(s); err != nil {
+		return err
+	}
 	for key, r := range s.Results {
 		ticket, ok := known[key]
 		if !ok || !validResult(s.Plan, ticket, r) {

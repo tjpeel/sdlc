@@ -60,11 +60,12 @@ type Driver interface {
 }
 
 type State struct {
-	Version   int
-	Plan      Plan
-	Results   map[string]Result
-	UpdatedAt time.Time
-	Settings  json.RawMessage
+	DependencyAmendments []DependencyAmendmentAudit `json:"dependency_amendments,omitempty"`
+	Version              int
+	Plan                 Plan
+	Results              map[string]Result
+	UpdatedAt            time.Time
+	Settings             json.RawMessage
 }
 
 type Runner struct {

@@ -61,6 +61,10 @@ func Discover(ctx context.Context, directory, reference, base string) (Plan, err
 					p.Tickets[i].DependsOn = append([]string(nil), item.DependsOn...)
 					p.Tickets[i].Priority = item.Priority
 					p.Tickets[i].Touches = append([]string(nil), item.Touches...)
+					if metadata.Version == 2 {
+						p.Tickets[i].DependsOn = exactStrings(item.DependsOn)
+						p.Tickets[i].Touches = exactStrings(item.Touches)
+					}
 				}
 			}
 		}
@@ -93,10 +97,13 @@ func readSidecar(path string) (*sidecar, error) {
 	if err != nil || len(b) > maximumMetadata {
 		return nil, errors.New("private series plan exceeds 64 KiB")
 	}
+	return decodeSidecar(b)
+}
+func decodeSidecar(b []byte) (*sidecar, error) {
 	var s sidecar
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if d.Decode(&s) != nil || d.Decode(new(any)) != io.EOF || s.Version != 1 {
+	if d.Decode(&s) != nil || d.Decode(new(any)) != io.EOF || (s.Version != 1 && s.Version != 2) {
 		return nil, errors.New("private series plan must be version 1 JSON")
 	}
 	if s.Tickets == nil {
