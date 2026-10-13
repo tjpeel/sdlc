@@ -19,6 +19,8 @@ uses the terminal's font and colours with a Robby Russell prompt. Read the
 review and independent terminal launches. The current beta baseline is
 `0.1.0-beta.40`; changes are recorded in the [changelog](CHANGELOG.md).
 
+Future work is recorded in the [feature backlog](docs/feature-backlog.md).
+
 Ticket and feature runs retain [usage metrics](docs/usage-metrics.md) across
 attempts and resumes. Read them with `sdlc usage --since 7d --json`.
 An [opt-in Headroom variant](docs/headroom.md) adds a local proxy for passthrough
