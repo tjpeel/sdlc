@@ -79,7 +79,7 @@ func validateReviewJournal(j *Journal) error {
 // ValidateReviewRepairInitialization admits only the exact old completed-review
 // hold. Live source and publication checks are repeated under controller ownership.
 func ValidateReviewRepairInitialization(j Journal, limit int) error {
-	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || j.Attempt >= 24 || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
+	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || j.Attempt >= effectiveNativeTurnLimit(&j) || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
 		return fmt.Errorf("review repair initialization requires an uninitialized completed-findings hold with its original session, passing evidence and remaining native capacity")
 	}
 	copy := j
@@ -104,8 +104,8 @@ func (runner Runner) grantReviewAssessment(directory string, j *Journal, finding
 	if countRound {
 		j.Rounds++
 	}
-	if j.Attempt >= 24 {
-		return runner.stop(directory, j, "blocked", "implementation reached the configured session-turn bound")
+	if j.Attempt >= effectiveNativeTurnLimit(j) {
+		return runner.stop(directory, j, "blocked", implementationTurnBound)
 	}
 	b := j.ReviewRepairBudget
 	if b == nil {

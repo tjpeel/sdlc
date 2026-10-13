@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -239,6 +240,10 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	dry := flags.Bool("dry-run", false, "offline preview")
 	var text, path string
 	var stdin bool
+	var extension int
+	if !answer {
+		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
+	}
 	if answer {
 		flags.StringVar(&text, "text", "", "literal answer")
 		flags.StringVar(&path, "answer-file", "", "answer text file")
@@ -248,7 +253,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--extend-session-turn-budget 1..24] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -256,6 +261,15 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if *id == "" || flags.NArg() != 0 {
 		return fmt.Errorf("%s requires --run RUN_ID", name)
+	}
+	extensionSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "extend-session-turn-budget" {
+			extensionSupplied = true
+		}
+	})
+	if extensionSupplied && (extension < 1 || extension > 24) {
+		return fmt.Errorf("--extend-session-turn-budget must be 1-24")
 	}
 	sources := 0
 	suppliedText := false
@@ -341,13 +355,16 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if extensionSupplied {
+		runArgs = append(runArgs, "--extend-session-turn-budget", strconv.Itoa(extension))
+	}
 	if *dry {
 		runArgs = append(runArgs, "--dry-run")
 	}
 	return runCommand(ctx, runArgs, output)
 }
 
-func printResumePlan(output io.Writer, journal workrun.Journal, answer string, structured bool) error {
+func printResumePlan(output io.Writer, journal workrun.Journal, answer string, structured bool, extension ...int) error {
 	hash := ""
 	if answer != "" {
 		hash = fmt.Sprintf("%x", sha256.Sum256([]byte(answer)))
@@ -355,23 +372,28 @@ func printResumePlan(output io.Writer, journal workrun.Journal, answer string, s
 	if !structured {
 		fmt.Fprintln(output, "Offline resume plan; authentication and model access have not been checked.")
 	}
-	return jsonResumePlan(output, journal, hash)
+	return jsonResumePlan(output, journal, hash, extension...)
 }
 
-func jsonResumePlan(output io.Writer, journal workrun.Journal, hash string) error {
+func jsonResumePlan(output io.Writer, journal workrun.Journal, hash string, extension ...int) error {
+	requestedTurns := 0
+	if len(extension) > 0 {
+		requestedTurns = extension[0]
+	}
 	questions := journal.Outcome.Questions
 	if journal.State != "waiting_for_human" {
 		questions = nil
 	}
 	return json.NewEncoder(output).Encode(struct {
-		Version      int          `json:"version"`
-		Mode         string       `json:"mode"`
-		Offline      bool         `json:"offline"`
-		RunID        string       `json:"run_id"`
-		Checkpoint   string       `json:"checkpoint"`
-		State        string       `json:"state"`
-		Questions    []string     `json:"questions"`
-		AnswerSHA256 string       `json:"answer_sha256,omitempty"`
-		Plan         workrun.Plan `json:"plan"`
-	}{1, "resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), journal.State, questions, hash, journal.Plan})
+		Version               int          `json:"version"`
+		Mode                  string       `json:"mode"`
+		Offline               bool         `json:"offline"`
+		RunID                 string       `json:"run_id"`
+		Checkpoint            string       `json:"checkpoint"`
+		State                 string       `json:"state"`
+		Questions             []string     `json:"questions"`
+		AnswerSHA256          string       `json:"answer_sha256,omitempty"`
+		RequestedSessionTurns int          `json:"requested_session_turns,omitempty"`
+		Plan                  workrun.Plan `json:"plan"`
+	}{1, "resume", true, journal.ID, journal.UpdatedAt.Format(time.RFC3339Nano), journal.State, questions, hash, requestedTurns, journal.Plan})
 }

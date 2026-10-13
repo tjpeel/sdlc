@@ -62,8 +62,8 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 		return nil
 	case "failed":
-		if journal.Attempt >= 24 {
-			return runner.stop(directory, journal, "blocked", "implementation reached the configured session-turn bound")
+		if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+			return runner.stop(directory, journal, "blocked", implementationTurnBound)
 		}
 		budget := journal.CIRepairBudget
 		if budget == nil {

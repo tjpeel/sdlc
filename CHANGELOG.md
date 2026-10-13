@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.42 - 2026-10-13
+
+### Added
+
+- Allow one explicit extension of 1–24 native turns for a saved run stopped at its original 24-turn ceiling. Resume keeps the same implementation session and cumulative counters, with a persisted audit and a shared ceiling for implementation and independent review. Input integrity, cleanup, provider holds and all check, CI and review allowances remain enforced.
+
 ## 0.1.0-beta.41 - 2026-10-13
 
 ### Changed

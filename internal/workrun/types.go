@@ -225,6 +225,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	SessionTurnExtension      *SessionTurnExtension `json:"session_turn_extension,omitempty"`
 	EffectiveChecks           [][]string            `json:"effective_checks,omitempty"`
 	ConfiguredFeedbackKey     string                `json:"configured_feedback_key,omitempty"`
 	CompanionRepositories     []CompanionRepository `json:"companion_repositories,omitempty"`

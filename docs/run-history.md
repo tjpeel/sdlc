@@ -1,6 +1,8 @@
 # Run history and retention
 
-SDLC keeps local run data indefinitely. Reaching `ready` means a draft PR has
+SDLC keeps local run data indefinitely. A one-time `--extend-session-turn-budget N`
+continuation retains the original session and cumulative attempt count; its
+additional allowance and original session are recorded in the private journal. Reaching `ready` means a draft PR has
 passed the controller's checks and independent review and is awaiting human
 review. It does not merge the PR or remove local files.
 

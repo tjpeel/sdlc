@@ -308,3 +308,67 @@ func TestAnswerDryRunWithoutInputShowsQuestionsWithoutWriting(t *testing.T) {
 		}
 	}
 }
+
+func TestResumeSessionTurnExtensionHelpAndBounds(t *testing.T) {
+	var out bytes.Buffer
+	if err := resumeCommand(context.Background(), []string{"--help"}, &out); err != nil || !strings.Contains(out.String(), "--extend-session-turn-budget 1..24") {
+		t.Fatal(out.String(), err)
+	}
+	for _, n := range []string{"0", "-1", "25"} {
+		if err := resumeCommand(context.Background(), []string{"--run", "example", "--extend-session-turn-budget", n, "--dry-run"}, &out); err == nil || !strings.Contains(err.Error(), "must be 1-24") {
+			t.Fatal("invalid short resume amount accepted", err)
+		}
+	}
+	if err := answerCommand(context.Background(), []string{"--run", "example", "--extend-session-turn-budget", "1"}, strings.NewReader(""), &out); err == nil {
+		t.Fatal("answer accepted native extension")
+	}
+}
+
+func TestResumeSessionTurnExtensionShortAndLongDryRun(t *testing.T) {
+	root := runGitFixture(t)
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := forbidConnectedRunCommands(t, root)
+	id := "abcdef0123456789abcdef01"
+	dir, err := workrun.RunDirectory(root, "TASK-1", "01-selected.md", id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := workrun.Journal{Version: 1, ID: id, State: "blocked", ResumeState: "repairing", StopReason: "implementation reached the configured session-turn bound", Attempt: 24, SessionID: "00000000-0000-4000-8000-000000000001", Workspace: filepath.Join(dir, "workspace"), Plan: workrun.Plan{Root: root, Reference: "TASK-1", Ticket: ".sdlc/work/TASK-1/tickets/01-selected.md", StartingSHA: strings.Repeat("a", 40), SourceSHA: strings.Repeat("b", 40), Roles: workrun.DefaultModels().Codex}}
+	if err := workrun.Save(dir, &j); err != nil {
+		t.Fatal(err)
+	}
+	if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Register(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "journal.json"))
+	t.Chdir(root)
+	var short, long bytes.Buffer
+	if err := resumeCommand(context.Background(), []string{"--run", id[:6], "--extend-session-turn-budget", "2", "--dry-run"}, &short); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(context.Background(), []string{"--reference", "TASK-1", "--ticket", "01-selected.md", "--resume", id, "--extend-session-turn-budget", "2", "--dry-run"}, &long); err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range []string{short.String(), long.String()} {
+		if !strings.Contains(out, `"requested_session_turns":2`) {
+			t.Fatal("preview lost requested extension", out)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "journal.json"))
+	if string(before) != string(after) {
+		t.Fatal("offline preview granted extension")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("preview executed connected command")
+	}
+	j.StopReason = "provider unavailable"
+	if err := workrun.Save(dir, &j); err != nil {
+		t.Fatal(err)
+	}
+	if err := resumeCommand(context.Background(), []string{"--run", id, "--extend-session-turn-budget", "2", "--dry-run"}, io.Discard); err == nil {
+		t.Fatal("short preview bypassed hold validation")
+	}
+}

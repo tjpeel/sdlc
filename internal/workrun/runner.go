@@ -34,6 +34,7 @@ type Runner struct {
 	MaxRounds                    int
 	InitializeCIRepairBudget     bool
 	InitializeReviewRepairBudget int
+	ExtendSessionTurnBudget      int
 	PollInterval                 time.Duration
 	MissingCheckGrace            time.Duration
 	// Reporting hooks run while the exclusive controller lock is held.
@@ -138,6 +139,20 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	if journal.PendingInputs != nil {
 		return fmt.Errorf("input recovery is unfinished; complete it with sdlc inputs --run %s", journal.ID)
 	}
+	if runner.ExtendSessionTurnBudget != 0 {
+		if runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || answer != "" {
+			return fmt.Errorf("session-turn extension cannot be combined with other recovery actions")
+		}
+		if err := ValidateSessionTurnExtension(*journal, runner.ExtendSessionTurnBudget); err != nil {
+			return err
+		}
+		if err := verifyInputs(journal.Workspace, journal.Plan.Inputs); err != nil {
+			return err
+		}
+		if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
+			return err
+		}
+	}
 	if runner.OnStart != nil {
 		if err := runner.OnStart(*journal); err != nil {
 			return err
@@ -152,6 +167,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 	// State reporting depends on the tracker opened by OnStart. Register its
 	// cleanup before persisting initialization through the reporting save path.
+	if runner.ExtendSessionTurnBudget != 0 {
+		journal.SessionTurnExtension = &SessionTurnExtension{GrantedAt: time.Now().UTC(), GrantedAttempt: journal.Attempt, OriginalLimit: defaultNativeTurnLimit, Additional: runner.ExtendSessionTurnBudget, OriginalSessionID: journal.SessionID}
+		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+	}
 	if runner.InitializeCIRepairBudget {
 		journal.CIRepairBudget = &CIRepairBudget{StartRound: journal.Rounds}
 		if err := runner.save(directory, journal); err != nil {
@@ -289,8 +310,8 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if status != "stored" {
 				return runner.stop(directory, journal, "blocked", "selected implementer has no usable stored login")
 			}
-			if journal.Attempt >= 24 {
-				return runner.stop(directory, journal, "blocked", "implementation reached the configured session-turn bound")
+			if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+				return runner.stop(directory, journal, "blocked", implementationTurnBound)
 			}
 			if err := runner.transition(directory, journal, "implementing"); err != nil {
 				return err
@@ -430,8 +451,8 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "awaiting_reviewer", "reviewing":
-			if journal.Attempt >= 24 {
-				return runner.stop(directory, journal, "blocked", "independent review reached the configured session-turn bound")
+			if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+				return runner.stop(directory, journal, "blocked", reviewTurnBound)
 			}
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)
 			if err != nil {
@@ -551,6 +572,13 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		defer func() { resultErr = errors.Join(resultErr, recorder.Close()) }()
 	}
 
+	if journal.Attempt >= effectiveNativeTurnLimit(journal) {
+		reason := implementationTurnBound
+		if role == "review" {
+			reason = reviewTurnBound
+		}
+		return result, runner.stop(directory, journal, "blocked", reason)
+	}
 	journal.Attempt++
 	if a := journal.ReviewAssessment; role == "implementation" && a != nil && a.Pending && a.StartedAttempt == 0 {
 		a.StartedAttempt = journal.Attempt

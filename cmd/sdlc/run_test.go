@@ -627,3 +627,30 @@ func TestParseRunReviewRepairInitializationRequiresExplicitResume(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+func TestParseRunSessionTurnExtensionRequiresSingleResume(t *testing.T) {
+	for _, args := range [][]string{
+		runArgs("--extend-session-turn-budget", "1"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "0"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "25"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "-1"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "1", "--answer-file", "answer.txt"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "1", "--initialize-ci-repair-budget"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "1", "--initialize-ci-repair-budget=false"),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "1", "--answer-file="),
+		runArgs("--resume", "recorded", "--extend-session-turn-budget", "1", "--initialize-review-repair-budget", "1"),
+		{"--reference", "TASK-1", "--all", "--extend-session-turn-budget", "1"},
+	} {
+		if _, err := parseRunOptions(args); err == nil {
+			t.Fatal("invalid native extension accepted", args)
+		}
+	}
+	options, err := parseRunOptions(runArgs("--resume", "recorded", "--extend-session-turn-budget", "24", "--dry-run"))
+	if err != nil || options.extendSessionTurnBudget != 24 || !options.dryRun {
+		t.Fatal(options, err)
+	}
+	options, err = parseRunOptions(controllerArgs(runArgs("--resume", "recorded", "--extend-session-turn-budget", "1", "--terminal", "false")))
+	if err != nil || options.extendSessionTurnBudget != 1 {
+		t.Fatal("controller lost extension", err)
+	}
+}

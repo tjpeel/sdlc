@@ -667,7 +667,7 @@ identity; it does not switch accounts or signing configurations. Existing frozen
 journals retain their legacy same-name signing route.
 
 Resume accepts only `--reference`, `--ticket`, `--resume`, `--answer-file`,
-`--timeout` and `--dry-run`. Implementation turns and repairs resume the exact
+`--timeout`, `--dry-run` and the explicit recovery flags described below. Implementation turns and repairs resume the exact
 recorded native session, never the latest unrelated session. Each independent
 review starts fresh. Cancellation, timeout, invalid handoffs, missing inputs,
 usage/access limits and policy refusals retain a stopped checkpoint. Fix the
@@ -677,7 +677,7 @@ provider restrictions. Journals and native storage must remain intact for resume
 Explicitly resuming a run stopped by the repository-check repair limit begins
 another finite repair window. The controller rechecks the candidate and returns
 fresh failure metadata to the same implementation session when repair is needed.
-Cumulative repair and turn counts remain recorded, including the 24-turn ceiling.
+Cumulative repair and turn counts remain recorded. The native-turn ceiling defaults to 24; a single explicit extension is described below.
 This renewal applies only to that check-limit stop, not provider, CI or independent
 review holds.
 
@@ -1681,3 +1681,20 @@ neither reruns the completed reviewer nor resets counters, sessions or other
 budgets. The allowance is persisted before implementation and cannot be reset.
 A failed provider turn does not refund it; ordinary supported resume continues
 that same pending assessment, subject to provider holds and the native-turn cap.
+
+### Continue a run at its native-turn ceiling
+
+Use `sdlc resume --run RUN_ID --extend-session-turn-budget N`, or add the same
+flag to a single `sdlc run --reference REFERENCE --ticket TICKET --resume RUN_ID`.
+`N` must be 1–24. This permits one extension for a saved run blocked at exactly
+24 attempts by the implementation or independent-review native-turn limit.
+The resulting ceiling, at most 48 attempts, is shared by both roles.
+
+The original implementation session, cumulative attempts and phase budgets remain
+recorded. The grant is audited and persisted before native work; failed native
+calls consume attempts, and the extension cannot be repeated or reset. Resume
+without the flag continues within the granted ceiling. This does not extend the
+configured-check, CI or review repair allowances or bypass provider failures,
+human questions, changed inputs or unfinished cleanup. It cannot be combined with
+an answer file or another recovery initializer. `--dry-run` previews admission
+without granting turns.
