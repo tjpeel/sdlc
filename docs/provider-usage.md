@@ -183,6 +183,23 @@ cache, and the controller does not execute the companion repository's code.
 
 ## CI failure evidence
 
+The artifact extension was checked against GitHub's official
+[Actions artifact API](https://docs.github.com/en/rest/actions/artifacts) and
+[`gh api` documentation](https://cli.github.com/manual/gh_api) on 14 October 2026.
+The existing read-only official client retrieves artifact metadata and ZIP bytes
+through generated repository endpoints. It does not add a provider client or
+authentication route. Artifact metadata supplies the workflow/head association,
+expiry, size and SHA256 digest; the documented download endpoint redirects to a
+temporary archive URL.
+
+Only artifacts corroborated by successful upload records from the current job
+are inspected. The collector binds them to the repository, published head and
+current attempt, compares metadata before and after download, and verifies the
+archive digest. It reads bounded ZIP members in memory without extracting or
+executing them. Supported Trivy reports project neutral finding fields; secret
+matches and source snippets are excluded before ordinary masking and excerpt
+selection. Private archive bytes are discarded after collection.
+
 The trusted CI reader uses the run's selected read-only GitHub profile through
 the frozen runtime's unmodified official `gh api` client. GitHub documents
 [workflow job metadata and log downloads](https://docs.github.com/en/rest/actions/workflow-jobs),

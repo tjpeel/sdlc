@@ -183,10 +183,10 @@ func (p GitHubPublisher) collectCIFailureContext(ctx context.Context, plan Plan,
 			if run.Output.Count < 0 || run.Output.Count > 200 {
 				return nil, fmt.Errorf("CI annotation count exceeds collection bound")
 			}
-			text := run.Output.Title + "\n" + run.Output.Summary + "\n" + run.Output.Text
-			text = strings.TrimSpace(text)
+			outputText := strings.TrimSpace(run.Output.Title + "\n" + run.Output.Summary + "\n" + run.Output.Text)
+			text := ""
 			isNativeSonar := run.App.Slug == "sonarqubecloud" || run.App.Slug == "sonarcloud" || run.App.Slug == "sonarqube"
-			if !isNativeSonar {
+			{
 				for page, count := 1, 0; count < run.Output.Count; page++ {
 					var annotations []struct {
 						Path    string `json:"path"`
@@ -203,7 +203,20 @@ func (p GitHubPublisher) collectCIFailureContext(ctx context.Context, plan Plan,
 					}
 					count += len(annotations)
 					for _, a := range annotations {
-						text += fmt.Sprintf("\nAnnotation %s:%d (%s): %s\n%s", a.Path, a.Line, a.Level, a.Title, a.Message)
+						if isNativeSonar {
+							approved := false
+							for _, location := range diagnostics {
+								approved = approved || location.Head == pr.HeadSHA && location.Path == a.Path && location.Line == a.Line
+							}
+							if !approved {
+								continue
+							}
+							// Native titles carry actionable descriptions without requiring a rule ID.
+							// Never retain source snippets, raw_details or message payloads here.
+							text += fmt.Sprintf("\nAnnotation %s:%d (%s): %s", a.Path, a.Line, a.Level, a.Title)
+						} else {
+							text += fmt.Sprintf("\nAnnotation %s:%d (%s): %s\n%s", a.Path, a.Line, a.Level, a.Title, a.Message)
+						}
 						if len(text) > maxCIAPIBytes {
 							return nil, fmt.Errorf("CI selected annotation payload exceeds bound")
 						}
@@ -213,6 +226,7 @@ func (p GitHubPublisher) collectCIFailureContext(ctx context.Context, plan Plan,
 					}
 				}
 			}
+			text += "\n" + outputText
 			if run.App.ID == 15368 && run.App.Slug == "github-actions" {
 				entry, err := p.collectCIActionFailure(ctx, plan, pr, run, text)
 				if err != nil {
@@ -446,10 +460,31 @@ func (p GitHubPublisher) collectCIActionFailure(ctx context.Context, plan Plan, 
 	if err != nil {
 		return CIFailedCheck{}, err
 	}
-	excerpt, truncated := ciActionLogExcerpt(clean, job.Steps)
-	if strings.TrimSpace(excerpt) != "" {
-		text += "\nActions job log evidence:\n" + excerpt
+	reports, reportsRedacted, reportsTruncated, err := p.collectCIArtifactReports(ctx, plan.Repository, run, job, clean)
+	if err != nil {
+		return CIFailedCheck{}, err
 	}
+	selected := ""
+	if reports != "" {
+		selected = "Actions report facts:\n" + reports
+	}
+	remaining := maxCIJobExcerpt - len(selected) - len("\nActions job log evidence:\n")
+	truncated := reportsTruncated
+	if remaining > 0 {
+		excerpt, logTruncated := ciActionLogExcerpt(clean, job.Steps, remaining)
+		truncated = truncated || logTruncated
+		if strings.TrimSpace(excerpt) != "" {
+			selected += "\nActions job log evidence:\n" + excerpt
+		}
+	} else {
+		truncated = truncated || strings.TrimSpace(clean) != ""
+	}
+	selected, selectedTruncated := ciTextExcerpt(selected, maxCIJobExcerpt)
+	truncated = truncated || selectedTruncated
+	if selected != "" {
+		text += "\n" + selected
+	}
+	redacted = redacted || reportsRedacted
 	var afterRun ciActionRun
 	var afterJob ciActionJob
 	if err := p.ciAPI(ctx, fmt.Sprintf("repos/%s/actions/runs/%d", plan.Repository, runID), &afterRun); err != nil {

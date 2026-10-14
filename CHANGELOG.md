@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.63 - 2026-10-14
+
+### Fixed
+
+- Retain analyzer descriptions even when annotations omit rule IDs, and collect verified current-job Trivy reports so CI repairs receive vulnerability IDs, affected packages and fixed versions. Exclude secret matches and source snippets, preserve feedback limits, and prioritise findings over repeated log output.
+- Recover a corroborated saved CI repair that asks for fuller controller evidence through ordinary resume, reusing its original session and repair grant.
+
+### Changed
+
+- Clarify that context and token efficiency must preserve enough detail for diagnosis and repair, with focused diagnostics available when the first feedback packet is insufficient.
+
 ## 0.1.0-beta.62 - 2026-10-14
 
 ### Fixed

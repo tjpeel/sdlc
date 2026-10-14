@@ -532,3 +532,17 @@ func TestCIFeedbackPendingRecoveryAndDispatchFence(t *testing.T) {
 		t.Fatal("interrupted context was dispatched twice", err)
 	}
 }
+
+func TestCIFeedbackAdmitsFullerControllerEvidenceForPersistedCIRepair(t *testing.T) {
+	_, j, _, _, _ := ciFeedbackRun(t)
+	j.Outcome.Summary = "Inspected the reported locations; source remains unchanged. CI repair requires fuller controller evidence before implementation can continue."
+	j.Outcome.Limitations = []string{"Generic analyzer findings lack rule IDs and descriptions.", "The Trivy excerpt omits actual vulnerability findings.", "Coverage report is missing; uncovered lines are unknown.", "The public analyzer endpoint was inaccessible through the available tool."}
+	j.StopReason = j.Outcome.Summary
+	if err := validateCIFeedbackEligibility(*j, ""); err != nil {
+		t.Fatal("corroborated fuller-evidence block refused", err)
+	}
+	j.Outcome.Limitations = append(j.Outcome.Limitations, "Provider access denied.")
+	if err := validateCIFeedbackEligibility(*j, ""); err == nil {
+		t.Fatal("provider hold admitted")
+	}
+}

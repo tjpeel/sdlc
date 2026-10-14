@@ -102,6 +102,7 @@ func ciRepairFeedback(result CIResult, head string) string {
 }
 
 var actionsJobLogEndpoint = regexp.MustCompile(`^repos/([^/]+/[^/]+)/actions/jobs/([1-9][0-9]*)/logs$`)
+var actionsArtifactEndpoint = regexp.MustCompile(`^repos/([^/]+/[^/]+)/actions/artifacts/([1-9][0-9]*)/zip$`)
 
 // Only the fixed controller-generated official-client job-log request can use
 // the larger raw intake. All metadata and other argv retain their old bound.
@@ -110,6 +111,11 @@ func ciCommandOutputLimit(name string, args []string) int {
 		return maxCIAPIBytes
 	}
 	match := actionsJobLogEndpoint.FindStringSubmatch(args[4])
+	limit := maxActionsJobLogBytes
+	if len(match) == 0 {
+		match = actionsArtifactEndpoint.FindStringSubmatch(args[4])
+		limit = maxCIArtifactZIPBytes
+	}
 	if len(match) != 3 || !githubRepository.MatchString(match[1]) {
 		return maxCIAPIBytes
 	}
@@ -117,7 +123,7 @@ func ciCommandOutputLimit(name string, args []string) int {
 	if err != nil || job <= 0 {
 		return maxCIAPIBytes
 	}
-	return maxActionsJobLogBytes
+	return limit
 }
 
 type ciResponseSizeError struct{ Limit int }

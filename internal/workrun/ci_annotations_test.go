@@ -197,7 +197,7 @@ func annotationPublication() Publication {
 
 func TestGitHubCIAnnotationsExactHeadAndSafeFeedback(t *testing.T) {
 	f := newCIAnnotationFixture()
-	result, err := (GitHubPublisher{Command: f.command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+	result, err := (GitHubPublisher{Command: f.command, CIPrivateValues: []string{"private literal"}}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
 	if err != nil || result.Status != "failed" || len(result.Diagnostics) != 2 {
 		t.Fatalf("missing annotations: %+v %v", result, err)
 	}
@@ -378,8 +378,15 @@ func TestCIOutputLimitOnlyAllowsExactVerifiedJobLogArgv(t *testing.T) {
 	if ciCommandOutputLimit("gh", valid) != maxActionsJobLogBytes {
 		t.Fatal("generated log request did not select log intake")
 	}
+	artifact := []string{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/artifacts/123/zip"}
+	if ciCommandOutputLimit("gh", artifact) != maxCIArtifactZIPBytes {
+		t.Fatal("exact artifact ZIP argv did not select binary intake")
+	}
 	for _, args := range [][]string{
 		{"api", "repos/example/project/actions/jobs/99/logs"},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/artifacts/0123/zip"},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/artifacts/123"},
+		append(append([]string(nil), artifact...), "--method", "POST"),
 		{"api", "--hostname", "other.invalid", "--allow-escape-sequences", valid[4]},
 		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/0/logs"},
 		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/099/logs"},

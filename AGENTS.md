@@ -21,6 +21,11 @@ successful output or obsolete diagnostics in every repair prompt. Use small
 read-only observers for status checks and reserve deeper reasoning for diagnosis,
 implementation and review.
 
+Efficiency must preserve enough detail to diagnose and repair a failure. Include
+actionable descriptions, source locations and observed causes when available;
+allow focused follow-up diagnostics when the initial evidence is insufficient.
+Reduce repetition and irrelevant output rather than withholding useful evidence.
+
 Measure native token use, cached input, observed context and compactions alongside
 time, repair rounds and the delivered outcome. Report missing measurements as
 unknown; cumulative token totals do not establish current context occupancy.

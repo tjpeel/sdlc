@@ -858,6 +858,14 @@ bounded log excerpts. Native Sonar rule, severity and committed-location finding
 remain included. Pending checks keep waiting; collection failures retain an
 operational hold before any repair grant.
 
+Analyzer annotations retain their descriptions even when no rule ID is supplied.
+For verified current-job uploads, supported Trivy JSON reports add vulnerability
+IDs, affected packages, installed and fixed versions, severity and secret-finding
+locations. Secret matches and report source snippets are never forwarded. ZIP
+archives are inspected in memory within intake limits and verified against their
+metadata digest; unrelated oversized artifacts are omitted with an explicit
+unknown-contents notice. Agent-feedback limits remain unchanged.
+
 An older saved implementation may have stopped for missing CI evidence without
 recording a question. Ordinary resume refreshes the failed revision and sends
 collected context to its original session, reusing the existing CI grant:

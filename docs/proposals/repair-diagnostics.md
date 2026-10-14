@@ -80,6 +80,12 @@ evidence needed for the next decision. Refer to retained evidence by its identit
 instead of repeating successful output or obsolete diagnostic bodies. Group
 related failures so the implementer can repair them in one coherent pass.
 
+Compact feedback must still support diagnosis and repair. Preserve finding
+descriptions, affected locations and observed causes where available, and let
+the implementer request focused diagnostics during the same repair. Token
+efficiency comes from removing repetition and irrelevant output, not from
+withholding the detail needed to work.
+
 Use [native usage measurements](../usage-metrics.md) to assess input, cached input,
 output, observed context and compactions alongside elapsed time, repair rounds
 and the final outcome. Missing observations remain unknown. Subscription

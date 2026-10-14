@@ -195,7 +195,7 @@ func missingCIContextBlock(reason string) bool {
 		}
 		return false
 	}
-	return (ciContextBoundary.MatchString(reason) || contains("continuous integration", "failed check", "failing check", "workflow", "pipeline")) && contains("failed", "failing", "failure") && contains("context", "log", "detail", "evidence", "information", "failed step", "failing step") && contains("need", "missing", "lack", "unavailable", "cannot access", "can't access", "not available", "not provided", "supplies no", "must provide")
+	return (ciContextBoundary.MatchString(reason) || contains("continuous integration", "failed check", "failing check", "workflow", "pipeline")) && (contains("failed", "failing", "failure") || contains("ci repair") && contains("controller evidence")) && contains("context", "log", "detail", "evidence", "information", "failed step", "failing step") && contains("need", "missing", "lack", "unavailable", "cannot access", "can't access", "not available", "not provided", "supplies no", "must provide")
 }
 
 func ciFeedbackRecoveryConflicts(j Journal) error {
