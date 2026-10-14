@@ -339,3 +339,82 @@ access or the captured private test inputs. See [interactive sessions](cli.md#in
   and complete its normal gates. Include negative cases for a changed candidate
   or environment, forged proof, concurrent resume and failed teardown. Measure
   whether valid managed evidence avoids repeating expensive checks unnecessarily.
+
+## F006: Reuse unaffected checks and focus review after grading updates
+
+Added: 2026-10-14. Status: deferred; feasibility reviewed, classification and
+evidence contracts not implemented.
+
+Small follow-up edits can repeat the full local suite and review even when most
+checked inputs remain unchanged. Grade the actual change and identify which
+obligations need fresh evidence, while keeping enough detail for the agent to
+diagnose and repair failures. This extends the evidence reuse discussed in F005.
+
+### Current boundary
+
+PR metadata corrections already reuse checks when source and execution inputs
+remain unchanged; see [the metadata regression](../internal/workrun/pr_metadata_test.go).
+Changed source needs a separate contract. Current
+[verification keys](../internal/workrun/verification.go) bind the complete
+candidate, commands, runtime and private inputs. An old passing key must not be
+relabelled as evidence that a different tree was tested.
+
+The [repair workflow](proposals/repair-diagnostics.md) already permits focused
+diagnostics and removes a mandatory delegated local review. Grading should reduce
+proven redundant work, without adding another review cycle or an agent risk score.
+
+### Proposed workflow
+
+- Derive classes from the controller's verified diff: PR metadata, approved prose,
+  source comments and directives, formatting, local code, runtime or dependency
+  changes, and safety-sensitive changes. The agent's description of an edit does
+  not authorise reuse. Unknown or mixed changes use full validation.
+- Begin with shadow plans alongside the existing full plan. Activate reuse in
+  newly planned runs only after the policy is validated. Preserve frozen plans
+  and retained verification requests in existing jobs.
+- Declare controller-owned input scopes for each reusable check, including
+  dependencies, generators, discovery inputs, Git history where relevant, tool
+  versions, effective commands, private inputs and execution context. Arbitrary
+  commands without complete scopes retain whole-candidate scope.
+- Start active reuse with metadata and explicitly approved prose paths outside
+  every affected check's input scope. README and CONTRIBUTING can drive check
+  discovery, so a documentation filename alone is insufficient.
+- Add comments, formatting and local code only when language and tool contracts
+  establish their effects. A Sonar suppression changes analysis behavior; build
+  tags, encoding declarations and generator directives can change execution.
+  Require fresh relevant lint or security analysis. Reuse runtime test evidence
+  only when its declared inputs are proven unaffected.
+- Produce evidence for the new candidate that identifies freshly executed
+  obligations and the original passing evidence reused for each unaffected
+  obligation. Include scope fingerprints, policy version and successful cleanup.
+  Preserve original evidence and explain each decision to the implementer.
+- Focus repeated local self-review on the exact intervening diff only after a
+  recorded full-review boundary and unresolved finding bindings exist. A boolean
+  local-review marker is insufficient. Keep the required opposite-provider
+  review and CI on the current published revision unchanged initially.
+
+### Recovery and acceptance criteria
+
+- Shadow plans agree with full-run outcomes for representative metadata, prose,
+  comment, directive, formatter, code, dependency and configuration changes.
+  Unsupported cases fall back to the full plan without introducing a new hold.
+- An approved prose change reuses only unaffected checks. Suppressions, build
+  tags, generators, workflows, tool pins and discovery inputs invalidate their
+  consumers. Prove that a small security-related edit cannot escape its analysis.
+- Dirty source, changed execution or private inputs, renames, file modes,
+  symlinks, stale findings and failed cleanup cannot receive unjustified reuse.
+  Revalidate the exact new candidate before publication.
+- Legacy required verification remains required. Baseline regressions retain
+  original blobs, candidate commands, expected exit status and literal failure
+  markers; changed relevant inputs require both phases again.
+- Preserve original sessions, accounts, models, cumulative usage and budgets,
+  signing, protected publication, current CI and independent review. Do not carry
+  old review approval across changed code without a fresh assessment.
+- Measure checks executed, elapsed time, repair and review turns, native tokens,
+  cached input, observed context and compactions. Account for child sessions or
+  mark their coverage unknown. Compact evidence must retain actionable findings
+  and allow focused follow-up diagnostics.
+
+Early savings will be limited where command scopes are unknown. The initial goal
+is an auditable reduction in redundant work, followed by broader reuse where the
+dependency and evidence contracts support it.
