@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 type Command func(context.Context, string, ...string) ([]byte, error)
@@ -52,6 +53,7 @@ func localCommand(ctx context.Context, name string, args ...string) ([]byte, err
 // GitHubPublisher receives an exported bundle, never the worker's .git config.
 // Its repository and signing/publication credentials are not worker mounts.
 type GitHubPublisher struct {
+	CIPrivateValues                    []string
 	Command                            Command
 	Frozen                             *PublicationIdentity
 	ExpectedHead, ExpectedTree         string
@@ -602,13 +604,8 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, fmt.Errorf("required CI checks could not be read")
 		}
 	}
-	var checks []struct {
-		Name   string `json:"name"`
-		Bucket string `json:"bucket"`
-		State  string `json:"state"`
-		Link   string `json:"link"`
-	}
-	if len(data) > maxCIAPIBytes || json.Unmarshal(data, &checks) != nil || checks == nil || len(checks) > 200 {
+	var checks []ciRequestedCheck
+	if len(data) > maxCIAPIBytes || !utf8.Valid(data) || json.Unmarshal(data, &checks) != nil || checks == nil || len(checks) > 200 {
 		return CIResult{}, fmt.Errorf("required CI checks could not be read")
 	}
 	result := CIResult{Status: "passed"}
@@ -639,6 +636,12 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	if len(sonarNames) > 0 {
 		result.Diagnostics, err = publisher.collectCIAnnotations(ctx, plan, pr, sonarNames)
+		if err != nil {
+			return CIResult{}, err
+		}
+	}
+	if result.Status == "failed" {
+		result.FailureContext, err = publisher.collectCIFailureContext(ctx, plan, pr, checks, result.Diagnostics)
 		if err != nil {
 			return CIResult{}, err
 		}

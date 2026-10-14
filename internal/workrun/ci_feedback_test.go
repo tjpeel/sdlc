@@ -30,6 +30,215 @@ func TestCIFeedbackAdmitsMissingFailureEvidenceWithoutDiagnosticParser(t *testin
 	}
 }
 
+func TestOrdinaryResumeAutomaticallyRefreshesCIContextInOriginalSession(t *testing.T) {
+	dir, j, r, p, pub := ciFeedbackRun(t)
+	r.CIFeedback = ""
+	j.CIRepairBudget.Used = 3
+	j.Rounds = 27
+	if err := Save(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	failureContext := &CIFailureContext{Head: testHead, Checks: []CIFailedCheck{{Kind: "check", Name: "offline unit suite", CheckID: 41, AppID: 90, AppSlug: "example-checks", Conclusion: "failure", Text: "UnknownProbeFailure: expected one item at src/Example.cs:42."}}}
+	pub.ciResults = []CIResult{{Status: "failed", FailureContext: failureContext}}
+	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	if len(p.calls) != 1 || p.calls[0].ResumeID != testNative || !strings.Contains(p.calls[0].Prompt, "UnknownProbeFailure") || strings.Count(p.calls[0].Prompt, "UnknownProbeFailure") != 1 || j.CIRepairBudget.Used != 3 || j.CIRepairBudget.StartRound != 24 || j.CIRepairBudget.LastGrantedHead != testHead || j.Rounds != 27 || j.Attempt != 13 || len(j.CIFeedbackRecoveries) != 1 || !j.CIFeedbackRecoveries[0].Automatic || !j.CIFeedbackRecoveries[0].Completed {
+		t.Fatal("ordinary resume changed grant or did not dispatch private evidence once")
+	}
+	beforeCI := pub.ci
+	if err := r.Run(context.Background(), dir, j, ""); err == nil || len(p.calls) != 1 || pub.ci != beforeCI {
+		t.Fatal("same failed head automatically dispatched context twice", err)
+	}
+	if strings.Contains(r.prompt(*j, "review"), "UnknownProbeFailure") {
+		t.Fatal("private CI context reached independent review")
+	}
+}
+
+func TestOrdinaryResumeHoldsUnavailableOrChangedAutomaticCIContext(t *testing.T) {
+	for _, kind := range []string{"none", "empty", "transport", "stale head", "context changed", "attempt changed"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, j, r, p, pub := ciFeedbackRun(t)
+			r.CIFeedback = ""
+			ctx := &CIFailureContext{Head: testHead, Checks: []CIFailedCheck{{Kind: "check", Name: "offline suite", CheckID: 41, AppID: 90, AppSlug: "example-checks", Conclusion: "failure", Text: "UnknownProbeFailure evidence."}}}
+			pub.ciResults = []CIResult{{Status: "failed", FailureContext: ctx}}
+			if kind == "attempt changed" {
+				ctx.Checks[0].Kind = "actions"
+				ctx.Checks[0].AppID = 15368
+				ctx.Checks[0].AppSlug = "github-actions"
+				ctx.Checks[0].RunID = 88
+				ctx.Checks[0].RunAttempt = 2
+				ctx.Checks[0].JobID = 99
+				ctx.Checks[0].RepositoryID = 7
+			}
+			switch kind {
+			case "none":
+				pub.ciResults[0].FailureContext = nil
+			case "empty":
+				ctx.Checks[0].Text = ""
+			case "transport":
+				pub.ciErr = errors.New("offline API unavailable")
+			case "stale head":
+				ctx.Head = testBase
+			case "context changed":
+				if err := r.prepareCIFeedback(context.Background(), dir, j); err != nil {
+					t.Fatal(err)
+				}
+				ctx.Checks[0].Text = "UnknownProbeFailure changed evidence."
+			case "attempt changed":
+				if err := r.prepareCIFeedback(context.Background(), dir, j); err != nil {
+					t.Fatal(err)
+				}
+				ctx.Checks[0].RunAttempt = 3
+			}
+			if err := r.Run(context.Background(), dir, j, ""); err == nil || len(p.calls) != 0 || j.CIRepairBudget.Used != 2 || j.Attempt != 12 || j.Rounds != 26 {
+				t.Fatal("unknown or changed automatic CI context dispatched", err)
+			}
+		})
+	}
+}
+
+func TestCIFeedbackLimitationsEvidenceSurvivesPrepareSaveLoadAndDispatch(t *testing.T) {
+	dir, j, r, p, _ := ciFeedbackRun(t)
+	j.Outcome.Summary = "Published CI failed without diagnostic details."
+	j.Outcome.Limitations = []string{"Missing failure context."}
+	j.StopReason = j.Outcome.Summary
+	p.outcomes = []Outcome{j.Outcome}
+	if err := ValidateCIFeedbackResume(*j, supplementalContext); err != nil {
+		t.Fatal("combined native evidence was not admitted", err)
+	}
+	if err := Save(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.prepareCIFeedback(context.Background(), dir, j); err != nil {
+		t.Fatal("admitted native evidence could not be persisted", err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CIFeedback = ""
+	if err := r.Run(context.Background(), dir, &loaded, ""); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	if len(p.calls) != 1 || p.calls[0].ResumeID != testNative || !strings.Contains(p.calls[0].Prompt, "ExampleOptions.RequiredValue") || !loaded.CIFeedbackRecoveries[0].Completed || loaded.CIFeedbackRecoveries[0].DispatchAttempt != 13 || loaded.CIFeedbackRecoveries[0].Text != "" || loaded.CIRepairBudget.Used != 2 || loaded.Rounds != 26 {
+		t.Fatal("combined evidence did not reach original session without a new grant")
+	}
+}
+
+func TestCIFeedbackFrozenLimitationsRefuseDriftAndOtherHolds(t *testing.T) {
+	for _, kind := range []string{"changed eligible context", "removed context", "auth", "access", "requirements"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, j, r, p, pub := ciFeedbackRun(t)
+			j.Outcome.Limitations = []string{"Missing failure context."}
+			if err := r.prepareCIFeedback(context.Background(), dir, j); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "changed eligible context":
+				j.Outcome.Limitations[0] = "Missing failure details for a different check."
+			case "removed context":
+				j.Outcome.Limitations = nil
+			case "auth":
+				j.Outcome.Limitations[0] = "Authentication requires attention."
+			case "access":
+				j.Outcome.Limitations[0] = "Access denied to CI evidence."
+			case "requirements":
+				j.Outcome.Limitations[0] = "Product requirements are missing."
+			}
+			if j.CIFeedbackRecoveries[0].BlockEvidence.Limitations[0] != "Missing failure context." {
+				t.Fatal("audit evidence aliases mutable native limitations")
+			}
+			if err := ValidateCIFeedbackResume(*j, supplementalContext); err == nil {
+				t.Fatal("changed limitation admitted")
+			}
+			beforeCI := pub.ci
+			if err := r.Run(context.Background(), dir, j, ""); err == nil || len(p.calls) != 0 || pub.ci != beforeCI {
+				t.Fatal("changed limitation reached repair stage", err)
+			}
+			if err := Save(dir, j); err == nil {
+				t.Fatal("changed native evidence persisted against frozen pending audit")
+			}
+			loaded, err := Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.CIFeedbackRecoveries[0].BlockEvidence.Limitations[0] != "Missing failure context." || loaded.Attempt != 12 || loaded.CIRepairBudget.Used != 2 {
+				t.Fatal("denied drift altered saved grant")
+			}
+			if kind == "auth" || kind == "access" || kind == "requirements" {
+				// The same hold must refuse a fresh admission without an audit too.
+				j.CIFeedbackRecoveries = nil
+				j.State, j.ResumeState, j.StopReason = "blocked", "implementing", j.Outcome.Summary
+				if err := ValidateCIFeedbackResume(*j, supplementalContext); err == nil {
+					t.Fatal("other hold in limitations granted fresh recovery")
+				}
+			}
+		})
+	}
+}
+
+func TestCIFeedbackLimitationsDriftDuringStatusCannotDispatch(t *testing.T) {
+	dir, j, r, p, _ := ciFeedbackRun(t)
+	j.Outcome.Limitations = []string{"Missing failure context."}
+	r.Provider = ciFeedbackStatusMutation{p, func() { j.Outcome.Limitations[0] = "Missing failure details for a different check." }}
+	if err := r.Run(context.Background(), dir, j, ""); err == nil || len(p.calls) != 0 {
+		t.Fatal("native evidence drift during status dispatched context", err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CIFeedbackRecoveries[0].DispatchAttempt != 0 || loaded.CIFeedbackRecoveries[0].BlockEvidence.Limitations[0] != "Missing failure context." || loaded.CIRepairBudget.Used != 2 {
+		t.Fatal("dispatch fence accepted changed blocked evidence")
+	}
+}
+
+func TestCIFeedbackBeta55AuditCompatibility(t *testing.T) {
+	for _, kind := range []string{"pending", "completed", "dispatched"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, j, r, p, _ := ciFeedbackRun(t)
+			j.Outcome.Limitations = []string{"Missing failure context."}
+			if err := r.prepareCIFeedback(context.Background(), dir, j); err != nil {
+				t.Fatal(err)
+			}
+			f := &j.CIFeedbackRecoveries[0]
+			f.BlockEvidence = nil // beta55 persisted only BlockSummary.
+			if kind != "pending" {
+				j.Attempt++
+				f.DispatchAttempt = j.Attempt
+				f.Text = ""
+				f.Completed = kind == "completed"
+			}
+			if err := Save(dir, j); err != nil {
+				t.Fatal("beta55 audit cannot save", err)
+			}
+			loaded, err := Load(dir)
+			if err != nil || loaded.CIFeedbackRecoveries[0].BlockEvidence != nil {
+				t.Fatal("legacy audit changed during load", err)
+			}
+			r.CIFeedback = ""
+			if kind == "pending" {
+				p.outcomes = []Outcome{loaded.Outcome}
+				if err := r.Run(context.Background(), dir, &loaded, ""); !errors.Is(err, ErrStopped) || len(p.calls) != 1 || !loaded.CIFeedbackRecoveries[0].Completed || loaded.CIFeedbackRecoveries[0].BlockEvidence == nil || loaded.CIRepairBudget.Used != 2 {
+					t.Fatal("eligible beta55 pending audit could not resume once", err)
+				}
+			} else {
+				if err := ValidateCIFeedbackResume(loaded, supplementalContext); err == nil || len(p.calls) != 0 {
+					t.Fatal("legacy completed/interrupted context admitted again")
+				}
+				if err := Save(dir, &loaded); err != nil {
+					t.Fatal(err)
+				}
+				retained, err := Load(dir)
+				if err != nil || retained.CIFeedbackRecoveries[0].BlockEvidence != nil || retained.CIFeedbackRecoveries[0].SHA256 != f.SHA256 || retained.CIFeedbackRecoveries[0].DispatchAttempt != f.DispatchAttempt {
+					t.Fatal("legacy history was rewritten", err)
+				}
+			}
+		})
+	}
+}
+
 func TestCIFeedbackRetainsCompletedEmptySourceArtifacts(t *testing.T) {
 	for _, location := range []string{"verification", "formatter preparation"} {
 		for _, kind := range []string{"completed", "pending key", "wrong key", "failed", "nonempty diff", "wrong head", "wrong tree", "digest", "size"} {

@@ -198,6 +198,8 @@ func (r *Registry) List(now time.Time) ([]View, error) {
 }
 
 func project(j workrun.Journal, directory string) View {
+	publicCI := j.CI
+	publicCI.FailureContext = nil
 	role, model := currentModel(j)
 	started := j.StartedAt
 	if started.IsZero() {
@@ -206,7 +208,7 @@ func project(j workrun.Journal, directory string) View {
 	return View{ID: j.ID, Root: j.Plan.Root, Reference: j.Plan.Reference, Ticket: j.Plan.Ticket, Directory: directory, State: j.State,
 		Role: role, Provider: model.Provider, Model: model.Name, Effort: model.Effort, StartedAt: started, UpdatedAt: j.UpdatedAt,
 		Available: true, NeedsAttention: j.State == "ready" || j.State == "waiting_for_human" || j.State == "blocked" || j.State == "failed" || j.StopReason != "",
-		StopReason: j.StopReason, Questions: j.Outcome.Questions, Findings: j.Outcome.Findings, CI: j.CI, PR: j.Publication, Journal: &j}
+		StopReason: j.StopReason, Questions: j.Outcome.Questions, Findings: j.Outcome.Findings, CI: publicCI, PR: j.Publication, Journal: &j}
 }
 
 func terminal(state string) bool {

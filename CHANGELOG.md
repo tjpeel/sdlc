@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.56 - 2026-10-14
+
+### Added
+
+- Return exact-revision CI check output, annotations and failed GitHub Actions job context automatically to the original implementer. Keep native Sonar findings alongside generic failure evidence so the agent can assess unfamiliar errors.
+- Resume an eligible saved missing-CI-context stop with ordinary `sdlc resume`, reusing its existing repair grant and original session. Mask collected credentials and hash-verified check-input values before retaining bounded private excerpts; keep collection, identity, cleanup and transport failures as operational holds.
+
+### Fixed
+
+- Preserve the same blocked summary and limitations in CI recovery admission, audit validation and dispatch. A missing-context reason supplied only in limitations no longer passes preview and then fails before the worker starts.
+
 ## 0.1.0-beta.55 - 2026-10-13
 
 ### Added

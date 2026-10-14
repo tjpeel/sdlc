@@ -782,10 +782,14 @@ func (d *seriesDriver) publicationPlan() workrun.Plan {
 	return workrun.Plan{Root: d.plan.Root, Reference: d.plan.Reference, Repository: d.settings.Repository, GitHubProfile: d.settings.GitHubProfile, SigningProfile: d.settings.SigningProfile, PublicationIdentity: d.settings.Identity}
 }
 
-func (d *seriesDriver) publisher(plan workrun.Plan) workrun.DockerPublisher {
+func (d *seriesDriver) publisher(plan workrun.Plan, inputDirectory ...string) workrun.DockerPublisher {
 	manager := githubauth.New(d.runtime)
 	manager.Profile = d.settings.GitHubProfile
-	return workrun.DockerPublisher{Runtime: d.runtime, ImageID: d.settings.ImageID, Auth: manager, ValidatePair: func() error { _, err := runSigningProfile(d.runtime, plan); return err }}
+	checkInputs := ""
+	if len(inputDirectory) != 0 {
+		checkInputs = inputDirectory[0]
+	}
+	return workrun.DockerPublisher{Runtime: d.runtime, ImageID: d.settings.ImageID, Auth: manager, CheckInputDirectory: checkInputs, ValidatePair: func() error { _, err := runSigningProfile(d.runtime, plan); return err }}
 }
 
 func (d *seriesDriver) Base(ctx context.Context, branch string) (workseries.Target, error) {
@@ -1001,7 +1005,6 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 func (d *seriesDriver) Observe(ctx context.Context, result workseries.Result) (workseries.Observation, error) {
 	ticket := filepath.Base(filepath.Dir(result.Directory)) + ".md"
 	directory, journal, err := d.loadRun(ticket, result)
-	_ = directory
 	if err != nil {
 		return workseries.Observation{}, err
 	}
@@ -1011,7 +1014,7 @@ func (d *seriesDriver) Observe(ctx context.Context, result workseries.Result) (w
 	remote, err := d.publisher(journal.Plan).Observe(ctx, journal.Plan, journal.Publication)
 	observation := workseries.Observation{State: remote.State, Base: remote.Base, BaseSHA: remote.BaseSHA, HeadSHA: remote.HeadSHA, MergeSHA: remote.MergeSHA}
 	if err == nil && remote.State == "OPEN" && remote.Base == journal.Plan.Base && remote.BaseSHA == journal.Publication.BaseSHA && remote.HeadSHA == journal.Publication.HeadSHA {
-		checks, checkErr := d.publisher(journal.Plan).Checks(ctx, journal.Plan, journal.Publication)
+		checks, checkErr := d.publisher(journal.Plan, filepath.Join(directory, "check-inputs")).Checks(ctx, journal.Plan, journal.Publication)
 		observation.CI, observation.Details = checks.Status, checks.Details
 		if checkErr != nil {
 			observation.CI, observation.Details = "unverified", "current published CI could not be verified"

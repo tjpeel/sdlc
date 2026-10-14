@@ -464,7 +464,7 @@ func TestDockerPublisherCurrentCollectorWorksWithFrozenLegacyImage(t *testing.T)
 				}
 				return
 			}
-			if err != nil || result.Status != "failed" || len(result.Diagnostics) != 2 || runner.calls < 8 || publisher.ImageID != docker.image || result.Diagnostics[0].Kind != "cognitive_complexity" {
+			if err != nil || result.Status != "failed" || len(result.Diagnostics) != 2 || result.FailureContext == nil || runner.calls < 8 || publisher.ImageID != docker.image || result.Diagnostics[0].Kind != "cognitive_complexity" {
 				t.Fatalf("legacy runtime did not execute current controller collector: %+v %v calls%d", result, err, runner.calls)
 			}
 		})

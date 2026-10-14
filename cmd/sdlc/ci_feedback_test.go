@@ -8,10 +8,25 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tjpeel/sdlc/internal/filelock"
+	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
+
+func TestDashboardJSONOmitsAutomaticPrivateCIFailureEvidence(t *testing.T) {
+	private := &workrun.CIFailureContext{Head: strings.Repeat("b", 40), Checks: []workrun.CIFailedCheck{{Kind: "check", Name: "offline suite", CheckID: 41, AppID: 90, AppSlug: "example-checks", Conclusion: "failure", Text: "private-ci-failure-sentinel"}}}
+	j := workrun.Journal{CI: workrun.CIResult{Status: "failed", FailureContext: private}}
+	v := runstatus.View{ID: strings.Repeat("a", 24), Available: true, State: "blocked", CI: j.CI, Journal: &j}
+	var out bytes.Buffer
+	if err := writeDashboardJSON(&out, []runstatus.View{v}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "private-ci-failure-sentinel") || strings.Contains(out.String(), "failure_context") || !strings.Contains(out.String(), "ci_status") {
+		t.Fatal("dashboard JSON forwarded private CI evidence")
+	}
+}
 
 func TestRunCIFeedbackRequiresSingleUncombinedResume(t *testing.T) {
 	for _, args := range [][]string{runArgs("--ci-feedback-file", "context.txt"), runArgs("--resume", "abc", "--ci-feedback-file", ""), runArgs("--resume", "abc", "--ci-feedback-file", "context.txt", "--answer-file", "answer.txt"), runArgs("--resume", "abc", "--ci-feedback-file", "context.txt", "--pr-feedback"), runArgs("--resume", "abc", "--ci-feedback-file", "context.txt", "--override-run-limits"), runArgs("--resume", "abc", "--ci-feedback-file", "context.txt", "--initialize-ci-repair-budget"), runArgs("--resume", "abc", "--ci-feedback-file", "context.txt", "--initialize-review-repair-budget", "1"), runArgs("--resume", "abc", "--ci-feedback-file", "context.txt", "--extend-session-turn-budget", "1")} {

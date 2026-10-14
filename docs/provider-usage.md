@@ -170,6 +170,30 @@ recovering interrupted staging. The provider receives a read-only
 source mount and its revision in the private workspace. It receives no GitHub
 cache, and the controller does not execute the companion repository's code.
 
+## CI failure evidence
+
+The trusted CI reader uses the run's selected read-only GitHub profile through
+the frozen runtime's unmodified official `gh api` client. GitHub documents
+[workflow job metadata and log downloads](https://docs.github.com/en/rest/actions/workflow-jobs),
+including the repository read permissions and temporary log-download redirect.
+SDLC verifies the repository, published head, check identity, Actions run attempt
+and job association before collecting a failed job. It fetches only verified
+GitHub API resources; diagnostic URLs do not authorise external requests.
+
+The reader mounts no provider cache, signing key, worker checkout or Docker
+socket. The host collector masks recognised credentials and values from
+hash-verified retained check-only inputs before retaining bounded excerpts.
+It never sends the masking dictionary or credential-cache contents to Docker
+or the implementation provider. Collection, identity, decoding, size and cleanup
+failures retain an operational hold before granting a repair.
+
+Sanitised CI text remains untrusted private project data. Masking cannot prove
+that arbitrary logs contain no unknown secret formats. Only the original
+implementation session receives failure context; independent review and
+portable status exports omit it. Ordinary recovery of an eligible saved
+missing-context stop reuses the existing CI grant and original session rather
+than resetting accounting or changing the account route.
+
 ## Opt-in local proxy
 
 Ticket and feature runs can explicitly select the [Headroom variant](headroom.md).

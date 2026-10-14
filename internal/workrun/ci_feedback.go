@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,17 +18,48 @@ import (
 // CIFeedbackRecovery supplements an existing CI repair grant. It never grants
 // another repair round. Text is private untrusted data, removed at dispatch.
 type CIFeedbackRecovery struct {
-	SHA256          string      `json:"sha256"`
-	Text            string      `json:"text,omitempty"`
-	Candidate       Revision    `json:"candidate"`
-	Publication     Publication `json:"publication"`
-	SessionID       string      `json:"session_id"`
-	GrantedAttempt  int         `json:"granted_attempt"`
-	GrantedRounds   int         `json:"granted_rounds"`
-	GrantedAt       time.Time   `json:"granted_at"`
-	BlockSummary    string      `json:"block_summary"`
-	DispatchAttempt int         `json:"dispatch_attempt,omitempty"`
-	Completed       bool        `json:"completed,omitempty"`
+	SHA256          string                   `json:"sha256"`
+	Text            string                   `json:"text,omitempty"`
+	Candidate       Revision                 `json:"candidate"`
+	Publication     Publication              `json:"publication"`
+	SessionID       string                   `json:"session_id"`
+	GrantedAttempt  int                      `json:"granted_attempt"`
+	GrantedRounds   int                      `json:"granted_rounds"`
+	GrantedAt       time.Time                `json:"granted_at"`
+	BlockSummary    string                   `json:"block_summary"`
+	BlockEvidence   *CIFeedbackBlockEvidence `json:"block_evidence,omitempty"`
+	Automatic       bool                     `json:"automatic,omitempty"`
+	DispatchAttempt int                      `json:"dispatch_attempt,omitempty"`
+	Completed       bool                     `json:"completed,omitempty"`
+}
+
+// BlockEvidence is optional only for beta55 audit compatibility. New grants
+// freeze every native field used to establish the missing-CI-context reason.
+type CIFeedbackBlockEvidence struct {
+	Summary     string   `json:"summary"`
+	Limitations []string `json:"limitations"`
+}
+
+func ciFeedbackBlockReason(summary string, limitations []string) string {
+	return summary + "\n" + strings.Join(limitations, "\n")
+}
+
+func captureCIFeedbackBlock(outcome Outcome) *CIFeedbackBlockEvidence {
+	return &CIFeedbackBlockEvidence{Summary: outcome.Summary, Limitations: slices.Clone(outcome.Limitations)}
+}
+
+func (f CIFeedbackRecovery) blockReason() string {
+	if f.BlockEvidence != nil {
+		return ciFeedbackBlockReason(f.BlockEvidence.Summary, f.BlockEvidence.Limitations)
+	}
+	return f.BlockSummary
+}
+
+func validateCIFeedbackBlockBinding(j *Journal, f CIFeedbackRecovery) error {
+	if j.Outcome.Status != "blocked" || j.Outcome.Summary != f.BlockSummary || !missingCIContextBlock(ciFeedbackBlockReason(j.Outcome.Summary, j.Outcome.Limitations)) || f.BlockEvidence != nil && (j.Outcome.Summary != f.BlockEvidence.Summary || !slices.Equal(j.Outcome.Limitations, f.BlockEvidence.Limitations)) {
+		return fmt.Errorf("native CI context block changed before dispatch")
+	}
+	return nil
 }
 
 func feedbackHash(text string) string {
@@ -58,8 +91,13 @@ func validateCIFeedbackJournal(j *Journal) error {
 	}
 	heads, hashes := map[string]bool{}, map[string]bool{}
 	for i, f := range j.CIFeedbackRecoveries {
-		if !missingCIContextBlock(f.BlockSummary) {
+		if f.BlockEvidence != nil && f.BlockEvidence.Summary != f.BlockSummary || !missingCIContextBlock(f.blockReason()) {
 			return fmt.Errorf("CI feedback audit has no eligible native CI context block")
+		}
+		if f.BlockEvidence != nil && !f.Completed {
+			if err := validateCIFeedbackBlockBinding(j, f); err != nil {
+				return err
+			}
 		}
 		if len(f.SHA256) != 64 || strings.Trim(f.SHA256, "0123456789abcdef") != "" || heads[f.Publication.HeadSHA] || hashes[f.SHA256] || !objectID.MatchString(f.Candidate.Head) || !objectID.MatchString(f.Candidate.Tree) || !f.Candidate.Clean || !objectID.MatchString(f.Publication.HeadSHA) || !objectID.MatchString(f.Publication.BaseSHA) || f.Publication.Number < 1 || f.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, f.Publication.Number) || f.SessionID == "" || f.GrantedAttempt < 1 || f.GrantedAttempt > j.Attempt || f.GrantedRounds < 1 || f.GrantedRounds > j.Rounds || f.GrantedAt.IsZero() || f.DispatchAttempt < 0 || f.DispatchAttempt != 0 && (f.DispatchAttempt <= f.GrantedAttempt || f.DispatchAttempt > j.Attempt) || f.Completed && f.DispatchAttempt == 0 || !f.Completed && i != len(j.CIFeedbackRecoveries)-1 {
 			return fmt.Errorf("invalid CI feedback recovery audit")
@@ -70,6 +108,17 @@ func validateCIFeedbackJournal(j *Journal) error {
 			}
 			if feedbackHash(f.Text) != f.SHA256 {
 				return fmt.Errorf("CI feedback bytes differ from recovery hash")
+			}
+			if f.Automatic {
+				var context CIFailureContext
+				decoder := json.NewDecoder(strings.NewReader(f.Text))
+				decoder.DisallowUnknownFields()
+				if decoder.Decode(&context) != nil || decoder.Decode(new(any)) != io.EOF {
+					return fmt.Errorf("invalid frozen automatic CI context")
+				}
+				if err := validateCIFailureContext(CIResult{Status: "failed", FailureContext: &context}, f.Publication); err != nil {
+					return err
+				}
 			}
 		} else if f.Text != "" {
 			return fmt.Errorf("dispatched CI feedback text was retained")
@@ -97,18 +146,22 @@ func ValidateCIFeedbackResume(j Journal, text string) error {
 		}
 		return validateCIFeedbackBinding(j, *f)
 	}
+	return validateCIFeedbackEligibility(j, text)
+}
+
+func validateCIFeedbackEligibility(j Journal, text string) error {
 	if j.State != "blocked" || (j.ResumeState != "implementing" && j.ResumeState != "repairing") || j.Outcome.Status != "blocked" || j.Outcome.Summary == "" || j.StopReason != j.Outcome.Summary || j.SessionID == "" || j.Attempt < 1 || j.CI.Status != "failed" || j.CIRepairBudget == nil || j.CIRepairBudget.Used < 1 || j.CIRepairBudget.LastGrantedHead != j.Publication.HeadSHA || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) {
 		return fmt.Errorf("CI feedback requires a native implementation block after a persisted failed-head CI repair grant")
 	}
 	if err := ciFeedbackRecoveryConflicts(j); err != nil {
 		return err
 	}
-	reason := strings.ToLower(j.Outcome.Summary + "\n" + strings.Join(j.Outcome.Limitations, "\n"))
+	reason := ciFeedbackBlockReason(j.Outcome.Summary, j.Outcome.Limitations)
 	if !missingCIContextBlock(reason) {
 		return fmt.Errorf("CI feedback requires a native block caused by missing failed CI context")
 	}
 	for _, f := range j.CIFeedbackRecoveries {
-		if f.Publication.HeadSHA == j.Publication.HeadSHA || f.SHA256 == feedbackHash(text) {
+		if f.Publication.HeadSHA == j.Publication.HeadSHA || text != "" && f.SHA256 == feedbackHash(text) {
 			return fmt.Errorf("CI feedback context or failed-head recovery was already granted")
 		}
 	}
@@ -164,8 +217,8 @@ func ciFeedbackRecoveryConflicts(j Journal) error {
 }
 
 func validateCIFeedbackBinding(j Journal, f CIFeedbackRecovery) error {
-	if j.Outcome.Status != "blocked" || j.Outcome.Summary != f.BlockSummary || !missingCIContextBlock(j.Outcome.Summary+"\n"+strings.Join(j.Outcome.Limitations, "\n")) {
-		return fmt.Errorf("native CI context block changed before dispatch")
+	if err := validateCIFeedbackBlockBinding(&j, f); err != nil {
+		return err
 	}
 	if f.SessionID != j.SessionID || f.Publication != j.Publication || j.CI.Status != "failed" || j.CIRepairBudget == nil || j.CIRepairBudget.Used < 1 || j.CIRepairBudget.LastGrantedHead != f.Publication.HeadSHA || j.Attempt < f.GrantedAttempt || j.Rounds != f.GrantedRounds || (j.State != "repairing" && j.State != "implementing" && !((j.State == "blocked" || j.State == "failed") && (j.ResumeState == "repairing" || j.ResumeState == "implementing"))) {
 		return fmt.Errorf("CI feedback recovery boundary changed")
@@ -175,18 +228,27 @@ func validateCIFeedbackBinding(j Journal, f CIFeedbackRecovery) error {
 
 func (runner Runner) prepareCIFeedback(ctx context.Context, directory string, j *Journal) error {
 	f := pendingCIFeedback(j)
+	automatic := false
 	if runner.CIFeedback == "" && f == nil {
-		return nil
+		if j.State != "blocked" || j.Outcome.Status != "blocked" || j.StopReason != j.Outcome.Summary || j.CI.Status != "failed" || j.CIRepairBudget == nil || j.CIRepairBudget.Used < 1 || j.CIRepairBudget.LastGrantedHead != j.Publication.HeadSHA {
+			return nil
+		}
+		if err := validateCIFeedbackEligibility(*j, ""); err != nil {
+			return err
+		}
+		automatic = true
 	}
 	if f != nil && f.DispatchAttempt != 0 {
 		return fmt.Errorf("CI feedback dispatch was interrupted; inspect the original session before recovery")
 	}
 	text := runner.CIFeedback
-	if text == "" {
+	if text == "" && f != nil {
 		text = f.Text
 	}
-	if err := ValidateCIFeedbackResume(*j, text); err != nil {
-		return err
+	if !automatic {
+		if err := ValidateCIFeedbackResume(*j, text); err != nil {
+			return err
+		}
 	}
 	if err := verifyInputs(j.Workspace, j.Plan.Inputs); err != nil {
 		return err
@@ -211,9 +273,38 @@ func (runner Runner) prepareCIFeedback(ctx context.Context, directory string, j 
 	if checks.Status != "failed" {
 		return fmt.Errorf("CI feedback requires currently failed CI on the exact published head")
 	}
-	if f == nil {
-		j.CIFeedbackRecoveries = append(j.CIFeedbackRecoveries, CIFeedbackRecovery{SHA256: feedbackHash(text), Text: text, Candidate: revision, Publication: j.Publication, SessionID: j.SessionID, GrantedAttempt: j.Attempt, GrantedRounds: j.Rounds, GrantedAt: time.Now().UTC(), BlockSummary: j.Outcome.Summary})
+	if automatic || f != nil && f.Automatic {
+		if checks.FailureContext == nil {
+			return fmt.Errorf("failed CI supplied no relevant failure context; original run remains held")
+		}
+		relevant := false
+		for _, entry := range checks.FailureContext.Checks {
+			relevant = relevant || strings.TrimSpace(entry.Text) != ""
+		}
+		if !relevant {
+			return fmt.Errorf("failed CI supplied no relevant failure context; original run remains held")
+		}
+		data, err := json.Marshal(checks.FailureContext)
+		if err != nil {
+			return fmt.Errorf("automatic CI context could not be encoded")
+		}
+		if err := ValidateCIFeedbackText(string(data)); err != nil {
+			return err
+		}
+		if f != nil && string(data) != f.Text {
+			return fmt.Errorf("automatic CI failure context changed before dispatch")
+		}
+		text = string(data)
 	}
+	if f == nil {
+		j.CIFeedbackRecoveries = append(j.CIFeedbackRecoveries, CIFeedbackRecovery{SHA256: feedbackHash(text), Text: text, Candidate: revision, Publication: j.Publication, SessionID: j.SessionID, GrantedAttempt: j.Attempt, GrantedRounds: j.Rounds, GrantedAt: time.Now().UTC(), BlockSummary: j.Outcome.Summary, BlockEvidence: captureCIFeedbackBlock(j.Outcome), Automatic: automatic})
+	} else if f.BlockEvidence == nil {
+		// A beta55 pending audit already established its summary-only reason.
+		// Preserve it and freeze currently eligible limitations before dispatch.
+		f.BlockEvidence = captureCIFeedbackBlock(j.Outcome)
+	}
+	j.CI = checks
+	checks.FailureContext = nil // the frozen supplemental payload is dispatched once.
 	j.Feedback = ciRepairFeedback(checks, j.Publication.HeadSHA)
 	return runner.transition(directory, j, "repairing")
 }

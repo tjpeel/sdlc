@@ -815,6 +815,37 @@ review holds.
 
 ### Supply missing CI failure context
 
+Failed CI checks automatically return relevant context for the exact published
+revision to the original implementation session. The controller collects check
+output and annotations, plus failed GitHub Actions job and step details and
+bounded log excerpts. Native Sonar rule, severity and committed-location findings
+remain included. Pending checks keep waiting; collection failures retain an
+operational hold before any repair grant.
+
+An older saved implementation may have stopped for missing CI evidence without
+recording a question. Ordinary resume refreshes the failed revision and sends
+collected context to its original session, reusing the existing CI grant:
+
+```sh
+sdlc resume --run RUN_ID
+```
+
+This recovery accepts only the corroborated missing-context stop. It retains
+original session and candidate bindings, input hashes, cumulative accounting,
+check and review gates, and the interrupted-dispatch fence. It does not reset
+budgets or resume provider, access, policy or unrelated requirements holds.
+If no relevant context is available, the run stays held.
+
+The selected GitHub profile stays in the trusted read-only controller. It masks
+recognised credential material and values from hash-verified retained check-only
+inputs before keeping excerpts, and records masking and truncation explicitly.
+Collected text is untrusted private evidence for the original implementer;
+independent review and portable status exports omit it. Masking does not prove
+that arbitrary CI output contains no unknown secrets. Raw response overflow,
+malformed data, stale identity, unsafe inputs and failed cleanup stop collection.
+
+Selected human context remains available as a fallback:
+
 A saved implementation can stop for missing CI failure evidence without
 recording a question. Supply selected factual context through the controller:
 

@@ -21,13 +21,20 @@ func TestGitHubChecksStatusAndExactRevision(t *testing.T) {
 				if name != "gh" {
 					t.Fatal("unexpected connected boundary")
 				}
+				if args[0] == "api" {
+					run := map[string]any{"id": 17, "name": "tests", "head_sha": testHead, "status": "completed", "conclusion": map[string]string{"fail": "failure", "cancel": "cancelled", "skipping": "skipped"}[tc.bucket], "html_url": "https://github.com/example/project/runs/17", "app": map[string]any{"id": 44, "slug": "example-checks"}, "output": map[string]any{"annotations_count": 0, "text": "Unknown unit failure in ExampleTest."}}
+					if strings.Contains(args[len(args)-1], "/commits/") {
+						return json.Marshal(map[string]any{"total_count": 1, "check_runs": []any{run}})
+					}
+					return json.Marshal(run)
+				}
 				if args[1] == "view" {
 					return []byte(`{"baseRefOid":"` + testBase + `","headRefOid":"` + testHead + `","state":"OPEN"}`), nil
 				}
 				if strings.Contains(strings.Join(args, " "), "--required") {
 					t.Fatal("omitted available CI evidence")
 				}
-				data, _ := json.Marshal([]map[string]string{{"name": "tests", "bucket": tc.bucket, "state": "COMPLETED"}})
+				data, _ := json.Marshal([]map[string]string{{"name": "tests", "bucket": tc.bucket, "state": "COMPLETED", "link": "https://github.com/example/project/runs/17"}})
 				return data, ciStatusExit(1)
 			}}
 			result, err := pub.Checks(context.Background(), Plan{Repository: "example/project"}, Publication{Number: 1, BaseSHA: testBase, HeadSHA: testHead})
@@ -37,7 +44,11 @@ func TestGitHubChecksStatusAndExactRevision(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || result.Status != tc.want || calls != 3 {
+			wantCalls := 3
+			if tc.want == "failed" {
+				wantCalls = 6
+			}
+			if err != nil || result.Status != tc.want || calls != wantCalls {
 				t.Fatalf("result=%+v calls=%d error=%v", result, calls, err)
 			}
 		})

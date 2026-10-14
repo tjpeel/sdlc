@@ -20,7 +20,7 @@ type ciAnnotationFixture struct {
 }
 
 func newCIAnnotationFixture() *ciAnnotationFixture {
-	run := map[string]any{"id": 17, "head_sha": testHead, "name": "SonarCloud Code Analysis", "status": "completed", "conclusion": "failure", "app": map[string]any{"slug": "sonarqubecloud"}, "output": map[string]any{"annotations_count": 4}}
+	run := map[string]any{"id": 17, "head_sha": testHead, "name": "SonarCloud Code Analysis", "status": "completed", "conclusion": "failure", "html_url": "https://private.invalid", "app": map[string]any{"id": 44, "slug": "sonarqubecloud"}, "output": map[string]any{"annotations_count": 4}}
 	prefix := "repos/example/project"
 	return &ciAnnotationFixture{responses: map[string]any{
 		prefix + "/commits/" + testHead + "/check-runs?per_page=100&page=1": map[string]any{"total_count": 1, "check_runs": []any{run}},
@@ -80,6 +80,16 @@ func workflowCIAnnotationFixture() *ciAnnotationFixture {
 	run := f.responses["repos/example/project/check-runs/17"].(map[string]any)
 	run["name"] = f.checkName
 	run["app"] = map[string]any{"id": 15368, "slug": "github-actions"}
+	run["details_url"] = "https://github.com/example/project/actions/runs/88/job/99"
+	run["output"] = map[string]any{"annotations_count": 0}
+	base := actionsCIFailureFixture()
+	job := base.responses["repos/example/project/actions/jobs/99"].(map[string]any)
+	job["name"], job["check_run_url"] = f.checkName, "https://api.github.com/repos/example/project/check-runs/17"
+	for endpoint, value := range base.responses {
+		if strings.Contains(endpoint, "/actions/") || endpoint == "repos/example/project" {
+			f.responses[endpoint] = value
+		}
+	}
 	return f
 }
 
@@ -96,10 +106,13 @@ func TestVerifiedActionsWorkflowMentioningSonarReturnsGenericFailedCI(t *testing
 	}
 	encoded, _ := json.Marshal(result)
 	feedback := ciRepairFeedback(result, testHead)
-	for _, value := range []string{"offline job", "private warning operand", "private credential", "private.invalid", "SonarCloud"} {
+	for _, value := range []string{"private warning operand", "private credential", "private.invalid"} {
 		if strings.Contains(string(encoded), value) || strings.Contains(feedback, value) {
 			t.Fatal("workflow metadata leaked into CI repair guidance", value)
 		}
+	}
+	if result.FailureContext == nil || result.FailureContext.Checks[0].Kind != "actions" || !strings.Contains(feedback, "UnknownProbeFailure") {
+		t.Fatal("Actions failure context was not supplied privately")
 	}
 }
 

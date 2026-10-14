@@ -46,6 +46,9 @@ func ciSourcePath(path string) bool {
 }
 
 func validateCIResult(result CIResult, published Publication) error {
+	if err := validateCIFailureContext(result, published); err != nil {
+		return err
+	}
 	if len(result.Diagnostics) > maxCIDiagnostics {
 		return fmt.Errorf("CI diagnostic bound exceeded")
 	}
@@ -94,7 +97,7 @@ func ciRepairFeedback(result CIResult, head string) string {
 			text += " Inspect this source location and repair the analyzer finding while preserving behavior."
 		}
 	}
-	return text
+	return text + ciFailureFeedback(result)
 }
 
 type ciAPIOutput struct {
@@ -111,7 +114,7 @@ func (b *ciAPIOutput) Write(p []byte) (int, error) {
 }
 func (p GitHubPublisher) ciAPI(ctx context.Context, endpoint string, target any) error {
 	data, err := p.command(ctx, "gh", "api", "--hostname", "github.com", endpoint)
-	if err != nil || len(data) > maxCIAPIBytes {
+	if err != nil || len(data) > maxCIAPIBytes || !utf8.Valid(data) {
 		return fmt.Errorf("CI annotation API could not be read")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -122,7 +125,9 @@ func (p GitHubPublisher) ciAPI(ctx context.Context, endpoint string, target any)
 }
 
 type ciCheckRun struct {
-	App struct {
+	DetailsURL string `json:"details_url"`
+	HTMLURL    string `json:"html_url"`
+	App        struct {
 		ID   int64  `json:"id"`
 		Slug string `json:"slug"`
 	} `json:"app"`
@@ -132,7 +137,10 @@ type ciCheckRun struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	Output     struct {
-		Count int `json:"annotations_count"`
+		Count   int    `json:"annotations_count"`
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+		Text    string `json:"text"`
 	} `json:"output"`
 }
 

@@ -757,7 +757,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	githubManager.OnWait = manager.OnWait
 	githubManager.OnAcquired = manager.OnAcquired
 	resolver := signing.Resolver{Profile: profile, Image: journal.Plan.SigningImage}
-	publisher := workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, SigningKey: resolver.Resolve, ValidatePair: func() error { _, err := runSigningProfile(runtime, journal.Plan); return err }}
+	publisher := workrun.DockerPublisher{Runtime: runtime, ImageID: journal.ImageID, Auth: githubManager, CheckInputDirectory: filepath.Join(directory, "check-inputs"), SigningKey: resolver.Resolve, ValidatePair: func() error { _, err := runSigningProfile(runtime, journal.Plan); return err }}
 	if err := workrun.ValidateDependencyContext(ctx, directory, journal.Plan, publisher); err != nil {
 		if answer != "" && errors.Is(err, workrun.ErrDependencyInvalid) {
 			if err := workrun.StoreDeferredAnswer(directory, &journal, answer); err != nil {

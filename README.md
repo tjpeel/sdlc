@@ -14,8 +14,10 @@ A saved run stopped by a corroborated local numeric limit can continue with
 `sdlc resume --run RUN_ID --override-run-limits`. The override persists without
 resetting its session or accounting; provider holds and verification gates remain
 enforced. See [run-limit recovery](docs/cli.md#continue-a-saved-run-past-local-numeric-limits).
-If a saved CI repair stops for missing failure evidence, supply bounded context
-to the original session with `sdlc resume --run RUN_ID --ci-feedback-file FILE`.
+Failed CI checks return bounded failure context to the original implementation
+session automatically. Ordinary `sdlc resume --run RUN_ID` also refreshes an
+eligible saved repair that stopped for missing CI context. Selected human context
+can still be supplied with `--ci-feedback-file FILE`.
 See [CI context recovery](docs/cli.md#supply-missing-ci-failure-context).
 Dedicated 1Password signing-key retrieval is implemented. Feature runs schedule dependencies
 and independent tickets and reconcile owned PRs after human merges. Detached
@@ -26,7 +28,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.55`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.56`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

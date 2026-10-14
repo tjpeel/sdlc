@@ -159,17 +159,33 @@ The delivery sequence is:
 6. Passing current CI and a complete review without findings produce `ready` for
    human review. The PR stays draft. SDLC never merges or approves automatically.
 
-Failed Sonar checks are inspected by the trusted GitHub publisher through the
-official `gh api` client for the exact published head. The current controller
-runs the frozen image's unmodified `gh` binary with the selected profile's
-read-only credential volume; it mounts no worker source, Docker socket or signing
-material. Existing frozen worker images and journals retain their image IDs,
-and the older image's publisher binary does not supply the annotation collector. Only bounded annotation
-metadata from regular committed source files reaches the original implementation
-session: source path, positive location, level, and fixed analyzer guidance.
-Cognitive-complexity annotations can include bounded current and allowed values;
-raw titles, messages, URLs and assertion text remain private. API failures,
-incomplete responses or changed PR/check-run identities stop the run.
+Failed CI checks are inspected by the trusted GitHub publisher through the
+frozen runtime's official `gh api` client and selected read-only GitHub profile.
+The current collector mounts no worker source, Docker socket or signing material.
+It checks the repository, published head, check identity and Actions run attempt
+before returning relevant check output, annotations, failed steps and job-log
+excerpts to the original implementer. It fetches only verified GitHub API
+resources, never arbitrary URLs from diagnostic text.
+
+The collector masks recognised credential material and values from hash-verified
+retained check-only inputs before excerpting. Generic text remains untrusted,
+private project evidence; masking cannot guarantee that all unknown secret
+formats are absent. Masking and truncation are explicit. Response bounds,
+malformed data, input drift, changed check/run identities, API errors and cleanup
+failures hold the run before any repair grant.
+
+Native Sonar findings remain a separate structured channel: bounded severity,
+verified rule or diagnostic kind, committed source path and positive location.
+Cognitive-complexity findings can include verified current and allowed values.
+A GitHub Actions workflow name containing Sonar does not establish native Sonar
+analysis. The agent receives relevant failure evidence and chooses its own repair.
+
+Ordinary resume can refresh a saved native stop caused by missing CI context
+without granting another repair or changing the original session. Its private
+audit freezes both the blocked summary and limitations and binds the collected
+context to the candidate and failed publication. An ambiguous dispatch stays
+held. Full local checks, signing, current CI and fresh independent review remain
+required after any correction.
 
 CI repairs have a separate persisted budget of at most three grants. Each grant
 records its failed published head, so unchanged-head failures cannot obtain

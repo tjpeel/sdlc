@@ -148,11 +148,12 @@ var stagePublisherController = controllerasset.Stage
 var controllerIdentityRunner PublisherCommandRunner = publisherCommandRunner{}
 
 type DockerPublisher struct {
-	Runtime          runtimeimage.Manager
-	ImageID          string
-	Auth             githubauth.Manager
-	CredentialVolume string
-	SigningKey       func(context.Context) ([]byte, error)
+	CheckInputDirectory string
+	Runtime             runtimeimage.Manager
+	ImageID             string
+	Auth                githubauth.Manager
+	CredentialVolume    string
+	SigningKey          func(context.Context) ([]byte, error)
 	// ValidatePair rechecks host pairing metadata before any publication operation.
 	ValidatePair func() error
 	Runner       PublisherCommandRunner
@@ -196,6 +197,10 @@ func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspa
 // Checks runs the current controller's collector with the frozen image's official
 // gh client. Old publisher binaries do not determine diagnostic capabilities.
 func (publisher DockerPublisher) Checks(ctx context.Context, plan Plan, previous Publication) (result CIResult, resultErr error) {
+	privateValues, err := ciPrivateInputValues(publisher.CheckInputDirectory, plan.CheckInputs)
+	if err != nil {
+		return CIResult{}, err
+	}
 	frozen := plan.PublicationIdentity
 	if frozen == nil {
 		return CIResult{}, fmt.Errorf("CI inspection requires frozen publication identity")
@@ -236,7 +241,7 @@ func (publisher DockerPublisher) Checks(ctx context.Context, plan Plan, previous
 	if err != nil || profileErr != nil || frozenErr != nil || profile != frozenProfile || session.Profile != frozenProfile || session.ImageID != publisher.ImageID || session.Volume != frozen.GitHubVolume || identity.ID != frozen.GitHubID || identity.Login != frozen.GitHubLogin {
 		return CIResult{}, fmt.Errorf("CI GitHub session differs from frozen publication identity")
 	}
-	collector := GitHubPublisher{Frozen: frozen, Command: func(ctx context.Context, name string, argv ...string) ([]byte, error) {
+	collector := GitHubPublisher{Frozen: frozen, CIPrivateValues: privateValues, Command: func(ctx context.Context, name string, argv ...string) ([]byte, error) {
 		if name != "gh" || len(argv) < 1 || argv[0] != "api" && argv[0] != "pr" {
 			return nil, fmt.Errorf("unsupported CI controller command")
 		}
