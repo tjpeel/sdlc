@@ -32,8 +32,8 @@ func validateDiagnosticOutcome(outcome Outcome, role string, plan *Plan) error {
 		return err
 	}
 	if outcome.Status == "diagnostics_requested" {
-		if role != "implementation" || len(outcome.DiagnosticRequests) == 0 || len(outcome.VerificationRequests) != 0 || len(outcome.RepositoryRequests) != 0 || len(outcome.PRFeedbackAssessments) != 0 {
-			return fmt.Errorf("diagnostics_requested requires only an implementation diagnostic batch")
+		if role != "implementation" || len(outcome.DiagnosticRequests) == 0 || len(outcome.VerificationRequests) != 0 || len(outcome.RepositoryRequests) != 0 {
+			return fmt.Errorf("diagnostics_requested requires an implementation diagnostic batch without verification or repository requests")
 		}
 	} else if len(outcome.DiagnosticRequests) != 0 {
 		return fmt.Errorf("diagnostic requests require implementation diagnostics_requested")

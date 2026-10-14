@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.68 - 2026-10-14
+
+### Changed
+
+- Give the original implementer all pending PR comments together so it can choose the order, group related fixes and request full checks for a coherent candidate. Retain a separate assessment, commit mapping and reply for every comment.
+
+### Fixed
+
+- Allow comment assessments alongside development diagnostic requests, preserving them while the original session investigates and completes its changes.
+
 ## 0.1.0-beta.67 - 2026-10-14
 
 ### Fixed

@@ -1997,17 +1997,26 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-feature.md \
 ```
 
 The controller reads inline review threads, review summaries and general PR
-comments. It sends new or changed feedback to the original implementation
-session in order. The implementor commits each correction separately, records
-the comments it addresses, and supplies a reason when a comment cannot be
-addressed. The controller posts that reason to the original thread or PR,
+comments. It sends all pending current comment revisions together to the
+original implementation session. The implementor chooses their order, groups
+related corrections into coherent commits, and returns an individual assessment
+for each comment with its disposition, rationale and correction commit IDs. One
+commit can address several comments. The implementor supplies a reason when a
+comment cannot be addressed. The controller posts that reason to the original
+thread or PR,
 retaining reply acknowledgements so an interrupted resume can recover without
 posting it twice. Human threads remain open for the reviewer to resolve.
 
-Assessments returned with `checks_requested` remain provisional, including
-requests for the configured suite alone. The same implementation session can
-refine them after receiving verification or companion source. A final assessment
-must still match the current unreplied comment revision. Only then can SDLC post
+The session can return a partial assessment batch alongside diagnostic,
+verification or companion source requests, then continue with the remaining
+comments. Assessments returned with `checks_requested` or `diagnostics_requested`
+remain provisional, including requests for the configured suite alone. The same
+implementation session can refine them after receiving results or companion
+source. Focused diagnostics support development; the full configured checks run
+once a coherent candidate is ready, rather than after each comment. Partial final
+assessments continue the session without forcing configured checks. A final
+assessment must still match the current unreplied comment revision. Only then
+can SDLC post
 the reply; it does not resolve the thread.
 
 An assessment accompanying a human question also remains provisional until the

@@ -171,6 +171,7 @@ type Finding struct {
 }
 
 type Outcome struct {
+	// PRFeedbackAssessments may cover any subset of the current requested batch.
 	PRFeedbackAssessments []PRFeedbackAssessment       `json:"pr_feedback_assessments,omitempty"`
 	RepositoryRequests    []CompanionRepositoryRequest `json:"repository_requests,omitempty"`
 	DiagnosticRequests    []VerificationRequest        `json:"diagnostic_requests,omitempty"`

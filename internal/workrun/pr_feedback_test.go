@@ -190,7 +190,7 @@ func (r feedbackHistoryRepository) FeedbackCommits(context.Context, string, stri
 func TestPRFeedbackRejectsInventedCorrectionCommit(t *testing.T) {
 	dir, j, r, _, _ := feedbackReadyRun(t)
 	comment := generalFeedback("comment:1", "Fix regression")
-	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, Entries: []PRFeedbackEntry{{Comment: comment, Fingerprint: feedbackFingerprint(comment)}}}
+	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, Entries: []PRFeedbackEntry{{StartedAttempt: j.Attempt, Comment: comment, Fingerprint: feedbackFingerprint(comment)}}}
 	r.Repository = feedbackHistoryRepository{fakeRepository: &fakeRepository{}, commits: []string{testSigned}}
 	out := assessedOutcome(comment, "addressed")
 	out.PRFeedbackAssessments[0].Commits = []string{testBase}

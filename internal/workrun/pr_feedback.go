@@ -209,26 +209,33 @@ func feedbackMarker(run, id, fingerprint string) string {
 	sum := sha256.Sum256([]byte(run + "\x00" + id + "\x00" + fingerprint))
 	return "<!-- sdlc-pr-feedback:" + hex.EncodeToString(sum[:]) + " -->"
 }
-func pendingFeedback(j *Journal) *PRFeedbackEntry {
+
+// pendingFeedbackEntries retains journal order for presentation, but assessments
+// may arrive in any order. Only the current unreplied revision is actionable.
+func pendingFeedbackEntries(j *Journal) []*PRFeedbackEntry {
 	if j.PRFeedback == nil || !j.PRFeedback.Active {
 		return nil
 	}
+	latest := map[string]int{}
+	for i, e := range j.PRFeedback.Entries {
+		latest[e.Comment.ID] = i
+	}
+	var pending []*PRFeedbackEntry
 	for i := range j.PRFeedback.Entries {
 		e := &j.PRFeedback.Entries[i]
-		if (e.Assessment == nil || e.Provisional) && !e.Comment.Deleted && !e.Comment.Resolved {
-			latest := true
-			for k := i + 1; k < len(j.PRFeedback.Entries); k++ {
-				if j.PRFeedback.Entries[k].Comment.ID == e.Comment.ID {
-					latest = false
-					break
-				}
-			}
-			if latest {
-				return e
-			}
+		if latest[e.Comment.ID] == i && (e.Assessment == nil || e.Provisional) && e.Reply == nil && !e.Comment.Deleted && !e.Comment.Resolved {
+			pending = append(pending, e)
 		}
 	}
-	return nil
+	return pending
+}
+
+func pendingFeedback(j *Journal) *PRFeedbackEntry {
+	entries := pendingFeedbackEntries(j)
+	if len(entries) == 0 {
+		return nil
+	}
+	return entries[0]
 }
 
 func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) error {
@@ -351,12 +358,18 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 }
 
 func (r Runner) feedbackPrompt(dir string, j *Journal) error {
-	e := pendingFeedback(j)
-	if e == nil {
+	entries := pendingFeedbackEntries(j)
+	if len(entries) == 0 {
 		return nil
 	}
-	if e.StartedAttempt == 0 {
-		e.StartedAttempt = j.Attempt + 1
+	started := false
+	for _, e := range entries {
+		if e.StartedAttempt == 0 {
+			e.StartedAttempt = j.Attempt + 1
+			started = true
+		}
+	}
+	if started {
 		if err := r.save(dir, j); err != nil {
 			return err
 		}
@@ -365,8 +378,8 @@ func (r Runner) feedbackPrompt(dir string, j *Journal) error {
 		sources, _ := json.Marshal(j.CompanionRepositories)
 		j.Feedback += "\nController-staged companion source metadata (read-only):\n" + string(sources)
 	}
-	data, _ := json.MarshalIndent(e, "", "  ")
-	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess only this comment revision before moving to the next. A non-implemented assessment remains provisional; after controller verification or a human answer, return the final assessment for this same revision with implemented. Interpret outdated inline feedback using its original commit, line and diff context and the current source. Return one pr_feedback_assessments entry with this exact id and fingerprint, disposition addressed/unaddressable/no_change, reason and full original commit IDs. Commit each correction separately, or group only logically related corrections. Do not post replies or resolve threads; the controller owns replies. If a prior interrupted turn already committed a correction, inspect existing history and reuse that commit rather than duplicating it. Request controller checks when needed. For an unaddressable comment explain the clarification or decision needed."
+	data, _ := json.MarshalIndent(entries, "", "  ")
+	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess all pending comment revisions in this batch. Choose the order and group related corrections into coherent commits. Return an individual pr_feedback_assessments entry for each assessed comment with its exact id and fingerprint, disposition addressed/unaddressable/no_change, rationale and full original correction commit IDs; a commit may address several comments. You may return a partial subset with diagnostic, verification, companion source requests or human questions, then continue this same session. Non-implemented assessments remain provisional; retain or refine them and return their final assessments with implemented. Use diagnostics_requested for focused development diagnostics and checks_requested for the full configured suite once a coherent candidate is ready, rather than checking after each comment. Interpret outdated inline feedback using its original commit, line and diff context and current source. Do not post replies or resolve threads; the controller owns replies. If a prior interrupted turn committed corrections, inspect history and reuse those commits rather than duplicating them. For an unaddressable comment explain the clarification or decision needed."
 	return nil
 }
 
@@ -375,11 +388,11 @@ type FeedbackCommitRepository interface {
 }
 
 func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, out Outcome) (bool, error) {
-	e := pendingFeedback(j)
-	if e == nil && CanReplaySavedPRFeedback(*j) {
-		e = savedFeedbackTarget(j)
+	pending := pendingFeedbackEntries(j)
+	if len(pending) == 0 && CanReplaySavedPRFeedback(*j) {
+		pending = []*PRFeedbackEntry{savedFeedbackTarget(j)}
 	}
-	if e == nil {
+	if len(pending) == 0 {
 		if len(out.PRFeedbackAssessments) > 0 {
 			return false, fmt.Errorf("no pending human feedback revision")
 		}
@@ -389,19 +402,33 @@ func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, ou
 		if out.Status == "implemented" {
 			return false, fmt.Errorf("pending PR feedback requires a structured assessment")
 		}
-		return false, nil
+		return true, nil
 	}
-	if len(out.PRFeedbackAssessments) != 1 {
-		return false, fmt.Errorf("assess the pending comment revision in order")
+	if len(out.PRFeedbackAssessments) > maxPRFeedbackComments {
+		return false, fmt.Errorf("too many PR feedback assessments")
 	}
-	a := out.PRFeedbackAssessments[0]
-	if err := validateFeedbackAssessment(a); err != nil {
-		return false, err
+	targets := map[string]*PRFeedbackEntry{}
+	for _, e := range pending {
+		targets[e.Comment.ID] = e
 	}
-	if a.ID != e.Comment.ID || a.Fingerprint != e.Fingerprint {
-		return false, fmt.Errorf("assessment does not match pending feedback revision")
+	seen := map[string]bool{}
+	var claimed []string
+	// Validate the entire handoff before changing any retained assessment.
+	for _, a := range out.PRFeedbackAssessments {
+		if err := validateFeedbackAssessment(a); err != nil {
+			return false, err
+		}
+		e := targets[a.ID]
+		if seen[a.ID] || e == nil || e.Fingerprint != a.Fingerprint || e.StartedAttempt == 0 {
+			return false, fmt.Errorf("assessment does not match a unique asked pending feedback revision")
+		}
+		seen[a.ID] = true
+		if e.Assessment != nil && !reflect.DeepEqual(*e.Assessment, a) && len(e.AssessmentHistory) >= 16 {
+			return false, fmt.Errorf("feedback assessment history reached its bound")
+		}
+		claimed = append(claimed, a.Commits...)
 	}
-	if len(a.Commits) > 0 {
+	if len(claimed) > 0 {
 		repo, ok := r.Repository.(FeedbackCommitRepository)
 		if !ok {
 			return false, fmt.Errorf("repository cannot verify feedback correction history")
@@ -418,24 +445,42 @@ func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, ou
 		for _, sha := range commits {
 			known[sha] = true
 		}
-		for _, sha := range a.Commits {
+		for _, sha := range claimed {
 			if !known[sha] {
 				return false, fmt.Errorf("claimed feedback commit is absent from candidate history")
 			}
 		}
 	}
-	if e.Assessment != nil && !reflect.DeepEqual(*e.Assessment, a) {
-		if len(e.AssessmentHistory) >= 16 {
-			return false, fmt.Errorf("feedback assessment history reached its bound")
+	// Stage a copy so a bounded-journal failure cannot leave a partial batch.
+	candidate := *j.PRFeedback
+	candidate.Entries = append([]PRFeedbackEntry(nil), candidate.Entries...)
+	for i := range candidate.Entries {
+		e := &candidate.Entries[i]
+		if !seen[e.Comment.ID] || targets[e.Comment.ID] != &j.PRFeedback.Entries[i] {
+			continue
 		}
-		e.AssessmentHistory = append(append([]PRFeedbackAssessment(nil), e.AssessmentHistory...), *e.Assessment)
+		for _, assessment := range out.PRFeedbackAssessments {
+			if assessment.ID != e.Comment.ID {
+				continue
+			}
+			a := assessment
+			if e.Assessment != nil && !reflect.DeepEqual(*e.Assessment, a) {
+				e.AssessmentHistory = append(append([]PRFeedbackAssessment(nil), e.AssessmentHistory...), *e.Assessment)
+			}
+			e.Assessment = &a
+			e.Provisional = out.Status != "implemented"
+			e.SignedCommits = nil
+			e.Marker = feedbackEntryMarker(j.ID, *e)
+			e.ReplyBody = a.Reason
+		}
 	}
-	e.Assessment = &a
-	e.Provisional = out.Status != "implemented"
-	e.SignedCommits = nil
-	e.Marker = feedbackEntryMarker(j.ID, *e)
-	e.ReplyBody = a.Reason
-	// Persist replay progress with the assessment before any later outcome checkpoints.
+	staged := *j
+	staged.PRFeedback = &candidate
+	if err := validatePRFeedbackJournal(&staged); err != nil {
+		return false, err
+	}
+	j.PRFeedback = &candidate
+	// Persist replay progress with the assessments before later checkpoints.
 	if override := j.RunLimitOverride; override != nil && override.PendingVerificationReplay {
 		override.VerificationReplayFeedbackProcessed = true
 	}
