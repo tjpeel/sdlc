@@ -747,6 +747,12 @@ semantic failures. Source correction requests return validated private artifacts
 for the implementer to assess, apply and commit. They never modify the host
 workspace or become permanent verification gates.
 
+Source correction commands must change only the selected source paths. When a
+formatter changes other committed files, the live response rejects that request
+without an artifact and retains the other batch results. The agent can narrow
+the formatter command from the working-directory root and retry. Source
+integrity, frozen-input and cleanup failures still stop the invocation.
+
 Commit a checkpoint before calling the helper. Dirty checkpoints and stale
 candidates return recoverable errors without provisional evidence; the agent can
 correct its checkpoint and continue during that same native invocation. Frozen

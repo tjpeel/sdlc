@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.60 - 2026-10-14
+
+### Fixed
+
+- Return formatting outside the selected source paths as a live diagnostic request failure, retaining the other batch results so the agent can narrow its command and continue. Export no artifact for that request; keep source integrity, frozen inputs and cleanup failures as operational holds.
+
 ## 0.1.0-beta.59 - 2026-10-14
 
 ### Added

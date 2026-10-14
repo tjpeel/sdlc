@@ -66,6 +66,35 @@ func sourcePatchStaleOnly(err error) bool {
 	return false
 }
 
+// A confirmed scope mismatch is a rejected request, never a correction artifact.
+// Extra operational causes in an error chain must retain their fatal status.
+type sourcePatchScopeError struct{}
+
+func (*sourcePatchScopeError) Error() string {
+	return "Source correction commands changed committed files outside source_patch.paths. Narrow the formatter command to the selected paths from the working root, or select the affected paths within the request bounds. No correction artifact was exported."
+}
+func sourcePatchScopeOnly(err error) bool {
+	if _, ok := err.(*sourcePatchScopeError); ok {
+		return true
+	}
+	if many, ok := err.(interface{ Unwrap() []error }); ok {
+		children := many.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !sourcePatchScopeOnly(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if one, ok := err.(interface{ Unwrap() error }); ok {
+		return sourcePatchScopeOnly(one.Unwrap())
+	}
+	return false
+}
+
 type sourcePatchDiffBudgetError struct{}
 
 func (*sourcePatchDiffBudgetError) Error() string {
@@ -86,7 +115,7 @@ func sourcePatchCollectionFailure(encoded []byte) (bool, error) {
 		return false, nil
 	}
 	code, err := decoder.Token()
-	if err != nil || (code != "source_patch_diff_budget_exceeded" && code != "source_patch_candidate_stale") || decoder.More() {
+	if err != nil || (code != "source_patch_diff_budget_exceeded" && code != "source_patch_candidate_stale" && code != "source_patch_unselected_changed") || decoder.More() {
 		return true, errors.New("invalid source correction failure response")
 	}
 	closing, err := decoder.Token()
@@ -98,6 +127,9 @@ func sourcePatchCollectionFailure(encoded []byte) (bool, error) {
 	}
 	if code == "source_patch_candidate_stale" {
 		return true, errSourcePatchStale
+	}
+	if code == "source_patch_unselected_changed" {
+		return true, &sourcePatchScopeError{}
 	}
 	return true, &sourcePatchDiffBudgetError{}
 }
@@ -350,7 +382,7 @@ def identity():
     if values!=[selection['head'],selection['tree']]:
         print(json.dumps({'failure':'source_patch_candidate_stale'})); sys.exit(0)
 identity()
-requested=selection['paths']; selected=set(requested); files={}; patches=[]; total=0; overflow=False
+requested=selection['paths']; selected=set(requested); files={}; patches=[]; total=0; overflow=False; unselected_changed=False
 def source_lines(data):
     parts=data.decode('utf-8').split('\n')
     return [part+'\n' for part in parts[:-1]]+([parts[-1]] if parts[-1] else [])
@@ -371,7 +403,7 @@ for entry in entries:
         for chunk in iter(lambda:stream.read(65536),b''): digest.update(chunk)
     changed=digest.hexdigest()!=oid.decode()
     if name not in selected:
-        if changed: raise ValueError('unselected source changed')
+        if changed: unselected_changed=True
         continue
     size=int(subprocess.check_output(git+['cat-file','-s',oid.decode()],env=env))
     if size>262144 or info.st_size>262144: raise ValueError('selected source exceeds bound')
@@ -392,6 +424,9 @@ for entry in entries:
     elif changed and not selection['capture']: raise ValueError('source changed before commands')
 if set(files)!=selected: raise ValueError('selected source is not committed regular text')
 identity()
+if unselected_changed:
+    if not selection['capture']: raise ValueError('unselected source changed before commands')
+    print(json.dumps({'failure':'source_patch_unselected_changed'})); sys.exit(0)
 if overflow:
     print(json.dumps({'failure':'source_patch_diff_budget_exceeded'}))
     sys.exit(0)
