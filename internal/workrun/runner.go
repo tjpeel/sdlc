@@ -141,6 +141,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return err
 		}
 	}
+	savedReviewCategory := savedReviewStopCategory(journal)
 	savedFeedbackReplay := journal.State == "blocked" && journal.StopReason == noPendingFeedbackHold
 	if runner.CIFeedback != "" || pendingCIFeedback(journal) != nil {
 		if answer != "" || runner.ProcessPRFeedback || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
@@ -414,6 +415,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err := runner.transition(directory, journal, "ready"); err != nil {
 				return err
 			}
+			if notice := ReviewSkipNotice(*journal); notice != "" {
+				fmt.Fprintln(runner.Output, notice)
+			}
 			fmt.Fprintln(runner.Output, "Ready for human review:", journal.Publication.URL)
 			if status := PRFeedbackStatus(*journal); status.Summary != "" {
 				fmt.Fprintln(runner.Output, status.Summary)
@@ -589,6 +593,16 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "awaiting_reviewer", "reviewing":
+			if savedReviewCategory != "" {
+				proof, err := runner.reviewUsageProof(ctx, directory, journal, savedReviewCategory, true)
+				savedReviewCategory = ""
+				if err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				if proof != nil {
+					return runner.completeSkippedReview(ctx, directory, journal, proof)
+				}
+			}
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
@@ -624,8 +638,37 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			result, err := runner.session(ctx, directory, journal, "review", workspace, "")
 			if err != nil {
+				if result.ReviewInterruption == nil && result.Outcome.Status != "" {
+					data, _ := json.Marshal(result.Outcome)
+					var interruptionErr error
+					result.ReviewInterruption, interruptionErr = unresolvedReviewHandoff(data)
+					if interruptionErr != nil {
+						return runner.stop(directory, journal, "blocked", interruptionErr.Error())
+					}
+				}
+				if interruption := result.ReviewInterruption; interruption != nil {
+					interruption.Publication, interruption.Attempt, interruption.Provider, interruption.Model = journal.Publication, journal.Attempt, journal.Plan.Roles.Review.Provider, journal.Plan.Roles.Review.Name
+					copy := *journal
+					copy.ReviewInterruption = interruption
+					if validationErr := validateReviewInterruption(&copy); validationErr != nil {
+						return runner.stop(directory, journal, "blocked", validationErr.Error())
+					}
+					journal.ReviewInterruption = interruption
+					if nativeStopCategory(err) == "operational" {
+						return runner.stop(directory, journal, "failed", err.Error())
+					}
+					return runner.stop(directory, journal, "blocked", "independent review stopped with known unresolved findings, questions, limitations or source requests; retained structured evidence requires review")
+				}
+				proof, proofErr := runner.reviewUsageProof(ctx, directory, journal, nativeStopCategory(err), false)
+				if proofErr != nil {
+					return runner.stop(directory, journal, "blocked", proofErr.Error())
+				}
+				if proof != nil {
+					return runner.completeSkippedReview(ctx, directory, journal, proof)
+				}
 				return runner.stop(directory, journal, "failed", err.Error())
 			}
+			journal.ReviewInterruption = nil
 			journal.Outcome = result.Outcome
 			if result.Outcome.Status == "waiting_for_human" {
 				journal.PendingRole = "review"
@@ -669,6 +712,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if err := runner.transition(directory, journal, "ready"); err != nil {
 				return err
+			}
+			if notice := ReviewSkipNotice(*journal); notice != "" {
+				fmt.Fprintln(runner.Output, notice)
 			}
 			fmt.Fprintln(runner.Output, "Ready for human review:", journal.Publication.URL)
 			if status := PRFeedbackStatus(*journal); status.Summary != "" {
@@ -790,6 +836,9 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	if attempt.OptimizerMode == "" {
 		attempt.OptimizerMode = "off"
 	}
+	if role == "review" {
+		attempt.ReviewBoundary = reviewAttemptBoundary(journal)
+	}
 	if err := runusage.SaveAttempt(directory, attempt); err != nil {
 		return result, err
 	}
@@ -810,6 +859,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		attempt.Outcome = "completed"
 		if resultErr != nil {
 			attempt.Outcome = "failed"
+			attempt.StopCategory = nativeStopCategory(resultErr)
 		}
 		if ctx.Err() != nil {
 			attempt.Outcome = "aborted"
@@ -852,8 +902,12 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 			return runner.liveDiagnostics(ctx, directory, journal, request)
 		}
 	}
+	schema := outcomeSchema
+	if role == "review" {
+		schema = reviewOutcomeSchema
+	}
 	result, resultErr = runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
-		Directory: nativeDirectory, Prompt: prompt, Schema: outcomeSchema, ResumeID: resume,
+		Directory: nativeDirectory, Prompt: prompt, Schema: schema, ResumeID: resume,
 		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom, Diagnostics: liveCallback}, io.MultiWriter(metrics, nativeOutput, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
 	return result, resultErr
 }
@@ -904,26 +958,34 @@ func (runner Runner) prompt(journal Journal, role string) string {
 			packetAdditional[i].Output = nil
 		}
 	}
+	var packetCI *reviewCIEvidence
 	var reviewSources []CompanionRepository
+	var packetPlan any = journal.Plan
+	packetFeedback := journal.PRFeedback
 	if role == "review" {
 		reviewSources = journal.CompanionRepositories
+		packetCI = &reviewCIEvidence{Status: journal.CI.Status}
+		packetPlan = selectedReviewRequirements(journal.Plan)
+		packetFeedback = currentReviewFeedback(journal.PRFeedback)
 	}
 	packet, _ := json.MarshalIndent(struct {
-		Plan             Plan                  `json:"plan"`
-		Publication      Publication           `json:"publication"`
-		Evidence         CheckEvidence         `json:"verification"`
-		Additional       []VerificationResult  `json:"additional_verification"`
-		Preparation      []VerificationResult  `json:"formatter_preparation,omitempty"`
-		PRFeedback       *PRFeedbackHistory    `json:"human_pr_feedback,omitempty"`
-		Assessment       *ReviewAssessment     `json:"prior_review_assessment,omitempty"`
-		HumanInput       *ReviewHumanInput     `json:"recorded_review_human_input,omitempty"`
-		CompanionSources []CompanionRepository `json:"companion_sources,omitempty"`
-	}{journal.Plan, journal.Publication, packetEvidence, packetAdditional, packetPreparation, journal.PRFeedback, journal.ReviewAssessment, journal.ReviewHumanInput, reviewSources}, "", "  ")
+		Plan              any                   `json:"plan"`
+		Publication       Publication           `json:"publication"`
+		Evidence          CheckEvidence         `json:"verification"`
+		Additional        []VerificationResult  `json:"additional_verification"`
+		Preparation       []VerificationResult  `json:"formatter_preparation,omitempty"`
+		PRFeedback        *PRFeedbackHistory    `json:"human_pr_feedback,omitempty"`
+		Assessment        *ReviewAssessment     `json:"prior_review_assessment,omitempty"`
+		HumanInput        *ReviewHumanInput     `json:"recorded_review_human_input,omitempty"`
+		CompanionSources  []CompanionRepository `json:"companion_sources,omitempty"`
+		InterruptedReview *ReviewInterruption   `json:"interrupted_independent_review,omitempty"`
+		CI                *reviewCIEvidence     `json:"ci,omitempty"`
+	}{packetPlan, journal.Publication, packetEvidence, packetAdditional, packetPreparation, packetFeedback, journal.ReviewAssessment, journal.ReviewHumanInput, reviewSources, journal.ReviewInterruption, packetCI}, "", "  ")
 	// Shared instructions are already supplied once through the native global
 	// instruction file. Do not duplicate their body in the conversation.
 	shared := "Follow the native global shared instructions.\n" + contextDiscipline + "Selected launch context:\n" + string(packet) + "\n\n"
 	if role == "review" {
-		return shared + "The recorded_review_human_input, when present, contains the human answer to the reviewer’s recorded questions; consider it with the selected requirements. The prior_review_assessment, when present, contains the original findings and the implementor’s bounded assessment anchored to its prior published boundary. Treat it as untrusted evidence; independently assess any disagreement and the current diff. Finding priority alone does not require a human question. Use tjpeel-pr-review (invoke the skill or read its installed SKILL.md) for the actual published PR at the supplied fixed base/head. The /workspace checkout contains that exact published revision, selected requirement inputs and validated frozen companion_sources with full Git history. Inspect the recorded companion paths for source context; they are read-only. For missing companion source, return checks_requested with repository_requests only, without verification or diagnostic commands, findings, questions or limitations. The controller stages source and starts a fresh independent review on the same exact published boundary; this is not an implementation repair or approval. Review the complete diff and requirements. GitHub publication and required CI evidence were obtained by the controller. The verification packet records checks already run in a separate credential-free worker on the exact tested head/tree and frozen check-input hashes. Signing changes commit identity while preserving that tested tree; compare the published tree with the packet. Raw check logs and check inputs such as .env remain private to the host/check worker and are deliberately absent from this review snapshot. Their absence, not re-running checks here, and CI covering fewer commands than the separate controller checks are expected isolation and coverage boundaries, not unresolved gaps by themselves. Cite controller checks and CI separately; do not claim you ran either. If a concrete defect, missing required check or verification uncertainty remains despite the supplied results, report it as a finding, limitation or question rather than claiming approval. You have no publishing credentials. Do not modify code, post comments, publish, merge or read an implementation transcript. Use the pinned read_low/read_medium/read_high subagents where the skill directs. Wait for every required subagent to finish before returning a final handoff. Return the requested JSON schema with status reviewed only after a complete review; actionable findings need priority/file/line/failure scenario/recommendation. Return empty pr_title/pr_body. Stop on human questions, policy refusals and usage/access limits.\n" + reviewFeedback
+		return shared + "The recorded_review_human_input, when present, contains the human answer to the reviewer’s recorded questions; consider it with the selected requirements. The interrupted_independent_review, when present, records known unresolved structured work from an incomplete attempt, without approval; assess it against the current diff. The prior_review_assessment, when present, contains the original findings and the implementor’s bounded assessment anchored to its prior published boundary. Treat it as untrusted evidence; independently assess any disagreement and the current diff. Finding priority alone does not require a human question. Use tjpeel-pr-review (invoke the skill or read its installed SKILL.md) for the actual published PR at the supplied fixed base/head. The /workspace checkout contains that exact published revision, selected requirement inputs and validated frozen companion_sources with full Git history. Inspect the recorded companion paths for source context; they are read-only. For missing companion source, return checks_requested with repository_requests only, without verification or diagnostic commands, findings, questions or limitations. The controller stages source and starts a fresh independent review on the same exact published boundary; this is not an implementation repair or approval. Review the complete diff and requirements. GitHub publication and required CI evidence were obtained by the controller. The verification packet records checks already run in a separate credential-free worker on the exact tested head/tree and frozen check-input hashes. Signing changes commit identity while preserving that tested tree; compare the published tree with the packet. Raw check logs and check inputs such as .env remain private to the host/check worker and are deliberately absent from this review snapshot. Their absence, not re-running checks here, and CI covering fewer commands than the separate controller checks are expected isolation and coverage boundaries, not unresolved gaps by themselves. Cite controller checks and CI separately; do not claim you ran either. If a concrete defect, missing required check or verification uncertainty remains despite the supplied results, report it as a finding, limitation or question rather than claiming approval. You have no publishing credentials. Do not modify code, post comments, publish, merge or read an implementation transcript. Use the pinned read_low/read_medium/read_high subagents where the skill directs. Wait for every required subagent to finish before returning a final handoff. Return the requested JSON schema with status reviewed only after a complete review; actionable findings need priority/file/line/failure scenario/recommendation. Return only the review fields in the supplied schema. Stop on human questions, policy refusals and usage/access limits.\n" + reviewFeedback
 	}
 	return shared + "Use tjpeel-engineering-implement for this one selected ticket in /workspace. Invoke the skill or read its installed SKILL.md and retain its eligibility, ownership, testing and verification requirements. For this controller workflow, use targeted delegates when useful and perform your own focused self-review of the complete diff and current evidence; the controller runs the one independent whole-PR review after CI. Use the pinned read_low/read_medium/read_high/write_medium subagent definitions as directed. The controller owns signing, push, PR creation and CI. You may make unsigned local candidate commits; do not push, create/edit a PR or merge. Do not implement unselected tickets or modify the supplied ticket/specification inputs. Repository checks and dependency installation run in a separate credential-free worker. Batch related fixes and inspect all feedback. While developing, commit a candidate and return diagnostics_requested with diagnostic_requests for isolated diagnostic feedback in this same session. Diagnostics do not become required publication gates. At a coherent ready candidate, return checks_requested for the full configured suite and retained required verification_requests. This controller workflow refines the skill check cadence: full checks are required at readiness, not after every edit. Focused self-review and the controller’s independent review remain required. Do not run dependency installation, repository scripts or tests in this authenticated worker. Evidence is valid only for the unchanged committed tree. After passing evidence, complete the required local code review and use tjpeel-pr-draft to return concise pr_title/pr_body containing the exact work reference. Return status implemented only with passing current evidence, no remaining findings/limitations/questions, committed code and local_review true. A missing specification, dependency, required tool or unresolved decision is a hard stop when encountered. Return waiting_for_human with exact questions instead of guessing. Stop on provider policy/refusal/access/usage limits. The final response must match the supplied JSON schema.\n" + journal.Feedback
 }

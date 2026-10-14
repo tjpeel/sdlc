@@ -36,24 +36,35 @@ var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 // Attempt is private native-client telemetry. SessionID never appears in Summary.
 // Elapsed time covers the entire attempt, including setup and queueing.
 type Attempt struct {
-	Version       int             `json:"version"`
-	RunID         string          `json:"run_id"`
-	Attempt       int             `json:"attempt"`
-	Role          string          `json:"role"`
-	Provider      string          `json:"provider"`
-	Model         string          `json:"model"`
-	Effort        string          `json:"effort,omitempty"`
-	ImageID       string          `json:"image_id,omitempty"`
-	StartedAt     time.Time       `json:"started_at"`
-	EndedAt       time.Time       `json:"ended_at,omitempty"`
-	Outcome       string          `json:"outcome"`
-	SessionID     string          `json:"session_id,omitempty"`
-	Resumed       bool            `json:"resumed,omitempty"`
-	OptimizerMode string          `json:"optimizer_mode"`
-	HeadroomStats *headroom.Stats `json:"headroom_stats,omitempty"`
-	ClientVersion string          `json:"client_version,omitempty"`
-	Usage         Usage           `json:"usage"`
-	EventTiming   *EventTiming    `json:"native_event_timing,omitempty"`
+	ReviewBoundary *ReviewBoundary `json:"review_boundary,omitempty"`
+	StopCategory   string          `json:"stop_category,omitempty"`
+	Version        int             `json:"version"`
+	RunID          string          `json:"run_id"`
+	Attempt        int             `json:"attempt"`
+	Role           string          `json:"role"`
+	Provider       string          `json:"provider"`
+	Model          string          `json:"model"`
+	Effort         string          `json:"effort,omitempty"`
+	ImageID        string          `json:"image_id,omitempty"`
+	StartedAt      time.Time       `json:"started_at"`
+	EndedAt        time.Time       `json:"ended_at,omitempty"`
+	Outcome        string          `json:"outcome"`
+	SessionID      string          `json:"session_id,omitempty"`
+	Resumed        bool            `json:"resumed,omitempty"`
+	OptimizerMode  string          `json:"optimizer_mode"`
+	HeadroomStats  *headroom.Stats `json:"headroom_stats,omitempty"`
+	ClientVersion  string          `json:"client_version,omitempty"`
+	Usage          Usage           `json:"usage"`
+	EventTiming    *EventTiming    `json:"native_event_timing,omitempty"`
+}
+
+// ReviewBoundary binds native review telemetry to the exact published candidate.
+type ReviewBoundary struct {
+	Number      int    `json:"number"`
+	Head        string `json:"head"`
+	Base        string `json:"base"`
+	Tree        string `json:"tree"`
+	EvidenceKey string `json:"evidence_key"`
 }
 
 type Group struct {
@@ -149,6 +160,28 @@ func openMetricsRoot(dir string, create bool) (*os.Root, error) {
 }
 
 func validateAttempt(a Attempt) error {
+	if complete := a.Usage.NativeFinalization; complete != nil {
+		if complete.Provider != a.Provider || complete.ExitCode < 0 || complete.ExitCode > 255 || complete.ObservedAt.IsZero() || complete.ObservedAt.Before(a.StartedAt) || !a.EndedAt.IsZero() && complete.ObservedAt.After(a.EndedAt) {
+			return fmt.Errorf("invalid native finalization")
+		}
+	}
+	if stop := a.Usage.NativeStop; stop != nil {
+		if a.Provider != "codex" || stop.Source != "codex.exec.fatal_error" || (stop.Category != "usage_exhausted" && stop.Category != "native_failure") || stop.ObservedAt.IsZero() || stop.ObservedAt.Before(a.StartedAt) || !a.EndedAt.IsZero() && stop.ObservedAt.After(a.EndedAt) {
+			return fmt.Errorf("invalid native usage stop")
+		}
+	}
+	switch a.StopCategory {
+	case "", "native_execution", "native_incomplete", "operational":
+	default:
+		return fmt.Errorf("invalid native stop category")
+	}
+	if b := a.ReviewBoundary; b != nil {
+		sha := regexp.MustCompile(`^[a-f0-9]{40}([a-f0-9]{24})?$`)
+		key := regexp.MustCompile(`^[a-f0-9]{64}$`)
+		if a.Role != "review" || b.Number < 1 || !sha.MatchString(b.Head) || !sha.MatchString(b.Base) || !sha.MatchString(b.Tree) || b.EvidenceKey != "" && !key.MatchString(b.EvidenceKey) {
+			return fmt.Errorf("invalid review metrics boundary")
+		}
+	}
 	if a.Version != Version || !safeID.MatchString(a.RunID) || a.Attempt < 1 || a.Attempt > maxRecords || !safeID.MatchString(a.Role) || !safeModel(a.Model) || !safeID.MatchString(a.Provider) || len(a.SessionID) > 256 || len(a.ImageID) > 512 || len(a.Effort) > 64 || len(a.OptimizerMode) > 64 {
 		return fmt.Errorf("invalid metrics attempt identity")
 	}
@@ -329,6 +362,26 @@ func readRecord(root *os.Root, name string, a *Attempt) error {
 		return err
 	}
 	return validateAttempt(*a)
+}
+
+// LoadAttempt uses the same bounded, private-file validation as usage reports.
+func LoadAttempt(directory, runID string, attempt int, role string) (Attempt, error) {
+	var a Attempt
+	if !safeID.MatchString(runID) || !safeID.MatchString(role) || attempt < 1 || attempt > maxRecords {
+		return a, fmt.Errorf("invalid metrics lookup")
+	}
+	root, err := openMetricsRoot(filepath.Join(directory, "metrics"), false)
+	if err != nil {
+		return a, err
+	}
+	defer root.Close()
+	if err := readRecord(root, recordName(Attempt{Attempt: attempt, Role: role}), &a); err != nil {
+		return a, err
+	}
+	if a.RunID != runID || a.Attempt != attempt || a.Role != role {
+		return a, fmt.Errorf("metrics lookup identity differs")
+	}
+	return a, nil
 }
 
 // LoadSummary exports no session identifiers, transcripts, paths or credentials.

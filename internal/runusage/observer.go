@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"math"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -17,23 +18,39 @@ const maxTokenCount int64 = 1_000_000_000_000
 // guarantee. Nil fields mean unknown. Aggregate counters are replaced, never
 // added across resumes, and cannot establish a current request's context size.
 type Usage struct {
-	Subscription      *SubscriptionUsage    `json:"subscription,omitempty"`
-	Aggregate         *TokenUsage           `json:"aggregate,omitempty"`
-	Context           *ContextUsage         `json:"context,omitempty"`
-	ClientVersion     string                `json:"client_version,omitempty"`
-	ReportedModel     string                `json:"reported_model,omitempty"`
-	ModelMatches      bool                  `json:"model_matches"`
-	Models            map[string]TokenUsage `json:"models,omitempty"`
-	EstimatedCostUSD  *float64              `json:"estimated_cost_usd,omitempty"`
-	DurationMS        *int64                `json:"duration_ms,omitempty"`
-	APIDurationMS     *int64                `json:"api_duration_ms,omitempty"`
-	Turns             *int64                `json:"turns,omitempty"`
-	RateLimits        map[string]RateLimit  `json:"rate_limits,omitempty"`
-	PeakContextTokens *int64                `json:"peak_context_tokens,omitempty"`
-	Compactions       int64                 `json:"compactions,omitempty"`
-	Retries           int64                 `json:"retries,omitempty"`
-	CompletedTurns    int64                 `json:"completed_turns,omitempty"`
-	Completeness      string                `json:"completeness,omitempty"`
+	NativeFinalization *NativeFinalization   `json:"native_finalization,omitempty"`
+	NativeStop         *NativeStop           `json:"native_stop,omitempty"`
+	Subscription       *SubscriptionUsage    `json:"subscription,omitempty"`
+	Aggregate          *TokenUsage           `json:"aggregate,omitempty"`
+	Context            *ContextUsage         `json:"context,omitempty"`
+	ClientVersion      string                `json:"client_version,omitempty"`
+	ReportedModel      string                `json:"reported_model,omitempty"`
+	ModelMatches       bool                  `json:"model_matches"`
+	Models             map[string]TokenUsage `json:"models,omitempty"`
+	EstimatedCostUSD   *float64              `json:"estimated_cost_usd,omitempty"`
+	DurationMS         *int64                `json:"duration_ms,omitempty"`
+	APIDurationMS      *int64                `json:"api_duration_ms,omitempty"`
+	Turns              *int64                `json:"turns,omitempty"`
+	RateLimits         map[string]RateLimit  `json:"rate_limits,omitempty"`
+	PeakContextTokens  *int64                `json:"peak_context_tokens,omitempty"`
+	Compactions        int64                 `json:"compactions,omitempty"`
+	Retries            int64                 `json:"retries,omitempty"`
+	CompletedTurns     int64                 `json:"completed_turns,omitempty"`
+	Completeness       string                `json:"completeness,omitempty"`
+}
+
+// NativeStop retains the category of a fatal native protocol event, without
+// retaining its potentially private error message.
+type NativeStop struct {
+	Source     string    `json:"source"`
+	Category   string    `json:"category"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+type NativeFinalization struct {
+	Provider   string    `json:"provider"`
+	ExitCode   int       `json:"exit_code"`
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 type TokenUsage struct {
@@ -165,6 +182,15 @@ func counts(raw json.RawMessage, cachedKey string) (*TokenUsage, bool) {
 }
 
 func (o *Observer) consume(line []byte, provider, requested string, usage *Usage) {
+	observeNativeUsageStop(line, provider, o.receivedAt, usage)
+	var completion struct {
+		Type     string `json:"type"`
+		Provider string `json:"provider"`
+		ExitCode *int   `json:"exit_code"`
+	}
+	if json.Unmarshal(line, &completion) == nil && completion.Type == "sdlc.native_finalization" && completion.Provider == provider && completion.ExitCode != nil && *completion.ExitCode >= 0 && *completion.ExitCode <= 255 {
+		usage.NativeFinalization = &NativeFinalization{Provider: provider, ExitCode: *completion.ExitCode, ObservedAt: o.receivedAt}
+	}
 	var event struct {
 		ClientVersion string          `json:"claude_code_version"`
 		Type          string          `json:"type"`
@@ -388,6 +414,43 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 			}
 		}
 	}
+}
+
+func observeNativeUsageStop(line []byte, provider string, observed time.Time, usage *Usage) {
+	if provider != "codex" {
+		return
+	}
+	var event struct {
+		Type    string          `json:"type"`
+		Message json.RawMessage `json:"message"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(line, &event) != nil {
+		return
+	}
+	message := ""
+	if event.Type == "error" {
+		_ = json.Unmarshal(event.Message, &message)
+	}
+	if event.Type == "turn.failed" {
+		message = event.Error.Message
+	}
+	// The pinned official exec protocol exposes a message, not its typed error
+	// code. These canonical prefixes come from UsageLimitReachedError::Display
+	// in codex-rs/protocol/src/error.rs at rust-v0.162.1. Unknown formats hold.
+	if event.Type != "error" && event.Type != "turn.failed" {
+		return
+	}
+	category := "native_failure"
+	if strings.HasPrefix(message, "You’ve hit your usage limit.") || strings.HasPrefix(message, "You’ve hit your usage limit for ") {
+		category = "usage_exhausted"
+	}
+	if usage.NativeStop != nil && usage.NativeStop.Category == "native_failure" {
+		return
+	}
+	usage.NativeStop = &NativeStop{Source: "codex.exec.fatal_error", Category: category, ObservedAt: observed}
 }
 
 // NewObserver reads native JSONL only; it never changes the provider lifecycle.

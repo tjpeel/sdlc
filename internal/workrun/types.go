@@ -200,10 +200,11 @@ type Session struct {
 }
 
 type SessionResult struct {
-	Outcome       Outcome
-	SessionID     string
-	ReportedModel string
-	HeadroomStats *headroom.Stats
+	ReviewInterruption *ReviewInterruption
+	Outcome            Outcome
+	SessionID          string
+	ReportedModel      string
+	HeadroomStats      *headroom.Stats
 }
 
 type Provider interface {
@@ -249,6 +250,8 @@ type Publisher interface {
 }
 
 type Journal struct {
+	ReviewInterruption        *ReviewInterruption     `json:"interrupted_independent_review,omitempty"`
+	ReviewSkip                *ReviewSkip             `json:"independent_review_skipped,omitempty"`
 	CIFeedbackRecoveries      []CIFeedbackRecovery    `json:"ci_feedback_recoveries,omitempty"`
 	PushRepair                *PushProtectionRepair   `json:"push_protection_repair,omitempty"`
 	RestackNeedsChecks        bool                    `json:"restack_needs_checks,omitempty"`

@@ -546,6 +546,19 @@ metadata requires a deliberate new `github use --profile NAME` selection.
 The implementation login is required before launch. A missing opposite-provider
 login allows implementation, local checks, draft PR publication and CI to finish,
 then retains `awaiting_reviewer`. Login and resume to complete independent review.
+A confirmed native usage cap in either selected independent reviewer instead
+finishes at `ready` for human review, with a visible **independent review skipped**
+notice. The private journal and status export retain the published head, tested
+tree, reviewer provider/model/effort, attempt and native exhaustion source.
+SDLC records no independent approval and never switches accounts or models.
+The clean committed candidate, full configured and additional checks, signed
+publication and exact-head CI must still pass. Unresolved findings or human
+questions, authentication, policy, tooling, invalid handoffs and cleanup failures
+retain their holds. Unknown or near-limit quota information does not skip review.
+A corroborated saved usage stop can resume to this checkpoint without another
+native reviewer attempt. If a failed native review already returned a valid
+structured finding, question, limitation or source request, SDLC retains that
+known work and keeps its hold. It does not infer findings from prose or tool logs.
 Account-authenticated runs support the account owner's local single-user job;
 CI execution is rejected. Review the [provider rules](provider-usage.md) first.
 
@@ -862,7 +875,9 @@ Resume accepts only `--reference`, `--ticket`, `--resume`, `--answer-file`,
 `--timeout`, `--dry-run` and the explicit recovery flags described below. Implementation turns and repairs resume the exact
 recorded native session, never the latest unrelated session. Each independent
 review starts fresh. Cancellation, timeout, invalid handoffs, missing inputs,
-usage/access limits and policy refusals retain a stopped checkpoint. Fix the
+implementation usage limits, access limits and policy refusals retain a stopped
+checkpoint. Confirmed independent-reviewer usage exhaustion uses the visible
+skipped-review human checkpoint described above. Fix the
 reported cause before resuming; never restart or change identities to evade
 provider restrictions. Journals and native storage must remain intact for resume.
 
@@ -2021,6 +2036,13 @@ the reply; it does not resolve the thread.
 
 An assessment accompanying a human question also remains provisional until the
 session completes it after the answer.
+
+GitHub can update an inline comment's current path, line or outdated flag after
+a correction. Those display changes do not create a new feedback revision when
+the captured original commit, line or position, diff context and reply thread
+still match. The saved fingerprint and reply marker stay unchanged. Human
+content, author, update time and resolution or deletion changes still require
+reconciliation; missing original context keeps the strict comparison.
 
 Comment revisions, original inline context, assessments, candidate and signed
 commit IDs, and replies stay in the private run journal. The dashboard shows

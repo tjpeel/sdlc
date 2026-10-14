@@ -105,10 +105,10 @@ func TestOutcomeRejectsIncompleteReviewAndImplementation(t *testing.T) {
 	}
 }
 
-func TestEventWriterRequiresEverySchemaField(t *testing.T) {
+func TestEventWriterRequiresEveryImplementationSchemaField(t *testing.T) {
 	for _, field := range []string{"status", "summary", "questions", "findings", "local_review", "limitations", "pr_title", "pr_body"} {
 		t.Run(field, func(t *testing.T) {
-			data, _ := json.Marshal(testOutcome("reviewed"))
+			data, _ := json.Marshal(testOutcome("implemented"))
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(data, &fields); err != nil {
 				t.Fatal(err)
@@ -119,7 +119,7 @@ func TestEventWriterRequiresEverySchemaField(t *testing.T) {
 			if _, err := w.Write(result); err != nil {
 				t.Fatal(err)
 			}
-			if err := w.finish("review"); err == nil {
+			if err := w.finish("implementation"); err == nil {
 				t.Fatalf("missing required %s accepted", field)
 			}
 		})

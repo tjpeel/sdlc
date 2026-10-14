@@ -93,7 +93,7 @@ leave network-disabled test containers. Real login requires the account owner's
 action through the official provider flow; SDLC does not automate browser sign-in
 or implement token refresh itself.
 
-Ticket workers must stop on exhausted usage, unsupported credentials, access
+Implementation workers must stop on exhausted usage, unsupported credentials, access
 denials, account holds and policy refusals. Any retry of a transient failure must
 remain within the provider's documented limits. Credentials belong to one
 authorised user; SDLC must not pool subscriptions or make their usage available
@@ -260,3 +260,30 @@ after the worker stops. SDLC disables Headroom beacon/update calls, semantic cac
 CCR retrieval, model routing and learned compression for this variant. Connected
 quality and subscription trials require separate authorisation; offline validation
 alone does not establish real account access or savings on engineering work.
+
+## Independent reviewer usage exhaustion
+
+An independent review can end at the human-review checkpoint when the selected
+native reviewer conclusively exhausts usage. This records a skipped review with
+its exact published revision and selected provider/model/attempt, rather than an
+approval. No replacement provider, model or account is selected. All current
+implementation, isolated verification, signed publication and exact-head CI
+checks still apply; pending findings, questions and operational failures keep
+their holds.
+
+Claude supplies the native `rate_limit_event` rejection. The pinned Codex
+0.162.1 [exec event protocol](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/exec/src/exec_events.rs)
+exposes fatal error messages without their typed error codes. Its
+[UsageLimitReachedError display](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/protocol/src/error.rs)
+supplies canonical usage-limit prefixes; SDLC decodes only those top-level fatal
+events into a bounded category and retains no error payload. Other formats and
+request throttling remain holds. Unknown quota probes, warnings and percentages
+near a limit are not exhaustion evidence.
+
+The native wrapper confirms completion only after its opaque authentication
+snapshot has been safely persisted. Parser, output, authentication persistence,
+container cleanup and model-identity failures cannot become skipped reviews.
+Compatible older usage holds require the exact controller-owned stop reason,
+same failed review attempt, matching retained published snapshot and corroborated
+wrapper completion; ambiguous evidence remains a hold. This lifecycle policy
+does not change authentication or native execution routes.

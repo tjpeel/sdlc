@@ -97,7 +97,7 @@ func TestPRFeedbackUnchangedHeadRunsChecksAndFreshIndependentReview(t *testing.T
 		t.Fatal("feedback reset saved identity, history or budgets")
 	}
 	packet := provider.sessions[2].Prompt
-	if !strings.Contains(packet, "human_pr_feedback") || !strings.Contains(packet, comment.Body) || !strings.Contains(packet, "unaddressable") || !strings.Contains(packet, "sdlc-pr-feedback") {
+	if !strings.Contains(packet, "human_pr_feedback") || !strings.Contains(packet, comment.Body) || !strings.Contains(packet, "unaddressable") || !strings.Contains(packet, comment.ID) || !strings.Contains(packet, feedbackFingerprint(comment)) {
 		t.Fatal("fresh review omitted human comments, assessment or reply evidence")
 	}
 	summary := PRFeedbackStatus(*j)

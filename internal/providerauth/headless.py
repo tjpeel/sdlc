@@ -237,12 +237,15 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
             subscription.capture(provider, 'before', env)
             subscription.boundary(provider, 'start')
             try:
-                return process(command, env)
+                code = process(command, env)
             finally:
                 subscription.boundary(provider, 'end')
                 subscription.capture(provider, 'after', env)
         finally:
             finish_auth(config, provider, directory)
+        print(json.dumps({"type": "sdlc.native_finalization", "provider": provider,
+                          "exit_code": code}), flush=True)
+        return code
 
 
 def main():

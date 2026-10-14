@@ -26,7 +26,7 @@ func (provider NativeProvider) Status(ctx context.Context, name string) (string,
 	return provider.Manager.Status(ctx, name)
 }
 
-func (provider NativeProvider) Execute(ctx context.Context, session Session, stdout, stderr io.Writer) (SessionResult, error) {
+func (provider NativeProvider) Execute(ctx context.Context, session Session, stdout, stderr io.Writer) (result SessionResult, resultErr error) {
 	if err := os.MkdirAll(session.Directory, 0777); err != nil {
 		return SessionResult{}, fmt.Errorf("cannot prepare native session storage")
 	}
@@ -102,6 +102,15 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 		}
 	}
 	events := &eventWriter{provider: session.Model.Provider, output: stdout}
+	defer func() {
+		if session.Role == "review" && resultErr != nil {
+			var interruptionErr error
+			result.ReviewInterruption, interruptionErr = unresolvedReviewHandoff(events.final)
+			if interruptionErr != nil {
+				resultErr = errors.Join(resultErr, interruptionErr)
+			}
+		}
+	}()
 	err = provider.Manager.Headless(nativeCtx, providerauth.HeadlessRequest{
 		Provider: session.Model.Provider, Model: session.Model.Name, Effort: session.Model.Effort,
 		Workspace: session.Workspace, SessionDirectory: session.Directory, PromptFile: prompt, SchemaFile: schema,
@@ -114,6 +123,21 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 		serviceCancel()
 		err = errors.Join(err, <-serviceDone)
 		serviceDone = nil
+	}
+	// A failed process can still leave an unterminated protocol line. Validate
+	// that line before deciding whether the native failure may be quota-related.
+	if events.err == nil && len(bytes.TrimSpace(events.buffer)) > 0 {
+		events.err = events.consume(events.buffer)
+		events.buffer = nil
+	}
+
+	// Stream copy failures can surface as process errors from the Docker
+	// adapter. Retain the parser/output hold instead of calling them quota stops.
+	if events.err != nil {
+		return events.result, errors.Join(err, events.err)
+	}
+	if events.modelChanged || events.result.ReportedModel != "" && events.result.ReportedModel != session.Model.Name {
+		return events.result, errors.Join(err, fmt.Errorf("provider reported a different model during the session; job stopped"))
 	}
 	if session.ResumeID != "" {
 		reportedID := events.result.SessionID
@@ -135,6 +159,7 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 }
 
 var sessionIdentifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var errNativeIncomplete = errors.New("provider did not complete a resumable session successfully")
 
 type eventWriter struct {
 	provider          string
@@ -195,10 +220,8 @@ func (writer *eventWriter) consume(line []byte) error {
 		IsError    bool            `json:"is_error"`
 		Structured json.RawMessage `json:"structured_output"`
 		Result     string          `json:"result"`
-		Message    struct {
-			Model string `json:"model"`
-		} `json:"message"`
-		Item struct {
+		Message    json.RawMessage `json:"message"`
+		Item       struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"item"`
@@ -211,8 +234,11 @@ func (writer *eventWriter) consume(line []byte) error {
 	// is compared with its requested role; nested events remain in the log.
 	if len(event.ParentTool) == 0 || bytes.Equal(bytes.TrimSpace(event.ParentTool), []byte("null")) {
 		reported = event.Model
-		if event.Message.Model != "" {
-			reported = event.Message.Model
+		var message struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(event.Message, &message) == nil && message.Model != "" {
+			reported = message.Model
 		}
 	}
 	if reported != "" {
@@ -261,7 +287,7 @@ func (writer *eventWriter) finish(role string) error {
 		writer.buffer = nil
 	}
 	if writer.failed || !writer.completed || !sessionIdentifier.MatchString(writer.result.SessionID) {
-		return fmt.Errorf("provider did not complete a resumable session successfully")
+		return errNativeIncomplete
 	}
 	if writer.modelChanged {
 		return fmt.Errorf("provider reported a model change during the session; job stopped")
@@ -270,7 +296,11 @@ func (writer *eventWriter) finish(role string) error {
 	if json.Unmarshal(writer.final, &fields) != nil {
 		return fmt.Errorf("provider did not return a JSON handoff")
 	}
-	for _, key := range []string{"status", "summary", "questions", "findings", "local_review", "limitations", "pr_title", "pr_body"} {
+	required := []string{"status", "summary", "questions", "findings", "limitations"}
+	if role != "review" {
+		required = append(required, "local_review", "pr_title", "pr_body")
+	}
+	for _, key := range required {
 		if value, ok := fields[key]; !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return fmt.Errorf("provider handoff is missing required field %s", key)
 		}

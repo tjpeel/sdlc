@@ -268,7 +268,7 @@ func (p GitHubPublisher) ReplyFeedback(ctx context.Context, plan Plan, pr Public
 	found := false
 	for _, current := range feedback {
 		if current.ID == c.ID {
-			if current.Body != c.Body || current.UpdatedAt != c.UpdatedAt || current.Path != c.Path || current.OriginalCommit != c.OriginalCommit || current.ThreadID != c.ThreadID {
+			if !sameFeedbackRevision(c, current) {
 				return PRFeedbackReply{}, &FeedbackRevisionChangedError{}
 			}
 			found = true

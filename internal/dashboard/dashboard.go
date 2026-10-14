@@ -374,6 +374,11 @@ func Reason(v runstatus.View) string {
 		return "Controller stopped; checkpoint retained."
 	}
 	if v.State == "ready" {
+		if v.Journal != nil {
+			if notice := workrun.ReviewSkipNotice(*v.Journal); notice != "" {
+				return notice
+			}
+		}
 		return "Draft PR is ready for human review."
 	}
 	return ""
@@ -513,6 +518,22 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 	}
 	for _, finding := range v.Findings {
 		fmt.Fprintf(&text, "Finding: %s %s:%d %s — %s\n", finding.Priority, finding.Path, finding.Line, finding.Scenario, finding.Recommendation)
+	}
+	if v.Journal != nil && v.Journal.ReviewInterruption != nil {
+		pending := v.Journal.ReviewInterruption
+		fmt.Fprintf(&text, "Interrupted independent review: attempt %d on %s; no approval recorded.\n", pending.Attempt, pending.Publication.HeadSHA)
+		for _, finding := range pending.Findings {
+			fmt.Fprintf(&text, "Finding: %s %s:%d %s — %s\n", finding.Priority, finding.Path, finding.Line, finding.Scenario, finding.Recommendation)
+		}
+		for _, question := range pending.Questions {
+			fmt.Fprintf(&text, "Unresolved review question: %s\n", question)
+		}
+		for _, limitation := range pending.Limitations {
+			fmt.Fprintf(&text, "Review limitation: %s\n", limitation)
+		}
+		for _, request := range pending.RepositoryRequests {
+			fmt.Fprintf(&text, "Review source needed: %s — %s\n", request.Repository, request.Purpose)
+		}
 	}
 	fmt.Fprintf(&text, "Private state: %s\n", v.Directory)
 	if v.Available && v.Journal != nil {

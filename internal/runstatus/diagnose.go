@@ -86,6 +86,12 @@ func diagnosticCI(value string) string {
 	return "unknown"
 }
 func diagnosticReview(j workrun.Journal) string {
+	if j.ReviewInterruption != nil {
+		return "interrupted_known_issues"
+	}
+	if workrun.ReviewSkipNotice(j) != "" {
+		return "skipped_usage_exhausted"
+	}
 	if j.Outcome.Status == "reviewed" {
 		return "reviewed"
 	}
@@ -119,6 +125,9 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	}
 	if workrun.CanReplaySavedPRFeedback(j) {
 		return NextAction{Category: "feedback_recovery", Instruction: "Resume to validate and replay the saved feedback outcome before another native turn.", Command: "sdlc resume --run " + id}
+	}
+	if j.State == "ready" && workrun.ReviewSkipNotice(j) != "" {
+		return NextAction{Category: "human_review", Instruction: workrun.ReviewSkipNotice(j), Command: "sdlc resume --run " + id + " --pr-feedback"}
 	}
 	if j.State == "ready" {
 		return NextAction{Category: "human_review", Instruction: "Review the published change; request PR feedback after new human comments.", Command: "sdlc resume --run " + id + " --pr-feedback"}

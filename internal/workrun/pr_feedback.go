@@ -93,18 +93,34 @@ func feedbackFingerprint(c PRFeedbackComment) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// GitHub remaps the current display location when a correction moves or renames
+// code. The captured fingerprint remains intact; only an unchanged original
+// inline anchor permits treating those display changes as the same human input.
+func sameFeedbackRevision(captured, current PRFeedbackComment) bool {
+	if reflect.DeepEqual(captured, current) {
+		return true
+	}
+	if captured.Kind != "inline" || current.Kind != "inline" || captured.ThreadID == "" || captured.ReplyID < 1 || !objectID.MatchString(captured.OriginalCommit) || captured.DiffHunk == "" || captured.OriginalLine < 1 && captured.OriginalPosition < 1 {
+		return false
+	}
+	current.Path = captured.Path
+	current.Line = captured.Line
+	current.Outdated = captured.Outdated
+	return reflect.DeepEqual(captured, current)
+}
+
 func ValidatePRFeedbackResume(j Journal) error {
 	if j.SessionID == "" || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) {
 		return fmt.Errorf("PR feedback requires an existing PR and its original implementation session")
 	}
-	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && j.Outcome.Status == "reviewed" && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && len(j.Outcome.Limitations) == 0 && j.CI.Status == "passed" && j.Evidence.Passed {
+	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && (j.Outcome.Status == "reviewed" || ReviewSkipNotice(j) != "" && validateReviewSkip(&j) == nil && j.Outcome.Status == "implemented" && j.Outcome.LocalReview) && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && len(j.Outcome.Limitations) == 0 && j.CI.Status == "passed" && j.Evidence.Passed {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.State == "blocked" && j.ResumeState == "publishing" && strings.HasPrefix(j.StopReason, prFeedbackReplyHold) && j.Outcome.Status == "implemented" && j.Evidence.Passed && pendingFeedback(&j) == nil {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.PRFeedback.FetchPending && (j.State == "pr_feedback" || j.State == "blocked" && j.ResumeState == "pr_feedback") {
-		if j.PRFeedback.FetchResumeState == "ready" && (j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || len(j.Outcome.Limitations) > 0 || j.CI.Status != "passed") {
+		if j.PRFeedback.FetchResumeState == "ready" && ((j.Outcome.Status != "reviewed" && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || len(j.Outcome.Limitations) > 0 || j.CI.Status != "passed") {
 			return fmt.Errorf("feedback fetch lost its ready boundary")
 		}
 		if j.PRFeedback.FetchResumeState == "publishing" && (j.Outcome.Status != "implemented" || pendingFeedback(&j) != nil) {
@@ -286,7 +302,7 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 				previous = &h.Entries[i]
 			}
 		}
-		if previous != nil && previous.Fingerprint == fp {
+		if previous != nil && (previous.Fingerprint == fp || sameFeedbackRevision(previous.Comment, c)) {
 			continue
 		}
 		occurrence := 0

@@ -208,7 +208,12 @@ func project(j workrun.Journal, directory string) View {
 	return View{ID: j.ID, Root: j.Plan.Root, Reference: j.Plan.Reference, Ticket: j.Plan.Ticket, Directory: directory, State: j.State,
 		Role: role, Provider: model.Provider, Model: model.Name, Effort: model.Effort, StartedAt: started, UpdatedAt: j.UpdatedAt,
 		Available: true, NeedsAttention: j.State == "ready" || j.State == "waiting_for_human" || j.State == "blocked" || j.State == "failed" || j.StopReason != "",
-		StopReason: j.StopReason, Questions: j.Outcome.Questions, Findings: j.Outcome.Findings, CI: publicCI, PR: j.Publication, Journal: &j}
+		StopReason: func() string {
+			if j.StopReason != "" {
+				return j.StopReason
+			}
+			return workrun.ReviewSkipNotice(j)
+		}(), Questions: j.Outcome.Questions, Findings: j.Outcome.Findings, CI: publicCI, PR: j.Publication, Journal: &j}
 }
 
 func terminal(state string) bool {

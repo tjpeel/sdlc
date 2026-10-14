@@ -7,6 +7,18 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.69 - 2026-10-14
+
+### Changed
+
+- Finish at the human review checkpoint with an explicit warning when the selected independent reviewer exhausts its provider allowance. Record the skipped review against the exact published revision and keep local verification, signing and CI requirements.
+- Give independent reviewers a smaller initial packet and output contract, retaining the selected requirements, current feedback and verification evidence, with the full checkout, history and companion source available for inspection.
+
+### Fixed
+
+- Retain native reviewer usage-limit evidence separately from authentication, protocol and cleanup failures. Corroborated saved review usage stops can complete without another provider attempt.
+- Keep existing comment assessments and replies valid when GitHub moves an inline comment's current path or line after a rename, while retaining checks for actual comment edits and changed original context.
+
 ## 0.1.0-beta.68 - 2026-10-14
 
 ### Changed

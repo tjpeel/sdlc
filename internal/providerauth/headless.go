@@ -278,9 +278,17 @@ func (manager Manager) Headless(ctx context.Context, request HeadlessRequest, st
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("native %s headless session failed; inspect the private run log before retrying", request.Provider)
+		return &NativeExecutionError{Provider: request.Provider}
 	}
 	return nil
+}
+
+// NativeExecutionError identifies only an unsuccessful native process. Setup,
+// authentication, cancellation and cleanup errors retain their separate holds.
+type NativeExecutionError struct{ Provider string }
+
+func (e *NativeExecutionError) Error() string {
+	return fmt.Sprintf("native %s headless session failed; inspect the private run log before retrying", e.Provider)
 }
 
 // Input builds fixed auxiliary recipes without including a host filesystem context.

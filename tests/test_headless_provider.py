@@ -196,6 +196,28 @@ class HeadlessTests(unittest.TestCase):
             headless.headless('codex', 'example-model', 'high', '', False, self.cache)
         self.assertEqual(phases, ['before', 'after'])
 
+    def test_finalization_marker_follows_completed_auth_persistence(self):
+        output = io.StringIO()
+        original = headless.finish_auth
+
+        def finish(*args):
+            self.assertNotIn('sdlc.native_finalization', output.getvalue())
+            original(*args)
+
+        with patch('sys.stdout', output), patch.object(headless, 'finish_auth', side_effect=finish):
+            self.run_client('codex')
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        complete = [event for event in events if event['type'] == 'sdlc.native_finalization']
+        self.assertEqual(complete, [{'type': 'sdlc.native_finalization', 'provider': 'codex', 'exit_code': 0}])
+
+    def test_auth_persistence_failure_has_no_finalization_marker(self):
+        output = io.StringIO()
+        with patch('sys.stdout', output), \
+                patch.object(headless, 'finish_auth', side_effect=ValueError('offline persistence failure')), \
+                self.assertRaises(ValueError):
+            self.run_client('codex')
+        self.assertNotIn('sdlc.native_finalization', output.getvalue())
+
     def test_codex_workspace_trust_rejects_other_config_shapes_before_client(self):
         for contents in (
                 "", "invalid TOML", b"\xff", "projects = []\n",
