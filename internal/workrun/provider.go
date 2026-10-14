@@ -307,7 +307,7 @@ func validateOutcome(outcome Outcome, role string) error {
 	if (role != "implementation" || outcome.Status != "checks_requested") && len(outcome.VerificationRequests) > 0 {
 		return fmt.Errorf("additional verification requests require implementation checks_requested")
 	}
-	if role != "implementation" && len(outcome.RepositoryRequests) > 0 {
+	if role != "implementation" && !(role == "review" && outcome.Status == "checks_requested") && len(outcome.RepositoryRequests) > 0 {
 		return fmt.Errorf("companion repository requests require the implementation role")
 	}
 	if outcome.Summary == "" || outcome.Questions == nil || outcome.Findings == nil || outcome.Limitations == nil {
@@ -319,7 +319,15 @@ func validateOutcome(outcome Outcome, role string) error {
 			return fmt.Errorf("waiting handoff must include a human question")
 		}
 	case "blocked", "failed":
-	case "checks_requested", "diagnostics_requested":
+	case "checks_requested":
+		if role == "review" {
+			if len(outcome.RepositoryRequests) == 0 || len(outcome.Questions) != 0 || len(outcome.Findings) != 0 || len(outcome.Limitations) != 0 || len(outcome.VerificationRequests) != 0 || len(outcome.DiagnosticRequests) != 0 {
+				return fmt.Errorf("review checks_requested requires source-only repository requests")
+			}
+		} else if role != "implementation" {
+			return fmt.Errorf("unsupported handoff role")
+		}
+	case "diagnostics_requested":
 		if role != "implementation" {
 			return fmt.Errorf("review must use the supplied verification evidence")
 		}

@@ -156,6 +156,13 @@ The delivery sequence is:
    publication credentials. Actionable findings return to the original
    implementation session. Repairs repeat checks, publication, CI and a fresh
    independent review.
+   Frozen companion source and its complete history accompany the snapshot.
+   A source-only reviewer request stages additional same-owner source through
+   the existing controller reader and starts another fresh review after exact
+   PR and CI validation. It retains the original implementation session and
+   cumulative accounting without spending repair grants. Access questions
+   remain owned by review.
+
 6. Passing current CI and a complete review without findings produce `ready` for
    human review. The PR stays draft. SDLC never merges or approves automatically.
 

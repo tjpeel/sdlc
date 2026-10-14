@@ -7,6 +7,18 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.66 - 2026-10-14
+
+### Fixed
+
+- Include validated frozen companion source and independent Git history in each published review snapshot.
+- Accept source-only companion requests from independent reviewers, stage new source through the existing controller reader and start a fresh review after exact PR and CI checks. Source requests retain the implementation session and cumulative accounting without spending repair grants.
+- Keep companion access questions and their recorded answers with independent review.
+
+### Changed
+
+- Remind implementation agents to follow the selected repository's commit subject policy and check capitalization during focused self-review before requesting checks. Signing continues to preserve exact commit messages.
+
 ## 0.1.0-beta.65 - 2026-10-14
 
 ### Fixed

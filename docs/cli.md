@@ -681,6 +681,18 @@ Supervised private trials have passed provider execution, vault retrieval,
 signed GitHub draft publication, CI and opposite-provider review/repair. New
 account/key pairing and later dashboard changes need separate validation.
 
+Independent review snapshots include the validated, frozen companion checkouts
+already recorded for the run, including their complete Git history and bounded
+source inventory. The reviewer receives read-only source and controller evidence.
+If more source is needed, it can return `checks_requested` with only
+`repository_requests`. The controller validates the same owner and configured
+GitHub reader, stages the immutable revision and creates a fresh independent
+review snapshot. Current PR and CI boundaries are checked before and after
+staging. Source requests do not dispatch implementation or spend repair grants.
+Access failures become recorded review questions; executable verification and
+diagnostic requests remain implementation-only.
+
+
 Every reported PR check must pass on the recorded current base/head. Pending
 checks are polled; failures, cancellation and skipping require repair. When no
 checks are reported, SDLC waits for up to thirty minutes for CI to start, then blocks
