@@ -210,7 +210,8 @@ func (publisher GitHubPublisher) gitArgs(directory string, args ...string) []str
 	if publisher.Frozen != nil {
 		helper = "!/usr/local/bin/gh auth git-credential"
 	}
-	base := []string{"-C", directory, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "credential.https://github.com.helper=" + helper}
+	// Retained private objects must stay stable through import, fsck and signing.
+	base := []string{"-C", directory, "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "credential.https://github.com.helper=" + helper}
 	return append(base, args...)
 }
 

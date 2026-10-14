@@ -1,6 +1,7 @@
 package workrun
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,11 +64,30 @@ func TestFrozenPublisherImportsRewrittenCandidateIntoExistingPrivateCache(t *tes
 		t.Fatal(err)
 	}
 	plan := Plan{Reference: "TASK-1", Repository: "example/project", Branch: "TASK-1", Base: "main", SourceSHA: base, BaseSHA: base, PublicationIdentity: &identity, PRTitle: "TASK-1 selected implementation", PRBody: "Implements TASK-1."}
+	cache := filepath.Join(directory, "publication.git")
+	git(directory, "init", "--bare", cache)
+	for _, setting := range [][]string{{"gc.auto", "1"}, {"gc.autoPackLimit", "1"}, {"fetch.unpackLimit", "1"}} {
+		git(cache, "config", setting[0], setting[1])
+	}
+	trace := filepath.Join(directory, "publisher-git-trace.json")
 	signed := 0
 	publisher := GitHubPublisher{Frozen: &identity, BundlePath: bundle, ExpectedHead: original, ExpectedTree: git(source, "rev-parse", "HEAD^{tree}"), SigningKeyPath: key, AllowedSignersPath: allowed, AfterSigning: func() error { signed++; return errors.New("offline stop before remote publication") }}
 	publisher.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "git" {
-			return localCommand(ctx, name, args...)
+			command := exec.CommandContext(ctx, name, args...)
+			for _, entry := range os.Environ() {
+				if !strings.HasPrefix(strings.SplitN(entry, "=", 2)[0], "GIT_") {
+					command.Env = append(command.Env, entry)
+				}
+			}
+			command.Env = append(command.Env, "GIT_TERMINAL_PROMPT=0", "GH_PROMPT_DISABLED=1", "GIT_OPTIONAL_LOCKS=0", "GIT_TRACE2_EVENT="+trace)
+			var diagnostic bytes.Buffer
+			command.Stderr = &diagnostic
+			output, err := command.Output()
+			if err != nil {
+				t.Logf("offline Git fixture failed: %v: %s", args, diagnostic.String())
+			}
+			return output, err
 		}
 		if name != "gh" {
 			t.Fatalf("unexpected executable %s", name)
@@ -96,7 +116,6 @@ func TestFrozenPublisherImportsRewrittenCandidateIntoExistingPrivateCache(t *tes
 		}
 	}
 	stopAfterSigning(1)
-	cache := filepath.Join(directory, "publication.git")
 	if git(cache, "rev-parse", "refs/sdlc/candidate") != original {
 		t.Fatal("original candidate not retained")
 	}
@@ -111,6 +130,7 @@ func TestFrozenPublisherImportsRewrittenCandidateIntoExistingPrivateCache(t *tes
 	git(source, "bundle", "create", bundle, "HEAD")
 	publisher.ExpectedHead, publisher.ExpectedTree = rewritten, git(source, "rev-parse", "HEAD^{tree}")
 	stopAfterSigning(2)
+	assertNoDetachedGitMaintenance(t, trace)
 	if git(cache, "rev-parse", "refs/sdlc/candidate") != rewritten {
 		t.Fatal("rewritten candidate not imported into retained cache")
 	}

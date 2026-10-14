@@ -2,7 +2,9 @@ package workrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +14,7 @@ import (
 
 func aggregateGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
 	output, err := cmd.CombinedOutput()
@@ -199,4 +201,61 @@ func TestRebaseHelperRecoversLostResultAfterNonoverlappingSameFileChanges(t *tes
 		t.Fatalf("same-file replay lost work: %s %v", data, err)
 	}
 	run()
+}
+
+// Git can detach an automatic collector from fetch. Observe real subprocesses
+// rather than treating a particular command-line spelling as the guarantee.
+func assertNoDetachedGitMaintenance(t *testing.T, trace string) {
+	t.Helper()
+	file, err := os.Open(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	commands := 0
+	for {
+		var event struct {
+			Event string   `json:"event"`
+			Argv  []string `json:"argv"`
+		}
+		if err := decoder.Decode(&event); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "start" {
+			commands++
+		}
+		if event.Event != "child_start" {
+			continue
+		}
+		for _, argument := range event.Argv {
+			if argument == "gc" || argument == "repack" {
+				t.Fatal("fixture started automatic object mutation", event.Argv)
+			}
+		}
+	}
+	if commands == 0 {
+		t.Fatal("Git trace did not record fixture execution")
+	}
+}
+
+func TestCombinedFixtureFetchKeepsObjectsStableUnderLowMaintenanceThresholds(t *testing.T) {
+	source, destination, bundles := t.TempDir(), t.TempDir(), t.TempDir()
+	aggregateGit(t, source, "init", "-b", "main")
+	aggregateWrite(t, source, "base.txt", "base")
+	aggregateGit(t, destination, "init", "-b", "main")
+	for _, setting := range [][]string{{"gc.auto", "1"}, {"gc.autoPackLimit", "1"}, {"fetch.unpackLimit", "1"}} {
+		aggregateGit(t, destination, "config", setting[0], setting[1])
+	}
+	first := aggregateSnapshot(t, source, "main", bundles)
+	aggregateGit(t, destination, "fetch", first.Bundle, "refs/sdlc/snapshot:refs/heads/imported")
+	aggregateWrite(t, source, "child.txt", "child")
+	second := aggregateSnapshot(t, source, "main", bundles)
+	trace := filepath.Join(t.TempDir(), "git-trace.json")
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+	aggregateGit(t, destination, "fetch", second.Bundle, "refs/sdlc/snapshot:refs/heads/imported")
+	aggregateGit(t, destination, "fsck", "--strict", "--no-reflogs")
+	assertNoDetachedGitMaintenance(t, trace)
 }

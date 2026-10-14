@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.67 - 2026-10-14
+
+### Fixed
+
+- Disable automatic Git maintenance during publisher operations so detached collectors cannot rewrite retained packs during import, strict integrity checks and signing.
+- Keep offline aggregate fixtures free of detached Git maintenance that can race temporary checkout cleanup. Regression checks observe real Git subprocesses under low maintenance thresholds.
+
 ## 0.1.0-beta.66 - 2026-10-14
 
 ### Fixed

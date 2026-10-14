@@ -147,6 +147,10 @@ The delivery sequence is:
    signing key resolved by the separate official 1Password Service Account CLI
    remain outside provider/check workers. The key enters over stdin into tmpfs
    and its file is removed before push. No host authentication fallback is used.
+   Git commands disable automatic maintenance while the controller owns the
+   publication cache. This keeps imported objects stable through strict integrity
+   checks and signing; retained candidate and signature checks still apply.
+
 4. Every reported CI check must pass for the recorded current PR base/head.
    Missing checks wait for up to thirty minutes for CI to start, then block with a
    retained checkpoint; configure CI and resume. Pending checks wait; failed, cancelled or skipped
