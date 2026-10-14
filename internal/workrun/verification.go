@@ -263,6 +263,9 @@ func (o *Outcome) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
+	if raw, ok := fields["diagnostic_requests"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("diagnostic_requests must be an array")
+	}
 	if raw, ok := fields["verification_requests"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return fmt.Errorf("verification_requests must be an array")
 	}
@@ -276,6 +279,9 @@ func (o *Outcome) UnmarshalJSON(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if err := validateDiagnosticRequests(value.DiagnosticRequests, nil); err != nil {
 		return err
 	}
 	if err := validateVerificationRequests(value.VerificationRequests, nil); err != nil {

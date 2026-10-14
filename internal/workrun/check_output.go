@@ -155,6 +155,11 @@ func boundOutputs(j *Journal, budget int) {
 			outputs = append(outputs, &j.Verification[i].Output[k])
 		}
 	}
+	for i := range j.Diagnostics {
+		for k := range j.Diagnostics[i].Output {
+			outputs = append(outputs, &j.Diagnostics[i].Output[k])
+		}
+	}
 	for _, output := range outputs {
 		retained += output.HeadBytes + output.TailBytes
 	}
@@ -178,6 +183,7 @@ func effectiveChecks(j *Journal) [][]string {
 }
 
 func invalidateCommandEvidence(j *Journal) {
+	clearDiagnosticEvidence(j)
 	clearFormatterPreparation(j)
 	j.Evidence.Passed = false
 	j.Evidence.Key = ""
@@ -229,7 +235,7 @@ func validateCommandEvidence(j *Journal) error {
 	if err := validate(j.Evidence.Output); err != nil {
 		return err
 	}
-	for _, r := range append(append([]VerificationResult(nil), j.Verification...), j.FormatterPreparation...) {
+	for _, r := range append(append(append([]VerificationResult(nil), j.Verification...), j.FormatterPreparation...), j.Diagnostics...) {
 		if err := validate(r.Output); err != nil {
 			return err
 		}

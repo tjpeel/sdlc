@@ -173,6 +173,7 @@ type Finding struct {
 type Outcome struct {
 	PRFeedbackAssessments []PRFeedbackAssessment       `json:"pr_feedback_assessments,omitempty"`
 	RepositoryRequests    []CompanionRepositoryRequest `json:"repository_requests,omitempty"`
+	DiagnosticRequests    []VerificationRequest        `json:"diagnostic_requests,omitempty"`
 	VerificationRequests  []VerificationRequest        `json:"verification_requests,omitempty"`
 	Status                string                       `json:"status"`
 	Summary               string                       `json:"summary"`
@@ -271,6 +272,9 @@ type Journal struct {
 	ReportedModel             string                `json:"reported_model,omitempty"`
 	Publication               Publication           `json:"publication"`
 	ImageID                   string                `json:"image_id"`
+	Diagnostics               []VerificationResult  `json:"diagnostics,omitempty"`
+	DiagnosticFeedbackKey     string                `json:"diagnostic_feedback_key,omitempty"`
+	DiagnosticFeedbackCount   int                   `json:"diagnostic_feedback_count,omitempty"`
 	VerificationFeedbackKey   string                `json:"verification_feedback_key,omitempty"`
 	VerificationFeedbackCount int                   `json:"verification_feedback_count,omitempty"`
 	Verification              []VerificationResult  `json:"additional_verification,omitempty"`

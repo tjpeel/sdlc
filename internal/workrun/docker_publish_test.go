@@ -365,12 +365,19 @@ func TestPublisherOutputBoundCannotBypassWriteThroughReaderFrom(t *testing.T) {
 }
 
 type frozenCIControllerDocker struct {
+	identityData  []byte
+	identityErr   error
+	identityCalls int
 	pairingRaceDocker
 	cleanupFailure bool
 }
 
 func (docker *frozenCIControllerDocker) Output(ctx context.Context, args ...string) ([]byte, error) {
 	if args[0] == "run" && args[len(args)-1] == "identity" {
+		docker.identityCalls++
+		if docker.identityData != nil || docker.identityErr != nil {
+			return docker.identityData, docker.identityErr
+		}
 		return []byte(`{"id":123,"login":"example"}`), nil
 	}
 	if args[0] == "ps" && docker.cleanupFailure && strings.Contains(strings.Join(args, " "), "sdlc-ci-") {
@@ -544,6 +551,71 @@ func TestPublisherControllerPreflightWithholdsCredentialsOnEveryRefusal(t *testi
 				joined := strings.Join(args, " ")
 				if !strings.Contains(joined, "--network none") || !strings.Contains(joined, "--read-only") || !strings.HasSuffix(joined, "--identity") || strings.Contains(joined, "github-auth") || strings.Contains(joined, "source.bundle") {
 					t.Fatal("identity probe boundary", joined)
+				}
+			}
+		})
+	}
+}
+
+func TestDockerChecksIdentityUnavailableAndActualMismatchRemainDistinctHolds(t *testing.T) {
+	for _, kind := range []string{"unavailable", "invalid response", "actual mismatch", "profile mismatch", "volume mismatch"} {
+		t.Run(kind, func(t *testing.T) {
+			directory, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			docker := &frozenCIControllerDocker{pairingRaceDocker: pairingRaceDocker{image: "sha256:" + strings.Repeat("a", 64), volume: "sdlc-github-auth-" + strings.Repeat("d", 32) + "-github"}}
+			runtime := runtimeimage.Manager{Directory: directory, Docker: docker}
+			state, _ := json.Marshal(runtimeimage.State{Version: 1, Engine: "fake-engine", ImageID: docker.image})
+			if err := os.WriteFile(filepath.Join(directory, "runtime.json"), state, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "github-installation.json"), []byte(`{"id":"`+strings.Repeat("d", 32)+`"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("DOCKER_HOST", "")
+			t.Setenv("DOCKER_CONTEXT", "")
+			identity := frozenTestIdentity()
+			identity.GitHubVolume = docker.volume
+			switch kind {
+			case "unavailable":
+				docker.identityErr = errors.New("private fixture transport or credentials")
+			case "invalid response":
+				docker.identityData = []byte("private invalid response bytes")
+			case "actual mismatch":
+				docker.identityData = []byte(`{"id":124,"login":"other-account"}`)
+			case "profile mismatch":
+				identity.GitHubProfile = "different-profile"
+			case "volume mismatch":
+				identity.GitHubVolume = "sdlc-github-auth-" + strings.Repeat("e", 32) + "-github"
+			}
+			auth := githubauth.New(runtime)
+			auth.Docker = docker
+			publisher := DockerPublisher{Runtime: runtime, ImageID: docker.image, Auth: auth, Runner: &frozenCIControllerRunner{t: t}, SigningKey: func(context.Context) ([]byte, error) { t.Fatal("identity hold requested signing key"); return nil, nil }}
+			result, err := publisher.Checks(context.Background(), Plan{Repository: "example/project", Base: "main", BaseSHA: testBase, PublicationIdentity: identity}, annotationPublication())
+			if err == nil || result.Status != "" || result.FailureContext != nil || len(result.Diagnostics) != 0 {
+				t.Fatal("identity uncertainty produced CI evidence", result, err)
+			}
+			if kind == "unavailable" || kind == "invalid response" {
+				if !strings.Contains(err.Error(), "lookup unavailable") || !strings.Contains(err.Error(), "sdlc auth status --service github --profile default --verify, then resume this run") || strings.Contains(err.Error(), "differs from") {
+					t.Fatal("lookup failure misreported account mismatch", err)
+				}
+			} else if !strings.Contains(err.Error(), "differs from frozen publication identity") || strings.Contains(err.Error(), "lookup unavailable") {
+				t.Fatal("actual frozen-session mismatch lost refusal", err)
+			}
+			wantCalls := 1
+			if kind == "profile mismatch" || kind == "volume mismatch" {
+				wantCalls = 0
+			}
+			if docker.identityCalls != wantCalls {
+				t.Fatal("identity guard retried or bypassed metadata refusal", docker.identityCalls)
+			}
+			for _, secret := range []string{"private fixture", "other-account", "private invalid"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatal("identity hold leaked raw diagnostics", err)
 				}
 			}
 		})

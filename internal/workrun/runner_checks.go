@@ -15,6 +15,9 @@ import (
 const configuredCheckRepairBound = "repository checks still fail after the repair bound"
 
 func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, journal *Journal, revision Revision) error {
+	if journal.Outcome.Status == "diagnostics_requested" {
+		return runner.diagnosticCandidatePhase(ctx, directory, journal, revision)
+	}
 	if err := resolveCandidateChecks(ctx, journal, revision); err != nil {
 		clearFormatterPreparation(journal)
 		journal.Evidence.Passed = false
@@ -35,6 +38,7 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 	}
 
 	if journal.CandidatePhasePending {
+		clearDiagnosticEvidence(journal)
 		clearFormatterPreparation(journal)
 		// A previous controller did not checkpoint successful phase cleanup.
 		// Its evidence is provisional even if every command completed.
@@ -91,6 +95,7 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 	})
 	closeErr := errors.Join(stream.Finish(), log.Close())
 	if closeErr != nil || err != callbackErr {
+		clearDiagnosticEvidence(journal)
 		clearFormatterPreparation(journal)
 		// Cleanup/setup failure must be resolved before publication, including on
 		// resume. It cannot leave the candidate's successful evidence reusable.

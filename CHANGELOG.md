@@ -7,6 +7,20 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.58 - 2026-10-14
+
+### Added
+
+- Let the original implementer request focused diagnostic batches before the configured suite. Return bounded results from the existing credential-free worker without making exploratory commands permanent publication gates. Preserve required verification and all final checks, signing, CI and independent review.
+
+### Changed
+
+- Wait for pending CI checks before returning a completed failure packet, so the implementer can assess related failures together. Keep each command chain fail-fast and encourage coherent repair batches.
+
+### Fixed
+
+- Distinguish an unavailable GitHub identity lookup from a confirmed identity mismatch, with a relevant verification command before resuming. Both conditions still block CI inspection.
+
 ## 0.1.0-beta.57 - 2026-10-14
 
 ### Fixed

@@ -17,7 +17,8 @@ func reportView() View {
 		Plan:        workrun.Plan{Repository: "example/project", Reference: "example", Ticket: "01-example.md", GitHubProfile: "excluded-account", SigningProfile: "excluded-signer", PublicationIdentity: &workrun.PublicationIdentity{GitHubVolume: "excluded-cache", SSHPublicKey: "excluded-public-key"}, CheckInputs: []workrun.Input{{Path: ".env", SHA256: strings.Repeat("b", 64)}}, Roles: workrun.DefaultModels().Codex},
 		Evidence:    workrun.CheckEvidence{Tree: strings.Repeat("c", 40), Passed: true, Commands: [][]string{{"dotnet", "test"}}, Log: "excluded-log-path"},
 		Publication: workrun.Publication{URL: "https://github.com/example/project/pull/1", Number: 1}, CI: workrun.CIResult{Status: "passed", Details: "excluded-ci-raw-output"},
-		Outcome: workrun.Outcome{Summary: "Checks and independent review passed.", LocalReview: true, PRBody: "excluded-pr-body", Questions: []string{"excluded-answered-question"}},
+		Diagnostics: []workrun.VerificationResult{{Request: workrun.VerificationRequest{ID: "excluded-diagnostic-id", Purpose: "excluded-diagnostic-purpose", Commands: [][]string{{"excluded-diagnostic-command"}}}, Output: []workrun.CommandOutput{{CombinedOutput: "excluded-diagnostic-output"}}}},
+		Outcome:     workrun.Outcome{Summary: "Checks and independent review passed.", LocalReview: true, PRBody: "excluded-pr-body", Questions: []string{"excluded-answered-question"}},
 	}
 	return View{ID: id, Available: true, Journal: &j}
 }

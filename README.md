@@ -28,7 +28,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.57`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.58`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -207,6 +207,14 @@ and [provider rules](docs/provider-usage.md) before a connected run. Supervised
 private trials have passed delivery/review/repair with both implementation
 providers. Later account/key pairing, history/dashboard changes and desktop
 notification delivery still need separate validation.
+
+During implementation, the agent can request a batch of focused diagnostics
+before the full configured suite. These one-shot requests return bounded output
+to the original session and do not become permanent publication gates. The
+agent requests full checks when its candidate is ready, then completes local
+review and PR metadata. CI waits for pending checks before returning a combined
+failure packet. Signing, full checks and independent review remain required.
+See the [repair diagnostic workflow](docs/proposals/repair-diagnostics.md).
 
 Run a whole feature from a clean checkout of the published integration branch:
 

@@ -237,8 +237,14 @@ func (publisher DockerPublisher) Checks(ctx context.Context, plan Plan, previous
 	}
 	profile, profileErr := githubauth.NormalizeProfile(plan.GitHubProfile)
 	frozenProfile, frozenErr := githubauth.NormalizeProfile(frozen.GitHubProfile)
+	if profileErr != nil || frozenErr != nil || profile != frozenProfile || session.Profile != frozenProfile || session.ImageID != publisher.ImageID || session.Volume != frozen.GitHubVolume {
+		return CIResult{}, fmt.Errorf("CI GitHub session differs from frozen publication identity")
+	}
 	identity, err := session.Identity(ctx)
-	if err != nil || profileErr != nil || frozenErr != nil || profile != frozenProfile || session.Profile != frozenProfile || session.ImageID != publisher.ImageID || session.Volume != frozen.GitHubVolume || identity.ID != frozen.GitHubID || identity.Login != frozen.GitHubLogin {
+	if err != nil {
+		return CIResult{}, fmt.Errorf("CI GitHub account lookup unavailable; verify the stored GitHub profile with sdlc auth status --service github --profile %s --verify, then resume this run", profile)
+	}
+	if identity.ID != frozen.GitHubID || identity.Login != frozen.GitHubLogin {
 		return CIResult{}, fmt.Errorf("CI GitHub session differs from frozen publication identity")
 	}
 	collector := GitHubPublisher{Frozen: frozen, CIPrivateValues: privateValues, Command: func(ctx context.Context, name string, argv ...string) ([]byte, error) {

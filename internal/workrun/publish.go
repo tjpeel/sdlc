@@ -610,6 +610,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	result := CIResult{Status: "passed"}
 	sonarNames := map[string]bool{}
+	pending := false
 	// A name only selects a candidate; exact check-run app/head authority
 	// distinguishes native analysis from an Actions workflow mentioning Sonar.
 	if len(checks) == 0 {
@@ -625,16 +626,17 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 		switch check.Bucket {
 		case "pass":
 		case "pending":
-			if result.Status == "passed" {
-				result.Status = "pending"
-			}
+			pending = true
 		case "fail", "cancel", "skipping":
 			result.Status = "failed"
 		default:
 			return CIResult{}, fmt.Errorf("required check has unknown status")
 		}
 	}
-	if len(sonarNames) > 0 {
+	if pending {
+		result.Status = "pending"
+	}
+	if !pending && len(sonarNames) > 0 {
 		result.Diagnostics, err = publisher.collectCIAnnotations(ctx, plan, pr, sonarNames)
 		if err != nil {
 			return CIResult{}, err
@@ -762,7 +764,10 @@ func (publisher GitHubPublisher) verifyIdentity(ctx context.Context) error {
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
 	}
-	if err != nil || json.Unmarshal(data, &identity) != nil || identity.ID != publisher.Frozen.GitHubID || identity.Login != publisher.Frozen.GitHubLogin {
+	if err != nil || json.Unmarshal(data, &identity) != nil || identity.ID <= 0 || identity.Login == "" {
+		return fmt.Errorf("GitHub account lookup unavailable; verify the stored GitHub profile, then resume this run")
+	}
+	if identity.ID != publisher.Frozen.GitHubID || identity.Login != publisher.Frozen.GitHubLogin {
 		return fmt.Errorf("GitHub account differs from frozen publication identity")
 	}
 	return nil

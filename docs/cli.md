@@ -738,6 +738,19 @@ Stop reasons and the latest CI result are saved in the journal for later inspect
 Resuming an older run registers it when the controller starts. Dry runs create
 neither registry entries nor heartbeats. These records are private local state.
 
+An implementer can return `diagnostics_requested` with a bounded
+`diagnostic_requests` batch to obtain focused machine evidence before the
+configured suite. The batch runs in the existing isolated check worker and
+returns every independent request's results to the original session, including
+nonzero exits. Commands within each request still stop when a prerequisite fails.
+These requests replace the latest diagnostic batch and never enter the retained
+required verification set. Unchanged results are cached; changed source, inputs,
+commands or runtime invalidate them. Diagnostic results cannot establish
+publication readiness. Use `checks_requested` for the full suite and retained
+required `verification_requests` when a coherent candidate is ready. Older saved
+requests retain their existing required status. See the
+[repair workflow](proposals/repair-diagnostics.md).
+
 Within the repair bound, a configured check failure still allows pending structured
 verification requests to run in the isolated check worker. Failed commands prevent
 reuse of their source copy and HOME. Passing an additional request does not replace
@@ -746,7 +759,7 @@ return to the original implementation session as untrusted data: combined stdout
 and stderr, exit status, revision, retained head/tail bytes and explicit omissions.
 Each execution captures at most 64 KiB, with at most 16 KiB per command; retained
 and returned command output shares a 16 KiB aggregate budget across the current
-suite and additional requests. Oversized output is drained and marked truncated.
+suite, additional requests and diagnostic batch. Oversized output is drained and marked truncated.
 Binary or split UTF-8 bytes use an explicit base64 encoding. Narrow diagnostic
 requests can obtain more focused output without error-specific adapters.
 

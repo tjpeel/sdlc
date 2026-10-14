@@ -12,6 +12,7 @@ func TestDiagnosticSnapshotOmitsFreeFormAndAccountData(t *testing.T) {
 	const excluded = "excluded-private-content"
 	id := strings.Repeat("a", 24)
 	j := workrun.Journal{ID: id, State: "blocked", ResumeState: "publishing", StopReason: excluded, SessionID: excluded, Instructions: excluded, Feedback: excluded, Plan: workrun.Plan{Root: excluded, Ticket: excluded, Checks: [][]string{{excluded}}, Inputs: []workrun.Input{{Path: excluded, SHA256: excluded}}, GitHubProfile: excluded, SigningProfile: excluded, PublicationIdentity: &workrun.PublicationIdentity{SSHPublicKey: excluded, GitHubVolume: excluded}}, Outcome: workrun.Outcome{Summary: excluded, Questions: []string{excluded}, Limitations: []string{excluded}}, CI: workrun.CIResult{Status: excluded, Details: excluded}, Evidence: workrun.CheckEvidence{Head: excluded, Tree: strings.Repeat("b", 40), Output: []workrun.CommandOutput{{CombinedOutput: excluded}}, Commands: [][]string{{excluded}}, Log: excluded}, Publication: workrun.Publication{URL: "https://" + excluded, Number: 4, HeadSHA: strings.Repeat("c", 40)}, Attempt: 25, Rounds: 17, CheckAttempt: 40}
+	j.Diagnostics = []workrun.VerificationResult{{Request: workrun.VerificationRequest{ID: excluded, Purpose: excluded, Commands: [][]string{{excluded}}}, Output: []workrun.CommandOutput{{CombinedOutput: excluded}}}}
 	snapshot, err := DiagnosticSnapshot(View{Available: true, ID: id, Directory: t.TempDir(), Journal: &j})
 	if err != nil {
 		t.Fatal(err)
