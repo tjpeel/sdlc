@@ -36,7 +36,7 @@ func TestReviewFirstHandoffIndependentOfCheckRounds(t *testing.T) {
 			if err := r.Run(context.Background(), dir, j, ""); err != nil {
 				t.Fatal(err)
 			}
-			if j.Rounds != 12 || j.RepairWindowStart != 2 || j.ReviewRepairBudget.Used != 1 || len(p.calls) != 4 || p.calls[2].ResumeID != testNative || j.ReviewAssessment.Pending {
+			if j.Rounds != 12 || j.RepairWindowStart != 12 || j.ReviewRepairBudget.Used != 1 || len(p.calls) != 4 || p.calls[2].ResumeID != testNative || j.ReviewAssessment.Pending {
 				t.Fatalf("lost independent handoff/session: %+v", j.ReviewRepairBudget)
 			}
 			if !strings.Contains(p.calls[3].Prompt, "prior_review_assessment") || !strings.Contains(p.calls[3].Prompt, "nil input panics") {
@@ -74,15 +74,13 @@ func TestLegacyReviewRecoveryForwardsStoredFindingExactlyOnce(t *testing.T) {
 }
 
 func TestReviewRecoveryPreflightDoesNotConsumeGrant(t *testing.T) {
-	for _, kind := range []string{"native", "ci", "source", "published tree", "unrelated", "question", "limitations"} {
+	for _, kind := range []string{"ci", "source", "published tree", "unrelated", "question", "limitations"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, j := legacyReviewRun(t)
 			p := &fakeProvider{}
 			pub := &fakePublisher{}
 			repo := &fakeRepository{}
 			switch kind {
-			case "native":
-				j.Attempt = 24
 			case "ci":
 				pub.statuses = []string{"failed"}
 			case "source":
@@ -210,7 +208,7 @@ func TestReviewRecoveryAcceptsSignedHeadWithSameTestedTree(t *testing.T) {
 	}
 }
 
-func TestReviewNativeCeilingStopsBeforeIndependentSession(t *testing.T) {
+func TestReviewPastLegacyNativeCeilingDispatchesIndependentSession(t *testing.T) {
 	dir, j := legacyReviewRun(t)
 	j.State = "reviewing"
 	j.Attempt = 24
@@ -219,8 +217,8 @@ func TestReviewNativeCeilingStopsBeforeIndependentSession(t *testing.T) {
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
 		t.Fatal(err)
 	}
-	if len(p.calls) != 0 || j.Attempt != 24 {
-		t.Fatal("review exceeded native ceiling")
+	if len(p.calls) != 1 || j.Attempt != 25 {
+		t.Fatal("review retained obsolete native ceiling")
 	}
 }
 

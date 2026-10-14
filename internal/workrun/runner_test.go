@@ -312,13 +312,13 @@ func TestRunnerCheckRepairBound(t *testing.T) {
 		t.Fatal("bounded stop lost history, session, or safe feedback")
 	}
 	p.outcomes = []Outcome{testOutcome("checks_requested")}
-	if err := r.Run(context.Background(), dir, &loaded, ""); !errors.Is(err, ErrStopped) || loaded.State != "blocked" || loaded.StopReason != configuredCheckRepairBound || c.calls != 4 || pub.calls != 0 {
-		t.Fatalf("explicit resume did not enforce fresh finite window: %v %+v", err, loaded)
+	if err := r.Run(context.Background(), dir, &loaded, ""); !errors.Is(err, ErrStopped) || loaded.State != "blocked" || loaded.StopReason != configuredCheckRepairBound || c.calls != 3 || pub.calls != 0 {
+		t.Fatalf("explicit resume reopened unsuccessful window: %v %+v", err, loaded)
 	}
-	if loaded.RepairWindowStart != 2 || loaded.Rounds != 4 || loaded.Attempt != 3 || loaded.CheckAttempt != 4 || loaded.SessionID != testNative || len(p.calls) != 3 || p.calls[2].ResumeID != testNative {
+	if loaded.RepairWindowStart != 0 || loaded.Rounds != 3 || loaded.Attempt != 2 || loaded.CheckAttempt != 3 || loaded.SessionID != testNative || len(p.calls) != 2 || p.calls[1].ResumeID != testNative {
 		t.Fatal("explicit resume reset history or lost native session")
 	}
-	if saved, err := Load(dir); err != nil || saved.RepairWindowStart != 2 || saved.Rounds != 4 {
+	if saved, err := Load(dir); err != nil || saved.RepairWindowStart != 0 || saved.Rounds != 3 {
 		t.Fatal("renewed repair window was not persisted", err)
 	}
 }
@@ -843,7 +843,7 @@ func TestRunnerCIRepairFiniteAndUnchangedHead(t *testing.T) {
 	j.CIRepairBudget = &CIRepairBudget{StartRound: 11}
 	pub := &fakePublisher{failures: 100}
 	runner := fakeRunner(&fakeProvider{}, &fakeChecker{}, pub, &fakeRepository{})
-	runner.MaxRounds = 99
+	runner.MaxRounds = 3
 	for i, head := range []string{testHead, testTree, strings.Repeat("4", 40)} {
 		j.Publication.HeadSHA = head
 		j.State = "ci"
@@ -875,8 +875,8 @@ func TestRunnerCIRepairFiniteAndUnchangedHead(t *testing.T) {
 	j.CIRepairBudget = &CIRepairBudget{}
 	j.State = "ci"
 	j.Attempt = 24
-	if err := runner.checkCI(context.Background(), dir, j); !errors.Is(err, ErrStopped) || j.CIRepairBudget.Used != 0 || j.Rounds != 1 {
-		t.Fatal("CI grant exceeded total turn ceiling", err)
+	if err := runner.checkCI(context.Background(), dir, j); err != nil || j.CIRepairBudget.Used != 1 || j.Rounds != 2 {
+		t.Fatal("CI grant retained obsolete total turn ceiling", err)
 	}
 }
 func TestRunnerLegacyCIBudgetInitializationIsOneTime(t *testing.T) {

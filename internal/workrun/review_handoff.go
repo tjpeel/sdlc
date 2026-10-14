@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -14,10 +15,35 @@ const reviewUnchangedBound = "independent review repeated findings on an already
 
 // ReviewRepairBudget counts handoffs, independently of check and CI failures.
 type ReviewRepairBudget struct {
+	DefaultLimit    bool   `json:"default_limit,omitempty"`
 	Limit           int    `json:"limit"`
 	Used            int    `json:"used"`
 	StartRound      int    `json:"start_round"`
 	LastGrantedHead string `json:"last_granted_head,omitempty"`
+}
+
+// ReviewRepairIncrease records an explicitly requested increase without refunds.
+type ReviewRepairIncrease struct {
+	GrantedAt           time.Time `json:"granted_at"`
+	CheckpointUpdatedAt time.Time `json:"checkpoint_updated_at"`
+	SessionID           string    `json:"session_id"`
+	Attempt             int       `json:"attempt"`
+	Rounds              int       `json:"rounds"`
+	OriginalLimit       int       `json:"original_limit"`
+	Limit               int       `json:"limit"`
+}
+
+func ValidateReviewRepairIncrease(j Journal, limit int) error {
+	if j.ReviewRepairBudget == nil || j.SessionID == "" || j.UpdatedAt.IsZero() || limit <= j.ReviewRepairBudget.Limit || limit > 12 {
+		return fmt.Errorf("review repair limit requires an existing original-session budget and an increase up to 12")
+	}
+	return validateReviewJournal(&j)
+}
+
+func increaseReviewRepairLimit(j *Journal, limit int) {
+	b := j.ReviewRepairBudget
+	j.ReviewRepairIncreases = append(j.ReviewRepairIncreases, ReviewRepairIncrease{GrantedAt: time.Now().UTC(), CheckpointUpdatedAt: j.UpdatedAt, SessionID: j.SessionID, Attempt: j.Attempt, Rounds: j.Rounds, OriginalLimit: b.Limit, Limit: limit})
+	b.Limit = limit
 }
 
 // ReviewHumanInput is captured only from an explicit answer to the reviewer's
@@ -52,7 +78,18 @@ func validateReviewJournal(j *Journal) error {
 	}
 
 	if b := j.ReviewRepairBudget; b != nil {
-		if b.Limit < 1 || b.Limit > 3 || b.Used < 0 || !runLimitsOverridden(j) && b.Used > b.Limit || b.StartRound < 0 || b.StartRound > j.Rounds || j.Rounds-b.StartRound < b.Used || (b.Used == 0) != (b.LastGrantedHead == "") || b.LastGrantedHead != "" && !objectID.MatchString(b.LastGrantedHead) {
+		prior := 0
+		for _, grant := range j.ReviewRepairIncreases {
+			if grant.GrantedAt.IsZero() || grant.CheckpointUpdatedAt.IsZero() || grant.GrantedAt.Before(grant.CheckpointUpdatedAt) || grant.SessionID != j.SessionID || grant.Attempt < 0 || grant.Attempt > j.Attempt || grant.Rounds < 0 || grant.Rounds > j.Rounds || grant.OriginalLimit < 1 || grant.Limit <= grant.OriginalLimit || grant.Limit > 12 || prior != 0 && grant.OriginalLimit != prior {
+				return fmt.Errorf("invalid review repair increase audit")
+			}
+			prior = grant.Limit
+		}
+		if prior != 0 && prior != b.Limit {
+			return fmt.Errorf("review repair increase limit changed")
+		}
+
+		if b.Limit < 1 || b.Limit > 12 || b.Used < 0 || !runLimitsOverridden(j) && b.Used > b.Limit || b.StartRound < 0 || b.StartRound > j.Rounds || j.Rounds-b.StartRound < b.Used || (b.Used == 0) != (b.LastGrantedHead == "") || b.LastGrantedHead != "" && !objectID.MatchString(b.LastGrantedHead) {
 			return fmt.Errorf("invalid review handoff accounting")
 		}
 	}
@@ -79,7 +116,7 @@ func validateReviewJournal(j *Journal) error {
 // ValidateReviewRepairInitialization admits only the exact old completed-review
 // hold. Live source and publication checks are repeated under controller ownership.
 func ValidateReviewRepairInitialization(j Journal, limit int) error {
-	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || !runLimitsOverridden(&j) && j.Attempt >= effectiveNativeTurnLimit(&j) || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
+	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
 		return fmt.Errorf("review repair initialization requires an uninitialized completed-findings hold with its original session, passing evidence and remaining native capacity")
 	}
 	copy := j
@@ -103,9 +140,6 @@ func (runner Runner) initializeReviewRepair(ctx context.Context, directory strin
 func (runner Runner) grantReviewAssessment(directory string, j *Journal, findings []Finding, countRound bool) error {
 	if countRound {
 		j.Rounds++
-	}
-	if !runLimitsOverridden(j) && j.Attempt >= effectiveNativeTurnLimit(j) {
-		return runner.stop(directory, j, "blocked", implementationTurnBound)
 	}
 	b := j.ReviewRepairBudget
 	if b == nil {

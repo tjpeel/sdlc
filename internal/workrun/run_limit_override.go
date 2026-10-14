@@ -40,6 +40,12 @@ type RunLimitOverride struct {
 func runLimitsOverridden(j *Journal) bool { return j.RunLimitOverride != nil }
 
 func validatePersistedRunLimitOverride(j *Journal) error {
+
+	if b := j.ConfiguredRepairBudget; b != nil {
+		if b.BaselineAt.IsZero() || !b.BaselineCheckpoint.IsZero() && b.BaselineAt.Before(b.BaselineCheckpoint) || b.BaselineAttempt < 0 || b.BaselineAttempt > j.Attempt || b.BaselineRound < 0 || b.BaselineRound > j.Rounds || b.LegacyRounds < 0 || b.LegacyRounds > b.BaselineRound || b.Used < 0 || b.Used > j.Rounds-b.BaselineRound || b.WindowStart < 0 || b.WindowStart > b.Used {
+			return fmt.Errorf("invalid configured repair accounting")
+		}
+	}
 	o := j.RunLimitOverride
 	if j.Attempt < 0 || j.Rounds < 0 || j.RepairWindowStart < 0 || j.RepairWindowStart > j.Rounds || j.CheckAttempt < 0 || j.VerificationFeedbackCount < 0 || j.PRMetadataCorrections < 0 {
 		return fmt.Errorf("invalid run limit accounting")
@@ -61,7 +67,7 @@ func validatePersistedRunLimitOverride(j *Journal) error {
 		}
 
 	case "native_turns":
-		if o.OriginalLimit != effectiveNativeTurnLimit(j) || o.GrantedAttempt < o.OriginalLimit {
+		if o.OriginalLimit != historicalNativeTurnLimit(j) || o.GrantedAttempt < o.OriginalLimit {
 			return fmt.Errorf("invalid native-turn override accounting")
 		}
 	case "configured_repairs":
@@ -69,11 +75,17 @@ func validatePersistedRunLimitOverride(j *Journal) error {
 			return fmt.Errorf("invalid configured repair override accounting")
 		}
 	case "ci_repairs":
-		if o.OriginalLimit != 0 && o.OriginalLimit != 3 {
+		if o.OriginalLimit != 0 && o.OriginalLimit != 3 && o.OriginalLimit != 12 {
 			return fmt.Errorf("invalid CI override accounting")
 		}
 	case "review_handoffs":
-		if o.OriginalLimit < 1 || o.OriginalLimit > 3 || j.ReviewRepairBudget == nil || o.OriginalLimit != j.ReviewRepairBudget.Limit {
+		matches := j.ReviewRepairBudget != nil && o.OriginalLimit == j.ReviewRepairBudget.Limit
+		for _, increase := range j.ReviewRepairIncreases {
+			if o.OriginalLimit == increase.OriginalLimit && o.GrantedAt.Before(increase.GrantedAt) {
+				matches = true
+			}
+		}
+		if o.OriginalLimit < 1 || o.OriginalLimit > 12 || !matches {
 			return fmt.Errorf("invalid review override accounting")
 		}
 	case "verification_feedback":
@@ -124,8 +136,8 @@ func admittedRunLimit(j Journal) (string, int, error) {
 	switch j.StopReason {
 	case implementationTurnBound, reviewTurnBound:
 		valid := j.StopReason == implementationTurnBound && (j.ResumeState == "implementing" || j.ResumeState == "repairing" || j.ResumeState == "ci") || j.StopReason == reviewTurnBound && (j.ResumeState == "reviewing" || j.ResumeState == "awaiting_reviewer")
-		if valid && j.Attempt >= effectiveNativeTurnLimit(&j) {
-			return "native_turns", effectiveNativeTurnLimit(&j), nil
+		if valid && j.Attempt >= historicalNativeTurnLimit(&j) {
+			return "native_turns", historicalNativeTurnLimit(&j), nil
 		}
 	case configuredCheckRepairBound:
 		if j.ResumeState == "checking" && j.Rounds > j.RepairWindowStart && !j.Evidence.Passed && (j.Evidence.CompletedFailureKey != "" || formatterRepairFailure(j)) {
@@ -138,8 +150,8 @@ func admittedRunLimit(j Journal) (string, int, error) {
 	case ciRepairBound:
 		b := j.CIRepairBudget
 		if j.ResumeState == "ci" && b != nil && b.Used > 0 && j.CI.Status == "failed" && j.Publication.Number > 0 && objectID.MatchString(j.Publication.HeadSHA) && b.LastGrantedHead != j.Publication.HeadSHA {
-			limit := 3
-			if b.Used < 3 {
+			limit := 12
+			if b.Used < 12 {
 				limit = 0
 			}
 			return "ci_repairs", limit, nil

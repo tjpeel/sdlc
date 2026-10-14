@@ -251,7 +251,7 @@ func TestOverrideRelaxesOnlyNumericAccountingUpperBounds(t *testing.T) {
 	}
 	without := *j
 	without.RunLimitOverride = nil
-	if validateSessionTurnExtension(&without) == nil || validateCIJournal(&without) == nil || validateReviewJournal(&without) == nil {
+	if validateSessionTurnExtension(&without) != nil || validateCIJournal(&without) != nil || validateReviewJournal(&without) == nil {
 		t.Fatal("default accounting ceilings changed")
 	}
 	for _, name := range []string{"ci-negative", "ci-rounds", "review-negative", "review-limit", "session", "grant-time", "grant-attempt"} {
@@ -270,7 +270,7 @@ func TestOverrideRelaxesOnlyNumericAccountingUpperBounds(t *testing.T) {
 			case "review-negative":
 				review.Used = -1
 			case "review-limit":
-				review.Limit = 4
+				review.Limit = 13
 			case "session":
 				extension.OriginalSessionID = "different-session"
 			case "grant-time":

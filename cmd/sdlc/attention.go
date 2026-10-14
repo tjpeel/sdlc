@@ -246,12 +246,14 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var text, path string
 	var ciFeedbackPath string
 	var stdin bool
+	var reviewRepairLimit int
 	var extension int
 	var feedback bool
 	var override bool
 	var timeout time.Duration
 	if !answer {
 		flags.StringVar(&ciFeedbackPath, "ci-feedback-file", "", "bounded supplemental CI context")
+		flags.IntVar(&reviewRepairLimit, "review-repair-limit", 0, "increase the saved review allowance to at most 12")
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
 		flags.BoolVar(&feedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
 		flags.BoolVar(&override, "override-run-limits", false, "persistently lift SDLC numeric run allowances")
@@ -266,7 +268,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -281,6 +283,15 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			extensionSupplied = true
 		}
 	})
+	reviewLimitSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "review-repair-limit" {
+			reviewLimitSupplied = true
+		}
+	})
+	if reviewLimitSupplied && (reviewRepairLimit < 1 || reviewRepairLimit > 12 || feedback || override || extensionSupplied || ciFeedbackPath != "") {
+		return fmt.Errorf("--review-repair-limit requires 1-12 without other recovery actions")
+	}
 	if extensionSupplied && (extension < 1 || extension > 24) {
 		return fmt.Errorf("--extend-session-turn-budget must be 1-24")
 	}
@@ -331,6 +342,11 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	action, err := resolveRunAction(ctx, *id, answer, feedback, override)
 	if err != nil {
 		return err
+	}
+	if reviewLimitSupplied {
+		if err := workrun.ValidateReviewRepairIncrease(*action.View.Journal, reviewRepairLimit); err != nil {
+			return err
+		}
 	}
 	if override {
 		if err := workrun.ValidateRunLimitOverride(*action.View.Journal); err != nil {
@@ -419,6 +435,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	})
 	if feedback {
 		runArgs = append(runArgs, "--pr-feedback")
+	}
+	if reviewLimitSupplied {
+		runArgs = append(runArgs, "--review-repair-limit", strconv.Itoa(reviewRepairLimit))
 	}
 	if extensionSupplied {
 		runArgs = append(runArgs, "--extend-session-turn-budget", strconv.Itoa(extension))

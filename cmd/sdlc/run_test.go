@@ -654,3 +654,20 @@ func TestParseRunSessionTurnExtensionRequiresSingleResume(t *testing.T) {
 		t.Fatal("controller lost extension", err)
 	}
 }
+
+func TestParseReviewRepairLimitRequiresBoundedSingleResume(t *testing.T) {
+	for _, args := range [][]string{
+		runArgs("--review-repair-limit", "12"),
+		runArgs("--resume", "example", "--review-repair-limit", "0"),
+		runArgs("--resume", "example", "--review-repair-limit", "13"),
+		runArgs("--resume", "example", "--review-repair-limit", "12", "--override-run-limits"),
+	} {
+		if _, err := parseRunOptions(args); err == nil {
+			t.Fatal("invalid review increase accepted", args)
+		}
+	}
+	options, err := parseRunOptions(runArgs("--resume", "example", "--review-repair-limit", "12", "--dry-run"))
+	if err != nil || options.reviewRepairLimit != 12 || !options.dryRun {
+		t.Fatal("review increase preview rejected", err)
+	}
+}

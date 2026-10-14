@@ -683,14 +683,14 @@ account/key pairing and later dashboard changes need separate validation.
 
 Every reported PR check must pass on the recorded current base/head. Pending
 checks are polled; failures, cancellation and skipping require repair. When no
-checks are reported, SDLC waits for up to two minutes for CI to start, then blocks
+checks are reported, SDLC waits for up to thirty minutes for CI to start, then blocks
 the run with its checkpoint retained. Configure CI and resume the run. SDLC
 rechecks the PR boundary around CI inspection and independent review. External base/head changes stop for reconciliation.
 
 A fresh opposite-provider session reviews the exact published revision and
 selected requirements, without the implementation transcript. Actionable findings
 return to the original implementation session for bounded repairs, checks,
-publication, CI and another fresh review. The normal repair bound is three rounds.
+publication, CI and another fresh review. The normal repair bound is twelve rounds.
 A complete review with no findings reaches `ready` and prints the PR URL. The PR
 remains draft; SDLC never approves, marks it ready or merges automatically.
 
@@ -738,7 +738,19 @@ Stop reasons and the latest CI result are saved in the journal for later inspect
 Resuming an older run registers it when the controller starts. Dry runs create
 neither registry entries nor heartbeats. These records are private local state.
 
-On macOS and Linux, the running implementer can call
+The optional live channel has no whole-tool deadline. Active and queued requests
+retain mailbox ownership until the controller responds or its lifetime connection
+closes. An interrupted helper's unfinished request is drained before a replacement
+can submit another request.
+
+Controller liveness uses a capability-authenticated TCP connection, separate from
+request data. macOS uses the Docker host bridge to a loopback listener. Native Linux
+uses the local default Docker bridge address. Unsupported rootless, custom, remote
+or VM bridge setups retain the structured `diagnostics_requested` handoff, and the
+implementer is told that the live helper is unavailable. Network isolation is not
+changed to enable the optional channel.
+
+On supported macOS and Linux hosts, the running implementer can call
 `/usr/bin/python3 -I /sdlc-diagnostics.py` with a JSON `requests` batch on stdin.
 The fixed helper obtains the current committed head/tree and uses a private
 controller mailbox; checks run in the separate credential-free worker. The
@@ -842,12 +854,27 @@ usage/access limits and policy refusals retain a stopped checkpoint. Fix the
 reported cause before resuming; never restart or change identities to evade
 provider restrictions. Journals and native storage must remain intact for resume.
 
-Without a persisted override, explicitly resuming a run stopped by the repository-check repair limit begins
-another finite repair window. The controller rechecks the candidate and returns
-fresh failure metadata to the same implementation session when repair is needed.
-Cumulative repair and turn counts remain recorded. The native-turn ceiling defaults to 24; a single explicit extension is described below.
-This renewal applies only to that check-limit stop, not provider, CI or independent
-review holds.
+Resuming rechecks the candidate in the original implementation session and retains
+the existing configured-check failure window.
+Cumulative repair and turn counts remain recorded. Native dispatches have no
+implicit lifetime limit. Configured checks count their own unsuccessful cycles;
+CI and independent review do not spend that allowance. A proven passing configured
+suite opens the next failure window. Resuming a failed suite does not reopen it.
+Older journals retain their previous aggregate as unattributed legacy history,
+with a recorded baseline for measured configured cycles after migration.
+
+New review allowances default to twelve handoffs. Previously saved limits remain
+unchanged because their origin may be unknown. To increase one explicitly:
+
+```sh
+sdlc resume --run RUN_ID --review-repair-limit 12 --dry-run
+sdlc resume --run RUN_ID --review-repair-limit 12
+```
+
+The controller records the original limit, checkpoint, session and cumulative
+counts. Used grants and the last assessed head are retained. This option only
+increases an existing allowance; it does not permit another grant for the same
+published head.
 
 ### Supply missing CI failure context
 
@@ -2036,25 +2063,19 @@ passes the stored findings directly to the original implementation session; it
 neither reruns the completed reviewer nor resets counters, sessions or other
 budgets. The allowance is persisted before implementation and cannot be reset.
 A failed provider turn does not refund it; ordinary supported resume continues
-that same pending assessment, subject to provider holds and the native-turn cap.
+that same pending assessment, subject to provider holds.
 
-### Continue a run at its native-turn ceiling
+### Historical native-turn holds
 
-Use `sdlc resume --run RUN_ID --extend-session-turn-budget N`, or add the same
-flag to a single `sdlc run --reference REFERENCE --ticket TICKET --resume RUN_ID`.
-`N` must be 1–24. This permits one extension for a saved run blocked at exactly
-24 attempts by the implementation or independent-review native-turn limit.
-The resulting ceiling, at most 48 attempts, is shared by both roles.
+Beta.65 removes the default lifetime dispatch ceiling. An ordinary resume can
+continue a saved implementation or review hold created by the old ceiling, while
+retaining its original session, attempt history and phase budgets.
 
-The original implementation session, cumulative attempts and phase budgets remain
-recorded. The grant is audited and persisted before native work; failed native
-calls consume attempts, and the extension cannot be repeated or reset. Resume
-without the flag continues within the granted ceiling. This does not extend the
-configured-check, CI or review repair allowances or bypass provider failures,
-human questions, changed inputs or unfinished cleanup. It cannot be combined with
-an answer file or another recovery initializer. `--dry-run` previews admission
-without granting turns.
-
+The legacy `--extend-session-turn-budget N` option remains compatible with old
+holds and audit records. Its original admission rules still require a hold at
+attempt 24 and `N` from 1 to 24. Historical receipts remain validated and retained;
+they do not impose a new dispatch ceiling. Provider restrictions, human questions,
+changed inputs and unfinished cleanup still require their normal resolution.
 
 ### Continue a saved run past local numeric limits
 

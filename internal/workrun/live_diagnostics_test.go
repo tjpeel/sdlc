@@ -182,13 +182,26 @@ func helperFixture(t *testing.T) (string, string, string, string) {
 	os.WriteFile(filepath.Join(workspace, "example.txt"), []byte("first"), 0600)
 	formatterGit(t, workspace, "add", ".")
 	formatterGit(t, workspace, "commit", "-qm", "Fixture checkpoint")
-	script := strings.NewReplacer("/sdlc-diagnostic-requests", requests, "/sdlc-diagnostic-responses", responses, "/workspace", workspace).Replace(liveDiagnosticHelper)
+	script := strings.NewReplacer("/sdlc-diagnostic-requests", requests, "/sdlc-diagnostic-responses", responses, "/workspace", workspace, "host.docker.internal", "127.0.0.1").Replace(liveDiagnosticHelper)
 	helper := filepath.Join(root, "helper.py")
 	os.WriteFile(helper, []byte(script), 0444)
 	return helper, requests, responses, workspace
 }
 func TestLiveHelpersSerializeThroughMatchingResponseWithoutNativeResume(t *testing.T) {
 	helper, requests, responses, _ := helperFixture(t)
+	// Advance simulated wall time by an hour per observation: a healthy service
+	// must retain both active and queued requests beyond the old half-hour cap.
+	script, err := os.ReadFile(helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script = []byte(strings.Replace(string(script), "import time\n", "import time\n_clock = iter(range(0, 100000000, 3601))\ntime.monotonic = lambda: next(_clock)\n", 1))
+	if err := os.Chmod(helper, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(helper, script, 0444); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	callbackEntered := make(chan string, 2)
@@ -205,6 +218,12 @@ func TestLiveHelpersSerializeThroughMatchingResponseWithoutNativeResume(t *testi
 			return LiveDiagnosticResponse{Results: []VerificationResult{{Request: request.Requests[0], Passed: true}}}, nil
 		})
 	}()
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(filepath.Join(responses, "service.json")); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	outputs := make([][]byte, 2)
 	var wait sync.WaitGroup
 	for i, id := range []string{"first", "second"} {
@@ -221,7 +240,11 @@ func TestLiveHelpersSerializeThroughMatchingResponseWithoutNativeResume(t *testi
 			outputs[i] = data
 		}(i, id)
 	}
-	<-callbackEntered
+	select {
+	case <-callbackEntered:
+	case <-ctx.Done():
+		t.Fatal("healthy diagnostic did not reach controller")
+	}
 	select {
 	case <-callbackEntered:
 		t.Fatal("second helper overwrote active mailbox")
@@ -323,5 +346,74 @@ func TestLiveSourceCorrectionStaleAndOversizeWithholdArtifacts(t *testing.T) {
 				t.Fatal("rejected correction exported receipt")
 			}
 		})
+	}
+}
+
+func TestKilledHelperDoesNotReleaseAnActiveRequestForOverwrite(t *testing.T) {
+	helper, requests, responses, _ := helperFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- serveDiagnosticMailbox(ctx, requests, responses, func(_ context.Context, request LiveDiagnosticRequest) (LiveDiagnosticResponse, error) {
+			entered <- request.Requests[0].ID
+			if request.Requests[0].ID == "first" {
+				<-release
+			}
+			return LiveDiagnosticResponse{Results: []VerificationResult{{Request: request.Requests[0], Passed: true}}}, nil
+		})
+	}()
+	// Wait for the authoritative service lease before starting a real helper.
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(filepath.Join(responses, "service.json")); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	firstCtx, firstCancel := context.WithCancel(ctx)
+	first := exec.CommandContext(firstCtx, "python3", "-I", helper)
+	first.Stdin = strings.NewReader(`[{"id":"first","purpose":"offline test","commands":[["go","test"]]}]`)
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if id := <-entered; id != "first" {
+		t.Fatal(id)
+	}
+	firstCancel()
+	_ = first.Wait()
+	second := exec.CommandContext(ctx, "python3", "-I", helper)
+	second.Stdin = strings.NewReader(`[{"id":"second","purpose":"offline test","commands":[["go","test"]]}]`)
+	output := make(chan []byte, 1)
+	go func() { data, _ := second.CombinedOutput(); output <- data }()
+	select {
+	case id := <-entered:
+		t.Fatal("interrupted helper allowed active mailbox overwrite", id)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	data := <-output
+	var response LiveDiagnosticResponse
+	if json.Unmarshal(data, &response) != nil || response.Error != "" || len(response.Results) != 1 || response.Results[0].Request.ID != "second" {
+		t.Fatal("replacement helper failed", string(data))
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	// The lease remains as a file, but kernel ownership is gone after cleanup.
+	before, err := os.ReadFile(filepath.Join(requests, "request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := exec.CommandContext(context.Background(), "python3", "-I", helper)
+	stopped.Stdin = strings.NewReader(`[{"id":"third","purpose":"offline test","commands":[["go","test"]]}]`)
+	if data, err := stopped.CombinedOutput(); err != nil || !strings.Contains(string(data), "Live diagnostics unavailable") {
+		t.Fatal("dead service did not return structured fallback", err, string(data))
+	}
+	after, err := os.ReadFile(filepath.Join(requests, "request.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("dead service overwrote prior mailbox", err)
 	}
 }

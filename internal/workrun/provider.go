@@ -17,8 +17,9 @@ import (
 )
 
 type NativeProvider struct {
-	Manager providerauth.Manager
-	ImageID string
+	Manager             providerauth.Manager
+	ImageID             string
+	diagnosticTransport func(string) (*diagnosticService, error)
 }
 
 func (provider NativeProvider) Status(ctx context.Context, name string) (string, error) {
@@ -38,19 +39,19 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 	}
 	defer os.RemoveAll(control)
 	prompt, schema, shared := filepath.Join(control, "prompt.txt"), filepath.Join(control, "schema.json"), filepath.Join(control, "instructions.md")
-	for path, content := range map[string]string{prompt: session.Prompt, schema: session.Schema, shared: session.Instructions} {
-		if err := os.WriteFile(path, []byte(content), 0444); err != nil {
-			return SessionResult{}, err
-		}
-		if err := os.Chmod(path, 0444); err != nil {
-			return SessionResult{}, err
-		}
-	}
 	nativeCtx, nativeCancel := context.WithCancel(ctx)
 	defer nativeCancel()
 	requestDirectory, responseDirectory, helper := "", "", ""
 	var serviceDone chan error
 	var serviceCancel context.CancelFunc
+	defer func() {
+		if serviceCancel != nil {
+			serviceCancel()
+			if serviceDone != nil {
+				<-serviceDone
+			}
+		}
+	}()
 	if session.Diagnostics != nil && liveDiagnosticsSupported {
 		if session.Role != "implementation" {
 			return SessionResult{}, fmt.Errorf("live diagnostics require implementation role")
@@ -67,16 +68,38 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 		if err := os.WriteFile(helper, []byte(liveDiagnosticHelper), 0444); err != nil {
 			return SessionResult{}, err
 		}
-		serviceCtx, cancel := context.WithCancel(nativeCtx)
-		serviceCancel = cancel
-		serviceDone = make(chan error, 1)
-		go func() {
-			err := serveDiagnosticMailbox(serviceCtx, requestDirectory, responseDirectory, session.Diagnostics)
-			if err != nil {
-				nativeCancel()
-			}
-			serviceDone <- err
-		}()
+		startTransport := provider.diagnosticTransport
+		if startTransport == nil {
+			startTransport = startDiagnosticService
+		}
+		transport, transportErr := startTransport(responseDirectory)
+		if transportErr != nil {
+			// Live diagnostics are optional. Keep the existing structured handoff
+			// available when this host cannot expose a supported lifetime channel.
+			helper, requestDirectory, responseDirectory = "", "", ""
+			session.Prompt = withoutLiveDiagnosticInstructions(session.Prompt)
+			session.Instructions = withoutLiveDiagnosticInstructions(session.Instructions)
+			fmt.Fprintln(stderr, "Live diagnostics unavailable on this host; structured diagnostic handoffs remain available.")
+		} else {
+			serviceCtx, cancel := context.WithCancel(nativeCtx)
+			serviceCancel = cancel
+			serviceDone = make(chan error, 1)
+			go func() {
+				err := serveDiagnosticMailbox(serviceCtx, requestDirectory, responseDirectory, session.Diagnostics, transport)
+				if err != nil {
+					nativeCancel()
+				}
+				serviceDone <- err
+			}()
+		}
+	}
+	for path, content := range map[string]string{prompt: session.Prompt, schema: session.Schema, shared: session.Instructions} {
+		if err := os.WriteFile(path, []byte(content), 0444); err != nil {
+			return SessionResult{}, err
+		}
+		if err := os.Chmod(path, 0444); err != nil {
+			return SessionResult{}, err
+		}
 	}
 	events := &eventWriter{provider: session.Model.Provider, output: stdout}
 	err = provider.Manager.Headless(nativeCtx, providerauth.HeadlessRequest{
@@ -90,6 +113,7 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 	if serviceDone != nil {
 		serviceCancel()
 		err = errors.Join(err, <-serviceDone)
+		serviceDone = nil
 	}
 	if session.ResumeID != "" {
 		reportedID := events.result.SessionID
@@ -331,3 +355,14 @@ func safeRelative(path string) bool {
 }
 
 const outcomeSchema = `{"type":"object","additionalProperties":false,"required":["status","summary","questions","findings","local_review","limitations","pr_title","pr_body","verification_requests","repository_requests","pr_feedback_assessments","diagnostic_requests"],"properties":{"pr_feedback_assessments":{"type":"array","maxItems":1,"description":"Assess the pending human PR comment revision in order. Return [] when no comment is pending. Correction commits must be full original candidate IDs; the controller maps them to signed publication IDs.","items":{"type":"object","additionalProperties":false,"required":["id","fingerprint","disposition","reason","commits"],"properties":{"id":{"type":"string"},"fingerprint":{"type":"string","pattern":"^[a-f0-9]{64}$"},"disposition":{"type":"string","enum":["addressed","unaddressable","no_change"]},"reason":{"type":"string","maxLength":8192},"commits":{"type":"array","maxItems":32,"items":{"type":"string","pattern":"^[a-f0-9]{40}([a-f0-9]{24})?$"}}}}},"status":{"type":"string","enum":["implemented","checks_requested","diagnostics_requested","reviewed","waiting_for_human","blocked","failed"],"description":"Use implemented or reviewed only when that role is complete with no unresolved questions or limitations. Actionable review findings may remain for the implementer to repair."},"summary":{"type":"string","description":"Describe work, evidence and ordinary scope boundaries here, distinguishing controller verification from checks you ran yourself."},"questions":{"type":"array","items":{"type":"string"}},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["priority","path","line","scenario","recommendation"],"properties":{"priority":{"type":"string","enum":["P0","P1","P2","P3"]},"path":{"type":"string"},"line":{"type":"integer"},"scenario":{"type":"string"},"recommendation":{"type":"string"}}}},"local_review":{"type":"boolean"},"limitations":{"type":"array","description":"Only unresolved obstacles that prevent completing this role. Normal scope or isolation boundaries already covered by supplied verification evidence belong in summary. Return an empty array when complete; never omit a genuine missing requirement, tool, required review or verification gap.","items":{"type":"string"}},"pr_title":{"type":"string"},"pr_body":{"type":"string"},"repository_requests":{"type":"array","maxItems":8,"description":"Request private companion source through the controller using checks_requested; same owner as the selected repository, read-only inspection, default-branch checkout with history. blocked and failed stop work even with requests. Return [] when unused.","items":{"type":"object","additionalProperties":false,"required":["id","repository","purpose"],"properties":{"id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"},"repository":{"type":"string","pattern":"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},"purpose":{"type":"string","maxLength":1024}}}},"verification_requests":{"type":"array","maxItems":16,"description":"Machine work for the controller, not human questions. Return [] when unused. Generic commands must pass. A baseline runs the same commands against candidate then a fresh candidate copy with only named original production blobs restored from captured StartingSHA or SourceSHA; final command must fail with the expected code and literal markers. Example: id regression, purpose prove new test catches old behavior, commands [[\"go\",\"test\",\"./internal/example\"]], baseline revision captured source SHA, paths [\"internal/example/example.go\"], expected_exit_code 1, failure_contains [\"TestRegression\"]. For a source correction artifact, use source_patch with explicit committed production paths and baseline:null. Commands run on a fresh source-only copy; a bounded private diff returns for review and commit. Use source_patch:null for ordinary requests.","items":{"type":"object","additionalProperties":false,"required":["id","purpose","commands","baseline","source_patch"],"properties":{"id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"},"purpose":{"type":"string","maxLength":1024},"commands":{"type":"array","items":{"type":"array","items":{"type":"string"}}},"baseline":{"anyOf":[{"type":"object","additionalProperties":false,"required":["revision","paths","expected_exit_code","failure_contains"],"properties":{"revision":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"expected_exit_code":{"type":"integer","minimum":1,"maximum":255},"failure_contains":{"type":"array","items":{"type":"string"}}}},{"type":"null"}]},"source_patch":{"anyOf":[{"type":"object","additionalProperties":false,"required":["paths"],"properties":{"paths":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"string","maxLength":240}}}},{"type":"null"}]}}}},"diagnostic_requests":{"type":"array","maxItems":16,"description":"Development diagnostics only: submit a batch of related argv checks with diagnostics_requested. Results return to this implementation session without becoming required publication checks. No source_patch. Use checks_requested for the full configured suite and retained required verification gates.","items":{"type":"object","additionalProperties":false,"required":["id","purpose","commands","baseline","source_patch"],"properties":{"id":{"type":"string","pattern":"^[a-z][a-z0-9_-]{0,63}$"},"purpose":{"type":"string","maxLength":1024},"commands":{"type":"array","items":{"type":"array","items":{"type":"string"}}},"baseline":{"anyOf":[{"type":"object","additionalProperties":false,"required":["revision","paths","expected_exit_code","failure_contains"],"properties":{"revision":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"expected_exit_code":{"type":"integer","minimum":1,"maximum":255},"failure_contains":{"type":"array","items":{"type":"string"}}}},{"type":"null"}]},"source_patch":{"type":"null"}}}}}}`
+
+func withoutLiveDiagnosticInstructions(value string) string {
+	lines := strings.Split(value, "\n")
+	retained := lines[:0]
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "For narrow checks during this running turn,") {
+			retained = append(retained, line)
+		}
+	}
+	return strings.Join(retained, "\n") + "\nLive diagnostics are unavailable for this turn. Use diagnostics_requested with diagnostic_requests for controller diagnostics; the original native session will resume with the results. Full configured checks and focused self-review remain required.\n"
+}

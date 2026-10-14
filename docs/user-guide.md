@@ -907,8 +907,7 @@ The controller retains the reviewed head and findings while diagnostics run, the
 includes a bounded final assessment in the next fresh independent review. The
 reviewer still decides independently, and signing, verification and CI gates remain.
 
-Review handoffs have their own finite allowance, normally three, separate from
-configured-check and CI failures. The cumulative history and 24 native-turn
-ceiling remain. Repeated findings on the same assessed published head stop rather
+Review handoffs have their own finite allowance, normally twelve, separate from
+configured-check and CI failures. Cumulative history remains; native dispatches have no default lifetime ceiling. Repeated findings on the same assessed published head stop rather
 than repeatedly sending the same finding to implementation. Legacy completed
 review holds can use the explicit recovery flag documented in the CLI guide.

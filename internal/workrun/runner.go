@@ -38,6 +38,7 @@ type Runner struct {
 	MaxRounds                    int
 	InitializeCIRepairBudget     bool
 	InitializeReviewRepairBudget int
+	ReviewRepairLimit            int
 	ExtendSessionTurnBudget      int
 	PollInterval                 time.Duration
 	MissingCheckGrace            time.Duration
@@ -201,6 +202,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return err
 		}
 	}
+	if runner.ReviewRepairLimit != 0 {
+		if err := ValidateReviewRepairIncrease(*journal, runner.ReviewRepairLimit); err != nil {
+			return err
+		}
+	}
 	if journal.PendingInputs != nil {
 		return fmt.Errorf("input recovery is unfinished; complete it with sdlc inputs --run %s", journal.ID)
 	}
@@ -232,6 +238,13 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 	// State reporting depends on the tracker opened by OnStart. Register its
 	// cleanup before persisting initialization through the reporting save path.
+	if runner.ReviewRepairLimit != 0 {
+		increaseReviewRepairLimit(journal, runner.ReviewRepairLimit)
+		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+	}
+	configuredRepairs(journal)
 	if runner.OverrideRunLimits && journal.RunLimitOverride == nil {
 		kind, limit, err := admittedRunLimit(*journal)
 		if err != nil {
@@ -243,7 +256,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 	}
 	if runner.ExtendSessionTurnBudget != 0 {
-		journal.SessionTurnExtension = &SessionTurnExtension{GrantedAt: time.Now().UTC(), GrantedAttempt: journal.Attempt, OriginalLimit: defaultNativeTurnLimit, Additional: runner.ExtendSessionTurnBudget, OriginalSessionID: journal.SessionID}
+		journal.SessionTurnExtension = &SessionTurnExtension{GrantedAt: time.Now().UTC(), GrantedAttempt: journal.Attempt, OriginalLimit: legacyNativeTurnLimit, Additional: runner.ExtendSessionTurnBudget, OriginalSessionID: journal.SessionID}
 		if err := runner.save(directory, journal); err != nil {
 			return err
 		}
@@ -262,7 +275,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return err
 		}
 	} else if journal.ReviewRepairBudget == nil && journal.Publication.Number == 0 && journal.Publication.URL == "" {
-		journal.ReviewRepairBudget = &ReviewRepairBudget{Limit: 3, StartRound: journal.Rounds}
+		journal.ReviewRepairBudget = &ReviewRepairBudget{Limit: 12, DefaultLimit: true, StartRound: journal.Rounds}
 	}
 	if runner.Output == nil {
 		runner.Output = io.Discard
@@ -347,9 +360,6 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		if journal.ResumeState == "" {
 			return fmt.Errorf("stopped run has no resumable stage")
 		}
-		if !runLimitsOverridden(journal) && journal.State == "blocked" && journal.ResumeState == "checking" && journal.StopReason == configuredCheckRepairBound && journal.SessionID != "" {
-			journal.RepairWindowStart = journal.Rounds
-		}
 		journal.State = journal.ResumeState
 	}
 	journal.StopReason = ""
@@ -360,13 +370,13 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		runner.Output = io.Discard
 	}
 	if runner.MaxRounds == 0 {
-		runner.MaxRounds = 3
+		runner.MaxRounds = 12
 	}
 	if runner.PollInterval == 0 {
 		runner.PollInterval = 15 * time.Second
 	}
 	if runner.MissingCheckGrace <= 0 {
-		runner.MissingCheckGrace = 2 * time.Minute
+		runner.MissingCheckGrace = 30 * time.Minute
 	}
 	for {
 		if runner.ValidateDependencies != nil {
@@ -439,9 +449,6 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if status != "stored" {
 				return runner.stop(directory, journal, "blocked", "selected implementer has no usable stored login")
-			}
-			if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
-				return runner.stop(directory, journal, "blocked", implementationTurnBound)
 			}
 			if err := runner.transition(directory, journal, "implementing"); err != nil {
 				return err
@@ -582,9 +589,6 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "awaiting_reviewer", "reviewing":
-			if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
-				return runner.stop(directory, journal, "blocked", reviewTurnBound)
-			}
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
@@ -740,14 +744,6 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		}
 		runner.progress = recorder
 		defer func() { resultErr = errors.Join(resultErr, recorder.Close()) }()
-	}
-
-	if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
-		reason := implementationTurnBound
-		if role == "review" {
-			reason = reviewTurnBound
-		}
-		return result, runner.stop(directory, journal, "blocked", reason)
 	}
 	journal.Attempt++
 	if a := journal.ReviewAssessment; role == "implementation" && a != nil && a.Pending && a.StartedAttempt == 0 {

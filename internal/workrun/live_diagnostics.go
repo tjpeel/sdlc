@@ -135,7 +135,18 @@ func writeDiagnosticResponse(directory string, response LiveDiagnosticResponse) 
 	return os.Rename(file.Name(), filepath.Join(directory, "response.json"))
 }
 
-func serveDiagnosticMailbox(ctx context.Context, requests, responses string, callback func(context.Context, LiveDiagnosticRequest) (LiveDiagnosticResponse, error)) error {
+func serveDiagnosticMailbox(ctx context.Context, requests, responses string, callback func(context.Context, LiveDiagnosticRequest) (LiveDiagnosticResponse, error), existing ...*diagnosticService) error {
+	var service *diagnosticService
+	var err error
+	if len(existing) > 0 {
+		service = existing[0]
+	} else {
+		service, err = startDiagnosticServiceAt(responses, "127.0.0.1", "127.0.0.1")
+	}
+	if err != nil {
+		return err
+	}
+	defer service.Close()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	previous := ""

@@ -39,7 +39,7 @@ func TestNativeTurnExtensionPersistsAndNeverRefundsFailedCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if effectiveNativeTurnLimit(&loaded) != 26 || loaded.SessionTurnExtension.GrantedAttempt != 24 {
+	if historicalNativeTurnLimit(&loaded) != 26 || loaded.SessionTurnExtension.GrantedAttempt != 24 {
 		t.Fatal("grant not persisted")
 	}
 	if err := ValidateSessionTurnExtension(loaded, 2); err == nil {
@@ -55,8 +55,8 @@ func TestNativeTurnExtensionPersistsAndNeverRefundsFailedCalls(t *testing.T) {
 	if err := r.Run(context.Background(), dir, &loaded, ""); !errors.Is(err, ErrStopped) {
 		t.Fatal(err)
 	}
-	if loaded.Attempt != 26 || len(p.calls) != 2 || loaded.StopReason != implementationTurnBound {
-		t.Fatal("extended ceiling not enforced")
+	if loaded.Attempt != 27 || len(p.calls) != 3 || loaded.StopReason == implementationTurnBound {
+		t.Fatal("legacy extension imposed a dispatch ceiling")
 	}
 }
 
@@ -139,7 +139,7 @@ func TestNativeTurnExtensionValidationAndDefaultCap(t *testing.T) {
 		}
 	}
 	e := SessionTurnExtension{GrantedAt: time.Now().UTC(), GrantedAttempt: 24, OriginalLimit: 24, Additional: 1, OriginalSessionID: testNative}
-	for _, name := range []string{"time", "attempt", "original", "additional", "session", "overflow", "decrement"} {
+	for _, name := range []string{"time", "attempt", "original", "additional", "session", "decrement"} {
 		copy := *j
 		grant := e
 		copy.SessionTurnExtension = &grant
@@ -154,8 +154,6 @@ func TestNativeTurnExtensionValidationAndDefaultCap(t *testing.T) {
 			grant.Additional = 25
 		case "session":
 			grant.OriginalSessionID = "rotated"
-		case "overflow":
-			copy.Attempt = 26
 		case "decrement":
 			copy.Attempt = 23
 		}
@@ -166,15 +164,17 @@ func TestNativeTurnExtensionValidationAndDefaultCap(t *testing.T) {
 	dir, j := nativeBoundRun(t)
 	p := &fakeProvider{}
 	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
-	if _, err := r.session(context.Background(), dir, j, "implementation", j.Workspace, testNative); !errors.Is(err, ErrStopped) || len(p.calls) != 0 || j.Attempt != 24 {
-		t.Fatal("standalone session bypassed default cap", err)
+	for i := 0; i < 32; i++ {
+		p.outcomes = append(p.outcomes, testOutcome("checks_requested"))
 	}
 	j.SessionTurnExtension = &e
-	if _, err := r.session(context.Background(), dir, j, "review", j.Workspace, ""); err == nil || j.Attempt != 25 || len(p.calls) != 1 {
-		t.Fatal("review did not consume shared extension")
+	for i := 0; i < 32; i++ {
+		if _, err := r.session(context.Background(), dir, j, "implementation", j.Workspace, testNative); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := r.session(context.Background(), dir, j, "review", j.Workspace, ""); !errors.Is(err, ErrStopped) || j.Attempt != 25 || len(p.calls) != 1 || j.StopReason != reviewTurnBound {
-		t.Fatal("review bypassed extended cap")
+	if j.Attempt != 56 || len(p.calls) != 32 || j.SessionID != testNative || validateSessionTurnExtension(j) != nil {
+		t.Fatal("successful dispatches lost cumulative accounting or original session")
 	}
 }
 

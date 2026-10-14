@@ -7,6 +7,19 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.65 - 2026-10-14
+
+### Fixed
+
+- Count configured-check failures separately from CI and independent review, retaining cumulative history and opening a new failure window only after a passing configured suite.
+- Keep active and queued live diagnostic requests owned until their controller operation completes, without a whole-tool deadline.
+
+### Changed
+
+- Remove the default lifetime cap on native agent dispatches while retaining all recorded attempts and historical continuation grants.
+- Give new CI, configured-check and review repair allowances twelve unsuccessful cycles or handoffs; saved review limits can be increased through an audited resume option.
+- Allow thirty minutes for CI checks to appear after publication. Reported pending checks continue to wait without an implicit deadline.
+
 ## 0.1.0-beta.64 - 2026-10-14
 
 ### Fixed

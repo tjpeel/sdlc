@@ -50,7 +50,9 @@ func liveNativeFixture(t *testing.T) (NativeProvider, *liveNativeDocker) {
 	manager := providerauth.Manager{Runtime: runtime, Docker: docker}
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
-	return NativeProvider{Manager: manager, ImageID: docker.image}, docker
+	return NativeProvider{Manager: manager, ImageID: docker.image, diagnosticTransport: func(directory string) (*diagnosticService, error) {
+		return startDiagnosticServiceAt(directory, "127.0.0.1", "127.0.0.1")
+	}}, docker
 }
 func nativeMounts(t *testing.T, args []string) map[string]string {
 	t.Helper()
@@ -239,5 +241,43 @@ func TestNativeFinishAndCancellationJoinOutstandingDiagnosticBeforeCleanup(t *te
 				t.Fatal("mailbox remained after join", err)
 			}
 		})
+	}
+}
+
+func TestUnavailableLiveTransportPreservesNativeStructuredHandoff(t *testing.T) {
+	provider, docker := liveNativeFixture(t)
+	provider.diagnosticTransport = func(string) (*diagnosticService, error) { return nil, errors.New("unsupported offline bridge") }
+	directory, j := testRun(t)
+	session := Session{Model: j.Plan.Roles.Implementation, Role: "implementation", Workspace: j.Workspace, Directory: filepath.Join(directory, "native"), Prompt: "For narrow checks during this running turn, use the helper.\nSelected implementation requirements.", Schema: outcomeSchema, Instructions: "For narrow checks during this running turn, use the helper.\nController checks remain required.", Diagnostics: func(context.Context, LiveDiagnosticRequest) (LiveDiagnosticResponse, error) {
+		t.Fatal("unavailable channel dispatched diagnostics")
+		return LiveDiagnosticResponse{}, nil
+	}}
+	docker.stream = func(_ context.Context, out io.Writer, args []string) error {
+		mounts := nativeMounts(t, args)
+		if mounts["/sdlc-diagnostics.py"] != "" || mounts["/sdlc-diagnostic-requests"] != "" || mounts["/sdlc-diagnostic-responses"] != "" {
+			t.Fatal("unavailable live channel still mounted")
+		}
+		inspected := 0
+		for destination, source := range mounts {
+			if destination != "/instructions.md" && destination != "/prompt.txt" {
+				continue
+			}
+			content, err := os.ReadFile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inspected++
+			if strings.Contains(string(content), "For narrow checks during") || !strings.Contains(string(content), "diagnostics_requested") {
+				t.Fatal("agent did not receive structured fallback capability", destination)
+			}
+		}
+		if inspected != 2 {
+			t.Fatal("fallback capability instructions were not inspected", inspected)
+		}
+		io.WriteString(out, codexEvents(testOutcome("checks_requested")))
+		return nil
+	}
+	if result, err := provider.Execute(context.Background(), session, io.Discard, io.Discard); err != nil || result.Outcome.Status != "checks_requested" || docker.streams != 1 {
+		t.Fatal("optional transport became a native run gate", err, result)
 	}
 }

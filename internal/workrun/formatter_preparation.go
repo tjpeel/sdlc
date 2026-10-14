@@ -205,8 +205,7 @@ func (runner Runner) prepareCandidate(ctx context.Context, directory string, jou
 	}
 	if corrections {
 		journal.Evidence.Passed = false
-		journal.Rounds++
-		if !runLimitsOverridden(journal) && journal.Rounds-journal.RepairWindowStart > runner.MaxRounds {
+		if runner.configuredRepairFailed(journal) {
 			return false, runner.stop(directory, journal, "blocked", configuredCheckRepairBound)
 		}
 		preparationFeedback := "Formatter preparation requires committed repair. Review the private source_patch artifacts, apply intended corrections in the implementation workspace, and commit them before requesting the full configured suite."

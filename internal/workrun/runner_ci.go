@@ -62,9 +62,6 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 		return nil
 	case "failed":
-		if !runLimitsOverridden(journal) && journal.Attempt >= effectiveNativeTurnLimit(journal) {
-			return runner.stop(directory, journal, "blocked", implementationTurnBound)
-		}
 		budget := journal.CIRepairBudget
 		if budget == nil {
 			return runner.stop(directory, journal, "blocked", legacyCIRepairBound)
@@ -73,8 +70,8 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 			return runner.stop(directory, journal, "blocked", "CI repair requires a new published head; unchanged failed revision retained")
 		}
 		limit := runner.MaxRounds
-		if limit <= 0 || limit > 3 {
-			limit = 3
+		if limit <= 0 {
+			limit = 12
 		}
 		if !runLimitsOverridden(journal) && budget.Used >= limit {
 			return runner.stop(directory, journal, "blocked", ciRepairBound)

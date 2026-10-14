@@ -148,7 +148,7 @@ The delivery sequence is:
    remain outside provider/check workers. The key enters over stdin into tmpfs
    and its file is removed before push. No host authentication fallback is used.
 4. Every reported CI check must pass for the recorded current PR base/head.
-   Missing checks wait for up to two minutes for CI to start, then block with a
+   Missing checks wait for up to thirty minutes for CI to start, then block with a
    retained checkpoint; configure CI and resume. Pending checks wait; failed, cancelled or skipped
    checks return a bounded repair. External PR changes stop for reconciliation.
 5. A fresh opposite-provider session uses `tjpeel-pr-review` on the exact published
@@ -187,9 +187,9 @@ context to the candidate and failed publication. An ambiguous dispatch stays
 held. Full local checks, signing, current CI and fresh independent review remain
 required after any correction.
 
-CI repairs have a separate persisted budget of at most three grants. Each grant
+CI repairs have a separate persisted budget of at most twelve grants. Each grant
 records its failed published head, so unchanged-head failures cannot obtain
-another repair turn. Total round history and the 24-turn implementation ceiling
+another repair turn. Total round history and native dispatch accounting
 remain intact, as do configured-check and review bounds. New runs initialize CI
 accounting before publication. Published legacy journals with unknown CI
 accounting do not receive an automatic fresh budget. For an existing legacy
@@ -198,7 +198,7 @@ accounting do not receive an automatic fresh budget. For an existing legacy
 once. Other holds and already initialized or exhausted CI budgets reject this
 option; it does not reset historical counters or renew other budgets.
 
-The normal configured-check and review repair bound is three rounds. Both leads use the pinned
+The normal configured-check and review repair bound is twelve rounds. Both leads use the pinned
 `read_low`, `read_medium` and `read_high` roles where their skills direct;
 implementation also uses `write_medium`. The controller's authority to publish
 one ticket does not authorise rewriting unrelated work.

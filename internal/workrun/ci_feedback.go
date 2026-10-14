@@ -199,7 +199,7 @@ func missingCIContextBlock(reason string) bool {
 }
 
 func ciFeedbackRecoveryConflicts(j Journal) error {
-	if len(j.Outcome.Questions) != 0 || len(j.Outcome.RepositoryRequests) != 0 || len(j.Outcome.VerificationRequests) != 0 || j.DeferredAnswer != "" || j.PendingInputs != nil || j.DependencyInvalid || j.Reconciliation != nil || j.RestackNeedsChecks || j.CandidatePhasePending || j.ReviewHumanInput != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.PRFeedback != nil && j.PRFeedback.Active || j.PushRepair != nil && j.PushRepair.Pending != nil || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay || !runLimitsOverridden(&j) && j.Attempt >= effectiveNativeTurnLimit(&j) {
+	if len(j.Outcome.Questions) != 0 || len(j.Outcome.RepositoryRequests) != 0 || len(j.Outcome.VerificationRequests) != 0 || j.DeferredAnswer != "" || j.PendingInputs != nil || j.DependencyInvalid || j.Reconciliation != nil || j.RestackNeedsChecks || j.CandidatePhasePending || j.ReviewHumanInput != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.PRFeedback != nil && j.PRFeedback.Active || j.PushRepair != nil && j.PushRepair.Pending != nil || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
 		return fmt.Errorf("CI feedback cannot be combined with pending recovery, review or a native turn hold")
 	}
 	if err := validateRetainedVerification(&j); err != nil {

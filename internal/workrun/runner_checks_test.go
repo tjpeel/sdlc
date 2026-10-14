@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 type controllerPhaseChecker struct {
@@ -162,6 +163,7 @@ func TestControllerConfiguredImmediateStopsSkipPendingVerification(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			directory, journal := testRun(t)
 			journal.Rounds = tc.rounds
+			journal.ConfiguredRepairBudget = &ConfiguredRepairBudget{BaselineAt: time.Now().UTC(), Used: tc.rounds}
 			asked := testOutcome("checks_requested")
 			asked.VerificationRequests = []VerificationRequest{regressionRequest()}
 			provider := &fakeProvider{outcomes: []Outcome{asked}}

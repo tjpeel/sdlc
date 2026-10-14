@@ -364,7 +364,7 @@ func TestCIFeedbackRecoveryRetainsChecksPublicationCIAndIndependentReview(t *tes
 }
 
 func TestCIFeedbackRejectsForbiddenStoppedRunsBeforeDispatch(t *testing.T) {
-	for _, kind := range []string{"question", "source", "inputs", "review", "grant", "failed", "operational", "auth", "policy", "usage", "turn limit", "session", "pending verification", "specification", "tool", "source summary", "indirect refusal", "mixed specification"} {
+	for _, kind := range []string{"question", "source", "inputs", "review", "grant", "failed", "operational", "auth", "policy", "usage", "session", "pending verification", "specification", "tool", "source summary", "indirect refusal", "mixed specification"} {
 		t.Run(kind, func(t *testing.T) {
 			dir, j, r, p, pub := ciFeedbackRun(t)
 			switch kind {
@@ -392,7 +392,7 @@ func TestCIFeedbackRejectsForbiddenStoppedRunsBeforeDispatch(t *testing.T) {
 				j.Outcome.Summary = "Usage limit reached."
 				j.StopReason = j.Outcome.Summary
 			case "turn limit":
-				j.Attempt = defaultNativeTurnLimit
+				j.Attempt = legacyNativeTurnLimit
 			case "session":
 				j.SessionID = ""
 			case "pending verification":

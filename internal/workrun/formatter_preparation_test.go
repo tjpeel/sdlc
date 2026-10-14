@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func formatterGit(t *testing.T, root string, args ...string) string {
@@ -431,6 +432,7 @@ func TestFormatterRepairLimitDefaultAndPersistedOverride(t *testing.T) {
 			directory, j, runner, checker, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
 			j.SessionID = testNative
 			j.Rounds = runner.MaxRounds
+			j.ConfiguredRepairBudget = &ConfiguredRepairBudget{BaselineAt: time.Now().UTC(), Used: runner.MaxRounds}
 			if err := Save(directory, j); err != nil {
 				t.Fatal(err)
 			}
@@ -472,6 +474,7 @@ func TestFormatterNumericHoldAdmitsCompletedSemanticFailure(t *testing.T) {
 	directory, j, runner, _, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
 	j.SessionID = testNative
 	j.Rounds = runner.MaxRounds
+	j.ConfiguredRepairBudget = &ConfiguredRepairBudget{BaselineAt: time.Now().UTC(), Used: runner.MaxRounds}
 	if _, err := runner.prepareCandidate(context.Background(), directory, j, Revision{Head: testHead, Tree: testTree, Clean: true}); !errors.Is(err, ErrStopped) {
 		t.Fatal(err)
 	}
@@ -490,6 +493,7 @@ func TestRunnerResumesFormatterHoldWithOriginalPersistedGrant(t *testing.T) {
 	directory, j, runner, checker, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
 	j.SessionID = testNative
 	j.Rounds = runner.MaxRounds
+	j.ConfiguredRepairBudget = &ConfiguredRepairBudget{BaselineAt: time.Now().UTC(), Used: runner.MaxRounds}
 	j.Attempt = 26
 	j.Outcome = testOutcome("implemented")
 	if _, err := runner.prepareCandidate(context.Background(), directory, j, Revision{Head: testHead, Tree: testTree, Clean: true}); !errors.Is(err, ErrStopped) {
