@@ -784,7 +784,7 @@ selected base; it does not reuse the old workspace. Repeating `--all` under the 
 saved feature instead. To retain the old feature and start a fresh one under that reference, archive the
 complete reference, then recreate its tickets and requirements without the old `runs` or `series` directories.
 
-The timeout is per controller invocation: default `2h`, accepted range `1m`–`24h`. Cancellation or timeout
+Controller invocations have no implicit deadline. An explicit `--timeout` applies to that invocation and accepts `1m`–`24h`. Cancellation or timeout
 retains a checkpoint. Fix the cause and resume the same ID; starting a new run is not a way to bypass a
 provider's denial or usage limit.
 

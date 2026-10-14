@@ -526,7 +526,7 @@ metadata and ambiguous selection fail even during dry-run.
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
 | `--docker-tests` | Override the project `docker_tests` default; enable the separate privileged integration-test daemon. Use `--docker-tests=false` to disable it for a new run. |
-| `--timeout` | `2h` per controller invocation; accepts `1m` through `24h`. Runs with a persisted limit override have no implicit deadline; explicit timeouts and parent deadlines still apply. |
+| `--timeout` | No implicit deadline for run, resume or feature controllers. An explicit timeout accepts `1m` through `24h`; parent deadlines and cancellation still apply. |
 | `--resume` | Continue a recorded run ID with its original settings. |
 | `--override-run-limits` | Admit a single saved-run resume at a corroborated local numeric hold and persist permission to continue past controller numeric ceilings. |
 | `--answer-file` | Bounded nonempty UTF-8 human answer, only with `--resume`. |
@@ -2093,7 +2093,7 @@ history, evidence and cumulative counters remain intact. The audit records the
 original checkpoint and accounting; an unrecorded prior configured ceiling is
 shown as unknown rather than inferred.
 
-An overridden run has no implicit two-hour controller deadline. An explicit
+Run, resume and feature controllers have no implicit whole-workflow deadline. An explicit
 `--timeout` still applies to that invocation, and a parent deadline or
 cancellation still stops the controller with its checkpoint retained. This also
 applies to later ordinary resumes of the overridden run.

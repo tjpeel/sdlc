@@ -317,7 +317,12 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if state.Version == 0 {
 		state = workseries.State{Version: 1, Plan: plan, Results: map[string]workseries.Result{}}
 	}
-	ctx, cancel := context.WithTimeout(ctx, options.timeout)
+	var cancel context.CancelFunc
+	if options.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, options.timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 	writer := &seriesWriter{w: output}
 	options.terminal = dashboardTerminal(output)

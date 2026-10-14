@@ -255,7 +255,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
 		flags.BoolVar(&feedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
 		flags.BoolVar(&override, "override-run-limits", false, "persistently lift SDLC numeric run allowances")
-		flags.DurationVar(&timeout, "timeout", 2*time.Hour, "explicit controller deadline (1m-24h)")
+		flags.DurationVar(&timeout, "timeout", 0, "optional controller deadline (1m-24h; default: none)")
 	}
 	if answer {
 		flags.StringVar(&text, "text", "", "literal answer")
@@ -266,7 +266,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --ci-feedback-file FILE] [--timeout 2h] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -299,7 +299,13 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	if ciFeedbackSupplied && (ciFeedbackPath == "" || feedback || override || extensionSupplied) {
 		return fmt.Errorf("--ci-feedback-file requires a nonempty path without another recovery action")
 	}
-	if !answer && (timeout < time.Minute || timeout > 24*time.Hour) {
+	timeoutSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" {
+			timeoutSupplied = true
+		}
+	})
+	if !answer && timeoutSupplied && (timeout < time.Minute || timeout > 24*time.Hour) {
 		return fmt.Errorf("timeout must be between 1m and 24h")
 	}
 	sources := 0
@@ -349,7 +355,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			fmt.Fprintln(output, dashboard.SafeText(question))
 		}
 		if *dry && sources == 0 {
-			return printResumePlan(output, *action.View.Journal, "", false)
+			return printResumePlan(ctx, output, *action.View.Journal, "", false)
 		}
 		if path != "" {
 			data, err := readHumanAnswer(path)
@@ -385,7 +391,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			if current.Checkpoint != action.Checkpoint {
 				return fmt.Errorf("run checkpoint changed; review the current questions again")
 			}
-			return printResumePlan(output, *current.View.Journal, text, false)
+			return printResumePlan(ctx, output, *current.View.Journal, text, false)
 		}
 		path, err = saveInlineAnswer(action, text)
 		if err != nil {
@@ -423,7 +429,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	return runCommand(ctx, runArgs, output)
 }
 
-func printResumePlan(output io.Writer, journal workrun.Journal, answer string, structured bool, extension ...int) error {
+func printResumePlan(ctx context.Context, output io.Writer, journal workrun.Journal, answer string, structured bool, extension ...int) error {
 	hash := ""
 	if answer != "" {
 		hash = fmt.Sprintf("%x", sha256.Sum256([]byte(answer)))
@@ -431,7 +437,12 @@ func printResumePlan(output io.Writer, journal workrun.Journal, answer string, s
 	if !structured {
 		fmt.Fprintln(output, "Offline resume plan; authentication and model access have not been checked.")
 	}
-	return jsonResumePlan(output, journal, hash, extension...)
+	requestedTurns := 0
+	if len(extension) > 0 {
+		requestedTurns = extension[0]
+	}
+	_, deadline := ctx.Deadline()
+	return encodeResumePlan(output, journal, hash, false, requestedTurns, false, &deadline)
 }
 
 func printCIFeedbackResumePlan(output io.Writer, journal workrun.Journal, text string, structured bool) error {

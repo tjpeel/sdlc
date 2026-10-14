@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.64 - 2026-10-14
+
+### Fixed
+
+- Remove the implicit two-hour deadline from run, resume and feature controllers so progressing workflows can finish. Explicit invocation timeouts, parent cancellation and bounded unsuccessful cycles still apply.
+
+### Changed
+
+- Report whether an ordinary resume preview has an execution deadline.
+
 ## 0.1.0-beta.63 - 2026-10-14
 
 ### Fixed

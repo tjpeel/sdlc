@@ -348,3 +348,102 @@ func TestStableRunOverrideCLIRejectsUnsafeReadyBoundary(t *testing.T) {
 		})
 	}
 }
+
+// A saved ordinary run must have the same unlimited invocation lifetime as an
+// overridden run. The preview reports the execution context before any provider
+// work, so this catches an accidental whole-workflow deadline without waiting.
+func TestOrdinaryResumeInvocationDeadlines(t *testing.T) {
+	for _, command := range []string{"run", "resume"} {
+		for _, scenario := range []string{"implicit", "explicit", "parent"} {
+			t.Run(command+"/"+scenario, func(t *testing.T) {
+				j, marker := overrideResumeFixture(t, false)
+				ctx := context.Background()
+				if scenario == "parent" {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, 48*time.Hour)
+					defer cancel()
+				}
+				args := runArgs("--resume", j.ID, "--dry-run", "--json")
+				if command == "resume" {
+					args = []string{"--run", j.ID[:6], "--dry-run"}
+				}
+				if scenario == "explicit" {
+					args = append(args, "--timeout", "1m")
+				}
+				var output bytes.Buffer
+				var err error
+				if command == "resume" {
+					err = resumeCommand(ctx, args, &output)
+				} else {
+					err = runCommand(ctx, args, &output)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan := decodeOverridePreview(t, output.Bytes())
+				if string(plan["execution_has_deadline"]) != fmt.Sprint(scenario != "implicit") {
+					t.Fatalf("unexpected execution deadline: %s", output.Bytes())
+				}
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatal("preview ran connected command")
+				}
+			})
+		}
+	}
+}
+
+func TestRunCommandsHonorParentCancellation(t *testing.T) {
+	for _, command := range []string{"run", "resume", "feature"} {
+		for _, expired := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/expired=%t", command, expired), func(t *testing.T) {
+				j, marker := overrideResumeFixture(t, false)
+				ctx, cancel := context.WithCancel(context.Background())
+				if expired {
+					ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				} else {
+					cancel()
+				}
+				defer cancel()
+				args := runArgs("--resume", j.ID, "--dry-run", "--json")
+				if command == "feature" {
+					args = []string{"--reference", "TASK-1", "--all", "--dry-run"}
+				}
+				var err error
+				if command == "resume" {
+					err = resumeCommand(ctx, []string{"--run", j.ID[:6], "--dry-run"}, &bytes.Buffer{})
+				} else {
+					err = runCommand(ctx, args, &bytes.Buffer{})
+				}
+				expected := error(context.Canceled)
+				if expired {
+					expected = context.DeadlineExceeded
+				}
+				if !errors.Is(err, expected) {
+					t.Fatalf("parent cancellation not preserved: %v", err)
+				}
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatal("canceled controller ran connected command")
+				}
+			})
+		}
+	}
+}
+
+func TestExplicitRunTimeoutStopsControllerPreparation(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	options, err := parseRunOptions(runArgs("--timeout", "1m", "--dry-run"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the real command/controller boundary and shorten only the selected
+	// duration after parsing, avoiding a minute-long offline regression.
+	options.timeout = time.Nanosecond
+	err = runSelectedCommand(context.Background(), options, &bytes.Buffer{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("explicit invocation timeout did not stop preparation: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("timed out controller ran connected command")
+	}
+}

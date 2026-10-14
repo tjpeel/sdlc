@@ -212,9 +212,13 @@ func TestFeatureOptionBoundaries(t *testing.T) {
 	}
 	for _, args := range valid {
 		options, err := parseRunOptions(args)
-		if err != nil || !options.all || options.parallel < 1 {
+		if err != nil || !options.all || options.parallel < 1 || options.timeout != 0 {
 			t.Fatalf("valid feature rejected: %v: %v", args, err)
 		}
+	}
+	options, err := parseRunOptions([]string{"--reference", "TASK-1", "--all", "--timeout", "1m"})
+	if err != nil || options.timeout != time.Minute {
+		t.Fatalf("explicit feature timeout lost: %+v %v", options, err)
 	}
 	invalid := [][]string{
 		{"--reference", "TASK-1", "--all", "--ticket", "01-selected.md"},

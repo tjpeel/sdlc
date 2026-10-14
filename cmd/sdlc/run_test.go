@@ -270,7 +270,7 @@ func TestRunOptionsDefaultsRepeatableInputsAndDockerOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.provider != "codex" || options.base != "main" || options.timeout != 2*time.Hour || options.dockerTests || !reflect.DeepEqual(options.inputs, selectedInputs{"spec.md", "design.md"}) {
+	if options.provider != "codex" || options.base != "main" || options.timeout != 0 || options.dockerTests || !reflect.DeepEqual(options.inputs, selectedInputs{"spec.md", "design.md"}) {
 		t.Fatalf("unexpected defaults: %+v", options)
 	}
 	options, err = parseRunOptions(runArgs("--provider", "claude", "--docker-tests", "--timeout", "1m"))
@@ -279,7 +279,7 @@ func TestRunOptionsDefaultsRepeatableInputsAndDockerOptIn(t *testing.T) {
 	}
 }
 func TestRunOptionsRejectInvalidAndResumeOverrides(t *testing.T) {
-	cases := [][]string{nil, {"--reference", "TASK-1"}, runArgs("extra"), runArgs("--provider", "other"), runArgs("--input", ""), runArgs("--answer-file", "answer.txt"), runArgs("--timeout", "59s"), runArgs("--timeout", "25h"), runArgs("--timeout", "invalid")}
+	cases := [][]string{nil, {"--reference", "TASK-1"}, runArgs("extra"), runArgs("--provider", "other"), runArgs("--input", ""), runArgs("--answer-file", "answer.txt"), runArgs("--timeout", "0"), runArgs("--timeout", "-1m"), runArgs("--timeout", "59s"), runArgs("--timeout", "25h"), runArgs("--timeout", "invalid")}
 	for _, name := range []string{"provider", "model", "effort", "review-model", "review-effort", "base", "branch", "repo", "input"} {
 		cases = append(cases, runArgs("--resume", "recorded", "--"+name, "override"))
 	}
