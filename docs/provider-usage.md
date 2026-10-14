@@ -176,6 +176,11 @@ The trusted CI reader uses the run's selected read-only GitHub profile through
 the frozen runtime's unmodified official `gh api` client. GitHub documents
 [workflow job metadata and log downloads](https://docs.github.com/en/rest/actions/workflow-jobs),
 including the repository read permissions and temporary log-download redirect.
+For job logs only, the reader uses the documented
+[`gh api --allow-escape-sequences`](https://cli.github.com/manual/gh_api) option
+to receive coloured output into its bounded buffer. It removes terminal
+controls and masks private values before retaining excerpts. Metadata requests
+keep the client's default output protection.
 SDLC verifies the repository, published head, check identity, Actions run attempt
 and job association before collecting a failed job. It fetches only verified
 GitHub API resources; diagnostic URLs do not authorise external requests.

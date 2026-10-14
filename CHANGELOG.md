@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.57 - 2026-10-14
+
+### Fixed
+
+- Read coloured GitHub Actions logs using the official client's documented option. Remove terminal controls and mask private values in the bounded collector before retaining failure evidence; keep metadata requests and all identity, cleanup and size checks unchanged.
+
 ## 0.1.0-beta.56 - 2026-10-14
 
 ### Added

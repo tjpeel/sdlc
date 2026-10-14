@@ -259,6 +259,39 @@ func TestAutomaticActionsFailureAuthorityChangesHold(t *testing.T) {
 	}
 }
 
+func TestActionsLogEscapeSequencesAreSanitizedBeforeEvidence(t *testing.T) {
+	f := actionsCIFailureFixture()
+	secret := "disposable-private-log-value"
+	f.responses["repos/example/project/actions/jobs/99/logs"] = []byte("\x1b[31mUnknownProbeFailure: exact evidence remains.\x1b[0m\n" + "disposable-\x1b[32mprivate-log-value\x1b[0m\n")
+	command := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		allowEscapes := false
+		for _, arg := range args {
+			allowEscapes = allowEscapes || arg == "--allow-escape-sequences"
+		}
+		if strings.HasSuffix(args[len(args)-1], "/logs") {
+			if !allowEscapes {
+				return nil, errors.New("response contains terminal escape sequences")
+			}
+		} else if allowEscapes {
+			t.Fatal("raw escape output enabled for metadata command")
+		}
+		return f.command(ctx, name, args...)
+	}
+	result, err := (GitHubPublisher{Command: command, CIPrivateValues: []string{secret}}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+	if err != nil {
+		t.Fatal("official client refused Actions log evidence", err)
+	}
+	encoded, err := json.Marshal(result.FailureContext)
+	if err != nil || result.FailureContext == nil || len(result.FailureContext.Checks) != 1 {
+		t.Fatal("missing sanitized Actions evidence", err)
+	}
+	entry := result.FailureContext.Checks[0]
+	feedback := ciFailureFeedback(result)
+	if !entry.Redacted || !strings.Contains(entry.Text, "UnknownProbeFailure") || strings.Contains(string(encoded)+feedback, secret) || strings.Contains(string(encoded), `\u001b`) || strings.Contains(feedback, "\x1b") {
+		t.Fatal("raw controls or private value reached retained evidence")
+	}
+}
+
 func TestCIFailureMaskingPrecedesExcerptsAndPreservesFailure(t *testing.T) {
 	f := actionsCIFailureFixture()
 	secret := "disposable-opaque-check-input-value"

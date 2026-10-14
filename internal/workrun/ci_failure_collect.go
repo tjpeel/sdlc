@@ -433,7 +433,7 @@ func (p GitHubPublisher) collectCIActionFailure(ctx context.Context, plan Plan, 
 			text += fmt.Sprintf("\nFailed step %d (%s): %s", step.Number, step.Conclusion, step.Name)
 		}
 	}
-	data, err := p.command(ctx, "gh", "api", "--hostname", "github.com", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
+	data, err := p.command(ctx, "gh", "api", "--hostname", "github.com", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
 	if err != nil || len(data) > maxCIAPIBytes {
 		return fail("Actions job log API could not be read within its bound")
 	}
