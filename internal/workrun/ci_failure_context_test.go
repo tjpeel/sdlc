@@ -186,7 +186,7 @@ func TestCIOperationalCollectionFailuresCannotGrantRepair(t *testing.T) {
 			r.CIFeedback = ""
 			f := actionsCIFailureFixture()
 			if kind == "oversize" {
-				f.responses["repos/example/project/actions/jobs/99/logs"] = []byte(strings.Repeat("x", maxCIAPIBytes+1))
+				f.responses["repos/example/project/actions/jobs/99/logs"] = []byte(strings.Repeat("x", maxActionsJobLogBytes+1))
 			} else {
 				f.fail = "repos/example/project/actions/jobs/99/logs"
 			}
@@ -245,7 +245,7 @@ func TestAutomaticActionsFailureAuthorityChangesHold(t *testing.T) {
 			case "transport":
 				f.fail = "repos/example/project/actions/jobs/99/logs"
 			case "oversize":
-				f.responses["repos/example/project/actions/jobs/99/logs"] = []byte(strings.Repeat("x", maxCIAPIBytes+1))
+				f.responses["repos/example/project/actions/jobs/99/logs"] = []byte(strings.Repeat("x", maxActionsJobLogBytes+1))
 			case "invalid utf8":
 				f.responses["repos/example/project/actions/jobs/99/logs"] = []byte{0xff}
 			case "incomplete key":
@@ -254,6 +254,9 @@ func TestAutomaticActionsFailureAuthorityChangesHold(t *testing.T) {
 			result, err := (GitHubPublisher{Command: f.command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
 			if err == nil || result.FailureContext != nil || strings.Contains(err.Error(), "opaque") {
 				t.Fatal("unverified context escaped operational hold", kind)
+			}
+			if kind == "oversize" && !strings.Contains(err.Error(), "16777216-byte intake bound") {
+				t.Fatal("oversized log hold omitted the controlled numeric bound", err)
 			}
 		})
 	}
@@ -489,5 +492,21 @@ func TestCIPrivateInputValuesRequireCapturedHashesAndSecretKeyPolicy(t *testing.
 	}
 	if _, err := ciPrivateInputValues(dir, inputs); err == nil {
 		t.Fatal("changed private check input admitted")
+	}
+}
+
+func TestActionsLogBeyondMetadataBoundRetainsLateMaskedFailure(t *testing.T) {
+	fixture := actionsCIFailureFixture()
+	secret := "disposable-private-late-value"
+	raw := strings.Repeat("2026-01-01T11:00:00Z routine synthetic setup output\n", 15000) + "2026-01-01T12:01:00Z UnknownProbeFailure: LateFailureSentinel " + secret + " at src/Example.cs:42.\n" + strings.Repeat("2026-01-01T13:00:00Z routine cleanup output\n", 1200)
+	fixture.responses["repos/example/project/actions/jobs/99/logs"] = []byte(raw)
+	result, err := (GitHubPublisher{Command: fixture.command, CIPrivateValues: []string{secret}}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+	if err != nil || result.Status != "failed" || result.FailureContext == nil {
+		t.Fatal("ordinary large log withheld verified failure packet", err)
+	}
+	entry := result.FailureContext.Checks[0]
+	encoded, _ := json.Marshal(result.FailureContext)
+	if !strings.Contains(entry.Text, "LateFailureSentinel") || strings.Contains(string(encoded), secret) || !entry.Redacted || len(entry.Text) > maxCIFailureText {
+		t.Fatal("late failure missing, unmasked, or outside retained bound", entry)
 	}
 }

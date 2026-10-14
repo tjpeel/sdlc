@@ -372,3 +372,42 @@ func TestGitHubChecksRejectsOperationalErrorsWithValidJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestCIOutputLimitOnlyAllowsExactVerifiedJobLogArgv(t *testing.T) {
+	valid := []string{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/99/logs"}
+	if ciCommandOutputLimit("gh", valid) != maxActionsJobLogBytes {
+		t.Fatal("generated log request did not select log intake")
+	}
+	for _, args := range [][]string{
+		{"api", "repos/example/project/actions/jobs/99/logs"},
+		{"api", "--hostname", "other.invalid", "--allow-escape-sequences", valid[4]},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/0/logs"},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/099/logs"},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/999999999999999999999/logs"},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/99"},
+		{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/../project/actions/jobs/99/logs"},
+		append(append([]string(nil), valid...), "--method", "POST"),
+	} {
+		if ciCommandOutputLimit("gh", args) != maxCIAPIBytes {
+			t.Fatal("unverified argv enlarged intake", args)
+		}
+	}
+	if ciCommandOutputLimit("other", valid) != maxCIAPIBytes {
+		t.Fatal("non-gh executable enlarged intake")
+	}
+	for _, limit := range []int{maxCIAPIBytes, maxActionsJobLogBytes} {
+		output := ciAPIOutput{limit: limit}
+		output.Write([]byte(strings.Repeat("x", limit)))
+		if output.exceeded || output.buffer.Len() != limit {
+			t.Fatal("exact bound was rejected")
+		}
+		output.Write([]byte("x"))
+		output.Write([]byte("later"))
+		if !output.exceeded || output.buffer.Len() != limit {
+			t.Fatal("oversized output retained extra bytes")
+		}
+	}
+	if _, _, err := sanitizeCIText(strings.Repeat("x", maxCIAPIBytes+1), nil); err == nil {
+		t.Fatal("metadata sanitizer bound was widened")
+	}
+}

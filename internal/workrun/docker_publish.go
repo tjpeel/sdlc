@@ -291,10 +291,10 @@ func (publisher DockerPublisher) ciControllerCommand(ctx context.Context, volume
 	if runner == nil {
 		runner = publisherCommandRunner{}
 	}
-	var output ciAPIOutput
+	output := ciAPIOutput{limit: ciCommandOutputLimit("gh", argv)}
 	err = runner.Run(ctx, nil, &output, args...)
 	if output.exceeded {
-		return nil, fmt.Errorf("CI controller response exceeds bound")
+		return nil, &ciResponseSizeError{Limit: output.limit}
 	}
 	return output.buffer.Bytes(), err
 }

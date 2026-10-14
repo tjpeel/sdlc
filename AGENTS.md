@@ -13,6 +13,21 @@ the next delivery.
 Follow `docs/proposals/beta-versioning.md` and verify the built/installed CLI's
 version and source revision before reporting delivery complete.
 
+# Workflow efficiency
+
+Treat agent context headroom and token consumption as product design constraints.
+Return current, actionable evidence; group related failures and avoid repeating
+successful output or obsolete diagnostics in every repair prompt. Use small
+read-only observers for status checks and reserve deeper reasoning for diagnosis,
+implementation and review.
+
+Measure native token use, cached input, observed context and compactions alongside
+time, repair rounds and the delivered outcome. Report missing measurements as
+unknown; cumulative token totals do not establish current context occupancy.
+Keep durable run history and accounting separate from prompt context, and use
+the official clients' supported context management. Efficiency work must not
+silently reset sessions, usage or budgets, or add new arbitrary stopping gates.
+
 # Provider service rules
 
 Account safety and compliance with provider terms are requirements throughout

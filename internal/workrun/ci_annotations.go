@@ -15,6 +15,7 @@ import (
 )
 
 const maxCIAPIBytes = 512 * 1024
+const maxActionsJobLogBytes = 16 * 1024 * 1024
 const maxCIDiagnostics = 20
 
 // CIAnnotation contains only approved source metadata and fixed repair kinds.
@@ -100,13 +101,43 @@ func ciRepairFeedback(result CIResult, head string) string {
 	return text + ciFailureFeedback(result)
 }
 
+var actionsJobLogEndpoint = regexp.MustCompile(`^repos/([^/]+/[^/]+)/actions/jobs/([1-9][0-9]*)/logs$`)
+
+// Only the fixed controller-generated official-client job-log request can use
+// the larger raw intake. All metadata and other argv retain their old bound.
+func ciCommandOutputLimit(name string, args []string) int {
+	if name != "gh" || len(args) != 5 || args[0] != "api" || args[1] != "--hostname" || args[2] != "github.com" || args[3] != "--allow-escape-sequences" {
+		return maxCIAPIBytes
+	}
+	match := actionsJobLogEndpoint.FindStringSubmatch(args[4])
+	if len(match) != 3 || !githubRepository.MatchString(match[1]) {
+		return maxCIAPIBytes
+	}
+	job, err := strconv.ParseInt(match[2], 10, 64)
+	if err != nil || job <= 0 {
+		return maxCIAPIBytes
+	}
+	return maxActionsJobLogBytes
+}
+
+type ciResponseSizeError struct{ Limit int }
+
+func (e *ciResponseSizeError) Error() string {
+	return fmt.Sprintf("GitHub response exceeds %d-byte intake bound", e.Limit)
+}
+
 type ciAPIOutput struct {
+	limit    int
 	buffer   bytes.Buffer
 	exceeded bool
 }
 
 func (b *ciAPIOutput) Write(p []byte) (int, error) {
-	if b.buffer.Len()+len(p) > maxCIAPIBytes {
+	limit := b.limit
+	if limit == 0 {
+		limit = maxCIAPIBytes
+	}
+	if b.exceeded || len(p) > limit-b.buffer.Len() {
 		b.exceeded = true
 		return len(p), nil
 	}

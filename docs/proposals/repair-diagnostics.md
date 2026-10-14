@@ -72,6 +72,22 @@ signing and independent review apply when the candidate is ready. The controller
 owns tool execution and publication; the agent owns diagnosis, edits and
 deciding which evidence it needs.
 
+## Context and token efficiency
+
+Context headroom and token consumption are design constraints throughout ticket
+work. Feedback should contain the current candidate, actionable failures and the
+evidence needed for the next decision. Refer to retained evidence by its identity
+instead of repeating successful output or obsolete diagnostic bodies. Group
+related failures so the implementer can repair them in one coherent pass.
+
+Use [native usage measurements](../usage-metrics.md) to assess input, cached input,
+output, observed context and compactions alongside elapsed time, repair rounds
+and the final outcome. Missing observations remain unknown. Subscription
+allowances and cumulative token totals do not establish current context
+occupancy. Larger raw log intake must not enlarge the excerpts sent to agents.
+Durable histories and cumulative accounting remain intact while the official
+clients manage their context through supported mechanisms.
+
 ## Limits and further work
 
 The live helper uses the existing official CLI's shell tool rather than a custom

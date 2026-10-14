@@ -31,12 +31,12 @@ func localCommand(ctx context.Context, name string, args ...string) ([]byte, err
 	var diagnostic bytes.Buffer
 	command.Stderr = &diagnostic
 	if name == "gh" {
-		var output ciAPIOutput
+		output := ciAPIOutput{limit: ciCommandOutputLimit(name, args)}
 		command.Stdout = &output
 		command.Stderr = io.Discard
 		err := command.Run()
 		if output.exceeded {
-			return nil, fmt.Errorf("GitHub response exceeds output bound")
+			return nil, &ciResponseSizeError{Limit: output.limit}
 		}
 		if err != nil {
 			return output.buffer.Bytes(), fmt.Errorf("GitHub command failed: %w", err)

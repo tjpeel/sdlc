@@ -383,3 +383,26 @@ type ciStatusExit int
 
 func (e ciStatusExit) Error() string { return "synthetic gh check exit" }
 func (e ciStatusExit) ExitCode() int { return int(e) }
+
+func TestLocalCommandUsesJobLogLimitOnlyForExactArgv(t *testing.T) {
+	root := t.TempDir()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!" + python + "\nimport sys\nsys.stdout.write('x' * (512*1024+1))\n"
+	if err := os.WriteFile(filepath.Join(root, "gh"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logArgs := []string{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/99/logs"}
+	data, err := localCommand(context.Background(), "gh", logArgs...)
+	if err != nil || len(data) != maxCIAPIBytes+1 {
+		t.Fatal("local transport rejected ordinary log", err)
+	}
+	_, err = localCommand(context.Background(), "gh", "api", "--hostname", "github.com", "repos/example/project/actions/jobs/99")
+	var size *ciResponseSizeError
+	if !errors.As(err, &size) || size.Limit != maxCIAPIBytes {
+		t.Fatal("local transport widened metadata bound", err)
+	}
+}

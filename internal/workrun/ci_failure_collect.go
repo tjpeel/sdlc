@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -434,10 +435,14 @@ func (p GitHubPublisher) collectCIActionFailure(ctx context.Context, plan Plan, 
 		}
 	}
 	data, err := p.command(ctx, "gh", "api", "--hostname", "github.com", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
-	if err != nil || len(data) > maxCIAPIBytes {
-		return fail("Actions job log API could not be read within its bound")
+	var sizeFailure *ciResponseSizeError
+	if len(data) > maxActionsJobLogBytes || errors.As(err, &sizeFailure) {
+		return fail(fmt.Sprintf("Actions job log exceeds %d-byte intake bound", maxActionsJobLogBytes))
 	}
-	clean, redacted, err := sanitizeCIText(string(data), p.CIPrivateValues)
+	if err != nil {
+		return fail("Actions job log API could not be read")
+	}
+	clean, redacted, err := sanitizeCITextWithinBound(string(data), p.CIPrivateValues, maxActionsJobLogBytes)
 	if err != nil {
 		return CIFailedCheck{}, err
 	}

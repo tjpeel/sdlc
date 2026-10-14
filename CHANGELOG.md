@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.62 - 2026-10-14
+
+### Fixed
+
+- Read verified Actions job logs with a separate 16 MiB intake limit instead of the 512 KiB metadata limit. Mask the full log before selecting failure excerpts; retain the existing agent-feedback limits, identity checks and operational holds. Oversized-log stops now name the intake limit.
+
+### Changed
+
+- Make agent context headroom and token consumption explicit workflow design goals, assessed alongside time, repair rounds and the delivered outcome.
+
 ## 0.1.0-beta.61 - 2026-10-14
 
 ### Fixed

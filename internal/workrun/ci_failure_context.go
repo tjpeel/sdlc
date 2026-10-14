@@ -65,7 +65,11 @@ func normalizeCIControls(raw string) string {
 }
 
 func sanitizeCIText(raw string, privateValues []string) (string, bool, error) {
-	if len(raw) > maxCIAPIBytes || !utf8.ValidString(raw) || len(privateValues) > 256 {
+	return sanitizeCITextWithinBound(raw, privateValues, maxCIAPIBytes)
+}
+
+func sanitizeCITextWithinBound(raw string, privateValues []string, maximum int) (string, bool, error) {
+	if len(raw) > maximum || !utf8.ValidString(raw) || len(privateValues) > 256 {
 		return "", false, fmt.Errorf("CI text or masking values exceed their bound")
 	}
 	text := normalizeCIControls(raw)

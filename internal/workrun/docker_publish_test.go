@@ -621,3 +621,26 @@ func TestDockerChecksIdentityUnavailableAndActualMismatchRemainDistinctHolds(t *
 		})
 	}
 }
+
+func TestFrozenCITransportAllowsOnlyBoundedJobLogPayload(t *testing.T) {
+	fixture := newCIAnnotationFixture()
+	fixture.responses["repos/example/project/actions/jobs/99/logs"] = []byte(strings.Repeat("x", maxCIAPIBytes+1))
+	docker := &frozenCIControllerDocker{pairingRaceDocker: pairingRaceDocker{image: "sha256:" + strings.Repeat("a", 64), volume: "sdlc-github-auth-" + strings.Repeat("d", 32) + "-github"}}
+	runner := &frozenCIControllerRunner{t: t, fixture: fixture, image: docker.image, volume: docker.volume, docker: docker}
+	publisher := DockerPublisher{Runtime: runtimeimage.Manager{Docker: docker}, ImageID: docker.image, Runner: runner}
+	args := []string{"api", "--hostname", "github.com", "--allow-escape-sequences", "repos/example/project/actions/jobs/99/logs"}
+	data, err := publisher.ciControllerCommand(context.Background(), docker.volume, args)
+	if err != nil || len(data) != maxCIAPIBytes+1 {
+		t.Fatal("frozen transport rejected normal large log", err)
+	}
+	fixture.responses["repos/example/project/actions/jobs/99"] = []byte(strings.Repeat("x", maxCIAPIBytes+1))
+	_, err = publisher.ciControllerCommand(context.Background(), docker.volume, []string{"api", "--hostname", "github.com", "repos/example/project/actions/jobs/99"})
+	var size *ciResponseSizeError
+	if !errors.As(err, &size) || size.Limit != maxCIAPIBytes {
+		t.Fatal("frozen metadata bound widened", err)
+	}
+	docker.cleanupFailure = true
+	if data, err := publisher.ciControllerCommand(context.Background(), docker.volume, args); err == nil || data != nil {
+		t.Fatal("log size allowance bypassed cleanup hold", err)
+	}
+}
