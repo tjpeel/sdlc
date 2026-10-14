@@ -1,9 +1,11 @@
 package workrun
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"sync"
 	"unicode/utf8"
@@ -25,6 +27,8 @@ type CommandOutput struct {
 	Truncated      bool   `json:"truncated"`
 	HeadBytes      int    `json:"head_bytes"`
 	TailBytes      int    `json:"tail_bytes"`
+	FailureBytes   int    `json:"failure_bytes,omitempty"`
+	FailureOffset  int64  `json:"failure_offset,omitempty"`
 }
 
 type commandOutputCollector struct {
@@ -61,16 +65,19 @@ func (c *commandOutputCollector) results() []CommandOutput {
 
 type boundedCommandOutput struct {
 	sync.Mutex
-	limit         int
-	head, tail    []byte
-	result        CommandOutput
-	releaseUnused func(int)
+	limit                     int
+	head, tail                []byte
+	line, failure             []byte
+	lineOffset, failureOffset int64
+	result                    CommandOutput
+	releaseUnused             func(int)
 }
 
 func (b *boundedCommandOutput) Write(p []byte) (int, error) {
 	b.Lock()
 	defer b.Unlock()
 	n := len(p)
+	b.captureFailure(p, b.result.TotalBytes)
 	b.result.TotalBytes += int64(n)
 	headLimit := (b.limit + 1) / 2
 	take := headLimit - len(b.head)
@@ -93,46 +100,175 @@ func (b *boundedCommandOutput) Write(p []byte) (int, error) {
 	}
 	return n, nil
 }
+
+// Markers select literal process context; only a reported nonzero exit activates it.
+var commandFailureMarker = regexp.MustCompile(`(?i)(\[FAIL\]|\berror(?:\s+[A-Z][A-Z0-9]*[0-9]|\[[A-Z][0-9]+\])?\s*:|^\s*(?:---\s+FAIL:|FAIL:|Failed\s+[A-Z_]|Traceback \(most recent call last\):))`)
+
+// Reserve most of a small window for its actual marker and following context.
+func failureContextStart(match []int, limit int) int {
+	prefix := limit / 4
+	if prefix > 256 {
+		prefix = 256
+	}
+	if available := limit - (match[1] - match[0]); prefix > available {
+		prefix = available
+	}
+	if prefix < 0 {
+		prefix = 0
+	}
+	start := match[0] - prefix
+	if start < 0 {
+		return 0
+	}
+	return start
+}
+
+func (b *boundedCommandOutput) captureFailure(data []byte, offset int64) {
+	maximum := b.limit
+	if maximum > 8*1024 {
+		maximum = 8 * 1024
+	}
+	if maximum <= 0 {
+		return
+	}
+	for len(data) > 0 && len(b.failure) == 0 {
+		size := len(data)
+		if size > 1024 {
+			size = 1024
+		}
+		if newline := bytes.IndexByte(data[:size], '\n'); newline >= 0 {
+			size = newline + 1
+		}
+		if len(b.line) == 0 {
+			b.lineOffset = offset
+		}
+		b.line = append(b.line, data[:size]...)
+		offset += int64(size)
+		data = data[size:]
+		// Match across the old/new scan boundary before discarding context.
+		// Keep a short actual prefix so a long line cannot bury its marker.
+		if match := commandFailureMarker.FindIndex(b.line); match != nil {
+			start := failureContextStart(match, maximum)
+			b.failureOffset = b.lineOffset + int64(start)
+			context := b.line[start:]
+			if len(context) > maximum {
+				context = context[:maximum]
+			}
+			b.failure = append(b.failure, context...)
+		} else if len(b.line) > 1024 {
+			discard := len(b.line) - 1024
+			b.line = append(b.line[:0], b.line[discard:]...)
+			b.lineOffset += int64(discard)
+		}
+		if len(b.line) > 0 && b.line[len(b.line)-1] == '\n' {
+			b.line = b.line[:0]
+		}
+	}
+	if len(b.failure) > 0 && len(b.failure) < maximum {
+		remaining := maximum - len(b.failure)
+		if remaining > len(data) {
+			remaining = len(data)
+		}
+		b.failure = append(b.failure, data[:remaining]...)
+	}
+}
 func (b *boundedCommandOutput) completed(exit int) {
 	b.Lock()
 	defer b.Unlock()
-	if !b.result.Completed && b.releaseUnused != nil {
-		b.releaseUnused(b.limit - len(b.head) - len(b.tail))
-	}
+	first := !b.result.Completed
 	b.result.Completed = true
 	b.result.ExitCode = exit
+	if first && b.releaseUnused != nil {
+		b.releaseUnused(b.limit - outputRetained(b.snapshotLocked()))
+	}
 }
 func (b *boundedCommandOutput) snapshot() CommandOutput {
 	b.Lock()
 	defer b.Unlock()
+	return b.snapshotLocked()
+}
+func (b *boundedCommandOutput) snapshotLocked() CommandOutput {
 	r := b.result
 	r.HeadBytes = len(b.head)
 	r.TailBytes = len(b.tail)
-	setCommandOutputData(&r, append(append([]byte(nil), b.head...), b.tail...))
-	r.OmittedBytes = r.TotalBytes - int64(len(b.head)+len(b.tail))
+	data := append([]byte(nil), b.head...)
+	if r.Completed && r.ExitCode != 0 && r.TotalBytes <= int64(b.limit) && len(b.failure) > 0 {
+		data = append(data, b.tail...)
+		r.HeadBytes = int(b.failureOffset)
+		r.FailureOffset = b.failureOffset
+		r.FailureBytes = len(b.failure)
+		r.TailBytes = len(data) - r.HeadBytes - r.FailureBytes
+		setCommandOutputData(&r, data)
+		r.OmittedBytes = 0
+		r.Truncated = false
+		return r
+	}
+	if r.Completed && r.ExitCode != 0 && r.TotalBytes > int64(b.limit) && len(b.failure) > 0 {
+		r.FailureOffset = b.failureOffset
+		r.FailureBytes = len(b.failure)
+		data = append(data, b.failure...)
+	}
+	data = append(data, b.tail...)
+	setCommandOutputData(&r, data)
+	r.OmittedBytes = r.TotalBytes - int64(len(data))
 	r.Truncated = r.OmittedBytes > 0
-	return r
+	return trimCommandOutput(r, b.limit)
 }
+func outputRetained(r CommandOutput) int { return r.HeadBytes + r.FailureBytes + r.TailBytes }
 func trimCommandOutput(r CommandOutput, limit int) CommandOutput {
 	data, _ := commandOutputBytes(r)
 	if len(data) <= limit {
 		return r
 	}
-	head := (limit + 1) / 2
-	tail := limit - head
-
-	if head > r.HeadBytes {
-		head = r.HeadBytes
-		tail = limit - head
+	failure := r.FailureBytes
+	if failure > limit {
+		failure = limit
 	}
-	if tail > r.TailBytes {
-		tail = r.TailBytes
-		head = limit - tail
+	failureStart := 0
+	if failure > 0 && failure < r.FailureBytes {
+		context := data[r.HeadBytes : r.HeadBytes+r.FailureBytes]
+		if match := commandFailureMarker.FindIndex(context); match != nil {
+			failureStart = failureContextStart(match, failure)
+		}
+		if failureStart+failure > r.FailureBytes {
+			failureStart = r.FailureBytes - failure
+		}
+		r.FailureOffset += int64(failureStart)
 	}
-	setCommandOutputData(&r, append(append([]byte(nil), data[:head]...), data[len(data)-tail:]...))
-	r.HeadBytes = head
-	r.TailBytes = tail
-	r.OmittedBytes = r.TotalBytes - int64(head+tail)
+	available := limit - failure
+	head := (available + 1) / 2
+	tail := available - head
+	headMaximum, tailMaximum := r.HeadBytes, r.TailBytes
+	if failure > 0 {
+		if int64(headMaximum) > r.FailureOffset {
+			headMaximum = int(r.FailureOffset)
+		}
+		after := r.TotalBytes - r.FailureOffset - int64(failure)
+		if int64(tailMaximum) > after {
+			tailMaximum = int(after)
+		}
+	}
+	if head > headMaximum {
+		head = headMaximum
+		tail = available - head
+	}
+	if tail > tailMaximum {
+		tail = tailMaximum
+		head = available - tail
+		if head > headMaximum {
+			head = headMaximum
+		}
+	}
+	selected := append([]byte(nil), data[:head]...)
+	if failure > 0 {
+		selected = append(selected, data[r.HeadBytes+failureStart:r.HeadBytes+failureStart+failure]...)
+	} else {
+		r.FailureOffset = 0
+	}
+	selected = append(selected, data[len(data)-tail:]...)
+	setCommandOutputData(&r, selected)
+	r.HeadBytes, r.FailureBytes, r.TailBytes = head, failure, tail
+	r.OmittedBytes = r.TotalBytes - int64(len(selected))
 	r.Truncated = r.OmittedBytes > 0
 	return r
 }
@@ -161,18 +297,18 @@ func boundOutputs(j *Journal, budget int) {
 		}
 	}
 	for _, output := range outputs {
-		retained += output.HeadBytes + output.TailBytes
+		retained += outputRetained(*output)
 	}
 	if retained <= budget {
 		return
 	}
 	// Preserve short results and allocate their unused shares to longer output.
 	sort.Slice(outputs, func(i, k int) bool {
-		return outputs[i].HeadBytes+outputs[i].TailBytes < outputs[k].HeadBytes+outputs[k].TailBytes
+		return outputRetained(*outputs[i]) < outputRetained(*outputs[k])
 	})
 	for i, output := range outputs {
 		*output = trimCommandOutput(*output, budget/(len(outputs)-i))
-		budget -= output.HeadBytes + output.TailBytes
+		budget -= outputRetained(*output)
 	}
 }
 func effectiveChecks(j *Journal) [][]string {
@@ -225,7 +361,7 @@ func validateCommandEvidence(j *Journal) error {
 		}
 		for _, r := range results {
 			data, err := commandOutputBytes(r)
-			if err != nil || !r.Completed || r.Command < 1 || r.Command > 64 || (r.Phase != "candidate" && r.Phase != "baseline") || r.ExitCode < 0 || r.ExitCode > 255 || r.HeadBytes < 0 || r.TailBytes < 0 || r.HeadBytes+r.TailBytes != len(data) || r.TotalBytes < int64(len(data)) || r.OmittedBytes != r.TotalBytes-int64(len(data)) || r.Truncated != (r.OmittedBytes > 0) {
+			if err != nil || !r.Completed || r.Command < 1 || r.Command > 64 || (r.Phase != "candidate" && r.Phase != "baseline") || r.ExitCode < 0 || r.ExitCode > 255 || r.HeadBytes < 0 || r.TailBytes < 0 || outputRetained(r) != len(data) || r.FailureBytes < 0 || r.FailureBytes > 8*1024 || r.HeadBytes > len(data) || r.TailBytes > len(data) || r.FailureBytes > len(data) || r.FailureOffset < 0 || (r.FailureBytes == 0 && r.FailureOffset != 0) || (r.FailureBytes > 0 && (r.ExitCode == 0 || r.FailureOffset < int64(r.HeadBytes) || r.FailureOffset > r.TotalBytes-int64(r.FailureBytes)-int64(r.TailBytes))) || r.TotalBytes < int64(len(data)) || r.OmittedBytes != r.TotalBytes-int64(len(data)) || r.Truncated != (r.OmittedBytes > 0) {
 				return fmt.Errorf("invalid command output evidence")
 			}
 			retained += len(data)

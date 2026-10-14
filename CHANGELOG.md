@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.61 - 2026-10-14
+
+### Fixed
+
+- Retain a bounded window around the first standard failure marker in unsuccessful check output, including failures in the middle of long logs. Keep original byte offsets and truncation counts, preserve the existing output limits, and prioritise that context when combining command results.
+
 ## 0.1.0-beta.60 - 2026-10-14
 
 ### Fixed
