@@ -7,6 +7,21 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.59 - 2026-10-14
+
+### Added
+
+- Let the implementation agent call an isolated diagnostic worker during its running native CLI invocation on macOS and Linux. Return focused check results and bounded source correction artifacts immediately, without another model turn or permanent verification gate. Keep the structured diagnostic handoff as the fallback.
+
+### Changed
+
+- Use implementer self-review followed by the controller's required opposite-provider review after CI. Remove the extra mandatory delegated local review while retaining full checks, signing, CI, and revision-bound repairs.
+- Return recoverable dirty-checkpoint and stale-candidate tool errors to the running agent so it can commit or retry. Withhold provisional evidence and keep infrastructure, frozen-input and cleanup failures as operational holds.
+
+### Fixed
+
+- Pin source copying, fingerprints and source correction collection to the accepted tree during live diagnostics, so concurrent edits cannot mix candidate identities.
+
 ## 0.1.0-beta.58 - 2026-10-14
 
 ### Added

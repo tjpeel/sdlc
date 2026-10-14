@@ -41,6 +41,31 @@ type sourcePatchCapture struct {
 	result     *SourcePatchResult
 }
 
+var errSourcePatchStale = errors.New("source correction candidate revision changed")
+
+// Joined cleanup/runtime failures must never become recoverable checkpoint errors.
+func sourcePatchStaleOnly(err error) bool {
+	if err == errSourcePatchStale {
+		return true
+	}
+	if many, ok := err.(interface{ Unwrap() []error }); ok {
+		children := many.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !sourcePatchStaleOnly(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if one, ok := err.(interface{ Unwrap() error }); ok {
+		return sourcePatchStaleOnly(one.Unwrap())
+	}
+	return false
+}
+
 type sourcePatchDiffBudgetError struct{}
 
 func (*sourcePatchDiffBudgetError) Error() string {
@@ -61,7 +86,7 @@ func sourcePatchCollectionFailure(encoded []byte) (bool, error) {
 		return false, nil
 	}
 	code, err := decoder.Token()
-	if err != nil || code != "source_patch_diff_budget_exceeded" || decoder.More() {
+	if err != nil || (code != "source_patch_diff_budget_exceeded" && code != "source_patch_candidate_stale") || decoder.More() {
 		return true, errors.New("invalid source correction failure response")
 	}
 	closing, err := decoder.Token()
@@ -70,6 +95,9 @@ func sourcePatchCollectionFailure(encoded []byte) (bool, error) {
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return true, errors.New("invalid source correction failure response")
+	}
+	if code == "source_patch_candidate_stale" {
+		return true, errSourcePatchStale
 	}
 	return true, &sourcePatchDiffBudgetError{}
 }
@@ -232,8 +260,11 @@ func (runner Runner) validateSourcePatchResume(ctx context.Context, directory st
 }
 func sourcePatchIdentity(ctx context.Context, workspace, head, tree string) error {
 	data, err := SafeGit(ctx, workspace, "rev-parse", "HEAD", "HEAD^{tree}")
-	if err != nil || strings.TrimSpace(data) != head+"\n"+tree {
-		return errors.New("source correction candidate revision changed")
+	if err != nil {
+		return errors.New("source correction candidate identity unavailable")
+	}
+	if strings.TrimSpace(data) != head+"\n"+tree {
+		return errSourcePatchStale
 	}
 	return nil
 }
@@ -290,7 +321,7 @@ func (checker DockerChecker) collectSourcePatch(ctx context.Context, workspace, 
 		return errors.New("source correction collection exceeds bound")
 	}
 	if failure, failureErr := sourcePatchCollectionFailure(encoded); failure {
-		if !capture {
+		if !capture && !sourcePatchStaleOnly(failureErr) {
 			return errors.New("invalid source correction validation response")
 		}
 		return failureErr
@@ -316,13 +347,14 @@ env={'PATH':os.environ['PATH'],'HOME':'/tmp','GIT_CONFIG_NOSYSTEM':'1','GIT_CONF
 git=['git','--no-replace-objects','-c','safe.directory=/source','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C','/source']
 def identity():
     values=subprocess.check_output(git+['rev-parse','HEAD','HEAD^{tree}'],env=env).decode().splitlines()
-    if values!=[selection['head'],selection['tree']]: raise ValueError('candidate identity changed')
+    if values!=[selection['head'],selection['tree']]:
+        print(json.dumps({'failure':'source_patch_candidate_stale'})); sys.exit(0)
 identity()
 requested=selection['paths']; selected=set(requested); files={}; patches=[]; total=0; overflow=False
 def source_lines(data):
     parts=data.decode('utf-8').split('\n')
     return [part+'\n' for part in parts[:-1]]+([parts[-1]] if parts[-1] else [])
-entries=subprocess.check_output(git+['ls-tree','-r','-z','HEAD'],env=env).split(b'\0')
+entries=subprocess.check_output(git+['ls-tree','-r','-z',selection['tree']],env=env).split(b'\0')
 for entry in entries:
     if not entry: continue
     metadata,raw=entry.split(b'\t',1); mode,kind,oid=metadata.split(b' ')

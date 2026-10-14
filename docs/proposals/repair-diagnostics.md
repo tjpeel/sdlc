@@ -7,6 +7,26 @@ repeat work that has already served its purpose.
 
 ## Implemented workflow
 
+On macOS and Linux, the running implementation CLI can call a fixed helper with
+a batch of machine requests. The helper transfers only those requests through a
+private mailbox; the controller runs them in its separate credential-free
+worker. Results return to the same native invocation. The helper executes no
+repository scripts or tests in the authenticated worker and has no publication
+or signing capability. Reviewers receive no helper or mailbox mounts.
+
+The agent commits a checkpoint before requesting tools. The controller pins the
+accepted tree throughout copying, execution and artifact collection. A dirty
+checkpoint or stale candidate returns an error without evidence so the agent
+can correct its request and continue. Frozen-input, infrastructure, transport
+integrity and cleanup failures stop the invocation. Concurrent helper calls are
+serialized; cancellation joins the service before temporary storage is removed.
+
+Source correction requests use the existing source-only worker and artifact
+bounds. The agent assesses any returned diff, applies the intended correction
+and commits it. The controller never applies it to the implementation workspace.
+Live requests retain only bounded metadata and private logs; their results never
+become required publication gates.
+
 An implementation handoff can return `diagnostics_requested` with a separate
 `diagnostic_requests` batch. The controller runs these requests in its existing
 credential-free check worker and returns their bounded process output to the
@@ -27,7 +47,8 @@ suite and any required regression verification. Return `implemented` only after
 current passing evidence, local review and PR metadata. Diagnostic success cannot
 replace those gates. Existing saved verification requests remain required;
 this change does not silently reclassify earlier requests or alter saved budgets.
-Source correction artifacts keep their existing formatter/verification path.
+Source corrections also keep their existing formatter/verification handoff path
+when the live helper is unavailable.
 
 At CI, a failed check accompanied by pending checks keeps the controller waiting.
 Once the reported checks finish, the implementer receives one failure packet for
@@ -44,18 +65,20 @@ accounts, infer identity from stored-login presence, or retry sign-in.
 The agent should assess the whole feedback packet, group related repairs into a
 coherent candidate, and choose focused diagnostics while developing. Neither
 this workflow nor the implementation skill requires one issue per commit or
-one issue per repair. Full checks and independent review apply when that
-candidate is ready. The controller owns tool execution and publication;
-the agent owns diagnosis, edits and deciding which evidence it needs.
+one issue per repair. The implementer self-reviews the complete changes and
+current evidence. The controller owns the required opposite-provider review
+after CI; a separate delegated local review is no longer mandatory. Full checks,
+signing and independent review apply when the candidate is ready. The controller
+owns tool execution and publication; the agent owns diagnosis, edits and
+deciding which evidence it needs.
 
 ## Limits and further work
 
-Diagnostics still return through an SDLC handoff and another native invocation.
-They do not provide an interactive tool inside a running model turn. A future
-controller-backed diagnostic tool could avoid that handoff while retaining the
-same worker isolation, candidate attribution and cleanup rules. That needs its
-own lifecycle design and offline regressions before changing either provider's
-execution path.
+The live helper uses the existing official CLI's shell tool rather than a custom
+provider client. Windows keeps the structured diagnostic handoff until the
+mailbox has equivalent safe file handling there. Source changes still require
+committed checkpoints; this avoids introducing an ambiguous dirty-source test
+snapshot. The helper does not certify full checks or publish a candidate.
 
 Configured command chains remain fail-fast because later commands may depend
 on a successful restore or build. To collect independent diagnostic failures

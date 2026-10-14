@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,14 +46,51 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 			return SessionResult{}, err
 		}
 	}
+	nativeCtx, nativeCancel := context.WithCancel(ctx)
+	defer nativeCancel()
+	requestDirectory, responseDirectory, helper := "", "", ""
+	var serviceDone chan error
+	var serviceCancel context.CancelFunc
+	if session.Diagnostics != nil && liveDiagnosticsSupported {
+		if session.Role != "implementation" {
+			return SessionResult{}, fmt.Errorf("live diagnostics require implementation role")
+		}
+		requestDirectory, responseDirectory, helper = filepath.Join(control, "requests"), filepath.Join(control, "responses"), filepath.Join(control, "diagnostics.py")
+		for path, mode := range map[string]os.FileMode{requestDirectory: 0777, responseDirectory: 0755} {
+			if err := os.Mkdir(path, mode); err != nil {
+				return SessionResult{}, err
+			}
+			if err := os.Chmod(path, mode); err != nil {
+				return SessionResult{}, err
+			}
+		}
+		if err := os.WriteFile(helper, []byte(liveDiagnosticHelper), 0444); err != nil {
+			return SessionResult{}, err
+		}
+		serviceCtx, cancel := context.WithCancel(nativeCtx)
+		serviceCancel = cancel
+		serviceDone = make(chan error, 1)
+		go func() {
+			err := serveDiagnosticMailbox(serviceCtx, requestDirectory, responseDirectory, session.Diagnostics)
+			if err != nil {
+				nativeCancel()
+			}
+			serviceDone <- err
+		}()
+	}
 	events := &eventWriter{provider: session.Model.Provider, output: stdout}
-	err = provider.Manager.Headless(ctx, providerauth.HeadlessRequest{
+	err = provider.Manager.Headless(nativeCtx, providerauth.HeadlessRequest{
 		Provider: session.Model.Provider, Model: session.Model.Name, Effort: session.Model.Effort,
 		Workspace: session.Workspace, SessionDirectory: session.Directory, PromptFile: prompt, SchemaFile: schema,
 		ResumeID: session.ResumeID, ReadOnly: session.Role == "review",
 		ImageID: provider.ImageID, InstructionsFile: shared, Headroom: session.Headroom,
+		DiagnosticHelper: helper, DiagnosticRequests: requestDirectory, DiagnosticResponses: responseDirectory,
 		OnHeadroomStats: func(stats headroom.Stats) { events.result.HeadroomStats = &stats },
 	}, events, stderr)
+	if serviceDone != nil {
+		serviceCancel()
+		err = errors.Join(err, <-serviceDone)
+	}
 	if session.ResumeID != "" {
 		reportedID := events.result.SessionID
 		events.result.SessionID = session.ResumeID

@@ -65,6 +65,17 @@ func clearDiagnosticEvidence(j *Journal) {
 }
 
 func validateDiagnosticsJournal(j *Journal) error {
+	liveRequests := make([]VerificationRequest, 0, len(j.LiveDiagnostics))
+	for _, result := range j.LiveDiagnostics {
+		if result.Output != nil || result.SourcePatch != nil || len(result.Log) > 256 || len(result.Diagnostic) > 4096 {
+			return fmt.Errorf("live diagnostic metadata cannot retain process output or artifacts")
+		}
+		liveRequests = append(liveRequests, result.Request)
+	}
+	if err := validateVerificationRequests(liveRequests, &j.Plan); err != nil {
+		return err
+	}
+
 	requests := make([]VerificationRequest, 0, len(j.Diagnostics))
 	for _, result := range j.Diagnostics {
 		if result.SourcePatch != nil || len(result.Log) > 256 || len(result.Diagnostic) > 4096 {

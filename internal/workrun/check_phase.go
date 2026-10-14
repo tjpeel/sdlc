@@ -78,6 +78,9 @@ func (checker DockerChecker) runCandidatePhase(ctx context.Context, workspace, i
 		if inputs != "" {
 			args = append(args, "--mount", "type=bind,src="+inputs+",dst=/inputs,readonly")
 		}
+		if checker.ExpectedTree != "" {
+			args = append(args, "--env", "SDLC_CHECK_TREE="+checker.ExpectedTree)
+		}
 		args = append(args, "--entrypoint", "python3", image, "-c", candidateFingerprint)
 		data, err := checker.Runtime.Docker.Output(ctx, args...)
 		if err != nil {
@@ -134,7 +137,7 @@ func (checker DockerChecker) runCandidatePhase(ctx context.Context, workspace, i
 const candidateFingerprint = `import hashlib,os,pathlib,stat,subprocess
 env={'PATH':os.environ['PATH'],'HOME':'/tmp','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null'}
 git=['git','--no-replace-objects','-c','safe.directory=/source','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C','/source']
-paths=set(subprocess.check_output(git+['ls-tree','-r','--name-only','-z','HEAD'],env=env).split(b'\0'))-{b''}
+paths=set(subprocess.check_output(git+['ls-tree','-r','--name-only','-z',os.environ.get('SDLC_CHECK_TREE','HEAD')],env=env).split(b'\0'))-{b''}
 if os.path.isdir('/inputs'):
     for root,dirs,files in os.walk('/inputs',followlinks=False):
         for name in files:
@@ -159,3 +162,9 @@ for raw in sorted(paths):
     digest.update(b'\0')
 print(digest.hexdigest())
 `
+
+// WithDiagnosticRevision pins every candidate copy and fallback to its accepted tree.
+func (checker DockerChecker) WithDiagnosticRevision(revision Revision) Checker {
+	checker.ExpectedTree = revision.Tree
+	return checker
+}

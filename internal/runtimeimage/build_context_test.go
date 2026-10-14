@@ -128,3 +128,43 @@ func TestBuildContextRejectsUnsafeOrIncompleteSource(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildContextIncludesReviewedLiveDiagnosticHelper(t *testing.T) {
+	source, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, cleanup, err := buildContext(source)
+	if err != nil {
+		t.Fatal("actual publisher source closure cannot be built", err)
+	}
+	defer cleanup()
+	relative := filepath.Join("internal", "workrun", "live_diagnostic_helper.py")
+	expected, err := os.ReadFile(filepath.Join(source, relative))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(filepath.Join(directory, "source", relative))
+	if err != nil || string(actual) != string(expected) {
+		t.Fatal("reviewed fixed helper missing or altered in runtime build context", err)
+	}
+}
+
+func TestBuildContextRejectsUnreviewedDiagnosticHelper(t *testing.T) {
+	_, _, source := fixture(t)
+	sourceFile(t, source, "cmd/sdlc-publisher/main.go", `package main
+import "github.com/tjpeel/sdlc/internal/workrun"
+func main(){workrun.F()}
+`)
+	sourceFile(t, source, "internal/workrun/provider.go", `package workrun
+import _ "embed"
+//go:embed live_diagnostic_helper_extra.py
+var helper string
+func F(){}
+`)
+	sourceFile(t, source, "internal/workrun/live_diagnostic_helper_extra.py", "unreviewed helper")
+	if _, cleanup, err := buildContext(source); err == nil {
+		cleanup()
+		t.Fatal("asset whitelist accepted an unreviewed helper variant")
+	}
+}

@@ -130,6 +130,17 @@ than guessing which credential generation remains valid. Native authentication
 errors and account usage limits stop work without automatic re-authentication,
 identity switching or restarting to evade the limit.
 
+On supported local hosts, an implementation session can call a fixed diagnostic
+helper through the official client's existing shell tool. The helper reads only
+Git checkpoint metadata and a bounded machine request, then waits for the
+controller's isolated check worker. It invokes no repository scripts, dependency
+installation or tests in the authenticated worker. Its request mailbox is
+separate from its read-only response mount; reviewers receive neither. The
+controller pins the accepted source tree, retains only bounded private results,
+and cancels and joins outstanding diagnostics before removing temporary mounts.
+Source correction artifacts use the existing source-only worker and size bounds.
+This adds no provider API client, authentication route or credential broker.
+
 Offline tests establish concurrent execution and storage protection, not provider
 tolerance of simultaneous token rotation. The reviewed official documentation
 describes native file-backed caching and container persistence; it does not

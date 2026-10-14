@@ -27,6 +27,7 @@ var subscriptionHelper string
 // Directory and file paths must be absolute. SessionDirectory is writable by
 // container UID 1000; Workspace needs that access only for implementation work.
 type HeadlessRequest struct {
+	DiagnosticHelper, DiagnosticRequests, DiagnosticResponses                              string
 	Provider, Model, Effort, Workspace, SessionDirectory, PromptFile, SchemaFile, ResumeID string
 	ImageID, InstructionsFile                                                              string
 	ReadOnly                                                                               bool
@@ -61,6 +62,9 @@ var headlessValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func validateHeadless(request HeadlessRequest) error {
+	if err := validateDiagnosticMounts(request); err != nil {
+		return err
+	}
 	if err := request.Headroom.Validate(); err != nil {
 		return err
 	}
@@ -155,6 +159,10 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 	if request.InstructionsFile != "" {
 		args = append(args, "--mount", headlessBind(request.InstructionsFile, "/instructions.md", true))
 	}
+	if request.DiagnosticHelper != "" {
+		args = append(args, "--mount", headlessBind(request.DiagnosticHelper, "/sdlc-diagnostics.py", true), "--mount", headlessBind(request.DiagnosticRequests, "/sdlc-diagnostic-requests", false), "--mount", headlessBind(request.DiagnosticResponses, "/sdlc-diagnostic-responses", true))
+	}
+
 	companion := filepath.Join(request.Workspace, ".sdlc", "repositories")
 	if info, err := os.Lstat(companion); err == nil && info.IsDir() {
 		args = append(args, "--mount", headlessBind(companion, "/workspace/.sdlc/repositories", true))

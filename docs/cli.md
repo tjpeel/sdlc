@@ -738,6 +738,23 @@ Stop reasons and the latest CI result are saved in the journal for later inspect
 Resuming an older run registers it when the controller starts. Dry runs create
 neither registry entries nor heartbeats. These records are private local state.
 
+On macOS and Linux, the running implementer can call
+`/usr/bin/python3 -I /sdlc-diagnostics.py` with a JSON `requests` batch on stdin.
+The fixed helper obtains the current committed head/tree and uses a private
+controller mailbox; checks run in the separate credential-free worker. The
+response contains bounded results for every independent request, including
+semantic failures. Source correction requests return validated private artifacts
+for the implementer to assess, apply and commit. They never modify the host
+workspace or become permanent verification gates.
+
+Commit a checkpoint before calling the helper. Dirty checkpoints and stale
+candidates return recoverable errors without provisional evidence; the agent can
+correct its checkpoint and continue during that same native invocation. Frozen
+input, infrastructure, transport-integrity and cleanup failures stop the
+invocation. Reviewers have no helper or mailbox mounts. Windows retains the
+structured handoff below. The implementer self-reviews its complete changes;
+the controller performs the required opposite-provider review after CI.
+
 An implementer can return `diagnostics_requested` with a bounded
 `diagnostic_requests` batch to obtain focused machine evidence before the
 configured suite. The batch runs in the existing isolated check worker and

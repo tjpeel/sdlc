@@ -186,6 +186,7 @@ type Outcome struct {
 }
 
 type Session struct {
+	Diagnostics  func(context.Context, LiveDiagnosticRequest) (LiveDiagnosticResponse, error) `json:"-"`
 	Model        Model
 	Role         string
 	Workspace    string
@@ -272,6 +273,7 @@ type Journal struct {
 	ReportedModel             string                `json:"reported_model,omitempty"`
 	Publication               Publication           `json:"publication"`
 	ImageID                   string                `json:"image_id"`
+	LiveDiagnostics           []VerificationResult  `json:"live_diagnostics,omitempty"`
 	Diagnostics               []VerificationResult  `json:"diagnostics,omitempty"`
 	DiagnosticFeedbackKey     string                `json:"diagnostic_feedback_key,omitempty"`
 	DiagnosticFeedbackCount   int                   `json:"diagnostic_feedback_count,omitempty"`

@@ -37,6 +37,7 @@ func (localCheckRunner) Run(ctx context.Context, output io.Writer, args ...strin
 // disposable storage. Privileged
 // containers are not a security boundary against hostile code.
 type DockerChecker struct {
+	ExpectedTree string
 	// WorkerName pins private derived-base checks so interrupted work can be
 	// stopped and cleaned before retrying the same generation.
 	WorkerName     string
@@ -101,7 +102,7 @@ if os.environ.get('SDLC_CHECK_HOME'):
  home_root.mkdir(parents=True,exist_ok=True)
  home_root.chmod(0o700)
  os.chown(home_root,1000,1000)
-tree = subprocess.check_output(git+['rev-parse','HEAD^{tree}'],env=env).decode().strip()
+tree = os.environ.get('SDLC_CHECK_TREE') or subprocess.check_output(git+['rev-parse','HEAD^{tree}'],env=env).decode().strip()
 if len(tree) not in (40,64) or any(c not in '0123456789abcdef' for c in tree): raise ValueError('unsafe tree identity')
 if os.environ.get('SDLC_CHECK_TREE',tree)!=tree: raise ValueError('check source changed during preparation')
 template_root = os.environ.get('SDLC_CHECK_TEMPLATES')
@@ -117,7 +118,7 @@ def blob(oid):
 if not template or not (template/'.complete').is_file():
  target = template/'files' if template else work_root
  target.mkdir(parents=True,exist_ok=True)
- entries = subprocess.check_output(git+['ls-tree', '-r', '-z', 'HEAD'], env=env)
+ entries = subprocess.check_output(git+['ls-tree', '-r', '-z', tree], env=env)
  for entry in entries.split(b'\0'):
   if not entry: continue
   metadata, raw_path = entry.split(b'\t', 1)
@@ -341,6 +342,9 @@ func (checker DockerChecker) checkPhase(ctx context.Context, workspace string, c
 	cleanups = append(cleanups, []string{"rm", "--force", name + "-copy"})
 	copyArgs := checkContainerEnvironment([]string{"run", "--name", name + "-copy", "--pull", "never", "--network", "none", "--user", "0:0", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "no-new-privileges", "--mount", "type=bind,src=" + workspace + ",dst=/source,readonly", "--mount", "type=volume,src=" + volumes[0] + ",dst=/workspace"})
 	copyArgs = append(copyArgs, "--mount", "type=volume,src="+name+"-home,dst=/check-home", "--env", "SDLC_CHECK_HOME=/check-home")
+	if checker.ExpectedTree != "" {
+		copyArgs = append(copyArgs, "--env", "SDLC_CHECK_TREE="+checker.ExpectedTree)
+	}
 	copyArgs = append(copyArgs, "--entrypoint", "python3", state.ImageID, "-c", copyCheckWorkspace)
 	if checker.sourcePatch != nil {
 		// Keep repository Python modules out of the fixed source copier's imports.

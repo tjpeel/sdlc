@@ -412,6 +412,9 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 		return err
 	}
 	key := strings.TrimSpace(string(tree))
+	if checker.ExpectedTree != "" {
+		key = checker.ExpectedTree
+	}
 	if len(key) != 40 && len(key) != 64 {
 		return errors.New("invalid check source tree")
 	}
