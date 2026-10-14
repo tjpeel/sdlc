@@ -27,6 +27,7 @@ var subscriptionHelper string
 // Directory and file paths must be absolute. SessionDirectory is writable by
 // container UID 1000; Workspace needs that access only for implementation work.
 type HeadlessRequest struct {
+	Speed                                                                                  string
 	DiagnosticHelper, DiagnosticRequests, DiagnosticResponses                              string
 	Provider, Model, Effort, Workspace, SessionDirectory, PromptFile, SchemaFile, ResumeID string
 	ImageID, InstructionsFile                                                              string
@@ -62,6 +63,9 @@ var headlessValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func validateHeadless(request HeadlessRequest) error {
+	if err := ValidateNativeSpeed(request.Provider, request.Model, request.Speed); err != nil {
+		return err
+	}
 	if err := validateDiagnosticMounts(request); err != nil {
 		return err
 	}
@@ -137,6 +141,9 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 		}
 	}
 	args = args[:entry]
+	if request.Speed != "" {
+		args = append(args, "--env", "SDLC_NATIVE_SPEED="+request.Speed)
+	}
 	for i, arg := range args {
 		switch arg {
 		case "--memory":
@@ -296,4 +303,26 @@ func (LocalDocker) Input(ctx context.Context, input io.Reader, args ...string) (
 	command := exec.CommandContext(ctx, "docker", args...)
 	command.Stdin = input
 	return command.Output()
+}
+
+// ValidateNativeSpeed rejects combinations that would switch models or require
+// an unsupported native mode. Empty denotes an older, unrecorded selection.
+func ValidateNativeSpeed(provider, model, speed string) error {
+	if speed == "" || speed == "normal" {
+		return nil
+	}
+	if speed != "fast" {
+		return fmt.Errorf("speed must be normal or fast")
+	}
+	if provider == "codex" {
+		return nil
+	}
+	if provider == "claude" {
+		switch model {
+		case "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8":
+			return nil
+		}
+		return fmt.Errorf("Claude fast speed requires an explicitly selected supported Opus model; %q is unsupported", model)
+	}
+	return fmt.Errorf("unsupported provider for native speed")
 }

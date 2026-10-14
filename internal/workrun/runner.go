@@ -829,10 +829,17 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	if role == "implementation" && resume != "" {
 		metricRole = "repair"
 	}
-	attempt := runusage.Attempt{Version: 1, RunID: journal.ID, Attempt: journal.Attempt,
+	speed := journal.Plan.Roles.ImplementationSpeed
+	if role == "review" {
+		speed = journal.Plan.Roles.ReviewSpeed
+	}
+	attempt := runusage.Attempt{RequestedSpeed: speed, Version: 1, RunID: journal.ID, Attempt: journal.Attempt,
 		Role: metricRole, Provider: model.Provider, Model: model.Name, Effort: model.Effort,
 		ImageID: journal.ImageID, StartedAt: time.Now().UTC(), Outcome: "running",
 		Resumed: resume != "", OptimizerMode: journal.Plan.Headroom.Mode}
+	if speed != "" {
+		attempt.EffectiveSpeed = "unknown"
+	}
 	if attempt.OptimizerMode == "" {
 		attempt.OptimizerMode = "off"
 	}
@@ -906,7 +913,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	if role == "review" {
 		schema = reviewOutcomeSchema
 	}
-	result, resultErr = runner.Provider.Execute(ctx, Session{Model: model, Role: role, Workspace: workspace,
+	result, resultErr = runner.Provider.Execute(ctx, Session{Speed: speed, Model: model, Role: role, Workspace: workspace,
 		Directory: nativeDirectory, Prompt: prompt, Schema: schema, ResumeID: resume,
 		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom, Diagnostics: liveCallback}, io.MultiWriter(metrics, nativeOutput, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
 	return result, resultErr

@@ -36,6 +36,8 @@ var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 // Attempt is private native-client telemetry. SessionID never appears in Summary.
 // Elapsed time covers the entire attempt, including setup and queueing.
 type Attempt struct {
+	RequestedSpeed string          `json:"requested_speed,omitempty"`
+	EffectiveSpeed string          `json:"effective_speed,omitempty"`
 	ReviewBoundary *ReviewBoundary `json:"review_boundary,omitempty"`
 	StopCategory   string          `json:"stop_category,omitempty"`
 	Version        int             `json:"version"`
@@ -160,6 +162,9 @@ func openMetricsRoot(dir string, create bool) (*os.Root, error) {
 }
 
 func validateAttempt(a Attempt) error {
+	if a.RequestedSpeed != "" && a.RequestedSpeed != "normal" && a.RequestedSpeed != "fast" || a.EffectiveSpeed != "" && a.EffectiveSpeed != "unknown" {
+		return fmt.Errorf("invalid native speed evidence")
+	}
 	if complete := a.Usage.NativeFinalization; complete != nil {
 		if complete.Provider != a.Provider || complete.ExitCode < 0 || complete.ExitCode > 255 || complete.ObservedAt.IsZero() || complete.ObservedAt.Before(a.StartedAt) || !a.EndedAt.IsZero() && complete.ObservedAt.After(a.EndedAt) {
 			return fmt.Errorf("invalid native finalization")

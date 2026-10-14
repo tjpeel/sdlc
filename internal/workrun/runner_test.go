@@ -250,6 +250,13 @@ func TestRunnerReviewFindingsRepairSameSession(t *testing.T) {
 	for _, roles := range []Roles{defaults.Codex, defaults.Claude} {
 		t.Run(roles.Implementation.Provider, func(t *testing.T) {
 			dir, j := testRun(t)
+			roles.ImplementationSpeed = "normal"
+			roles.ReviewSpeed = "normal"
+			if roles.Implementation.Provider == "codex" {
+				roles.ImplementationSpeed = "fast"
+			} else {
+				roles.ReviewSpeed = "fast"
+			}
 			j.Plan.Roles = roles
 			review := testOutcome("reviewed")
 			review.Findings = []Finding{{Priority: "P1", Path: "app.go", Line: 1, Scenario: "nil input panics", Recommendation: "guard nil input"}}
@@ -265,6 +272,13 @@ func TestRunnerReviewFindingsRepairSameSession(t *testing.T) {
 				t.Fatalf("unexpected repair stages: sessions=%d publications=%d CI=%d checks=%d", len(p.calls), pub.calls, pub.ci, checks.calls)
 			}
 			for i, expected := range []Model{roles.Implementation, roles.Review, roles.Implementation, roles.Review} {
+				wantSpeed := roles.ImplementationSpeed
+				if i%2 == 1 {
+					wantSpeed = roles.ReviewSpeed
+				}
+				if p.calls[i].Speed != wantSpeed {
+					t.Fatalf("stage %d lost frozen speed: %q", i, p.calls[i].Speed)
+				}
 				if p.calls[i].Model != expected {
 					t.Fatalf("stage %d used the wrong provider, model or reasoning: %+v", i, p.calls[i].Model)
 				}

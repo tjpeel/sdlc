@@ -90,6 +90,11 @@ def persist_claude_refresh(path, directory):
 
 
 def native_command(provider, model, effort, resume, readonly):
+    speed = os.environ.get("SDLC_NATIVE_SPEED", "")
+    if speed not in ("", "normal", "fast"):
+        raise ValueError("unsupported native speed")
+    if provider == "claude" and speed == "fast" and model not in ("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"):
+        raise ValueError("unsupported Claude fast model")
     if provider == "codex":
         command = ["codex", "exec"]
         if resume:
@@ -102,10 +107,14 @@ def native_command(provider, model, effort, resume, readonly):
                     "-c", "model_reasoning_effort=" + json.dumps(effort),
                     "-c", "mcp_servers={}", "-c", "features.hooks=false",
                     "-c", "features.plugins=false"]
+        if speed == "fast":
+            command += ["-c", 'service_tier="priority"']
         command += [resume, "-"] if resume else ["-"]
         return command
     settings = {"disableAllHooks": True, "enabledPlugins": {},
                 "skipDangerousModePermissionPrompt": True}
+    if speed:
+        settings["fastMode"] = speed == "fast"
     command = ["claude", "-p", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--forward-subagent-text",
                "--model", model, "--effort", effort,

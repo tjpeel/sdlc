@@ -28,7 +28,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.69`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.70`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -190,7 +190,10 @@ sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
   --input .sdlc/work/YOUR_WORK_REFERENCE/specification.md
 ```
 
-The default implementer is Codex at medium effort; Claude reviews at high effort.
+New runs use Codex Sol 6.1 and Claude Sonnet 5.5 at low effort. Use
+`--reasoning low|medium|high|xhigh|max` to select both lead roles' reasoning band,
+or override each role's model and effort. `--speed` and `--review-speed` request
+normal or fast service separately; fast is opt-in and provider costs differ.
 The implementation account must be logged in. If the opposite reviewer has no
 login, delivery proceeds through the draft PR and CI, then pauses at
 `awaiting_reviewer`. Authenticate that provider and resume the recorded run.

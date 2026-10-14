@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/tjpeel/sdlc/internal/providerauth"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,8 +20,8 @@ type ModelDefaults struct {
 
 func DefaultModels() ModelDefaults {
 	return ModelDefaults{Version: 1,
-		Codex:  Roles{Model{"codex", "gpt-6.1-sol", "medium"}, Model{"claude", "claude-opus-5-5", "high"}},
-		Claude: Roles{Model{"claude", "claude-sonnet-5-5", "medium"}, Model{"codex", "gpt-6.1-sol", "high"}},
+		Codex:  Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "low"}},
+		Claude: Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"claude", "claude-sonnet-5-5", "low"}, Review: Model{"codex", "gpt-6.1-sol", "low"}},
 	}
 }
 
@@ -117,4 +118,29 @@ func ResolveModels(defaults ModelDefaults, provider, model, effort, reviewModel,
 		return Roles{}, err
 	}
 	return roles, nil
+}
+
+// ResolveSpeeds freezes explicit native speed settings for new runs. Empty saved
+// settings retain the official client's prior default behaviour.
+func ResolveSpeeds(roles Roles, speed, reviewSpeed string) (Roles, error) {
+	if speed == "" {
+		speed = "normal"
+	}
+	if reviewSpeed == "" {
+		reviewSpeed = "normal"
+	}
+	roles.ImplementationSpeed, roles.ReviewSpeed = speed, reviewSpeed
+	return roles, ValidateSpeeds(roles)
+}
+
+func ValidateSpeeds(roles Roles) error {
+	for _, role := range []struct {
+		model Model
+		speed string
+	}{{roles.Implementation, roles.ImplementationSpeed}, {roles.Review, roles.ReviewSpeed}} {
+		if err := providerauth.ValidateNativeSpeed(role.model.Provider, role.model.Name, role.speed); err != nil {
+			return err
+		}
+	}
+	return nil
 }

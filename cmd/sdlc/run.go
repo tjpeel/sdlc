@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--override-run-limits | --pr-feedback | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--speed normal|fast] [--review-speed normal|fast]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--override-run-limits | --pr-feedback | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -48,24 +48,24 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
-	overrideRunLimits                                                                                                                                  bool
-	processPRFeedback                                                                                                                                  bool
-	extendSessionTurnBudget                                                                                                                            int
-	runtimeName, headroomMode                                                                                                                          string
-	frozenHeadroom                                                                                                                                     *headroom.Config
-	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, resume, answerFile, ciFeedbackFile, githubProfile string
-	inputs                                                                                                                                             selectedInputs
-	initializeCIRepairBudget                                                                                                                           bool
-	initializeReviewRepairBudget                                                                                                                       int
-	reviewRepairLimit                                                                                                                                  int
-	dockerTests, dryRun                                                                                                                                bool
-	timeout                                                                                                                                            time.Duration
-	notifications                                                                                                                                      notify.Options
-	all, watch, alternate                                                                                                                              bool
-	terminal                                                                                                                                           bool
-	parallel                                                                                                                                           int
-	jsonOutput                                                                                                                                         bool
-	terminalMode, launchID                                                                                                                             string
+	overrideRunLimits                                                                                                                                                                 bool
+	processPRFeedback                                                                                                                                                                 bool
+	extendSessionTurnBudget                                                                                                                                                           int
+	runtimeName, headroomMode                                                                                                                                                         string
+	frozenHeadroom                                                                                                                                                                    *headroom.Config
+	reference, ticket, provider, base, branch, repository, model, effort, reviewModel, reviewEffort, reasoning, speed, reviewSpeed, resume, answerFile, ciFeedbackFile, githubProfile string
+	inputs                                                                                                                                                                            selectedInputs
+	initializeCIRepairBudget                                                                                                                                                          bool
+	initializeReviewRepairBudget                                                                                                                                                      int
+	reviewRepairLimit                                                                                                                                                                 int
+	dockerTests, dryRun                                                                                                                                                               bool
+	timeout                                                                                                                                                                           time.Duration
+	notifications                                                                                                                                                                     notify.Options
+	all, watch, alternate                                                                                                                                                             bool
+	terminal                                                                                                                                                                          bool
+	parallel                                                                                                                                                                          int
+	jsonOutput                                                                                                                                                                        bool
+	terminalMode, launchID                                                                                                                                                            string
 	// Internal resume selections recover recorded paths and freeze the checkpoint.
 	root, runID, checkpoint               string
 	featureOwned                          bool
@@ -96,6 +96,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.branch, "branch", "", "explicit destination branch; defaults to project branch_format")
 	flags.StringVar(&options.repository, "repo", "", "GitHub owner/repo; defaults to saved SDLC identity, then origin")
 	flags.StringVar(&options.model, "model", "", "implementation lead model")
+	flags.StringVar(&options.reasoning, "reasoning", "", "new-run reasoning for both roles: low, medium, high, xhigh or max; role effort flags override")
+	flags.StringVar(&options.speed, "speed", "", "implementation native speed: normal or fast")
+	flags.StringVar(&options.reviewSpeed, "review-speed", "", "review native speed: normal or fast")
 	flags.StringVar(&options.effort, "effort", "", "implementation lead reasoning effort")
 	flags.StringVar(&options.reviewModel, "review-model", "", "opposite-provider review lead model")
 	flags.StringVar(&options.reviewEffort, "review-effort", "", "review lead reasoning effort")
@@ -132,6 +135,24 @@ func parseRunOptions(args []string) (runOptions, error) {
 
 	if options.initializeReviewRepairBudget != 0 && (options.initializeReviewRepairBudget < 1 || options.initializeReviewRepairBudget > 3 || options.resume == "" || options.all || options.answerFile != "" || options.initializeCIRepairBudget) {
 		return options, fmt.Errorf("--initialize-review-repair-budget requires 1-3 and a single --resume without other recovery flags")
+	}
+	if options.reasoning != "" {
+		switch options.reasoning {
+		case "low", "medium", "high", "xhigh", "max":
+		default:
+			return options, fmt.Errorf("reasoning must be low, medium, high, xhigh or max")
+		}
+		if options.effort == "" {
+			options.effort = options.reasoning
+		}
+		if options.reviewEffort == "" {
+			options.reviewEffort = options.reasoning
+		}
+	}
+	for _, speed := range []string{options.speed, options.reviewSpeed} {
+		if speed != "" && speed != "normal" && speed != "fast" {
+			return options, fmt.Errorf("speed must be normal or fast")
+		}
 	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
@@ -395,6 +416,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 				return err
 			}
 			roles, err = workrun.ResolveModels(defaults, options.provider, options.model, options.effort, options.reviewModel, options.reviewEffort)
+			if err == nil {
+				roles, err = workrun.ResolveSpeeds(roles, options.speed, options.reviewSpeed)
+			}
 			if err != nil {
 				return err
 			}

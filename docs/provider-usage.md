@@ -287,3 +287,27 @@ Compatible older usage holds require the exact controller-owned stop reason,
 same failed review attempt, matching retained published snapshot and corroborated
 wrapper completion; ambiguous evidence remains a hold. This lifecycle policy
 does not change authentication or native execution routes.
+
+Claude can label a native `rate_limit` assistant error `<synthetic>`. That error
+envelope does not identify an inference model. SDLC retains the selected model
+from native initialization and continues to check real model reports. Recovery
+of an earlier stop requires the retained event stream to corroborate that exact
+envelope, the selected initialization, rejected usage window and safe native
+completion. It preserves the original metrics and does not dispatch the provider.
+
+## Native speed selection
+
+New-run speed controls were checked against the official
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+and [Claude fast-mode guide](https://code.claude.com/docs/en/fast-mode) on
+14 October 2026. Codex fast requests use the native `service_tier` configuration;
+normal uses its isolated client's default tier. Claude uses the documented
+`--settings` fast-mode value. Old saved runs without a speed selection retain
+their previous native command.
+
+Claude fast mode supports Opus 5.5, Opus 5 and Opus 4.8. SDLC refuses an
+unsupported selected model before dispatch rather than allowing a model switch.
+On subscription plans, fast mode draws paid usage credits outside the included
+allowance, even when allowance remains. Selecting the flag does not enable or
+purchase credits, establish account access, or prove the effective service speed.
+No live fast-mode provider request was made while validating these controls.

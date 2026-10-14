@@ -20,8 +20,10 @@ type Model struct {
 }
 
 type Roles struct {
-	Implementation Model `json:"implementation"`
-	Review         Model `json:"review"`
+	ImplementationSpeed string `json:"implementation_speed,omitempty"`
+	ReviewSpeed         string `json:"review_speed,omitempty"`
+	Implementation      Model  `json:"implementation"`
+	Review              Model  `json:"review"`
 }
 
 type Input struct {
@@ -187,6 +189,7 @@ type Outcome struct {
 }
 
 type Session struct {
+	Speed        string
 	Diagnostics  func(context.Context, LiveDiagnosticRequest) (LiveDiagnosticResponse, error) `json:"-"`
 	Model        Model
 	Role         string

@@ -33,6 +33,25 @@ CODEX_WORKSPACE_TRUST = '[projects."/workspace"]\ntrust_level = "trusted"\n'
 
 
 class HeadlessTests(unittest.TestCase):
+    def test_recorded_speed_controls_native_commands_without_model_switch(self):
+        for speed, tier in (("normal", "default"), ("fast", "priority")):
+            with patch.dict(os.environ, {"SDLC_NATIVE_SPEED": speed}):
+                command = headless.native_command("codex", "gpt-6.1-sol", "low", ID, False)
+                if speed == "fast":
+                    self.assertIn('service_tier="priority"', command)
+                else:
+                    self.assertFalse(any(item.startswith("service_tier=") for item in command))
+                self.assertEqual(command[command.index("--model") + 1], "gpt-6.1-sol")
+                command = headless.native_command("claude", "claude-opus-5-5", "low", ID, True)
+                self.assertEqual(json.loads(command[command.index("--settings") + 1])["fastMode"], speed == "fast")
+        with patch.dict(os.environ, {"SDLC_NATIVE_SPEED": ""}):
+            command = headless.native_command("claude", "claude-sonnet-5-5", "low", ID, True)
+            self.assertNotIn("fastMode", json.loads(command[command.index("--settings") + 1]))
+            self.assertFalse(any(item.startswith("service_tier=") for item in headless.native_command("codex", "saved-model", "high", ID, False)))
+        with patch.dict(os.environ, {"SDLC_NATIVE_SPEED": "fast"}):
+            with self.assertRaises(ValueError):
+                headless.native_command("claude", "claude-sonnet-5-5", "low", ID, True)
+
     def setUp(self):
         capture = patch.object(subscription, 'capture')
         self.capture = capture.start()

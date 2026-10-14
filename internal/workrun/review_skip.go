@@ -17,19 +17,20 @@ import (
 
 // ReviewSkip records missing independent review, never an approval.
 type ReviewSkip struct {
-	Publication  Publication `json:"publication"`
-	Tree         string      `json:"tree"`
-	EvidenceKey  string      `json:"evidence_key"`
-	Provider     string      `json:"provider"`
-	Model        string      `json:"model"`
-	Effort       string      `json:"effort"`
-	Attempt      int         `json:"attempt"`
-	StopCategory string      `json:"stop_category"`
-	Source       string      `json:"source"`
-	Window       string      `json:"window"`
-	ObservedAt   time.Time   `json:"observed_at"`
-	RecordedAt   time.Time   `json:"recorded_at"`
-	ResetsAt     *int64      `json:"resets_at,omitempty"`
+	ModelEvidenceSource string      `json:"model_evidence_source,omitempty"`
+	Publication         Publication `json:"publication"`
+	Tree                string      `json:"tree"`
+	EvidenceKey         string      `json:"evidence_key"`
+	Provider            string      `json:"provider"`
+	Model               string      `json:"model"`
+	Effort              string      `json:"effort"`
+	Attempt             int         `json:"attempt"`
+	StopCategory        string      `json:"stop_category"`
+	Source              string      `json:"source"`
+	Window              string      `json:"window"`
+	ObservedAt          time.Time   `json:"observed_at"`
+	RecordedAt          time.Time   `json:"recorded_at"`
+	ResetsAt            *int64      `json:"resets_at,omitempty"`
 }
 
 func reviewAttemptBoundary(j *Journal) *runusage.ReviewBoundary {
@@ -68,6 +69,9 @@ func validateReviewSkip(j *Journal) error {
 	s := j.ReviewSkip
 	if s == nil {
 		return nil
+	}
+	if s.ModelEvidenceSource != "" && s.ModelEvidenceSource != "retained_native_events" {
+		return fmt.Errorf("invalid review model recovery evidence")
 	}
 	if _, err := hex.DecodeString(s.EvidenceKey); err != nil {
 		return fmt.Errorf("invalid retained review skip check key")
@@ -113,6 +117,9 @@ func savedReviewStopCategory(j *Journal) string {
 	if j.State != "failed" || j.ResumeState != "reviewing" {
 		return ""
 	}
+	if j.Plan.Roles.Review.Provider == "claude" && j.StopReason == (&providerauth.NativeExecutionError{Provider: "claude"}).Error()+"\n"+providerModelMismatchMessage {
+		return "claude_synthetic_quota"
+	}
 	// These exact controller-owned legacy reasons preceded typed categories.
 	switch j.StopReason {
 	case errNativeIncomplete.Error():
@@ -124,6 +131,10 @@ func savedReviewStopCategory(j *Journal) string {
 }
 
 func (r Runner) reviewUsageProof(ctx context.Context, dir string, j *Journal, category string, legacy bool) (*ReviewSkip, error) {
+	reconcileSynthetic := legacy && category == "claude_synthetic_quota"
+	if reconcileSynthetic {
+		category = "native_execution"
+	}
 	if category != "native_execution" && category != "native_incomplete" {
 		return nil, nil
 	}
@@ -135,6 +146,11 @@ func (r Runner) reviewUsageProof(ctx context.Context, dir string, j *Journal, ca
 		return nil, err
 	}
 	m := j.Plan.Roles.Review
+	if reconcileSynthetic {
+		if err := recoverSyntheticQuotaModel(dir, j, &a); err != nil {
+			return nil, err
+		}
+	}
 	if a.Outcome != "failed" || a.Provider != m.Provider || a.Model != m.Name || a.Effort != m.Effort || a.ImageID != j.ImageID || a.Resumed || !a.EndedAt.IsZero() && a.EndedAt.After(j.UpdatedAt) && legacy || a.Usage.ReportedModel != "" && a.Usage.ReportedModel != m.Name {
 		return nil, nil
 	}
@@ -185,7 +201,11 @@ func (r Runner) reviewUsageProof(ctx context.Context, dir string, j *Journal, ca
 			return nil, fmt.Errorf("saved exhausted review snapshot differs from the current publication")
 		}
 	}
-	return &ReviewSkip{Publication: j.Publication, Tree: j.Evidence.Tree, EvidenceKey: j.Evidence.Key, Provider: m.Provider, Model: m.Name, Effort: m.Effort, Attempt: a.Attempt, StopCategory: category, Source: limit.Source, Window: window, ObservedAt: limit.ObservedAt, ResetsAt: limit.ResetsAt}, nil
+	result := &ReviewSkip{Publication: j.Publication, Tree: j.Evidence.Tree, EvidenceKey: j.Evidence.Key, Provider: m.Provider, Model: m.Name, Effort: m.Effort, Attempt: a.Attempt, StopCategory: category, Source: limit.Source, Window: window, ObservedAt: limit.ObservedAt, ResetsAt: limit.ResetsAt}
+	if reconcileSynthetic {
+		result.ModelEvidenceSource = "retained_native_events"
+	}
+	return result, nil
 }
 
 func (r Runner) completeSkippedReview(ctx context.Context, dir string, j *Journal, skip *ReviewSkip) error {

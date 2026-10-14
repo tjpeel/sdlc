@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.70 - 2026-10-14
+
+### Changed
+
+- Default new runs to Codex Sol 6.1 and Claude Sonnet 5.5 at low effort. Select a shared reasoning band, override each lead's model or effort, and request normal or fast service separately for implementation and review. Saved runs retain their recorded settings.
+- Record requested speed separately from unknown effective service speed. Reject unsupported Claude fast-mode models before dispatch; speed controls use the official native clients.
+
+### Fixed
+
+- Recognize Claude's synthetic usage-limit error metadata while preserving the selected model and genuine model-change holds. A corroborated saved review stop can record its skipped review from retained events without another provider attempt.
+
 ## 0.1.0-beta.69 - 2026-10-14
 
 ### Changed

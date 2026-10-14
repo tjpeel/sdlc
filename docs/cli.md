@@ -525,6 +525,8 @@ metadata and ambiguous selection fail even during dry-run.
 | `--github-profile` | Select a registered account/key pair for an unbound repository; omission uses saved repository selection or a unique owner pair or sole configured pair. A conflicting saved selection fails. |
 | `--model`, `--effort` | Override the implementation lead's model and effort. |
 | `--review-model`, `--review-effort` | Override the opposite provider's review lead. |
+| `--reasoning` | Set both leads' reasoning band: `low`, `medium`, `high`, `xhigh` or `max`. Explicit role effort flags take precedence. |
+| `--speed`, `--review-speed` | Request `normal` (new-run default) or `fast` service separately for implementation and review. Provider availability and costs apply. |
 | `--docker-tests` | Override the project `docker_tests` default; enable the separate privileged integration-test daemon. Use `--docker-tests=false` to disable it for a new run. |
 | `--timeout` | No implicit deadline for run, resume or feature controllers. An explicit timeout accepts `1m` through `24h`; parent deadlines and cancellation still apply. |
 | `--resume` | Continue a recorded run ID with its original settings. |
@@ -556,7 +558,9 @@ publication and exact-head CI must still pass. Unresolved findings or human
 questions, authentication, policy, tooling, invalid handoffs and cleanup failures
 retain their holds. Unknown or near-limit quota information does not skip review.
 A corroborated saved usage stop can resume to this checkpoint without another
-native reviewer attempt. If a failed native review already returned a valid
+native reviewer attempt. Claude's `<synthetic>` usage-error envelope preserves
+the initialized model; an older stop caused by that envelope requires retained
+events to verify the same failed attempt before recovery. If a failed native review already returned a valid
 structured finding, question, limitation or source request, SDLC retains that
 known work and keeps its hold. It does not infer findings from prose or tool logs.
 Account-authenticated runs support the account owner's local single-user job;
@@ -568,15 +572,14 @@ These are requested lead settings, not a guarantee of account entitlement:
 
 | Selected implementer | Implementation | Independent review |
 | --- | --- | --- |
-| Codex (default) | `gpt-6.1-sol`, `medium` | Claude `claude-opus-5-5`, `high` |
-| Claude | `claude-sonnet-5-5`, `medium` | Codex `gpt-6.1-sol`, `high` |
+| Codex (default) | `gpt-6.1-sol`, `low` | Claude `claude-sonnet-5-5`, `low` |
+| Claude | `claude-sonnet-5-5`, `low` | Codex `gpt-6.1-sol`, `low` |
 
 For example:
 
 ```sh
 sdlc run --reference YOUR_WORK_REFERENCE --ticket 01-add-api.md \
-  --provider codex --model gpt-6.1-sol --effort medium \
-  --review-model claude-opus-5-5 --review-effort high
+  --reasoning medium --review-effort high --speed fast
 ```
 
 An optional private `models.json` beside the installation's runtime record can
@@ -589,23 +592,39 @@ opposite reviewer providers:
 {
   "version": 1,
   "codex": {
-    "implementation": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "medium"},
-    "review": {"provider": "claude", "model": "claude-opus-5-5", "effort": "high"}
+    "implementation": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "low"},
+    "review": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "low"}
   },
   "claude": {
-    "implementation": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "medium"},
-    "review": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"}
+    "implementation": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "low"},
+    "review": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "low"}
   }
 }
 ```
 
-Flags override that file for new runs. Resume preserves the recorded models,
-effort, runtime image, inputs, checks and shared instructions. Accepted Codex
+Flags override that file for new runs. `--reasoning` sets both lead bands;
+`--effort` and `--review-effort` can override either one. Band names express a
+workload choice, not equal model performance across providers. Resume preserves
+the recorded models, effort, speed, runtime image, inputs, checks and shared
+instructions. Older saved runs without speed fields retain the native client's
+previous behaviour. Accepted Codex
 efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`;
 Claude accepts `low`, `medium`, `high`, `xhigh`, `max`. Acceptance by SDLC does not
 establish support by a model or account. A reported model mismatch or change
 stops the run; if the client reports no model, SDLC cannot verify it. Providers
 may cap or interpret effort differently.
+
+Normal service is the new-run default. Fast requests use native service-tier or
+fast-mode settings and may consume more allowance or credits. Claude fast mode
+supports Opus 5.5, Opus 5 and Opus 4.8, and uses paid usage credits outside the
+subscription allowance. It cannot run with Sonnet 5.5; SDLC rejects that
+combination before dispatch instead of selecting another model. SDLC does not
+enable credits or purchase them. An explicit compatible model override is
+required for `--review-speed fast` when Claude reviews a Codex implementation.
+Requested speed is recorded separately from effective speed, which stays
+unknown when the native client supplies no evidence. See
+[Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference)
+and [Claude fast mode](https://code.claude.com/docs/en/fast-mode).
 
 The lead follows the pinned engineering and PR skills. The native clients load
 the image's pinned agent definitions and model/effort policies for

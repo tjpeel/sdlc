@@ -14,6 +14,7 @@ import (
 
 	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/providerauth"
+	"github.com/tjpeel/sdlc/internal/runusage"
 )
 
 type NativeProvider struct {
@@ -112,7 +113,7 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 		}
 	}()
 	err = provider.Manager.Headless(nativeCtx, providerauth.HeadlessRequest{
-		Provider: session.Model.Provider, Model: session.Model.Name, Effort: session.Model.Effort,
+		Provider: session.Model.Provider, Model: session.Model.Name, Effort: session.Model.Effort, Speed: session.Speed,
 		Workspace: session.Workspace, SessionDirectory: session.Directory, PromptFile: prompt, SchemaFile: schema,
 		ResumeID: session.ResumeID, ReadOnly: session.Role == "review",
 		ImageID: provider.ImageID, InstructionsFile: shared, Headroom: session.Headroom,
@@ -136,8 +137,11 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 	if events.err != nil {
 		return events.result, errors.Join(err, events.err)
 	}
+	if events.syntheticQuotaError && events.initializedModel != session.Model.Name {
+		return events.result, errors.Join(err, errors.New("synthetic Claude quota failure has no matching native initialization"))
+	}
 	if events.modelChanged || events.result.ReportedModel != "" && events.result.ReportedModel != session.Model.Name {
-		return events.result, errors.Join(err, fmt.Errorf("provider reported a different model during the session; job stopped"))
+		return events.result, errors.Join(err, errors.New(providerModelMismatchMessage))
 	}
 	if session.ResumeID != "" {
 		reportedID := events.result.SessionID
@@ -161,15 +165,19 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 var sessionIdentifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var errNativeIncomplete = errors.New("provider did not complete a resumable session successfully")
 
+const providerModelMismatchMessage = "provider reported a different model during the session; job stopped"
+
 type eventWriter struct {
-	provider          string
-	output            io.Writer
-	buffer            []byte
-	final             json.RawMessage
-	result            SessionResult
-	completed, failed bool
-	modelChanged      bool
-	err               error
+	provider            string
+	output              io.Writer
+	buffer              []byte
+	final               json.RawMessage
+	result              SessionResult
+	completed, failed   bool
+	modelChanged        bool
+	syntheticQuotaError bool
+	initializedModel    string
+	err                 error
 }
 
 func (writer *eventWriter) Write(data []byte) (int, error) {
@@ -221,6 +229,7 @@ func (writer *eventWriter) consume(line []byte) error {
 		Structured json.RawMessage `json:"structured_output"`
 		Result     string          `json:"result"`
 		Message    json.RawMessage `json:"message"`
+		Error      json.RawMessage `json:"error"`
 		Item       struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -239,6 +248,15 @@ func (writer *eventWriter) consume(line []byte) error {
 		}
 		if json.Unmarshal(event.Message, &message) == nil && message.Model != "" {
 			reported = message.Model
+		}
+		var errorCode string
+		_ = json.Unmarshal(event.Error, &errorCode)
+		if runusage.ClaudeSyntheticQuotaError(writer.provider, event.Type, errorCode, message.Model) {
+			writer.syntheticQuotaError = true
+			reported = ""
+		}
+		if writer.provider == "claude" && event.Type == "system" && event.Subtype == "init" {
+			writer.initializedModel = reported
 		}
 	}
 	if reported != "" {

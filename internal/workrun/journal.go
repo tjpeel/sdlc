@@ -207,6 +207,9 @@ func Load(directory string) (Journal, error) {
 	if err := ValidateModel(journal.Plan.Roles.Review); err != nil {
 		return Journal{}, err
 	}
+	if err := ValidateSpeeds(journal.Plan.Roles); err != nil {
+		return Journal{}, err
+	}
 	if journal.Plan.Roles.Implementation.Provider == journal.Plan.Roles.Review.Provider {
 		return Journal{}, fmt.Errorf("run providers must differ")
 	}

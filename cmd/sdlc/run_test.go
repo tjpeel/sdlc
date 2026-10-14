@@ -671,3 +671,39 @@ func TestParseReviewRepairLimitRequiresBoundedSingleResume(t *testing.T) {
 		t.Fatal("review increase preview rejected", err)
 	}
 }
+
+func TestRunNewModelControlsReachOfflinePlan(t *testing.T) {
+	root := runGitFixture(t)
+	marker := forbidConnectedRunCommands(t, root)
+	var output bytes.Buffer
+	args := runArgs("--repo", "example/project", "--model", "gpt-6.1-sol", "--review-model", "claude-opus-5-5", "--reasoning", "xhigh", "--effort", "low", "--speed", "fast", "--review-speed", "fast", "--dry-run", "--json")
+	if err := runCommand(context.Background(), args, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Plan workrun.Plan `json:"plan"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err, output.String())
+	}
+	roles := result.Plan.Roles
+	if roles.Implementation.Effort != "low" || roles.Review.Effort != "xhigh" || roles.ImplementationSpeed != "fast" || roles.ReviewSpeed != "fast" || roles.Review.Name != "claude-opus-5-5" {
+		t.Fatal("CLI selection did not reach plan", roles)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("offline plan dispatched provider")
+	}
+	output.Reset()
+	if err := runCommand(context.Background(), runArgs("--repo", "example/project", "--review-speed", "fast", "--dry-run"), &output); err == nil {
+		t.Fatal("Sonnet fast accepted")
+	}
+	for _, flag := range []string{"--reasoning", "--speed", "--review-speed"} {
+		value := "normal"
+		if flag == "--reasoning" {
+			value = "low"
+		}
+		if _, err := parseRunOptions(runArgs("--resume", "run-one", flag, value)); err == nil {
+			t.Fatal("resume changed frozen option", flag)
+		}
+	}
+}

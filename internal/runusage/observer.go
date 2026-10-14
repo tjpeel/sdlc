@@ -83,6 +83,7 @@ type ContextUsage struct {
 // The Claude 2.1.287 CLI may omit contextWindow: no window or percentage is
 // inferred from model names, aggregate usage, or a provider's advertised limit.
 type Observer struct {
+	initializedModel                               string
 	nativeStarted                                  bool
 	subscriptionRevision                           uint64
 	mu                                             sync.Mutex
@@ -207,6 +208,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 		APIDuration   json.RawMessage `json:"duration_api_ms"`
 		Turns         json.RawMessage `json:"num_turns"`
 		Rate          json.RawMessage `json:"rate_limit_info"`
+		Error         json.RawMessage `json:"error"`
 		ModelUsage    map[string]struct {
 			Window   json.RawMessage `json:"contextWindow"`
 			Input    json.RawMessage `json:"inputTokens"`
@@ -266,12 +268,21 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 			o.nativeSession = id
 		}
 	}
+	if provider == "claude" && event.Type == "system" && event.Subtype == "init" {
+		o.initializedModel = event.Model
+	}
 	if provider == "claude" && event.Type == "system" && event.Subtype == "init" && clientVersion.MatchString(event.ClientVersion) {
 		usage.ClientVersion = event.ClientVersion
 	}
 	reported := event.Model
+	var errorCode string
+	_ = json.Unmarshal(event.Error, &errorCode)
+	syntheticQuota := ClaudeSyntheticQuotaError(provider, event.Type, errorCode, event.Message.Model)
 	if event.Message.Model != "" {
 		reported = event.Message.Model
+	}
+	if syntheticQuota && o.initializedModel == requested {
+		reported = ""
 	}
 	if safeModel(reported) {
 		if usage.ReportedModel != "" && usage.ReportedModel != reported {
@@ -301,7 +312,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 	if provider != "claude" {
 		return
 	}
-	if event.Type == "assistant" && safeModel(event.Message.Model) && event.Message.ID != "" && len(event.Message.ID) <= 256 {
+	if event.Type == "assistant" && !syntheticQuota && safeModel(event.Message.Model) && event.Message.ID != "" && len(event.Message.ID) <= 256 {
 		id := sha256.Sum256([]byte(event.Message.ID))
 		if o.messageID != id || usage.Context == nil {
 			window := (*int64)(nil)

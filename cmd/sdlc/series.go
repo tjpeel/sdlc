@@ -509,6 +509,9 @@ func selectSeriesSettings(ctx context.Context, directory string, plan workseries
 			}
 		}
 		roles, err := workrun.ResolveModels(models, provider, options.model, options.effort, options.reviewModel, options.reviewEffort)
+		if err == nil {
+			roles, err = workrun.ResolveSpeeds(roles, options.speed, options.reviewSpeed)
+		}
 		if err != nil {
 			return settings, err
 		}
@@ -616,7 +619,7 @@ func loadSeriesSettings(data []byte) (seriesSettings, error) {
 		return settings, fmt.Errorf("invalid private feature settings")
 	}
 	for _, roles := range settings.Roles {
-		if workrun.ValidateModel(roles.Implementation) != nil || workrun.ValidateModel(roles.Review) != nil || roles.Implementation.Provider == roles.Review.Provider {
+		if workrun.ValidateSpeeds(roles) != nil || workrun.ValidateModel(roles.Implementation) != nil || workrun.ValidateModel(roles.Review) != nil || roles.Implementation.Provider == roles.Review.Provider {
 			return settings, fmt.Errorf("invalid private feature models")
 		}
 	}
@@ -642,6 +645,9 @@ func checkSeriesOptions(options runOptions, settings seriesSettings) error {
 		}
 	}
 	for _, roles := range settings.Roles {
+		if options.supplied["speed"] && options.speed != roles.ImplementationSpeed || options.supplied["review-speed"] && options.reviewSpeed != roles.ReviewSpeed || options.supplied["reasoning"] && (options.effort != roles.Implementation.Effort || options.reviewEffort != roles.Review.Effort) {
+			return fmt.Errorf("feature resume preserves recorded reasoning and speed")
+		}
 		if options.supplied["model"] && options.model != roles.Implementation.Name || options.supplied["effort"] && options.effort != roles.Implementation.Effort || options.supplied["review-model"] && options.reviewModel != roles.Review.Name || options.supplied["review-effort"] && options.reviewEffort != roles.Review.Effort {
 			return fmt.Errorf("feature resume preserves recorded models and reasoning")
 		}

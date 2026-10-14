@@ -144,11 +144,17 @@ func TestHeadlessUnavailableAuthNeverStartsModel(t *testing.T) {
 	}
 }
 func TestHeadlessRejectsUnsafeRequestsBeforeDocker(t *testing.T) {
-	for _, kind := range []string{"provider", "relative", "resume", "nested", "extension", "companion", "companion-parent"} {
+	for _, kind := range []string{"provider", "relative", "resume", "nested", "extension", "companion", "companion-parent", "speed", "sonnet-fast"} {
 		t.Run(kind, func(t *testing.T) {
 			manager, docker := fixture(t)
 			request := headlessFixture(t)
 			switch kind {
+			case "speed":
+				request.Speed = "turbo"
+			case "sonnet-fast":
+				request.Provider = "claude"
+				request.Model = "claude-sonnet-5-5"
+				request.Speed = "fast"
 			case "provider":
 				request.Provider = "other"
 			case "relative":

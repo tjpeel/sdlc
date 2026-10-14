@@ -87,3 +87,29 @@ func TestLoadModelsMissingAndCustomDefaults(t *testing.T) {
 		t.Fatalf("custom defaults: %+v %v", got, err)
 	}
 }
+
+func TestDefaultModelPolicyAndNativeSpeed(t *testing.T) {
+	d := DefaultModels()
+	for _, roles := range []Roles{d.Codex, d.Claude} {
+		for _, m := range []Model{roles.Implementation, roles.Review} {
+			want := "gpt-6.1-sol"
+			if m.Provider == "claude" {
+				want = "claude-sonnet-5-5"
+			}
+			if m.Name != want || m.Effort != "low" {
+				t.Fatal("unexpected default", m)
+			}
+		}
+		if roles.ImplementationSpeed != "normal" || roles.ReviewSpeed != "normal" {
+			t.Fatal("unfrozen speed", roles)
+		}
+	}
+	if _, err := ResolveSpeeds(d.Codex, "normal", "fast"); err == nil {
+		t.Fatal("Sonnet fast could switch selected model")
+	}
+	roles := d.Codex
+	roles.Review.Name = "claude-opus-5-5"
+	if _, err := ResolveSpeeds(roles, "fast", "fast"); err != nil {
+		t.Fatal(err)
+	}
+}
