@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.74 - 2026-10-15
+
+### Fixed
+
+- Dependency build planning now selects the newest published Docker CLI and daemon image pair when source tags precede image publication. Preserve the installed version floor and report registry failures without silently falling back.
+
 ## 0.1.0-beta.73 - 2026-10-15
 
 ### Added

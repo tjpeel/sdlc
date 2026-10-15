@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,6 +158,14 @@ func (report Report) Incomplete() bool {
 	return false
 }
 
+type metadataHTTPError struct{ status int }
+
+func (err *metadataHTTPError) Error() string {
+	return fmt.Sprintf("metadata returned HTTP %d", err.status)
+}
+
+var errImageMissing = errors.New("public image manifest not published")
+
 type response struct {
 	data    []byte
 	headers http.Header
@@ -204,7 +214,7 @@ func (fetch *fetcher) get(ctx context.Context, address, accept, token string) ([
 	}
 	defer result.Body.Close()
 	if result.StatusCode != http.StatusOK {
-		cached.err = fmt.Errorf("metadata returned HTTP %d", result.StatusCode)
+		cached.err = &metadataHTTPError{status: result.StatusCode}
 		return nil, nil, cached.err
 	}
 	data, err := io.ReadAll(io.LimitReader(result.Body, maximumResponse+1))
@@ -351,25 +361,69 @@ func (fetch *fetcher) check(ctx context.Context, dependency runtimeimage.Depende
 }
 
 func (fetch *fetcher) dockerCLI(ctx context.Context) (string, error) {
+	versions, err := fetch.dockerVersions(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(versions) == 0 {
+		return "", nil
+	}
+	return versions[0], nil
+}
+
+// dockerImageVersion selects a published CLI/daemon pair without crossing the installed floor.
+func (fetch *fetcher) dockerImageVersion(ctx context.Context, floor string) (string, error) {
+	versions, err := fetch.dockerVersions(ctx)
+	if err != nil {
+		return "", err
+	}
+	versions = append(versions, floor)
+	sort.Slice(versions, func(i, j int) bool { return compare(versions[i], versions[j]) > 0 })
+	seen := map[string]bool{}
+	for _, candidate := range versions {
+		if seen[candidate] || compare(candidate, floor) < 0 {
+			continue
+		}
+		seen[candidate] = true
+		available := true
+		for _, suffix := range []string{"-cli", "-dind"} {
+			_, err := fetch.image(ctx, runtimeimage.Dependency{Source: "library/docker", Track: candidate + suffix})
+			if errors.Is(err, errImageMissing) {
+				available = false
+				break
+			}
+			if err != nil {
+				return "", fmt.Errorf("Docker %s%s: %w", candidate, suffix, err)
+			}
+		}
+		if available {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no published Docker CLI and daemon pair at or above %s", floor)
+}
+
+func (fetch *fetcher) dockerVersions(ctx context.Context) ([]string, error) {
 	const endpoint = "https://api.github.com/repos/docker/cli/tags"
-	address, candidate := endpoint+"?per_page=100", ""
+	address := endpoint + "?per_page=100"
+	candidates := map[string]bool{}
 	visited := map[string]bool{}
 	for page := 0; page < 20; page++ {
 		if visited[address] {
-			return "", fmt.Errorf("invalid Docker tag pagination")
+			return nil, fmt.Errorf("invalid Docker tag pagination")
 		}
 		visited[address] = true
 		data, headers, err := fetch.get(ctx, address, "application/json", "")
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		var tags []struct{ Name string }
 		if json.Unmarshal(data, &tags) != nil || tags == nil || len(tags) > 100 {
-			return "", fmt.Errorf("invalid Docker tag metadata")
+			return nil, fmt.Errorf("invalid Docker tag metadata")
 		}
 		for _, tag := range tags {
-			if _, valid := version(tag.Name); valid && (candidate == "" || compare(tag.Name, candidate) > 0) {
-				candidate = tag.Name
+			if _, valid := version(tag.Name); valid {
+				candidates[strings.TrimPrefix(tag.Name, "v")] = true
 			}
 		}
 		next := ""
@@ -385,11 +439,16 @@ func (fetch *fetcher) dockerCLI(ctx context.Context) (string, error) {
 			}
 		}
 		if next == "" {
-			return candidate, nil
+			versions := make([]string, 0, len(candidates))
+			for candidate := range candidates {
+				versions = append(versions, candidate)
+			}
+			sort.Slice(versions, func(i, j int) bool { return compare(versions[i], versions[j]) > 0 })
+			return versions, nil
 		}
 		parsed, err := url.Parse(strings.TrimSuffix(strings.TrimPrefix(next, "<"), ">"))
 		if err != nil {
-			return "", fmt.Errorf("invalid Docker tag pagination")
+			return nil, fmt.Errorf("invalid Docker tag pagination")
 		}
 		validPath := parsed.Path == "/repos/docker/cli/tags"
 		// GitHub emits canonical numeric repository URLs in Link headers.
@@ -400,16 +459,16 @@ func (fetch *fetcher) dockerCLI(ctx context.Context) (string, error) {
 			}
 		}
 		if parsed.Scheme != "https" || parsed.Host != "api.github.com" || !validPath || parsed.User != nil || parsed.Fragment != "" || parsed.Query().Get("per_page") != "100" || len(parsed.Query()["per_page"]) != 1 || len(parsed.Query()["page"]) != 1 {
-			return "", fmt.Errorf("invalid Docker tag pagination")
+			return nil, fmt.Errorf("invalid Docker tag pagination")
 		}
 		pageNumber, err := strconv.Atoi(parsed.Query().Get("page"))
 		if err != nil || pageNumber != page+2 || len(parsed.Query()) != 2 {
-			return "", fmt.Errorf("invalid Docker tag pagination")
+			return nil, fmt.Errorf("invalid Docker tag pagination")
 		}
 		// Use only the validated page parameters, retaining the known repository.
 		address = endpoint + "?" + parsed.Query().Encode()
 	}
-	return "", fmt.Errorf("Docker tag pagination exceeded the check limit")
+	return nil, fmt.Errorf("Docker tag pagination exceeded the check limit")
 }
 
 func version(value string) ([3]uint64, bool) {
@@ -506,6 +565,10 @@ func (fetch *fetcher) image(ctx context.Context, dependency runtimeimage.Depende
 	accept := "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 	data, headers, err := fetch.get(ctx, "https://registry-1.docker.io/v2/"+dependency.Source+"/manifests/"+dependency.Track, accept, authorization.Token)
 	if err != nil {
+		var status *metadataHTTPError
+		if errors.As(err, &status) && status.status == http.StatusNotFound {
+			return "", errImageMissing
+		}
 		return "", err
 	}
 	sum := sha256.Sum256(data)

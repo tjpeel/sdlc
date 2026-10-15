@@ -294,3 +294,67 @@ func TestInvalidPinsAndRecipeFailBeforeMetadata(t *testing.T) {
 		t.Fatal("ambiguous recipe accepted")
 	}
 }
+
+func TestPlanDockerRequiresPublishedMatchedPair(t *testing.T) {
+	for _, missing := range []string{"cli", "dind"} {
+		t.Run(missing, func(t *testing.T) {
+			fixture := planMetadata()
+			fixture.bodies["api.github.com/repos/docker/cli/tags"] = `[{"name":"v29.9.1"},{"name":"v29.8.3"}]`
+			fixture.bodies["registry-1.docker.io/v2/library/docker/manifests/29.9.1-cli"] = fixture.bodies["registry-1.docker.io/v2/library/docker/manifests/29.8.3-cli"]
+			fixture.overrides["registry-1.docker.io/v2/library/docker/manifests/29.9.1-"+missing] = func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing"))}, nil
+			}
+			plan, err := (Checker{fixture}).Plan(context.Background(), planState(), planRecipe(), packages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(plan.Pins.Images["docker"], "docker:29.8.3-cli@") || !strings.HasPrefix(plan.Pins.DaemonImage, "docker:29.8.3-dind@") {
+				t.Fatal("did not select published matched pair", plan.Pins)
+			}
+		})
+	}
+}
+
+func TestDockerPairDoesNotHideOperationalFailures(t *testing.T) {
+	for _, status := range []int{401, 429, 500} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			fixture := planMetadata()
+			fixture.overrides["registry-1.docker.io/v2/library/docker/manifests/29.8.3-cli"] = func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("failure"))}, nil
+			}
+			_, err := (Checker{fixture}).Plan(context.Background(), planState(), planRecipe(), packages)
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprint(status)) {
+				t.Fatal("operational failure hidden", err)
+			}
+		})
+	}
+}
+
+func TestDockerPairMissingAndAuthorizationFailures(t *testing.T) {
+	for _, authMissing := range []bool{false, true} {
+		t.Run(fmt.Sprint(authMissing), func(t *testing.T) {
+			fixture := planMetadata()
+			missing := func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("missing"))}, nil
+			}
+			if authMissing {
+				fixture.overrides["auth.docker.io/token"] = missing
+			} else {
+				for _, version := range []string{"29.8.3", "29.8.2"} {
+					fixture.overrides["registry-1.docker.io/v2/library/docker/manifests/"+version+"-cli"] = missing
+				}
+			}
+			_, err := (Checker{fixture}).fetcher().dockerImageVersion(context.Background(), "29.8.2")
+			if err == nil {
+				t.Fatal("missing metadata accepted")
+			}
+			expected := "no published Docker CLI and daemon pair"
+			if authMissing {
+				expected = "metadata returned HTTP 404"
+			}
+			if !strings.Contains(err.Error(), expected) {
+				t.Fatal(err)
+			}
+		})
+	}
+}

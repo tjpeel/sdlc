@@ -387,19 +387,16 @@ func (fetch *fetcher) sourcePins(ctx context.Context, previous runtimepins.Pins,
 		return pins, results, nil
 	}
 	nodeResult := fetch.check(ctx, node)
-	dockerResult := fetch.check(ctx, docker)
+	dockerCandidate, dockerErr := fetch.dockerImageVersion(ctx, dockerFloor)
 	goCandidate, goErr := fetch.golang(ctx, goInstalled)
 	opCandidate, opErr := fetch.onePassword(ctx)
-	versions := []string{nodeResult.Candidate, goCandidate, dockerResult.Candidate, dockerResult.Candidate, opCandidate}
+	versions := []string{nodeResult.Candidate, goCandidate, dockerCandidate, dockerCandidate, opCandidate}
 	installed := []string{node.Version, goInstalled, dockerFloor, dockerFloor, opInstalled}
 	sources := []string{"library/node", "library/golang", "library/docker", "library/docker", "1password/op"}
 	suffixes := []string{"-bookworm", "-bookworm", "-cli", "-dind", ""}
-	errors := []error{nil, goErr, nil, nil, opErr}
+	errors := []error{nil, goErr, dockerErr, dockerErr, opErr}
 	if nodeResult.Status == Unavailable {
 		errors[0] = fmt.Errorf("Node release metadata unavailable")
-	}
-	if dockerResult.Status == Unavailable {
-		errors[2], errors[3] = fmt.Errorf("Docker release metadata unavailable"), fmt.Errorf("Docker release metadata unavailable")
 	}
 	var firstErr error
 	for i := range results {
