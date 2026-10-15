@@ -2113,6 +2113,27 @@ the text size and digest. It saves no feedback, contacts no remote service and
 starts no provider. Without an input source, dry-run previews without prompting.
 The explicit single-ticket resume also accepts `--pr-feedback-file FILE`.
 
+### Mark PR feedback as already handled
+
+Add a **🚀 (rocket)** reaction to the specific comment using the run's configured
+GitHub account. Adoption and later `--pr-feedback` passes skip that comment while
+it remains unchanged since your reaction. This covers general PR comments, review
+summaries and inline comments. Resolved inline threads are already skipped.
+
+Only the frozen GitHub account selected for the run can mark feedback this way;
+other users' reactions do not exclude comments. SDLC verifies both the account's
+numeric identity and login. It records the actor, reaction identity and time in
+the private feedback history and reports an ignored count. Ignored comment bodies
+are omitted from agent prompts. The reaction does not resolve a thread, change
+GitHub review approval, or bypass repository checks and independent review.
+
+A comment edited after the reaction is eligible again. Remove and re-add the
+reaction after reading the edit if it is still handled. Removing a marker makes
+unassessed feedback eligible at the next explicit adoption or feedback pass.
+Replies are separate comments: marking a parent does not suppress new replies.
+SDLC reads reactions; it does not add or remove them. Unverifiable reaction data
+keeps the run held rather than silently ignoring feedback.
+
 ### Address human PR feedback
 
 After adding comments to a ready PR, resume its saved run:

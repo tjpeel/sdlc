@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.84 - 2026-10-15
+
+### Added
+
+- Mark PR feedback as already handled with a rocket reaction from the run's configured GitHub account. Adoption and later feedback passes retain the skip evidence and omit ignored bodies from agent prompts. Other accounts' reactions do not suppress feedback; edited comments and new replies remain eligible, and removing the marker restores unassessed feedback.
+
 ## 0.1.0-beta.83 - 2026-10-15
 
 ### Added

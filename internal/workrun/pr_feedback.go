@@ -23,23 +23,31 @@ type PRFeedbackPublisher interface {
 	ReplyFeedback(context.Context, Plan, Publication, PRFeedbackComment, string, string) (PRFeedbackReply, error)
 }
 
+type PRFeedbackIgnore struct {
+	By         string `json:"by"`
+	UserID     int64  `json:"user_id"`
+	ReactionID string `json:"reaction_id"`
+	CreatedAt  string `json:"created_at"`
+}
+
 type PRFeedbackComment struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind"`
-	ThreadID         string `json:"thread_id,omitempty"`
-	ReplyID          int64  `json:"reply_id,omitempty"`
-	Author           string `json:"author"`
-	Body             string `json:"body"`
-	UpdatedAt        string `json:"updated_at"`
-	Path             string `json:"path,omitempty"`
-	Line             int    `json:"line,omitempty"`
-	OriginalLine     int    `json:"original_line,omitempty"`
-	OriginalPosition int    `json:"original_position,omitempty"`
-	OriginalCommit   string `json:"original_commit,omitempty"`
-	DiffHunk         string `json:"diff_hunk,omitempty"`
-	Outdated         bool   `json:"outdated,omitempty"`
-	Resolved         bool   `json:"resolved,omitempty"`
-	Deleted          bool   `json:"deleted,omitempty"`
+	Ignored          *PRFeedbackIgnore `json:"ignored,omitempty"`
+	ID               string            `json:"id"`
+	Kind             string            `json:"kind"`
+	ThreadID         string            `json:"thread_id,omitempty"`
+	ReplyID          int64             `json:"reply_id,omitempty"`
+	Author           string            `json:"author"`
+	Body             string            `json:"body"`
+	UpdatedAt        string            `json:"updated_at"`
+	Path             string            `json:"path,omitempty"`
+	Line             int               `json:"line,omitempty"`
+	OriginalLine     int               `json:"original_line,omitempty"`
+	OriginalPosition int               `json:"original_position,omitempty"`
+	OriginalCommit   string            `json:"original_commit,omitempty"`
+	DiffHunk         string            `json:"diff_hunk,omitempty"`
+	Outdated         bool              `json:"outdated,omitempty"`
+	Resolved         bool              `json:"resolved,omitempty"`
+	Deleted          bool              `json:"deleted,omitempty"`
 }
 
 type PRFeedbackAssessment struct {
@@ -161,6 +169,12 @@ func validatePRFeedbackJournal(j *Journal) error {
 	}
 	latest := map[string]PRFeedbackEntry{}
 	for _, e := range h.Entries {
+		if ignored := e.Comment.Ignored; ignored != nil {
+			frozen := j.Plan.PublicationIdentity
+			if frozen == nil || ignored.UserID != frozen.GitHubID || !strings.EqualFold(ignored.By, frozen.GitHubLogin) {
+				return fmt.Errorf("feedback ignore actor differs from frozen account")
+			}
+		}
 		if err := validateFeedbackComment(e.Comment); err != nil {
 			return err
 		}
@@ -212,6 +226,12 @@ func localFeedbackID(text string) string {
 }
 
 func validateFeedbackComment(c PRFeedbackComment) error {
+	if c.Ignored != nil {
+		i := c.Ignored
+		if _, err := time.Parse(time.RFC3339, i.CreatedAt); err != nil || i.By == "" || len(i.By) > 100 || i.UserID < 1 || i.ReactionID == "" || len(i.ReactionID) > 200 || c.Kind == "local" {
+			return fmt.Errorf("invalid feedback ignore evidence")
+		}
+	}
 	if c.Kind == "local" {
 		if err := ValidateLocalPRFeedback(c.Body); err != nil {
 			return err
@@ -271,7 +291,7 @@ func pendingFeedbackEntries(j *Journal) []*PRFeedbackEntry {
 	var pending []*PRFeedbackEntry
 	for i := range j.PRFeedback.Entries {
 		e := &j.PRFeedback.Entries[i]
-		if latest[e.Comment.ID] == i && (e.Assessment == nil || e.Provisional) && e.Reply == nil && !e.Comment.Deleted && !e.Comment.Resolved {
+		if latest[e.Comment.ID] == i && (e.Assessment == nil || e.Provisional) && e.Reply == nil && !e.Comment.Deleted && !e.Comment.Resolved && e.Comment.Ignored == nil {
 			pending = append(pending, e)
 		}
 	}
@@ -576,7 +596,7 @@ func (r Runner) replyPRFeedback(ctx context.Context, dir string, j *Journal) err
 	}
 	for i := range j.PRFeedback.Entries {
 		e := &j.PRFeedback.Entries[i]
-		if latest[e.Comment.ID] != i || e.Assessment == nil || e.Provisional || e.Reply != nil || e.Comment.Deleted {
+		if latest[e.Comment.ID] != i || e.Assessment == nil || e.Provisional || e.Reply != nil || e.Comment.Deleted || e.Comment.Ignored != nil {
 			continue
 		}
 		// Original-to-signed mappings are saved by the trusted signing publisher.
@@ -655,7 +675,7 @@ func savedFeedbackTarget(j *Journal) *PRFeedbackEntry {
 		if e.Comment.ID != a.ID {
 			continue
 		}
-		if e.Fingerprint != a.Fingerprint || e.Comment.Deleted || e.Comment.Resolved || e.Reply != nil || e.Assessment == nil || e.StartedAttempt < 1 || e.StartedAttempt >= j.Attempt {
+		if e.Fingerprint != a.Fingerprint || e.Comment.Deleted || e.Comment.Resolved || e.Comment.Ignored != nil || e.Reply != nil || e.Assessment == nil || e.StartedAttempt < 1 || e.StartedAttempt >= j.Attempt {
 			return nil
 		}
 		if e.Provisional && reflect.DeepEqual(*e.Assessment, a) || e.Assessment.Disposition == "unaddressable" && len(e.Assessment.Commits) == 0 && a.Disposition == "addressed" && len(a.Commits) > 0 {

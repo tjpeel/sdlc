@@ -995,12 +995,12 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	var packetCI *reviewCIEvidence
 	var reviewSources []CompanionRepository
 	var packetPlan any = journal.Plan
-	packetFeedback := journal.PRFeedback
+	packetFeedback := feedbackWithoutIgnored(journal.PRFeedback)
 	if role == "review" {
 		reviewSources = journal.CompanionRepositories
 		packetCI = &reviewCIEvidence{Status: journal.CI.Status}
 		packetPlan = selectedReviewRequirements(journal.Plan)
-		packetFeedback = currentReviewFeedback(journal.PRFeedback)
+		packetFeedback = currentReviewFeedback(packetFeedback)
 	}
 	packet, _ := json.MarshalIndent(struct {
 		Plan              any                   `json:"plan"`

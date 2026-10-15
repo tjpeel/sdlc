@@ -11,6 +11,7 @@ import (
 )
 
 type feedbackGitHubFake struct {
+	reactionCommand          func([]string) ([]byte, error)
 	t                        *testing.T
 	items                    map[string][]githubFeedbackItem
 	threads                  []map[string]any
@@ -53,6 +54,18 @@ func (f *feedbackGitHubFake) command(_ context.Context, name string, args ...str
 	}
 	if endpoint == "repos/example/project" {
 		return []byte(`{"id":99,"full_name":"example/project"}`), nil
+	}
+	if endpoint == "graphql" && strings.Contains(strings.Join(args, " "), "query SDLCFeedback") {
+		if f.reactionCommand != nil {
+			return f.reactionCommand(args)
+		}
+		nodes := []map[string]any{}
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "ids[]=") {
+				nodes = append(nodes, map[string]any{"id": strings.TrimPrefix(arg, "ids[]="), "reactionGroups": []any{}})
+			}
+		}
+		return encode(map[string]any{"data": map[string]any{"nodes": nodes}}), nil
 	}
 	if endpoint == "graphql" {
 		return encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"reviewThreads": map[string]any{"nodes": f.threads, "pageInfo": map[string]any{"hasNextPage": f.moreThreads, "endCursor": "same-cursor"}}}}}}), nil
@@ -100,7 +113,7 @@ func (f *feedbackGitHubFake) command(_ context.Context, name string, args ...str
 	return encode(items[start:end]), nil
 }
 func githubItem(id int64, body, author, kind string) githubFeedbackItem {
-	item := githubFeedbackItem{ID: id, Body: body, Updated: "2026-10-13T12:00:00Z"}
+	item := githubFeedbackItem{ID: id, NodeID: fmt.Sprintf("node-%d", id), Body: body, Updated: "2026-10-13T12:00:00Z"}
 	item.User.Login = author
 	item.User.Type = kind
 	return item

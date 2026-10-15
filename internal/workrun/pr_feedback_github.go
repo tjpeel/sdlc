@@ -190,6 +190,7 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 		return nil, err
 	}
 	result := []PRFeedbackComment{}
+	nodeIDs := map[string]string{}
 	seen := map[string]bool{}
 	for _, kind := range []string{"inline", "review", "comment"} {
 		endpoint := fmt.Sprintf("repos/%s/pulls/%d/comments", plan.Repository, pr.Number)
@@ -235,12 +236,16 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 			}
 			seen[c.ID] = true
 			result = append(result, c)
+			nodeIDs[c.ID] = item.NodeID
 			if len(result) > maxPRFeedbackComments {
 				return nil, fmt.Errorf("human PR feedback exceeds comment bound")
 			}
 		}
 	}
 	// IDs and kinds supply a stable order without trusting mutable API page order.
+	if err := p.markIgnoredFeedback(ctx, result, nodeIDs); err != nil {
+		return nil, err
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	if err := p.feedbackBoundary(ctx, plan, pr); err != nil {
 		return nil, err

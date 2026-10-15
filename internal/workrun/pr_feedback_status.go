@@ -6,6 +6,7 @@ import (
 )
 
 type PRFeedbackSummary struct {
+	Ignored            int    `json:"ignored,omitempty"`
 	Cycle              int    `json:"cycle"`
 	Pending            int    `json:"pending"`
 	Unresolved         int    `json:"unresolved"`
@@ -30,6 +31,10 @@ func PRFeedbackStatus(j Journal) PRFeedbackSummary {
 		if latest[e.Comment.ID] != i || e.Comment.Deleted || e.Comment.Resolved {
 			continue
 		}
+		if e.Comment.Ignored != nil {
+			result.Ignored++
+			continue
+		}
 		if e.Assessment == nil || e.Provisional {
 			result.Pending++
 			continue
@@ -42,8 +47,11 @@ func PRFeedbackStatus(j Journal) PRFeedbackSummary {
 			lines = append(lines, e.Comment.ID+": "+e.Assessment.Reason)
 		}
 	}
-	if result.Pending > 0 || result.Unresolved > 0 || result.OutstandingReplies > 0 {
+	if result.Pending > 0 || result.Unresolved > 0 || result.OutstandingReplies > 0 || result.Ignored > 0 {
 		result.Summary = fmt.Sprintf("PR feedback cycle %d: %d pending, %d unresolved, %d replies outstanding.", result.Cycle, result.Pending, result.Unresolved, result.OutstandingReplies)
+		if result.Ignored > 0 {
+			result.Summary += fmt.Sprintf(" %d ignored by rocket reaction.", result.Ignored)
+		}
 		if len(lines) > 0 {
 			result.Summary += "\n" + strings.Join(lines, "\n")
 		}
