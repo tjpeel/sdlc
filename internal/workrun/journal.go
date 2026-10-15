@@ -78,6 +78,9 @@ func Save(directory string, journal *Journal) error {
 	if err := validateSessionTurnExtension(journal); err != nil {
 		return err
 	}
+	if err := validateAdoptionPlan(journal.Plan); err != nil {
+		return err
+	}
 	if err := validatePRFeedbackJournal(journal); err != nil {
 		return err
 	}
@@ -166,6 +169,9 @@ func Load(directory string) (Journal, error) {
 		return Journal{}, err
 	}
 	if err := validateSessionTurnExtension(&journal); err != nil {
+		return Journal{}, err
+	}
+	if err := validateAdoptionPlan(journal.Plan); err != nil {
 		return Journal{}, err
 	}
 	if err := validatePRFeedbackJournal(&journal); err != nil {

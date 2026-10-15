@@ -31,6 +31,7 @@ type PublisherRequest struct {
 	SnapshotBranch string                `json:"snapshot_branch,omitempty"`
 }
 type PublisherResponse struct {
+	Adoption          *PRAdoption                  `json:"adoption,omitempty"`
 	HistoryIncomplete *HistoricalCleanupIncomplete `json:"history_incomplete,omitempty"`
 	PushProtection    *PushProtectionRejection     `json:"push_protection,omitempty"`
 	Diagnostic        *PublicationDiagnostic       `json:"diagnostic,omitempty"`

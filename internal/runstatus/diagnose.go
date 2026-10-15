@@ -73,7 +73,7 @@ func diagnosticHash(value string) string {
 }
 func diagnosticState(value string) string {
 	switch value {
-	case "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "ready", "blocked", "failed", "waiting_for_human":
+	case "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "ready", "blocked", "failed", "waiting_for_human":
 		return value
 	}
 	return "unknown"

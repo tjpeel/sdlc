@@ -376,7 +376,7 @@ func (runner Runner) checkAdditionalCandidate(ctx context.Context, directory str
 		}
 		return nil
 	}
-	if revision.Head == journal.Plan.StartingSHA {
+	if revision.Head == journal.Plan.StartingSHA && journal.Plan.Adoption == nil {
 		return runner.stop(directory, journal, "blocked", "ticket produced no implementation commit")
 	}
 	if err := ValidatePRMetadata(journal.Plan); err != nil {

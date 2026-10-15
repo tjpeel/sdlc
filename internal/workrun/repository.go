@@ -54,7 +54,9 @@ elif sys.argv[1].startswith('feedback_commits:'):
  git('merge-base','--is-ancestor',base,head)
  print(json.dumps(git('rev-list','--reverse','--first-parent',base+'..'+head).decode().split()))
 elif sys.argv[1]=='bundle':
- git('bundle','create','/export/source.bundle','HEAD')
+ refs=['HEAD']
+ if subprocess.run(['git','-c','safe.directory=/workspace','rev-parse','--verify','refs/sdlc/adopted-base^{commit}'],cwd=root,env=env,capture_output=True).returncode==0: refs.append('refs/sdlc/adopted-base')
+ git('bundle','create','/export/source.bundle',*refs)
  os.chmod('/export/source.bundle',0o644)
 else: raise ValueError('unknown action')
 `

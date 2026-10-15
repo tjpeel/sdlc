@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.72 - 2026-10-15
+
+### Added
+
+- Adopt an existing open same-repository PR with `sdlc adopt --pr URL`, optionally supplying a local ticket. Start a fresh comments-repair session, preserve existing history and PR metadata, sign correction commits, and require verification, CI and independent review. Retain the frozen base for PRs behind their target branch; reject fork PRs and changed publication identities.
+
 ## 0.1.0-beta.71 - 2026-10-15
 
 ### Added

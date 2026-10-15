@@ -46,6 +46,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	Adoption            *PRAdoption               `json:"adoption,omitempty"`
 	DependencyContext   *DependencyContext        `json:"dependency_context,omitempty"`
 	Derived             *DerivedBoundary          `json:"derived,omitempty"`
 	RuntimeProvenance   *RuntimeProvenance        `json:"runtime_provenance,omitempty"`

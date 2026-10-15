@@ -158,6 +158,9 @@ func execute(ctx context.Context, request workrun.PublisherRequest, input io.Rea
 	}
 	publisher := workrun.GitHubPublisher{Command: trustedCommand, Frozen: identity, PushRepair: request.PushRepair, RejectedBundlePath: "/rejected.bundle", ExpectedHead: request.ExpectedHead, ExpectedTree: request.ExpectedTree, BundlePath: "/source.bundle", SigningKeyPath: "/tmp/signing-key", AllowedSignersPath: "/tmp/allowed-signers"}
 	switch request.Action {
+	case "adopt":
+		adoption, snapshot, err := publisher.Adopt(ctx, request.Plan, request.Previous.Number, "/publisher")
+		return workrun.PublisherResponse{Adoption: &adoption, Snapshot: snapshot}, err
 	case "branch":
 		snapshot, err := publisher.Branch(ctx, request.Plan, request.SnapshotBranch)
 		return workrun.PublisherResponse{Snapshot: snapshot}, err
@@ -213,7 +216,7 @@ func main() {
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "--capabilities" {
-		_, _ = os.Stdout.WriteString(`{"version":2,"actions":["publish","checks","branch","snapshot","observe","restack"]}` + "\n")
+		_, _ = os.Stdout.WriteString(`{"version":2,"actions":["publish","checks","branch","snapshot","observe","restack","adopt"]}` + "\n")
 		return
 	}
 	// A detached or killed Docker client must not leave credentials available

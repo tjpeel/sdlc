@@ -48,6 +48,8 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	adoptURL                                                                                                                                                                          string
+	adoptGenerated                                                                                                                                                                    bool
 	overrideRunLimits                                                                                                                                                                 bool
 	processPRFeedback                                                                                                                                                                 bool
 	extendSessionTurnBudget                                                                                                                                                           int
@@ -86,6 +88,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	var options runOptions
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.StringVar(&options.adoptURL, "pr", "", "adopt an existing same-repository PR by URL")
 	flags.StringVar(&options.reference, "reference", "", "selected work folder")
 	flags.StringVar(&options.ticket, "ticket", "", "exact numbered ticket filename")
 	flags.StringVar(&options.githubProfile, "github-profile", "", "registered GitHub account/key pair; defaults to repository selection")
@@ -181,6 +184,25 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	if options.supplied["initialize-review-repair-budget"] && options.initializeReviewRepairBudget == 0 {
 		return options, fmt.Errorf("--initialize-review-repair-budget must be 1-3")
+	}
+	if options.adoptURL != "" {
+		_, number, err := workrun.ParsePRURL(options.adoptURL)
+		if err != nil {
+			return options, err
+		}
+		for _, name := range []string{"all", "resume", "pr-feedback", "base", "branch", "repo", "run-root", "checkpoint", "terminal", "launch-id", "watch", "parallel", "alternate-providers", "answer-file", "ci-feedback-file", "override-run-limits", "extend-session-turn-budget", "initialize-ci-repair-budget", "initialize-review-repair-budget", "review-repair-limit"} {
+			if options.supplied[name] {
+				return options, fmt.Errorf("PR adoption cannot combine --pr with --%s", name)
+			}
+		}
+		if (options.reference == "") != (options.ticket == "") {
+			return options, fmt.Errorf("adoption ticket context requires both --reference and --ticket")
+		}
+		if options.reference == "" {
+			options.reference = fmt.Sprintf("pr-%d", number)
+			options.ticket = "01-pr-comments.md"
+			options.adoptGenerated = true
+		}
 	}
 	if options.reference == "" || flags.NArg() != 0 || !options.all && options.ticket == "" {
 		return options, fmt.Errorf("run requires --reference REFERENCE and either --ticket NUMBERED_FILE or --all")
@@ -287,6 +309,9 @@ func runCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if err != nil {
 		return err
+	}
+	if options.adoptURL != "" {
+		return adoptSelectedCommand(ctx, options, output)
 	}
 	if options.terminalMode != "" {
 		return launchRunCommand(ctx, args, options, output)
@@ -436,7 +461,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if options.frozenConfig == nil && !options.supplied["docker-tests"] {
 			options.dockerTests = launch.Config.DockerTests
 		}
-		if !options.dryRun {
+		if !options.dryRun && options.adoptURL == "" {
 			if err := workrun.ValidateSourceHistory(ctx, launch.Root); err != nil {
 				return err
 			}
@@ -540,7 +565,32 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		journal.Workspace = filepath.Join(directory, "workspace")
 		var plan workrun.Plan
-		if options.snapshot == nil {
+		if options.adoptURL != "" {
+			state, statusErr := runtime.Status(ctx)
+			if statusErr != nil {
+				return statusErr
+			}
+			identity, identityErr := freezePublicationIdentity(ctx, runtime, work.Root, repository, pair)
+			if identityErr != nil {
+				return identityErr
+			}
+			seed := journal.Plan
+			seed.PublicationIdentity = identity
+			seed.Repository = identity.RepositoryName
+			auth := githubauth.New(runtime)
+			auth.Profile = pair.GitHubProfile
+			publisher := workrun.DockerPublisher{Runtime: runtime, ImageID: state.ImageID, Auth: auth}
+			_, number, _ := workrun.ParsePRURL(options.adoptURL)
+			adoption, snapshot, adoptErr := publisher.Adopt(ctx, seed, number, directory)
+			if adoptErr != nil {
+				return adoptErr
+			}
+			plan, err = workrun.CaptureAdoption(ctx, launch, snapshot, adoption, journal.Workspace, seed.Repository, roles)
+			journal.Publication = workrun.Publication{URL: adoption.URL, Number: adoption.Number, BaseSHA: adoption.BaseSHA, HeadSHA: adoption.HeadSHA}
+			journal.State = "adopting"
+			journal.CIRepairBudget = &workrun.CIRepairBudget{}
+			journal.ReviewRepairBudget = &workrun.ReviewRepairBudget{Limit: 12, DefaultLimit: true}
+		} else if options.snapshot == nil {
 			plan, err = workrun.Capture(ctx, launch, journal.Workspace, branch, options.base, repository, roles)
 		} else {
 			plan, err = workrun.CaptureSnapshot(ctx, launch, *options.snapshot, journal.Workspace, branch, repository, roles)

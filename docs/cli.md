@@ -2014,6 +2014,57 @@ Use `sdlc storage` from a project repository to report retained `.sdlc` sizes, c
 
 A single-ticket run can select `--runtime NAME`. Resume recovers that selection from its journal. Named runtimes have their own image tag and state while retaining the installation's account caches and build lock. To test committed local skill changes without replacing a paused run's default image, build with `sdlc runtime build --name reviewed-skills --source . --skills-source /path/to/skills --agents-source /path/to/agents`, then select `--runtime reviewed-skills` on the new ticket run. See [runtime variants](runtime-variants.md) for provenance, rebuild options and limitations.
 
+### Adopt an existing PR
+
+Start a fresh comments-repair run from an existing open GitHub PR, from its
+configured local project checkout:
+
+```sh
+sdlc adopt --pr https://github.com/OWNER/REPO/pull/123 --dry-run
+sdlc adopt --pr https://github.com/OWNER/REPO/pull/123
+```
+
+No local ticket is required. SDLC creates an ignored private input under
+`.sdlc/work/pr-123/tickets/01-pr-comments.md` and retains the run in that
+reference. It never overwrites a different existing ticket. To supply an
+existing local ticket and its linked requirements instead:
+
+```sh
+sdlc adopt --pr https://github.com/OWNER/REPO/pull/123 \
+  --reference YOUR_WORK_REFERENCE --ticket 01-feature.md
+```
+
+The normal new-run provider, model, effort, speed, GitHub-profile, named-runtime,
+input and Docker-check options apply. `--base`, `--branch`, `--repo`, feature
+scheduling and background-terminal launch options do not apply: the PR owns
+its repository and branch selection. The shell exposes the same operation as
+`/adopt --pr URL`. Project initialization, configured verification and a paired
+GitHub/signing profile are required, as for a ticket run. The offline dry-run
+makes no GitHub or provider requests and creates no work files; remote state,
+branch ownership, access and comments remain unverified.
+
+Adoption captures the remote head and current base without copying unrelated
+local source edits. An advanced base is retained separately for independent
+review; adoption does not merge or rebase the original PR. Explicit input files
+must not overwrite its tracked source. The PR must be open, belong to the
+selected project's repository and have a head branch in that same repository.
+Fork PRs are not supported. Closed PRs, unrelated histories and changed remote
+boundaries stop before corrections are published.
+
+The new implementation session assesses pending inline threads, review summaries
+and general comments together. It fixes supported issues, returns individual
+assessments, and follows the normal isolated checks, signed publication, CI and
+fresh independent-review gates. Existing commits, PR title, description, base
+and branch are preserved; only correction commits are signed. An assessment
+requiring no code change still runs verification and review without inventing
+a commit. SDLC posts assessment replies, leaves human threads open and does not
+merge the PR. PR descriptions and feedback are treated as untrusted evidence.
+
+The resulting run appears in the dashboard. Resume an interrupted adoption with
+`sdlc resume --run RUN_ID`; after readiness, collect later comments with
+`sdlc resume --run RUN_ID --pr-feedback`. Adoption freezes accounts, runtime,
+models and revisions under the same saved-run rules as ticket execution.
+
 ### Address human PR feedback
 
 After adding comments to a ready PR, resume its saved run:

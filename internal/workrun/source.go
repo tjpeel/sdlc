@@ -72,6 +72,10 @@ func isolatedGit(ctx context.Context, directory string, args ...string) (string,
 // Capture copies local source into a disposable checkout, preserving dirty
 // files in a separate unsigned baseline commit. It never changes source files.
 func Capture(ctx context.Context, launch project.LaunchResult, destination, branch, base, repository string, roles Roles) (plan Plan, err error) {
+	return capture(ctx, launch, destination, branch, base, repository, roles, nil)
+}
+
+func capture(ctx context.Context, launch project.LaunchResult, destination, branch, base, repository string, roles Roles, adoption *PRAdoption) (plan Plan, err error) {
 	budget, err := project.ResolveNugetCacheBudget(launch.Config.NugetCache)
 	if err != nil {
 		return plan, err
@@ -82,6 +86,7 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 		}
 	}
 	plan = Plan{Root: launch.Root, SourceSHA: launch.Head, Reference: launch.Reference, Ticket: launch.Ticket, Branch: branch, Base: base, Repository: repository, Checks: launch.Config.Checks, CheckSelection: launch.Config.CheckSelection, Roles: roles}
+	plan.Adoption = adoption
 	plan.NugetCache = &budget
 	if _, err = isolatedGit(ctx, launch.Root, "check-ref-format", "--branch", branch); err != nil {
 		return plan, err
@@ -101,9 +106,9 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 	if err = ValidateSourceHistory(ctx, launch.Root); err != nil {
 		return plan, err
 	}
-	// The exported HEAD must contain the fixed base used by the independent
-	// reviewer. A behind or diverged checkout cannot supply that review boundary.
-	if _, e := isolatedGit(ctx, launch.Root, "merge-base", "--is-ancestor", plan.BaseSHA, launch.Head); e != nil {
+	// Ticket captures require the selected base in HEAD. Adoption separately
+	// retains and verifies its fixed base for review of diverged PR history.
+	if _, e := isolatedGit(ctx, launch.Root, "merge-base", "--is-ancestor", plan.BaseSHA, launch.Head); e != nil && adoption == nil {
 		return plan, errors.New("source HEAD must include the selected base; update the checkout before launching work")
 	}
 	if err = realDirectory(launch.Root); err != nil {
@@ -306,9 +311,11 @@ func Capture(ctx context.Context, launch project.LaunchResult, destination, bran
 	if err != nil {
 		return plan, err
 	}
-	plan.PRMetadataPolicy, err = capturePRMetadataPolicy(ctx, destination)
-	if err != nil {
-		return plan, err
+	if adoption == nil {
+		plan.PRMetadataPolicy, err = capturePRMetadataPolicy(ctx, destination)
+		if err != nil {
+			return plan, err
+		}
 	}
 	complete = true
 	return plan, nil

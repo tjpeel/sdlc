@@ -396,6 +396,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return runner.stop(directory, journal, "blocked", err.Error())
 		}
 		switch journal.State {
+		case "adopting":
+			if err := runner.beginAdoption(ctx, directory, journal); err != nil {
+				return err
+			}
+			continue
 		case "pr_feedback":
 			if err := runner.beginPRFeedback(ctx, directory, journal); err != nil {
 				return err
@@ -1144,8 +1149,10 @@ func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory 
 		return runner.stop(directory, journal, "waiting_for_human", strings.Join(journal.Outcome.Questions, "\n"))
 	case "checks_requested", "diagnostics_requested", "implemented":
 		if journal.Outcome.Status == "implemented" {
-			journal.Plan.PRTitle = journal.Outcome.PRTitle
-			journal.Plan.PRBody = journal.Outcome.PRBody
+			if journal.Plan.Adoption == nil {
+				journal.Plan.PRTitle = journal.Outcome.PRTitle
+				journal.Plan.PRBody = journal.Outcome.PRBody
+			}
 		}
 		completeVerificationReplay(journal)
 		if err := runner.transition(directory, journal, "checking"); err != nil {

@@ -112,8 +112,26 @@ func (publisher GitHubPublisher) Snapshot(ctx context.Context, plan Plan, branch
 	if err != nil || head != remote.Commit.SHA {
 		return BranchSnapshot{}, fmt.Errorf("snapshot did not retain expected branch revision")
 	}
+	refs := []string{"refs/sdlc/snapshot"}
+	if plan.Adoption != nil {
+		a := plan.Adoption
+		if a.Validate(plan.Repository) != nil || branch != a.Branch || head != a.HeadSHA {
+			return BranchSnapshot{}, fmt.Errorf("invalid adoption snapshot boundary")
+		}
+		if _, err := publisher.git(ctx, local, "fetch", "--no-tags", canonical, "refs/heads/"+a.Base+":refs/sdlc/base"); err != nil {
+			return BranchSnapshot{}, err
+		}
+		base, err := publisher.git(ctx, local, "rev-parse", "refs/sdlc/base")
+		if err != nil || base != a.BaseSHA {
+			return BranchSnapshot{}, fmt.Errorf("PR base changed during adoption")
+		}
+		if _, err := publisher.git(ctx, local, "merge-base", a.HeadSHA, a.BaseSHA); err != nil {
+			return BranchSnapshot{}, fmt.Errorf("PR head and base have no shared history")
+		}
+		refs = append(refs, "refs/sdlc/base")
+	}
 	bundle := filepath.Join(directory, "snapshot.bundle")
-	if _, err = publisher.git(ctx, local, "bundle", "create", bundle, "refs/sdlc/snapshot"); err != nil {
+	if _, err = publisher.git(ctx, local, append([]string{"bundle", "create", bundle}, refs...)...); err != nil {
 		return BranchSnapshot{}, err
 	}
 	if err = validateSnapshotBundle(bundle); err != nil {
@@ -302,8 +320,32 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 			return Publication{}, fmt.Errorf("exported objects failed integrity checks")
 		}
 	}
+	if plan.Adoption != nil {
+		if err := validateAdoptionPlan(plan); err != nil {
+			return Publication{}, err
+		}
+		if _, err := publisher.git(ctx, local, "-c", "protocol.file.allow=always", "fetch", "--no-tags", bundle, "refs/sdlc/adopted-base:refs/heads/adopted-base"); err != nil {
+			return Publication{}, fmt.Errorf("adoption bundle is missing its fixed review base")
+		}
+		base, err := publisher.git(ctx, local, "rev-parse", "refs/heads/adopted-base")
+		if err != nil || base != plan.BaseSHA {
+			return Publication{}, fmt.Errorf("adoption bundle review base differs from frozen PR")
+		}
+	}
 	if _, err := publisher.git(ctx, local, "merge-base", "--is-ancestor", plan.SourceSHA, candidate); err != nil {
 		return Publication{}, fmt.Errorf("implementation no longer descends from its original source")
+	}
+	if plan.Adoption != nil && candidate == plan.SourceSHA {
+		if err := publisher.verifyAdoption(ctx, plan, previous, candidate); err != nil {
+			return Publication{}, err
+		}
+		if previous.HeadSHA != candidate {
+			return Publication{}, fmt.Errorf("unchanged adoption candidate differs from publication")
+		}
+		if _, err := publisher.git(ctx, local, "update-ref", "refs/heads/publication", candidate); err != nil {
+			return Publication{}, err
+		}
+		return previous, nil
 	}
 	commits, err := publisher.git(ctx, local, "rev-list", "--reverse", "--first-parent", plan.SourceSHA+".."+candidate)
 	if err != nil || commits == "" {
@@ -440,6 +482,9 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		if json.Unmarshal(prs, &matches) != nil || len(matches) > 1 {
 			return Publication{}, fmt.Errorf("cannot reconcile destination PR")
 		}
+		if plan.Adoption != nil && (len(matches) != 1 || matches[0].Number != plan.Adoption.Number) {
+			return Publication{}, fmt.Errorf("adopted PR identity changed")
+		}
 		if len(matches) == 1 {
 			pr := matches[0]
 			if pr.State != "OPEN" || (previous.Number != 0 && previous.Number != pr.Number) {
@@ -486,6 +531,11 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		}
 		if remoteHead != "" && remoteHead != parent {
 			return Publication{}, fmt.Errorf("immutable derived branch changed externally")
+		}
+	}
+	if plan.Adoption != nil {
+		if err := publisher.verifyAdoption(ctx, plan, previous, parent); err != nil {
+			return Publication{}, err
 		}
 	}
 	if remoteHead != parent {
@@ -547,22 +597,36 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 				}
 			}
 		}
-		if _, err := publisher.command(ctx, "gh", "pr", "edit", fmt.Sprint(matches[0].Number), "--repo", plan.Repository, "--title", title, "--body-file", bodyPath); err != nil {
-			return Publication{}, err
+		if plan.Adoption == nil {
+			if _, err := publisher.command(ctx, "gh", "pr", "edit", fmt.Sprint(matches[0].Number), "--repo", plan.Repository, "--title", title, "--body-file", bodyPath); err != nil {
+				return Publication{}, err
+			}
 		}
 	}
-	data, err := publisher.command(ctx, "gh", "pr", "view", plan.Branch, "--repo", plan.Repository, "--json", "number,url,baseRefOid,headRefOid")
+	selector, fields := plan.Branch, "number,url,baseRefOid,headRefOid"
+	if plan.Adoption != nil {
+		selector = fmt.Sprint(plan.Adoption.Number)
+		fields += ",state,headRefName,baseRefName,isCrossRepository"
+	}
+	data, err := publisher.command(ctx, "gh", "pr", "view", selector, "--repo", plan.Repository, "--json", fields)
 	if err != nil {
 		return Publication{}, err
 	}
 	var result struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		Base   string `json:"baseRefOid"`
-		Head   string `json:"headRefOid"`
+		State    string `json:"state"`
+		HeadName string `json:"headRefName"`
+		BaseName string `json:"baseRefName"`
+		Cross    bool   `json:"isCrossRepository"`
+		Number   int    `json:"number"`
+		URL      string `json:"url"`
+		Base     string `json:"baseRefOid"`
+		Head     string `json:"headRefOid"`
 	}
 	if json.Unmarshal(data, &result) != nil || result.Number < 1 || result.Base != plan.BaseSHA || result.Head != parent || !strings.HasPrefix(result.URL, "https://github.com/"+plan.Repository+"/pull/") {
 		return Publication{}, fmt.Errorf("published PR revision could not be confirmed")
+	}
+	if plan.Adoption != nil && (result.Number != plan.Adoption.Number || result.URL != plan.Adoption.URL || result.State != "OPEN" || result.HeadName != plan.Branch || result.BaseName != plan.Base || result.Cross) {
+		return Publication{}, fmt.Errorf("adopted PR identity changed after publication")
 	}
 	if output != nil {
 		fmt.Fprintln(output, "Draft PR:", result.URL)
