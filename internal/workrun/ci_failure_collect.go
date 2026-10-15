@@ -448,13 +448,18 @@ func (p GitHubPublisher) collectCIActionFailure(ctx context.Context, plan Plan, 
 			text += fmt.Sprintf("\nFailed step %d (%s): %s", step.Number, step.Conclusion, step.Name)
 		}
 	}
-	data, err := p.command(ctx, "gh", "api", "--hostname", "github.com", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
+	data, err := readCIJobLog(ctx, func() ([]byte, error) {
+		return p.command(ctx, "gh", "api", "--hostname", "github.com", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
+	}, waitCIJobLog)
 	var sizeFailure *ciResponseSizeError
 	if len(data) > maxActionsJobLogBytes || errors.As(err, &sizeFailure) {
 		return fail(fmt.Sprintf("Actions job log exceeds %d-byte intake bound", maxActionsJobLogBytes))
 	}
 	if err != nil {
-		return fail("Actions job log API could not be read")
+		if request, ok := err.(*ciRequestError); ok {
+			return fail("Actions job log API could not be read: " + request.Error())
+		}
+		return fail("Actions job log API could not be read (request, cancellation or cleanup failure)")
 	}
 	clean, redacted, err := sanitizeCITextWithinBound(string(data), p.CIPrivateValues, maxActionsJobLogBytes)
 	if err != nil {

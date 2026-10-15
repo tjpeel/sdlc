@@ -293,11 +293,18 @@ func (publisher DockerPublisher) ciControllerCommand(ctx context.Context, volume
 		runner = publisherCommandRunner{}
 	}
 	output := ciAPIOutput{limit: ciCommandOutputLimit("gh", argv)}
-	err = runner.Run(ctx, nil, &output, args...)
+	diagnostic := &ciDiagnosticOutput{}
+	if detailed, ok := runner.(interface {
+		RunDiagnostic(context.Context, io.Reader, io.Writer, io.Writer, ...string) error
+	}); ok {
+		err = detailed.RunDiagnostic(ctx, nil, &output, diagnostic, args...)
+	} else {
+		err = runner.Run(ctx, nil, &output, args...)
+	}
 	if output.exceeded {
 		return nil, &ciResponseSizeError{Limit: output.limit}
 	}
-	return output.buffer.Bytes(), err
+	return output.buffer.Bytes(), classifyCIRequest(err, diagnostic.buffer.String())
 }
 
 func ciControllerArguments(image, name, volume string) []string {

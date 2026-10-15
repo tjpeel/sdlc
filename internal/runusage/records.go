@@ -409,15 +409,28 @@ func LoadAttempt(directory, runID string, attempt int, role string) (Attempt, er
 // Unknown resumed baselines remain unknown; observed session totals are not added
 // twice. Callers should treat elapsed_ms as summed attempt time, not wall time.
 func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error) {
+	return loadSummary(directory, runID, expectedAttempts, 0, false)
+}
+
+// LoadInvocationSummary uses prior checkpoints only as subtraction baselines.
+// It never resets, rewrites or charges earlier attempts to the selected invocation.
+func LoadInvocationSummary(directory, runID string, afterAttempt, throughAttempt int) (Summary, error) {
+	return loadSummary(directory, runID, throughAttempt, afterAttempt, true)
+}
+
+func loadSummary(directory, runID string, expectedAttempts, afterAttempt int, invocation bool) (Summary, error) {
 	s := Summary{Version: Version, RunID: runID, ElapsedScope: "attempt_setup_queue_and_execution", Groups: []Group{}}
-	if !safeID.MatchString(runID) || expectedAttempts < 0 || expectedAttempts > maxRecords {
+	if !safeID.MatchString(runID) || expectedAttempts < 0 || expectedAttempts > maxRecords || afterAttempt < 0 || afterAttempt > expectedAttempts {
 		return s, fmt.Errorf("invalid summary identity")
+	}
+	if invocation && afterAttempt == expectedAttempts {
+		return s, nil
 	}
 	dir := filepath.Join(directory, "metrics")
 	root, err := openMetricsRoot(dir, false)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.Missing = expectedAttempts
+			s.Missing = expectedAttempts - afterAttempt
 			return s, nil
 		}
 		return s, err
@@ -450,16 +463,60 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 		records = append(records, a)
 	}
 	sort.Slice(records, func(i, j int) bool {
+		if invocation && records[i].Attempt != records[j].Attempt {
+			return records[i].Attempt < records[j].Attempt
+		}
 		if records[i].StartedAt.Equal(records[j].StartedAt) {
 			return recordName(records[i]) < recordName(records[j])
 		}
 		return records[i].StartedAt.Before(records[j].StartedAt)
 	})
-	s.Sessions = sessionSummaries(records)
+	lastMissingPrior := 0
+	if invocation {
+		present := map[int]bool{}
+		for _, a := range records {
+			if a.Attempt <= afterAttempt {
+				present[a.Attempt] = true
+			}
+		}
+		for attempt := 1; attempt <= afterAttempt; attempt++ {
+			if !present[attempt] {
+				lastMissingPrior = attempt
+			}
+		}
+	}
+
+	if invocation {
+		s.Sessions = invocationSessions(records, afterAttempt, expectedAttempts, lastMissingPrior)
+	} else {
+		s.Sessions = sessionSummaries(records)
+	}
 	groups := map[string]*Group{}
 	baselines := map[string]TokenUsage{}
 	modelBaselines := map[string]map[string]TokenUsage{}
 	for _, a := range records {
+		if invocation && a.Attempt > expectedAttempts {
+			continue
+		}
+		if invocation && a.Attempt <= afterAttempt {
+			if a.Attempt <= lastMissingPrior {
+				continue
+			}
+			totals, known := wholeTree(a.Usage, a.Provider)
+			complete := a.Usage.Completeness == "observed" && a.Outcome != "running"
+			key := a.Provider + "\x00" + a.Model + "\x00" + a.OptimizerMode + "\x00" + a.ImageID + "\x00" + a.SessionID
+			if a.SessionID != "" && complete && known {
+				baselines[key] = totals
+			} else {
+				delete(baselines, key)
+			}
+			if a.SessionID != "" && complete && known && a.Provider == "claude" {
+				modelBaselines[key] = a.Usage.Models
+			} else {
+				delete(modelBaselines, key)
+			}
+			continue
+		}
 		if s.Subscriptions == nil {
 			s.Subscriptions = map[string]*SubscriptionUsage{}
 		}
@@ -639,7 +696,7 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 		}
 		g.MeasuredAttempts++
 	}
-	s.Missing = expectedAttempts - s.Attempts
+	s.Missing = expectedAttempts - afterAttempt - s.Attempts
 	if s.Missing < 0 {
 		s.Missing = 0
 	}

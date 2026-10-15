@@ -33,13 +33,14 @@ func localCommand(ctx context.Context, name string, args ...string) ([]byte, err
 	if name == "gh" {
 		output := ciAPIOutput{limit: ciCommandOutputLimit(name, args)}
 		command.Stdout = &output
-		command.Stderr = io.Discard
+		diagnostic := &ciDiagnosticOutput{}
+		command.Stderr = diagnostic
 		err := command.Run()
 		if output.exceeded {
 			return nil, &ciResponseSizeError{Limit: output.limit}
 		}
 		if err != nil {
-			return output.buffer.Bytes(), fmt.Errorf("GitHub command failed: %w", err)
+			return output.buffer.Bytes(), classifyCIRequest(err, diagnostic.buffer.String())
 		}
 		return output.buffer.Bytes(), nil
 	}

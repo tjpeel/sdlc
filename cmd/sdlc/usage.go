@@ -256,12 +256,12 @@ func usageCount(value *int64) string {
 }
 
 // Telemetry is best effort: reporting must not change the saved workflow result.
-func printCompletedRunUsage(output io.Writer, directory string, journal workrun.Journal) {
-	summary, err := runusage.LoadSummary(directory, journal.ID, journal.Attempt)
+func printCompletedRunUsage(output io.Writer, directory string, journal workrun.Journal, startingAttempt int) {
+	summary, err := runusage.LoadInvocationSummary(directory, journal.ID, startingAttempt, journal.Attempt)
 	if err != nil {
-		fmt.Fprintln(output, "Run usage: unavailable (recorded metrics could not be read).")
+		fmt.Fprintln(output, "This invocation usage: unavailable (recorded metrics could not be read).")
 		return
 	}
-	dashboard.WriteUsageOverview(output, summary)
-	fmt.Fprintf(output, "Session and subagent details: sdlc usage --run %s (or --json).\n", dashboard.SafeText(journal.ID))
+	dashboard.WriteInvocationUsageOverview(output, summary)
+	fmt.Fprintf(output, "Full run history: sdlc usage --run %s (or --json).\n", dashboard.SafeText(journal.ID))
 }

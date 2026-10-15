@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.81 - 2026-10-15
+
+### Fixed
+
+- Scope completion usage to the current controller invocation, including resumed native-session deltas and current subscription boundaries. Keep earlier attempts only as subtraction baselines; retain full history in usage and JSON. Exclude replayed subagent observations and show no new agent usage when a resume starts no provider attempts.
+- Retain safe HTTP/network categories when Actions job-log retrieval fails. Retry temporary log availability, server and network failures at most twice, with bounded waits; permissions, rate limits, intake limits, cancellation and cleanup failures keep their holds.
+
 ## 0.1.0-beta.80 - 2026-10-15
 
 ### Changed

@@ -181,7 +181,7 @@ func TestFinishedRunUsageReadsSessionSettingsWithoutChangingRecords(t *testing.T
 	}
 	before := dashboardTree(t, directory)
 	var text bytes.Buffer
-	printCompletedRunUsage(&text, directory, workrun.Journal{ID: "run-one", Attempt: 1})
+	printCompletedRunUsage(&text, directory, workrun.Journal{ID: "run-one", Attempt: 1}, 0)
 	for _, want := range []string{"1 attempt across 1 session", "high effort", "fast speed", "in 100", "cached 40", "sdlc usage --run run-one"} {
 		if !strings.Contains(text.String(), want) {
 			t.Errorf("missing %q in %s", want, text.String())
@@ -192,6 +192,32 @@ func TestFinishedRunUsageReadsSessionSettingsWithoutChangingRecords(t *testing.T
 	}
 	if after := dashboardTree(t, directory); !reflect.DeepEqual(before, after) {
 		t.Fatal("report modified records")
+	}
+	second := a
+	second.Attempt = 2
+	second.Resumed = true
+	second.StartedAt = start.Add(time.Minute)
+	second.EndedAt = second.StartedAt.Add(time.Second)
+	input2, cached2, output2 := int64(150), int64(60), int64(18)
+	second.Usage.Aggregate = &runusage.TokenUsage{InputTokens: &input2, CachedInputTokens: &cached2, OutputTokens: &output2}
+	if err := runusage.SaveAttempt(directory, second); err != nil {
+		t.Fatal(err)
+	}
+	before = dashboardTree(t, directory)
+	text.Reset()
+	printCompletedRunUsage(&text, directory, workrun.Journal{ID: "run-one", Attempt: 2}, 1)
+	for _, want := range []string{"This invocation usage: 1 attempt", "in 50, cached 20, out 6", "Full run history:"} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("resume scope missing %q: %s", want, text.String())
+		}
+	}
+	if after := dashboardTree(t, directory); !reflect.DeepEqual(before, after) {
+		t.Fatal("resume report modified accounting")
+	}
+	text.Reset()
+	printCompletedRunUsage(&text, directory, workrun.Journal{ID: "run-one", Attempt: 2}, 2)
+	if !strings.Contains(text.String(), "no provider attempts; no new agent usage") || strings.Contains(text.String(), "example-model") {
+		t.Fatal("zero-work resume replayed old usage", text.String())
 	}
 }
 

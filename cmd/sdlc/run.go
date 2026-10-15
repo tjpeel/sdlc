@@ -882,8 +882,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		observe(journal, true)
 		return err
 	}
+	startingAttempt := journal.Attempt
 	err = runner.Run(ctx, directory, &journal, answer)
-	printCompletedRunUsage(output, directory, journal)
+	printCompletedRunUsage(output, directory, journal, startingAttempt)
 	if errors.Is(err, workrun.ErrStopped) || journal.State == "waiting_for_human" || journal.State == "blocked" || journal.State == "failed" {
 		if reportErr := printRunAttention(output, journal); reportErr != nil {
 			err = errors.Join(err, reportErr)

@@ -60,7 +60,19 @@ func WriteSessions(output io.Writer, summary runusage.Summary) {
 
 // WriteUsageOverview is the compact completion report; detailed evidence stays in usage/JSON.
 func WriteUsageOverview(output io.Writer, summary runusage.Summary) {
-	fmt.Fprintf(output, "Run usage: %s across %s", usageCountLabel(summary.Attempts, "attempt"), usageCountLabel(len(summary.Sessions), "session"))
+	writeUsageOverview(output, summary, "Run usage")
+}
+
+func WriteInvocationUsageOverview(output io.Writer, summary runusage.Summary) {
+	if summary.Attempts == 0 && summary.Missing == 0 {
+		fmt.Fprintln(output, "This invocation usage: no provider attempts; no new agent usage.")
+		return
+	}
+	writeUsageOverview(output, summary, "This invocation usage")
+}
+
+func writeUsageOverview(output io.Writer, summary runusage.Summary, heading string) {
+	fmt.Fprintf(output, "%s: %s across %s", heading, usageCountLabel(summary.Attempts, "attempt"), usageCountLabel(len(summary.Sessions), "session"))
 	if summary.ElapsedMS > 0 {
 		fmt.Fprintf(output, "; provider time %s", compactDuration(summary.ElapsedMS))
 	}

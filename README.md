@@ -20,10 +20,12 @@ New generated
 model defaults include `review_effort_policy: "pr-v1"`; custom defaults can retain
 that field for automatic Claude selection or omit it for fixed effort.
 
-Completion usage reports show model/role, requested effort and speed, elapsed
+Completion usage reports cover only the current run/resume invocation, using prior
+native checkpoints as subtraction baselines. They show model/role, requested effort and speed, elapsed
 provider time, native token counts and observed subagents. Missing values are
 omitted with a note; omitted does not mean zero. `sdlc usage --run RUN_ID` and
-`--json` retain session, subagent and measurement details. Provider time includes
+`--json` retain full-run session, subagent and measurement history. A resume that
+starts no provider attempts reports no new agent usage. Provider time includes
 setup, queueing and tools; it is not inference latency. Codex input includes cache
 reads, while Claude input excludes cache reads/writes.
 
@@ -52,7 +54,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.80`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.81`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
