@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.71 - 2026-10-15
+
+### Added
+
+- Build named runtimes from clean, committed local agents catalogues with `--agents-source`, independently or alongside `--skills-source`. Record both commits and preserve the default runtime and saved runs.
+
 ## 0.1.0-beta.70 - 2026-10-14
 
 ### Changed

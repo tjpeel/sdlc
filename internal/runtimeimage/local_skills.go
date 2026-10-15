@@ -25,7 +25,7 @@ type boundedArchive struct {
 
 func (w *boundedArchive) Write(data []byte) (int, error) {
 	if w.bytes+int64(len(data)) > maximumSkillsArchive {
-		return 0, errors.New("local skills archive exceeds 16 MiB")
+		return 0, errors.New("local catalogue archive exceeds 16 MiB")
 	}
 	n, err := w.file.Write(data)
 	w.bytes += int64(n)
@@ -37,18 +37,22 @@ func catalogueGit(ctx context.Context, root string, args ...string) ([]byte, err
 func cleanCatalogue(ctx context.Context, root, revision string) error {
 	status, err := catalogueGit(ctx, root, "status", "--porcelain=v1", "--untracked-files=normal")
 	if err != nil || len(status) != 0 {
-		return errors.New("local skills catalogue must have a clean committed working tree")
+		return errors.New("local catalogue must have a clean committed working tree")
 	}
 	head, err := catalogueGit(ctx, root, "rev-parse", "HEAD")
 	if err != nil || strings.TrimSpace(string(head)) != revision {
-		return errors.New("local skills catalogue revision changed during snapshot")
+		return errors.New("local catalogue revision changed during snapshot")
 	}
 	return nil
 }
 
-// snapshotSkills includes only Git's committed archive, never the checkout or
-// ignored/untracked account files. Check boundaries before any Docker operation.
 func snapshotSkills(ctx context.Context, source, contextDirectory string) (string, string, error) {
+	return snapshotCatalogue(ctx, source, contextDirectory, "skills")
+}
+
+// snapshotCatalogue includes only Git's committed archive, never checkout or
+// ignored/untracked account files. Check boundaries before any Docker operation.
+func snapshotCatalogue(ctx context.Context, source, contextDirectory, catalogue string) (string, string, error) {
 	root, err := filepath.Abs(source)
 	if err != nil {
 		return "", "", err
@@ -59,24 +63,24 @@ func snapshotSkills(ctx context.Context, source, contextDirectory string) (strin
 	}
 	top, err := catalogueGit(ctx, root, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", "", errors.New("local skills source must be a Git checkout root")
+		return "", "", errors.New("local catalogue source must be a Git checkout root")
 	}
 	actual, err := filepath.EvalSymlinks(strings.TrimSpace(string(top)))
 	if err != nil || actual != root {
-		return "", "", errors.New("local skills source must match its Git checkout root")
+		return "", "", errors.New("local catalogue source must match its Git checkout root")
 	}
 	head, err := catalogueGit(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", errors.New("local skills source must have a committed HEAD")
+		return "", "", errors.New("local catalogue source must have a committed HEAD")
 	}
 	revision := strings.TrimSpace(string(head))
 	if !sourceCommitID.MatchString(revision) {
-		return "", "", errors.New("local skills source has an invalid commit identity")
+		return "", "", errors.New("local catalogue source has an invalid commit identity")
 	}
 	if err := cleanCatalogue(ctx, root, revision); err != nil {
 		return "", "", err
 	}
-	destination := filepath.Join(contextDirectory, "local-catalogues", "skills.tar")
+	destination := filepath.Join(contextDirectory, "local-catalogues", catalogue+".tar")
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return "", "", err
@@ -87,9 +91,9 @@ func snapshotSkills(ctx context.Context, source, contextDirectory string) (strin
 	runErr := command.Run()
 	closeErr := file.Close()
 	if runErr != nil || closeErr != nil {
-		return "", "", errors.New("cannot create bounded committed skills archive")
+		return "", "", errors.New("cannot create bounded committed catalogue archive")
 	}
-	if err := validateSkillsArchive(destination); err != nil {
+	if err := validateCatalogueArchive(destination, catalogue); err != nil {
 		return "", "", err
 	}
 	if err := cleanCatalogue(ctx, root, revision); err != nil {
@@ -105,12 +109,12 @@ type catalogueEntry struct {
 
 func cataloguePath(name string) error {
 	if !utf8.ValidString(name) || name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
-		return errors.New("local skills archive contains an unsafe path")
+		return errors.New("local catalogue archive contains an unsafe path")
 	}
 	for _, part := range strings.Split(name, "/") {
 		switch strings.ToLower(part) {
 		case ".git", ".secrets", ".ssh", ".aws", ".codex", ".claude", "auth.json", "credentials":
-			return errors.New("local skills archive contains authentication state")
+			return errors.New("local catalogue archive contains authentication state")
 		}
 	}
 	return nil
@@ -184,6 +188,10 @@ func resolveCatalogueFile(name string, entries map[string]*catalogueEntry) (*cat
 	return nil, errors.New("catalogue link chain exceeds 32 entries")
 }
 func validateSkillsArchive(archive string) error {
+	return validateCatalogueArchive(archive, "skills")
+}
+
+func validateCatalogueArchive(archive, catalogue string) error {
 	file, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -191,7 +199,7 @@ func validateSkillsArchive(archive string) error {
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > maximumSkillsArchive {
 		file.Close()
-		return errors.New("local skills archive exceeds its bounds")
+		return errors.New("local catalogue archive exceeds its bounds")
 	}
 	reader := tar.NewReader(file)
 	entries := map[string]*catalogueEntry{}
@@ -204,14 +212,14 @@ func validateSkillsArchive(archive string) error {
 		}
 		if err != nil {
 			file.Close()
-			return errors.New("local skills archive is invalid")
+			return errors.New("local catalogue archive is invalid")
 		}
 		if header.Typeflag == tar.TypeXGlobalHeader {
 			continue
 		}
 		if len(ordered) >= maximumSkillsEntries {
 			file.Close()
-			return errors.New("local skills archive has too many entries")
+			return errors.New("local catalogue archive has too many entries")
 		}
 		name := strings.TrimSuffix(header.Name, "/")
 		if err := cataloguePath(name); err != nil {
@@ -220,15 +228,15 @@ func validateSkillsArchive(archive string) error {
 		}
 		if entries[name] != nil {
 			file.Close()
-			return errors.New("local skills archive has duplicate paths")
+			return errors.New("local catalogue archive has duplicate paths")
 		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir && header.Typeflag != tar.TypeSymlink {
 			file.Close()
-			return errors.New("local skills archive must contain regular files, directories or bounded internal file references")
+			return errors.New("local catalogue archive must contain regular files, directories or bounded internal file references")
 		}
 		if header.Size < 0 || header.Size > maximumBuildFile {
 			file.Close()
-			return errors.New("local skills archive file exceeds 2 MiB")
+			return errors.New("local catalogue archive file exceeds 2 MiB")
 		}
 		copy := *header
 		copy.Name = name
@@ -237,7 +245,7 @@ func validateSkillsArchive(archive string) error {
 			entry.data, err = io.ReadAll(io.LimitReader(reader, maximumBuildFile+1))
 			if err != nil || int64(len(entry.data)) != header.Size {
 				file.Close()
-				return errors.New("local skills archive file is incomplete")
+				return errors.New("local catalogue archive file is incomplete")
 			}
 		}
 		if header.Typeflag == tar.TypeSymlink {
@@ -261,8 +269,8 @@ func validateSkillsArchive(archive string) error {
 			}
 		}
 	}
-	if _, err := resolveCatalogueFile("scripts/install-skills", entries); err != nil {
-		return errors.New("local skills source lacks committed scripts/install-skills")
+	if _, err := resolveCatalogueFile("scripts/install-"+catalogue, entries); err != nil {
+		return fmt.Errorf("local %s source lacks committed scripts/install-%s", catalogue, catalogue)
 	}
 	if !linked {
 		return nil
@@ -285,16 +293,16 @@ func validateSkillsArchive(archive string) error {
 		header := tar.Header{Name: original.header.Name, Mode: entry.header.Mode, Typeflag: entry.header.Typeflag, Size: int64(len(entry.data)), ModTime: entry.header.ModTime}
 		if err := writer.WriteHeader(&header); err != nil {
 			materialized.Close()
-			return errors.New("materialized local skills archive exceeds its bounds")
+			return errors.New("materialized local catalogue archive exceeds its bounds")
 		}
 		if _, err := writer.Write(entry.data); err != nil {
 			materialized.Close()
-			return errors.New("materialized local skills archive exceeds its bounds")
+			return errors.New("materialized local catalogue archive exceeds its bounds")
 		}
 	}
 	if err := writer.Close(); err != nil {
 		materialized.Close()
-		return errors.New("materialized local skills archive exceeds its bounds")
+		return errors.New("materialized local catalogue archive exceeds its bounds")
 	}
 	if err := materialized.Sync(); err != nil {
 		materialized.Close()
@@ -318,4 +326,17 @@ func localSkillsRecipe(recipe []byte, revision string) ([]byte, error) {
 	}
 	text = skillsRecipeArgument.ReplaceAllString(text, "ARG SKILLS_REVISION="+revision)
 	return []byte(strings.Replace(text, "ARG LOCAL_SKILLS=0\n", "ARG LOCAL_SKILLS=1\n", 1)), nil
+}
+
+func localAgentsRecipe(recipe []byte, revision string) ([]byte, error) {
+	text := string(recipe)
+	argument := regexp.MustCompile(`(?m)^ARG AGENTS_REVISION=[0-9a-f]{40}$`)
+	if !strings.Contains(text, "ARG LOCAL_AGENTS=0\n") || !strings.Contains(text, "/tmp/sdlc-local-catalogues/agents.tar") {
+		return nil, errors.New("runtime source does not support local agents archives")
+	}
+	if !sourceCommitID.MatchString(revision) || len(argument.FindAllStringIndex(text, -1)) != 1 {
+		return nil, errors.New("runtime source must contain one exact agents revision argument")
+	}
+	text = argument.ReplaceAllString(text, "ARG AGENTS_REVISION="+revision)
+	return []byte(strings.Replace(text, "ARG LOCAL_AGENTS=0\n", "ARG LOCAL_AGENTS=1\n", 1)), nil
 }

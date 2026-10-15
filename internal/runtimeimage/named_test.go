@@ -72,9 +72,19 @@ func TestNamedRuntimeDoesNotReplaceDefaultStateOrImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	skills, revision := skillsFixture(t)
+	agents, _ := skillsFixture(t)
+	if err := os.Rename(filepath.Join(agents, "scripts/install-skills"), filepath.Join(agents, "scripts/install-agents")); err != nil {
+		t.Fatal(err)
+	}
+	skillGit(t, agents, "add", ".")
+	skillGit(t, agents, "-c", "user.name=Example", "-c", "user.email=example@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "Add agent installer")
+	agentsRevision := skillGit(t, agents, "rev-parse", "HEAD")
 	sourceFile(t, skills, ".secrets/ignored-token", "PRIVATE-IGNORED-SENTINEL")
-	sourceFile(t, source, "runtime/Dockerfile", string(recipe)+"ARG LOCAL_SKILLS=0\n# /tmp/sdlc-local-catalogues/skills.tar\n")
+	sourceFile(t, source, "runtime/Dockerfile", string(recipe)+"ARG LOCAL_SKILLS=0\n# /tmp/sdlc-local-catalogues/skills.tar\nARG LOCAL_AGENTS=0\n# /tmp/sdlc-local-catalogues/agents.tar\n")
 	for i := range base.inventoryOverride.Dependencies {
+		if base.inventoryOverride.Dependencies[i].Source == "tjpeel/agents" {
+			base.inventoryOverride.Dependencies[i].Version = agentsRevision
+		}
 		if base.inventoryOverride.Dependencies[i].Source == "tjpeel/skills" {
 			base.inventoryOverride.Dependencies[i].Version = revision
 		}
@@ -85,6 +95,10 @@ func TestNamedRuntimeDoesNotReplaceDefaultStateOrImage(t *testing.T) {
 	named.Docker = docker
 	archiveChecked := false
 	base.buildHook = func() {
+		if err := validateCatalogueArchive(filepath.Join(base.context, "local-catalogues", "agents.tar"), "agents"); err != nil {
+			t.Error(err)
+		}
+
 		file, err := os.Open(filepath.Join(base.context, "local-catalogues", "skills.tar"))
 		if err != nil {
 			t.Error(err)
@@ -107,9 +121,12 @@ func TestNamedRuntimeDoesNotReplaceDefaultStateOrImage(t *testing.T) {
 		}
 		archiveChecked = true
 	}
-	state, err := named.BuildWithOptions(context.Background(), source, BuildOptions{SkillsSource: skills, Pins: &pins})
+	state, err := named.BuildWithOptions(context.Background(), source, BuildOptions{SkillsSource: skills, AgentsSource: agents, Pins: &pins})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if state.AgentsRevision != agentsRevision || state.AgentsSource != agents || !strings.Contains(state.BuildRecipe, "ARG LOCAL_AGENTS=1") || !strings.Contains(state.BuildRecipe, "ARG AGENTS_REVISION="+agentsRevision) {
+		t.Fatalf("local agents provenance missing: %+v", state)
 	}
 	if !archiveChecked || state.Name != "skills-test" || state.SkillsRevision != revision || state.SkillsSource != skills || !strings.Contains(state.BuildRecipe, "ARG LOCAL_SKILLS=1") || !strings.Contains(state.BuildRecipe, "ARG SKILLS_REVISION="+revision) {
 		t.Fatalf("local provenance missing: %+v", state)
@@ -369,6 +386,66 @@ func TestLocalSkillsSourceBuildPreservesBlankOptionalDockerfileDefaults(t *testi
 		t.Fatal(err)
 	}
 	if state.BuildRecipe != string(expected) || string(base.buildRecipe) != string(expected) || state.SkillsRevision != revision || docker.tags[manager.ImageName()] != newImage {
+		t.Fatal("actual local recipe or provenance differs")
+	}
+}
+
+func TestLocalAgentsRejectSkillsOnlyCatalogueBeforeDocker(t *testing.T) {
+	manager, docker, source, _, _ := pinsFixture(t)
+	manager.Name = "agents-test"
+	catalogue, _ := skillsFixture(t)
+	_, err := manager.BuildWithOptions(context.Background(), source, BuildOptions{AgentsSource: catalogue})
+	if err == nil || !strings.Contains(err.Error(), "scripts/install-agents") {
+		t.Fatalf("wanted missing agents installer, got %v", err)
+	}
+	if len(docker.calls) != 0 {
+		t.Fatal("invalid local agents reached Docker")
+	}
+}
+
+func TestLocalAgentsOnlyBuildPreservesSourceDefaults(t *testing.T) {
+	manager, base, source := fixture(t)
+	recipe, err := os.ReadFile(filepath.Join("..", "..", "runtime", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe = regexp.MustCompile(`(?m)^ARG (NPM_VERSION|YARN_VERSION|COMPOSE_VERSION|BUILDX_VERSION)=.*$`).ReplaceAll(recipe, []byte("ARG ${1}="))
+	sourceFile(t, source, "runtime/Dockerfile", string(recipe))
+	skills, _ := skillsFixture(t)
+	if err := os.Rename(filepath.Join(skills, "scripts/install-skills"), filepath.Join(skills, "scripts/install-agents")); err != nil {
+		t.Fatal(err)
+	}
+	skillGit(t, skills, "add", ".")
+	skillGit(t, skills, "-c", "user.name=Example", "-c", "user.email=example@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "Add agent installer")
+	revision := skillGit(t, skills, "rev-parse", "HEAD")
+	inventory := testInventory()
+	for i := range inventory.Dependencies {
+		if inventory.Dependencies[i].Source == "tjpeel/agents" {
+			inventory.Dependencies[i].Version = revision
+		}
+	}
+	base.inventoryOverride = &inventory
+	manager.Name = "skills-test"
+	docker := &namedDocker{fakeDocker: base, tags: map[string]string{}}
+	manager.Docker = docker
+	state, err := manager.BuildWithOptions(context.Background(), source, BuildOptions{AgentsSource: skills})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DependencyPins != nil {
+		t.Fatal("source defaults promoted to full dependency overrides")
+	}
+	for _, arg := range []string{"NPM_VERSION", "YARN_VERSION", "COMPOSE_VERSION", "BUILDX_VERSION"} {
+		blank := "ARG " + arg + "=\n"
+		if !strings.Contains(string(recipe), blank) || !strings.Contains(state.BuildRecipe, blank) {
+			t.Fatalf("optional default changed: %s", arg)
+		}
+	}
+	expected, err := localAgentsRecipe(recipe, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.BuildRecipe != string(expected) || string(base.buildRecipe) != string(expected) || state.AgentsRevision != revision || docker.tags[manager.ImageName()] != newImage {
 		t.Fatal("actual local recipe or provenance differs")
 	}
 }

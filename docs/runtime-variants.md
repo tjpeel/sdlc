@@ -6,7 +6,7 @@ lock, with a separate Docker tag and private state file.
 
 ```sh
 sdlc runtime build --name skills-test --source /path/to/sdlc \
-  --skills-source /path/to/skills
+  --skills-source /path/to/skills --agents-source /path/to/agents
 sdlc runtime status --name skills-test --offline
 sdlc run --runtime skills-test --reference EXAMPLE --ticket 01-example.md
 ```
@@ -48,3 +48,17 @@ runtime; named variants use `runtime build`. Existing container and saved-work
 build guards still apply. `runtime build --force` permits replacement despite
 stopped saved work, retaining its files and previous image. It does not migrate
 checkpoints or bypass active controllers and container checks.
+
+Use `--agents-source` to include a clean, committed local agents catalogue,
+with or without `--skills-source`. Both options require a named runtime and
+apply the same archive limits and authentication-state exclusions. The agents
+catalogue must include committed `scripts/install-agents`; its installer runs
+for both Codex and Claude. Runtime state, inventory and new-run provenance
+record the exact agents commit.
+
+When rebuilding a local agents variant, pass `--agents-source` again or choose
+`--source-pins` to return to remote catalogue pins. To retain local skills while
+returning agents to remote pins, pass `--source-pins --skills-source`.
+Existing runtime leases, container checks and saved-work guards still apply;
+`--force` does not bypass an active controller. Named runtimes preserve the
+default selection and retain superseded images for saved work.

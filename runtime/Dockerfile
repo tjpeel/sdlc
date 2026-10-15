@@ -17,6 +17,7 @@ ARG GH_VERSION=2.102.0
 ARG CLAUDE_VERSION=2.1.296
 ARG DOTNET_VERSION=10.0.401
 ARG LOCAL_SKILLS=0
+ARG LOCAL_AGENTS=0
 ARG SKILLS_REVISION=96371b635720556093698ee870127d33b359b192
 ARG AGENTS_REVISION=ca463638c94e3dc44f51420554692636fa5fe0d0
 # An installation update can override these defaults in its private build recipe.
@@ -126,8 +127,11 @@ RUN set -eu; \
         mkdir -p /opt/sdlc/catalogues/skills; \
         tar -xf /tmp/sdlc-local-catalogues/skills.tar -C /opt/sdlc/catalogues/skills; \
     else fetch_catalogue skills "$SKILLS_REVISION"; fi; \
+    if [ "$LOCAL_AGENTS" = 1 ]; then \
+        mkdir -p /opt/sdlc/catalogues/agents; \
+        tar -xf /tmp/sdlc-local-catalogues/agents.tar -C /opt/sdlc/catalogues/agents; \
+    else fetch_catalogue agents "$AGENTS_REVISION"; fi; \
     rm -rf /tmp/sdlc-local-catalogues; \
-    fetch_catalogue agents "$AGENTS_REVISION"; \
     bash /opt/sdlc/catalogues/skills/scripts/install-skills \
         --provider codex --prefix tjpeel -- /home/node/.agents/skills; \
     bash /opt/sdlc/catalogues/agents/scripts/install-agents \

@@ -24,6 +24,8 @@ import (
 const Image = "sdlc:local"
 
 type State struct {
+	AgentsSource   string            `json:"agents_source,omitempty"`
+	AgentsRevision string            `json:"agents_revision,omitempty"`
 	Name           string            `json:"name,omitempty"`
 	SkillsSource   string            `json:"skills_source,omitempty"`
 	SkillsRevision string            `json:"skills_revision,omitempty"`
@@ -40,6 +42,7 @@ type State struct {
 }
 
 type BuildOptions struct {
+	AgentsSource string
 	SkillsSource string
 	// SourcePins ignores private dependency overrides and uses the source Dockerfile.
 	SourcePins bool
@@ -236,8 +239,8 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if err := ValidateName(manager.Name); err != nil {
 		return State{}, err
 	}
-	if options.SkillsSource != "" && manager.Name == "" {
-		return State{}, errors.New("local skills require a named runtime to preserve the default image")
+	if (options.SkillsSource != "" || options.AgentsSource != "") && manager.Name == "" {
+		return State{}, errors.New("local skills and agents require a named runtime to preserve the default image")
 	}
 	if err := ctx.Err(); err != nil {
 		return State{}, err
@@ -290,6 +293,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if previousErr == nil && previous.SkillsSource != "" && options.SkillsSource == "" && !options.SourcePins {
 		return State{}, errors.New("runtime used local skills; pass --skills-source or --source-pins for an explicit remote build")
 	}
+	if previousErr == nil && previous.AgentsSource != "" && options.AgentsSource == "" && !options.SourcePins {
+		return State{}, errors.New("runtime used local agents; pass --agents-source or --source-pins for an explicit remote build")
+	}
 	pins := options.Pins
 	if pins == nil && !options.SourcePins && previousErr == nil && previous.Source == root {
 		pins = previous.DependencyPins
@@ -319,13 +325,27 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 			return State{}, err
 		}
 	}
+	agentsSource, agentsRevision := "", ""
+	if options.AgentsSource != "" {
+		agentsSource, agentsRevision, err = snapshotCatalogue(ctx, options.AgentsSource, contextDirectory, "agents")
+		if err != nil {
+			return State{}, fmt.Errorf("local agents: %w", err)
+		}
+		if pins != nil {
+			pins.Arguments["AGENTS_REVISION"] = agentsRevision
+		}
+		recipe, err = localAgentsRecipe(recipe, agentsRevision)
+		if err != nil {
+			return State{}, err
+		}
+	}
 	if pins != nil {
 		recipe, err = runtimepins.ApplyDockerfile(recipe, *pins)
 		if err != nil {
 			return State{}, err
 		}
 	}
-	if pins != nil || skillsRevision != "" {
+	if pins != nil || skillsRevision != "" || agentsRevision != "" {
 		if err := os.WriteFile(path, recipe, 0600); err != nil {
 			return State{}, err
 		}
@@ -404,6 +424,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if skillsRevision != "" {
 		buildArgs = append(buildArgs, "--build-arg", "LOCAL_SKILLS=1")
 	}
+	if agentsRevision != "" {
+		buildArgs = append(buildArgs, "--build-arg", "LOCAL_AGENTS=1")
+	}
 	buildArgs = append(buildArgs, "--tag", candidate, "--label", "io.sdlc.managed=true", "--label", "io.sdlc.source-revision="+revision, contextDirectory)
 	build := manager.Docker.Run
 	if options.Refresh || pins != nil {
@@ -440,7 +463,12 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 			return State{}, fmt.Errorf("local skills inventory mismatch: %w", err)
 		}
 	}
-	state := State{Name: manager.Name, SkillsSource: skillsSource, SkillsRevision: skillsRevision, Version: 1, Source: root, Revision: revision, Engine: engine, ImageID: id, BuiltAt: time.Now().UTC(), Tools: strings.TrimSpace(string(tools)), Inventory: inventory, DependencyPins: pins, BuildRecipe: string(recipe)}
+	if agentsRevision != "" {
+		if err := inventoryVersionMatches(*inventory, "git", "tjpeel/agents", agentsRevision); err != nil {
+			return State{}, fmt.Errorf("local agents inventory mismatch: %w", err)
+		}
+	}
+	state := State{AgentsSource: agentsSource, AgentsRevision: agentsRevision, Name: manager.Name, SkillsSource: skillsSource, SkillsRevision: skillsRevision, Version: 1, Source: root, Revision: revision, Engine: engine, ImageID: id, BuiltAt: time.Now().UTC(), Tools: strings.TrimSpace(string(tools)), Inventory: inventory, DependencyPins: pins, BuildRecipe: string(recipe)}
 	if options.ValidateCandidate != nil {
 		if err := options.ValidateCandidate(ctx, state); err != nil {
 			return State{}, fmt.Errorf("built runtime failed update validation: %w", err)

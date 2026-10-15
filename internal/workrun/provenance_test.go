@@ -21,12 +21,13 @@ func TestRuntimeProvenanceUsesFrozenInventoryAndLocalOverride(t *testing.T) {
 		t.Fatal("frozen runtime inventory lost", provenance)
 	}
 	state.SkillsRevision = testTree
+	state.AgentsRevision = testTree
 	provenance = CaptureRuntimeProvenance(state)
-	if provenance.SkillsRevision != testTree || provenance.Sources["skills"] != "runtime_descriptor" {
+	if provenance.SkillsRevision != testTree || provenance.Sources["skills"] != "runtime_descriptor" || provenance.Sources["agents"] != "runtime_descriptor" || provenance.AgentsRevision != testTree {
 		t.Fatal("local runtime skills override lost", provenance)
 	}
 	state.Inventory.Dependencies[1].Version = testBase
-	if provenance.AgentsRevision != agents {
+	if provenance.AgentsRevision != testTree {
 		t.Fatal("captured provenance changed with installation state")
 	}
 }

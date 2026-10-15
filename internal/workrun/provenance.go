@@ -36,6 +36,7 @@ func CaptureRuntimeProvenance(state runtimeimage.State) *RuntimeProvenance {
 		}
 	}
 	record("skills", state.SkillsRevision, "runtime_descriptor")
+	record("agents", state.AgentsRevision, "runtime_descriptor")
 	if state.Inventory != nil {
 		for _, dependency := range state.Inventory.Dependencies {
 			if dependency.Kind != "git" {

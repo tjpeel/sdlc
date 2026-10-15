@@ -44,7 +44,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	flags := flag.NewFlagSet("runtime "+args[0], flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	var source string
-	var name, skillsSource string
+	var name, skillsSource, agentsSource string
 	var offline bool
 	var githubProfile string
 	var dryRun bool
@@ -57,6 +57,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if args[0] == "build" || args[0] == "update" {
 		flags.StringVar(&source, "source", "", "SDLC source (uses bundled Homebrew source or saved source when omitted)")
 		if args[0] == "build" {
+			flags.StringVar(&agentsSource, "agents-source", "", "clean committed local agents Git catalogue (requires --name)")
 			flags.StringVar(&skillsSource, "skills-source", "", "clean committed local skills Git catalogue (requires --name)")
 			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
 			flags.BoolVar(&force, "force", false, "replace runtime despite stopped saved work; retain its files and previous image")
@@ -116,9 +117,12 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if err != nil {
 		return err
 	}
-	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{SkillsSource: skillsSource, SourcePins: sourcePins, SourceRevision: revision, KeepPreviousImage: force, ValidatePrevious: runtimeBuildSavedWorkGuard(manager.Directory, source, force, output)})
+	state, err := manager.BuildWithOptions(ctx, source, runtimeimage.BuildOptions{AgentsSource: agentsSource, SkillsSource: skillsSource, SourcePins: sourcePins, SourceRevision: revision, KeepPreviousImage: force, ValidatePrevious: runtimeBuildSavedWorkGuard(manager.Directory, source, force, output)})
 	if err != nil {
 		return err
+	}
+	if state.AgentsRevision != "" {
+		fmt.Fprintf(output, "Local agents commit: %s\n", state.AgentsRevision)
 	}
 	if state.SkillsRevision != "" {
 		fmt.Fprintf(output, "Local skills commit: %s\n", state.SkillsRevision)
