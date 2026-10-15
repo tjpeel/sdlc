@@ -25,6 +25,7 @@ type Runner struct {
 	ValidateDependencies         func(context.Context, string, Plan) error
 	OverrideRunLimits            bool
 	ProcessPRFeedback            bool
+	LocalPRFeedback              string
 	CompanionCloner              CompanionRepositoryCloner
 	Provider                     Provider
 	Checker                      Checker
@@ -161,9 +162,17 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	if savedFeedbackReplay && !CanReplaySavedPRFeedback(*journal) {
 		return fmt.Errorf("saved feedback outcome is not eligible for replay; inspect the diagnostic snapshot")
 	}
+	if runner.LocalPRFeedback != "" && !runner.ProcessPRFeedback {
+		return fmt.Errorf("local feedback requires PR feedback initiation")
+	}
 	if runner.ProcessPRFeedback {
 		if answer != "" || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ExtendSessionTurnBudget != 0 {
 			return fmt.Errorf("PR feedback cannot be combined with recovery actions")
+		}
+		if runner.LocalPRFeedback != "" {
+			if err := ValidateLocalPRFeedback(runner.LocalPRFeedback); err != nil {
+				return err
+			}
 		}
 		if err := ValidatePRFeedbackResume(*journal); err != nil {
 			return err

@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.83 - 2026-10-15
+
+### Added
+
+- Submit private PR feedback with `sdlc feedback --run RUN_ID`: hidden multiline paste, file and stdin inputs are retained in the run folder and assessed in the original session through the existing checks and independent review. Local feedback assessments stay private instead of posting GitHub comments. Interrupted cycles retain their selected input for ordinary resume.
+
 ## 0.1.0-beta.82 - 2026-10-15
 
 ### Fixed

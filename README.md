@@ -36,6 +36,8 @@ Adopt an existing open same-repository PR with `sdlc adopt --pr PR_URL` to asses
 review comments and publish verified corrections; a local ticket is optional.
 Human PR comments can resume the original implementation session through checks
 and a fresh independent review with `sdlc resume --run RUN_ID --pr-feedback`.
+Supply private pasted or file feedback with
+`sdlc feedback --run RUN_ID [--file FILE]`.
 A saved run stopped by a corroborated local numeric limit can continue with
 `sdlc resume --run RUN_ID --override-run-limits`. The override persists without
 resetting its session or accounting; provider holds and verification gates remain
@@ -54,7 +56,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.82`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.83`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

@@ -80,3 +80,10 @@ func (p DockerPublisher) ReplyFeedback(ctx context.Context, plan Plan, pr Public
 	}
 	return
 }
+
+// ValidateFeedbackBoundary checks the frozen PR without reading or posting comments.
+func (p DockerPublisher) ValidateFeedbackBoundary(ctx context.Context, plan Plan, pr Publication) error {
+	return p.withFeedbackPublisher(ctx, plan, func(collector GitHubPublisher) error {
+		return collector.feedbackBoundary(ctx, plan, pr)
+	})
+}

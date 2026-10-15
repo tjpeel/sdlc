@@ -14,7 +14,7 @@ import (
 func shellCommands() []shell.Command {
 	command := func(name, group, summary, usage string, native bool, flags string) shell.Command {
 		entry := shell.Command{Name: name, Group: group, Summary: summary, Usage: usage, Native: native}
-		entry.Interactive = name == "interactive" || name == "auth login" || name == "signing setup"
+		entry.Interactive = name == "interactive" || name == "auth login" || name == "signing setup" || name == "feedback"
 		for _, name := range strings.Fields(flags) {
 			entry.Flags = append(entry.Flags, shell.Flag{Name: "--" + name, Summary: "See command help for values and constraints"})
 		}
@@ -33,8 +33,9 @@ func shellCommands() []shell.Command {
 		command("references", "Work", "List local work references without reading ticket bodies", "/references [--json]", false, "json"),
 		command("tickets", "Work", "List ordered ticket filenames for a local reference", "/tickets REFERENCE [--json]", false, "json"),
 		command("inspect", "Work", "Read one explicitly selected safe local ticket or run", "/inspect @REF/NUMBERED_FILE | @ref:REF | @run:ID", false, "reference ticket json"),
+		command("feedback", "Work", "Supply private feedback to a saved PR run", "/feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]", true, "run file stdin dry-run"),
 		command("adopt", "Work", "Adopt an existing PR and address its comments", "/adopt --pr URL [--reference REF --ticket FILE] [--dry-run]", true, "pr reference ticket provider github-profile input model effort reasoning review-model review-effort speed review-speed runtime docker-tests dry-run json timeout"),
-		command("run", "Work", "Review the existing run plan, then start an independent terminal", "/run --reference REF --ticket FILE | --all [--parallel 2]", false, "reference ticket all parallel watch alternate-providers provider github-profile input base branch repo model effort review-model review-effort resume pr-feedback override-run-limits answer-file ci-feedback-file docker-tests dry-run timeout notify sound json terminal launch-id headroom runtime"),
+		command("run", "Work", "Review the existing run plan, then start an independent terminal", "/run --reference REF --ticket FILE | --all [--parallel 2]", false, "reference ticket all parallel watch alternate-providers provider github-profile input base branch repo model effort review-model review-effort resume pr-feedback pr-feedback-file override-run-limits answer-file ci-feedback-file docker-tests dry-run timeout notify sound json terminal launch-id headroom runtime"),
 		command("answer", "Work", "Read pending questions, type an answer and resume the recorded run; CLI: sdlc answer --run ID", "/answer [RUN_ID]", false, ""),
 		command("inputs", "Work", "Inspect captured requirements or attach missing files to an unpublished paused run without starting it", "/inputs --run ID [--add RELATIVE_PATH] [--dry-run]", true, "run add dry-run json"),
 		command("dependencies", "Work", "Amend one unstarted ticket's dependencies in its saved feature", "/dependencies --reference REF --ticket FILE --depends-on PARENT [--dry-run]", true, "reference ticket depends-on run-root dry-run json"),

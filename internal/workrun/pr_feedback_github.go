@@ -333,3 +333,7 @@ func (p GitHubPublisher) ReplyFeedback(ctx context.Context, plan Plan, pr Public
 	}
 	return PRFeedbackReply{ID: strconv.FormatInt(item.ID, 10), URL: item.URL}, nil
 }
+
+func (p GitHubPublisher) ValidateFeedbackBoundary(ctx context.Context, plan Plan, pr Publication) error {
+	return p.feedbackBoundary(ctx, plan, pr)
+}

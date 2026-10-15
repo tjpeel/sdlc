@@ -2075,6 +2075,44 @@ The resulting run appears in the dashboard. Resume an interrupted adoption with
 `sdlc resume --run RUN_ID --pr-feedback`. Adoption freezes accounts, runtime,
 models and revisions under the same saved-run rules as ticket execution.
 
+### Supply private feedback from pasted text or a file
+
+For a saved run whose PR is ready, submit a block of feedback without posting it
+on GitHub:
+
+```sh
+sdlc feedback --run RUN_ID
+sdlc feedback --run RUN_ID --file /PATH/TO/PRIVATE_FEEDBACK.md
+sdlc feedback --run RUN_ID --stdin < /PATH/TO/PRIVATE_FEEDBACK.md
+sdlc feedback --run RUN_ID --file /PATH/TO/PRIVATE_FEEDBACK.md --dry-run
+```
+
+The default command opens the controlling terminal with echo disabled. Paste
+multiline text, then press Ctrl-D to submit or Ctrl-C to cancel. The text is not
+echoed or placed in shell history. A real terminal is required for hidden input;
+use `--file` or `--stdin` for automation. Input must be nonempty UTF-8 text of at
+most 64 KiB. Include file paths, line references and numbered findings when useful.
+
+SDLC saves the source in the run's private `feedback/SHA256.txt` file (directory
+0700, file 0600), binds its contents to the feedback journal, and resumes the
+original implementation session. It assesses the block through the same feedback
+flow as PR comments, including correction commits, configured checks, signed
+publication, CI and a fresh independent review. The source and assessment remain
+in the private run history; SDLC does not create a GitHub comment or post a reply
+for local feedback. Normal PR updates and correction commits are still published.
+
+The run must meet the existing PR-feedback eligibility checks. This command cannot
+bypass CI, implementation, access, provider or independent-review holds, and cannot
+be combined with budget recovery. An interrupted active feedback cycle continues
+with ordinary `sdlc resume --run RUN_ID`; answer any recorded question with
+`sdlc answer`. A failed initial PR identity check retains the selected local input
+for ordinary resume. Do not resubmit just to recover an interrupted cycle.
+
+`--dry-run` checks eligibility and, when a file or stdin is supplied, reports only
+the text size and digest. It saves no feedback, contacts no remote service and
+starts no provider. Without an input source, dry-run previews without prompting.
+The explicit single-ticket resume also accepts `--pr-feedback-file FILE`.
+
 ### Address human PR feedback
 
 After adding comments to a ready PR, resume its saved run:

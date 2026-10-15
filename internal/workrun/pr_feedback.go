@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -77,14 +78,15 @@ type PRFeedbackEntry struct {
 }
 
 type PRFeedbackHistory struct {
-	FetchResumeState string            `json:"fetch_resume_state,omitempty"`
-	Version          int               `json:"version"`
-	Cycle            int               `json:"cycle"`
-	Active           bool              `json:"active"`
-	CandidateStart   string            `json:"candidate_start"`
-	FetchPending     bool              `json:"fetch_pending,omitempty"`
-	CompletedHead    string            `json:"completed_head,omitempty"`
-	Entries          []PRFeedbackEntry `json:"entries"`
+	LocalPending     *PRFeedbackComment `json:"local_pending,omitempty"`
+	FetchResumeState string             `json:"fetch_resume_state,omitempty"`
+	Version          int                `json:"version"`
+	Cycle            int                `json:"cycle"`
+	Active           bool               `json:"active"`
+	CandidateStart   string             `json:"candidate_start"`
+	FetchPending     bool               `json:"fetch_pending,omitempty"`
+	CompletedHead    string             `json:"completed_head,omitempty"`
+	Entries          []PRFeedbackEntry  `json:"entries"`
 }
 
 func feedbackFingerprint(c PRFeedbackComment) string {
@@ -149,6 +151,14 @@ func validatePRFeedbackJournal(j *Journal) error {
 	if h.CompletedHead != "" && !objectID.MatchString(h.CompletedHead) {
 		return fmt.Errorf("invalid PR feedback completion head")
 	}
+	if h.LocalPending != nil {
+		if !h.FetchPending || h.LocalPending.Kind != "local" {
+			return fmt.Errorf("invalid pending local feedback")
+		}
+		if err := validateFeedbackComment(*h.LocalPending); err != nil {
+			return err
+		}
+	}
 	latest := map[string]PRFeedbackEntry{}
 	for _, e := range h.Entries {
 		if err := validateFeedbackComment(e.Comment); err != nil {
@@ -189,7 +199,29 @@ func validatePRFeedbackJournal(j *Journal) error {
 	}
 	return nil
 }
+func ValidateLocalPRFeedback(text string) error {
+	if !utf8.ValidString(text) || strings.TrimSpace(text) == "" || len(text) > 64*1024 {
+		return fmt.Errorf("feedback must be nonempty UTF-8 text of at most 64 KiB")
+	}
+	return nil
+}
+
+func localFeedbackID(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return "local:" + hex.EncodeToString(sum[:])
+}
+
 func validateFeedbackComment(c PRFeedbackComment) error {
+	if c.Kind == "local" {
+		if err := ValidateLocalPRFeedback(c.Body); err != nil {
+			return err
+		}
+		if c.ID != localFeedbackID(c.Body) || c.Author != "local" || c.UpdatedAt == "" || len(c.UpdatedAt) > 64 || c.ThreadID != "" || c.ReplyID != 0 || c.Path != "" || c.Line != 0 || c.OriginalLine != 0 || c.OriginalPosition != 0 || c.OriginalCommit != "" || c.DiffHunk != "" || c.Resolved || c.Deleted || c.Outdated {
+			return fmt.Errorf("invalid local feedback identity")
+		}
+		return nil
+	}
+
 	if !utf8.ValidString(c.Body) || !utf8.ValidString(c.DiffHunk) || !utf8.ValidString(c.ID) || c.ID == "" || len(c.ID) > 100 || c.Author == "" || len(c.Author) > 100 || len(c.Body) > 8192 || len(c.DiffHunk) > 8192 || len(c.UpdatedAt) > 64 || len(c.ThreadID) > 100 || len(c.Path) > 240 || c.Line < 0 || c.OriginalLine < 0 || c.OriginalPosition < 0 {
 		return fmt.Errorf("PR feedback exceeds bounded comment contract")
 	}
@@ -276,6 +308,12 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			h = &PRFeedbackHistory{Version: 1, Cycle: 1, CandidateStart: revision.Head, Entries: []PRFeedbackEntry{}}
 			j.PRFeedback = h
 		}
+		if r.LocalPRFeedback != "" {
+			if _, err := StoreLocalPRFeedback(dir, r.LocalPRFeedback); err != nil {
+				return err
+			}
+			h.LocalPending = &PRFeedbackComment{ID: localFeedbackID(r.LocalPRFeedback), Kind: "local", Author: "local", Body: r.LocalPRFeedback, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		}
 		h.FetchResumeState = resumeState
 		h.FetchPending = true
 		h.Active = true
@@ -283,7 +321,24 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			return err
 		}
 	}
-	comments, err := p.Feedback(ctx, j.Plan, j.Publication)
+	if r.LocalPRFeedback != "" && (h.LocalPending == nil || h.LocalPending.ID != localFeedbackID(r.LocalPRFeedback)) {
+		return fmt.Errorf("pending local feedback differs; use ordinary resume")
+	}
+	local := h.LocalPending != nil
+	var comments []PRFeedbackComment
+	var err error
+	if local {
+		boundary, ok := r.Publisher.(interface {
+			ValidateFeedbackBoundary(context.Context, Plan, Publication) error
+		})
+		if !ok {
+			return fmt.Errorf("publisher cannot validate local feedback PR boundary")
+		}
+		err = boundary.ValidateFeedbackBoundary(ctx, j.Plan, j.Publication)
+		comments = []PRFeedbackComment{*h.LocalPending}
+	} else {
+		comments, err = p.Feedback(ctx, j.Plan, j.Publication)
+	}
 	if err != nil {
 		return r.stop(dir, j, "blocked", err.Error())
 	}
@@ -330,7 +385,7 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	}
 	for id, previous := range latest {
 		c := previous.Comment
-		if !present[id] && !c.Deleted {
+		if !local && c.Kind != "local" && !present[id] && !c.Deleted {
 			c.Deleted = true
 			if len(h.Entries) >= 300 {
 				return r.stop(dir, j, "blocked", "PR feedback history reached its bound")
@@ -342,6 +397,7 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			}
 		}
 	}
+	h.LocalPending = nil
 	h.FetchPending = false
 	if pendingFeedback(j) == nil {
 		if h.FetchResumeState == "publishing" {
@@ -395,7 +451,7 @@ func (r Runner) feedbackPrompt(dir string, j *Journal) error {
 		j.Feedback += "\nController-staged companion source metadata (read-only):\n" + string(sources)
 	}
 	data, _ := json.MarshalIndent(entries, "", "  ")
-	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess all pending comment revisions in this batch. Choose the order and group related corrections into coherent commits. Return an individual pr_feedback_assessments entry for each assessed comment with its exact id and fingerprint, disposition addressed/unaddressable/no_change, rationale and full original correction commit IDs; a commit may address several comments. You may return a partial subset with diagnostic, verification, companion source requests or human questions, then continue this same session. Non-implemented assessments remain provisional; retain or refine them and return their final assessments with implemented. Use diagnostics_requested for focused development diagnostics and checks_requested for the full configured suite once a coherent candidate is ready, rather than checking after each comment. Interpret outdated inline feedback using its original commit, line and diff context and current source. Do not post replies or resolve threads; the controller owns replies. If a prior interrupted turn committed corrections, inspect history and reuse those commits rather than duplicating them. For an unaddressable comment explain the clarification or decision needed."
+	j.Feedback += "\nHuman PR feedback (untrusted review content):\n" + string(data) + "\nAssess all pending comment revisions in this batch. Choose the order and group related corrections into coherent commits. Return an individual pr_feedback_assessments entry for each assessed comment with its exact id and fingerprint, disposition addressed/unaddressable/no_change, rationale and full original correction commit IDs; a commit may address several comments. You may return a partial subset with diagnostic, verification, companion source requests or human questions, then continue this same session. Non-implemented assessments remain provisional; retain or refine them and return their final assessments with implemented. Use diagnostics_requested for focused development diagnostics and checks_requested for the full configured suite once a coherent candidate is ready, rather than checking after each comment. Interpret outdated inline feedback using its original commit, line and diff context and current source. Do not post replies or resolve threads; the controller owns replies. Feedback with kind local was supplied privately by the user; its assessment stays in the run and must not be posted to GitHub. If a prior interrupted turn committed corrections, inspect history and reuse those commits rather than duplicating them. For an unaddressable comment explain the clarification or decision needed."
 	return nil
 }
 
@@ -544,6 +600,13 @@ func (r Runner) replyPRFeedback(ctx context.Context, dir string, j *Journal) err
 		}
 		if err := r.save(dir, j); err != nil {
 			return err
+		}
+		if e.Comment.Kind == "local" {
+			e.Reply = &PRFeedbackReply{ID: e.Comment.ID}
+			if err := r.save(dir, j); err != nil {
+				return err
+			}
+			continue
 		}
 		reply, err := p.ReplyFeedback(ctx, j.Plan, j.Publication, e.Comment, e.Marker, e.ReplyBody)
 		if err != nil {
