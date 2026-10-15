@@ -92,6 +92,9 @@ func diagnosticReview(j workrun.Journal) string {
 	if workrun.ReviewSkipNotice(j) != "" {
 		return "skipped_usage_exhausted"
 	}
+	if workrun.ReviewWarningNotice(j) != "" {
+		return "reviewed_with_limitations"
+	}
 	if j.Outcome.Status == "reviewed" {
 		return "reviewed"
 	}
@@ -128,6 +131,9 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	}
 	if j.State == "ready" && workrun.ReviewSkipNotice(j) != "" {
 		return NextAction{Category: "human_review", Instruction: workrun.ReviewSkipNotice(j), Command: "sdlc resume --run " + id + " --pr-feedback"}
+	}
+	if j.State == "ready" && workrun.ReviewWarningNotice(j) != "" {
+		return NextAction{Category: "human_review", Instruction: "Independent review completed with coverage limitations; inspect the private review result before human approval.", Command: "sdlc resume --run " + id + " --pr-feedback"}
 	}
 	if j.State == "ready" {
 		return NextAction{Category: "human_review", Instruction: "Review the published change; request PR feedback after new human comments.", Command: "sdlc resume --run " + id + " --pr-feedback"}

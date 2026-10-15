@@ -304,7 +304,7 @@ func TestStableRunOverrideCLIRejectsUnsafeReadyBoundary(t *testing.T) {
 			case "ci":
 				j.CI.Status = "failed"
 			case "review":
-				j.Outcome.Limitations = []string{"Review incomplete"}
+				j.Outcome.Questions = []string{"Which behavior is required?"}
 			case "pending-input":
 				// An unfinished transaction is rejected by action admission before any grant.
 				j.PendingInputs = &workrun.PendingInputRecovery{InputRecovery: workrun.InputRecovery{Scope: "checks", PreviousCheckpoint: j.UpdatedAt, AddedAt: time.Now().UTC(), Inputs: []workrun.Input{{Path: "fixture.txt", SHA256: strings.Repeat("a", 64)}}}, Stage: "input-recovery-pending"}

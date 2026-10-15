@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // ReviewInterruption retains known unresolved structured review work, without
@@ -61,4 +62,12 @@ func validateReviewInterruption(j *Journal) error {
 		return err
 	}
 	return validateCompanionRepositoryRequests(c.RepositoryRequests, &j.Plan)
+}
+
+// ReviewWarningNotice preserves the reviewer's stated coverage at the human checkpoint.
+func ReviewWarningNotice(j Journal) string {
+	if j.Outcome.Status != "reviewed" || len(j.Outcome.Limitations) == 0 {
+		return ""
+	}
+	return "Warning: independent review has limitations; human review is required:\n  " + strings.Join(j.Outcome.Limitations, "\n  ")
 }

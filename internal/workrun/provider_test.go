@@ -90,12 +90,12 @@ func TestOutcomeRejectsIncompleteReviewAndImplementation(t *testing.T) {
 	cases := []struct {
 		name, role string
 		outcome    Outcome
-	}{{"missing local review", "implementation", testOutcome("implemented")}, {"missing metadata", "implementation", testOutcome("implemented")}, {"missing arrays", "implementation", testOutcome("implemented")}, {"question absent", "implementation", testOutcome("waiting_for_human")}, {"review cannot request checks", "review", testOutcome("checks_requested")}, {"implementation cannot review", "implementation", testOutcome("reviewed")}, {"unsafe finding", "review", testOutcome("reviewed")}, {"review limitation", "review", testOutcome("reviewed")}}
+	}{{"missing local review", "implementation", testOutcome("implemented")}, {"missing metadata", "implementation", testOutcome("implemented")}, {"missing arrays", "implementation", testOutcome("implemented")}, {"question absent", "implementation", testOutcome("waiting_for_human")}, {"review cannot request checks", "review", testOutcome("checks_requested")}, {"implementation cannot review", "implementation", testOutcome("reviewed")}, {"unsafe finding", "review", testOutcome("reviewed")}, {"review question", "review", testOutcome("reviewed")}}
 	cases[0].outcome.LocalReview = false
 	cases[1].outcome.PRBody = ""
 	cases[2].outcome.Limitations = nil
 	cases[6].outcome.Findings = []Finding{{Priority: "P1", Path: "../private", Line: 1, Scenario: "failure", Recommendation: "fix"}}
-	cases[7].outcome.Limitations = []string{"required evidence missing"}
+	cases[7].outcome.Questions = []string{"Which behavior is required?"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := validateOutcome(tc.outcome, tc.role); err == nil {

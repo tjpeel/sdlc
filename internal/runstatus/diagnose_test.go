@@ -54,3 +54,18 @@ func TestDiagnosticNextActionSelectsNumericPermissionOrHumanAnswer(t *testing.T)
 		t.Fatal("unknown hold was guessed or exposed")
 	}
 }
+
+func TestPartialReviewDiagnosticPreservesWarningWithoutPrivateText(t *testing.T) {
+	j := workrun.Journal{ID: strings.Repeat("a", 24), State: "ready", Outcome: workrun.Outcome{Status: "reviewed", Limitations: []string{"private coverage detail"}}}
+	d, err := DiagnosticSnapshot(View{Available: true, ID: j.ID, Directory: t.TempDir(), Journal: &j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Review != "reviewed_with_limitations" || d.ReviewLimitations != 1 || d.NextAction.Category != "human_review" || strings.Contains(string(raw), "private coverage detail") {
+		t.Fatalf("warning diagnostic: %s", raw)
+	}
+}

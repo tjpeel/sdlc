@@ -113,7 +113,7 @@ func ValidatePRFeedbackResume(j Journal) error {
 	if j.SessionID == "" || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) {
 		return fmt.Errorf("PR feedback requires an existing PR and its original implementation session")
 	}
-	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && (j.Outcome.Status == "reviewed" || ReviewSkipNotice(j) != "" && validateReviewSkip(&j) == nil && j.Outcome.Status == "implemented" && j.Outcome.LocalReview) && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && len(j.Outcome.Limitations) == 0 && j.CI.Status == "passed" && j.Evidence.Passed {
+	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && (j.Outcome.Status == "reviewed" || ReviewSkipNotice(j) != "" && validateReviewSkip(&j) == nil && j.Outcome.Status == "implemented" && j.Outcome.LocalReview) && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && (len(j.Outcome.Limitations) == 0 || j.Outcome.Status == "reviewed") && j.CI.Status == "passed" && j.Evidence.Passed {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.State == "blocked" && j.ResumeState == "publishing" && strings.HasPrefix(j.StopReason, prFeedbackReplyHold) && j.Outcome.Status == "implemented" && j.Evidence.Passed && pendingFeedback(&j) == nil {

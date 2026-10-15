@@ -375,6 +375,9 @@ func Reason(v runstatus.View) string {
 	}
 	if v.State == "ready" {
 		if v.Journal != nil {
+			if notice := workrun.ReviewWarningNotice(*v.Journal); notice != "" {
+				return notice
+			}
 			if notice := workrun.ReviewSkipNotice(*v.Journal); notice != "" {
 				return notice
 			}

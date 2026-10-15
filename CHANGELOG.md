@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.79 - 2026-10-15
+
+### Changed
+
+- Treat coverage limitations in a completed independent review as visible warnings at the human-review checkpoint, retaining the reviewer’s account in private run state. Findings, human questions and operational failures keep their existing handling. Diagnostics distinguish reviews with limitations; later PR feedback passes remain available.
+- Ask reviewers to explain incomplete coverage and why they stopped, without treating controller verification as their own review.
+
 ## 0.1.0-beta.78 - 2026-10-15
 
 ### Changed

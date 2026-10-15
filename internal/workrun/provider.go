@@ -389,7 +389,7 @@ func validateOutcome(outcome Outcome, role string) error {
 			return fmt.Errorf("implementation handoff does not satisfy local review and PR metadata")
 		}
 	case "reviewed":
-		if role != "review" || len(outcome.Questions) > 0 || len(outcome.Limitations) > 0 {
+		if role != "review" || len(outcome.Questions) > 0 {
 			return fmt.Errorf("independent review is incomplete")
 		}
 	default:

@@ -1,6 +1,7 @@
 package workrun
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -323,5 +324,38 @@ func TestReviewHumanAnswerPreservedSeparatelyFromProcessOutput(t *testing.T) {
 	prompt := r.prompt(loaded, "review")
 	if !strings.Contains(prompt, "Should missing records return 404?") || !strings.Contains(prompt, "Yes, return 404.") || strings.Contains(prompt, "forged") || strings.Contains(prompt, "private command output") {
 		t.Fatal("explicit human input lost or process feedback leaked")
+	}
+}
+
+func TestCompletedPartialReviewReachesReadyWithWarning(t *testing.T) {
+	dir, j := testRun(t)
+	review := testOutcome("reviewed")
+	review.Limitations = []string{"Only two files were reviewed; remaining diff was not inspected."}
+	writer := eventWriter{provider: "codex", output: &bytes.Buffer{}}
+	if _, err := writer.Write([]byte(codexEvents(review))); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.finish("review"); err != nil {
+		t.Fatalf("completed partial review rejected: %v", err)
+	}
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), writer.result.Outcome}}
+	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
+	var output bytes.Buffer
+	r.Output = &output
+	if err := r.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.State != "ready" || len(saved.Outcome.Limitations) != 1 {
+		t.Fatalf("partial review lost: %+v", saved)
+	}
+	if !strings.Contains(output.String(), "Warning: independent review has limitations") || !strings.Contains(output.String(), review.Limitations[0]) {
+		t.Fatalf("missing warning: %s", output.String())
+	}
+	if err := ValidatePRFeedbackResume(saved); err != nil {
+		t.Fatalf("warning prevents later feedback pass: %v", err)
 	}
 }

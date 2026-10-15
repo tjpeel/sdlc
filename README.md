@@ -8,6 +8,9 @@ inspecting the shared runtime, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions, and single-ticket or feature execution through checks, draft
 PRs, CI and independent review, with a live dashboard of local runs.
+A completed independent review may report coverage limitations: these are retained
+as warnings at the human-review checkpoint. Findings still enter repair, and
+required human decisions and operational failures still stop the run.
 Adopt an existing open same-repository PR with `sdlc adopt --pr PR_URL` to assess
 review comments and publish verified corrections; a local ticket is optional.
 Human PR comments can resume the original implementation session through checks
@@ -30,7 +33,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.78`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.79`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
