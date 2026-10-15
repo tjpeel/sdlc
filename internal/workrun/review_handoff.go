@@ -65,6 +65,14 @@ type ReviewAssessment struct {
 }
 
 func validateReviewJournal(j *Journal) error {
+	seenAutoHeads := map[string]bool{}
+	for _, head := range j.AutoRecommendationHeads {
+		if !objectID.MatchString(head) || seenAutoHeads[head] {
+			return fmt.Errorf("invalid automatic recommendation acceptance history")
+		}
+		seenAutoHeads[head] = true
+	}
+
 	if err := validateReviewContinuation(j); err != nil {
 		return err
 	}

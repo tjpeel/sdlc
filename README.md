@@ -14,6 +14,11 @@ existing saved runs retain their selected effort. The diff-based `pr-v1` policy
 remains available as an explicit `review_effort_policy` setting; it is not the
 new-run default.
 
+Independent review recommendations can be accepted with delegated implementation
+decisions, or automatically through an explicit persisted model default or
+`--auto-accept-recommendations`. Required verification and publication gates
+remain in place. Review-only entry points never start repairs automatically.
+
 Completion usage reports cover only the current run/resume invocation, using prior
 native checkpoints as subtraction baselines. They show model/role, requested effort and speed, elapsed
 provider time, native token counts and observed subagents. Missing values are
@@ -56,7 +61,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.91`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.92`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

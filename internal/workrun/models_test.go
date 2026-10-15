@@ -117,3 +117,24 @@ func TestDefaultModelPolicyAndNativeSpeed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPersistedAutomaticRecommendationDefaultIsExplicit(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte(`{"version":1,"codex":{"auto_accept_recommendations":true},"claude":{"auto_accept_recommendations":true}}`)
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := LoadModels(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"codex", "claude"} {
+		roles, err := ResolveModels(defaults, provider, "", "", "", "")
+		if err != nil || !roles.AutoAcceptRecommendations || roles.Review.Effort != "high" {
+			t.Fatal("explicit persisted default not retained", roles, err)
+		}
+	}
+	if DefaultModels().Codex.AutoAcceptRecommendations || DefaultModels().Claude.AutoAcceptRecommendations {
+		t.Fatal("automatic acceptance became implicit for other installations")
+	}
+}

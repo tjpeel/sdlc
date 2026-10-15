@@ -20,11 +20,12 @@ type Model struct {
 }
 
 type Roles struct {
-	ReviewEffortPolicy  string `json:"review_effort_policy,omitempty"`
-	ImplementationSpeed string `json:"implementation_speed,omitempty"`
-	ReviewSpeed         string `json:"review_speed,omitempty"`
-	Implementation      Model  `json:"implementation"`
-	Review              Model  `json:"review"`
+	AutoAcceptRecommendations bool   `json:"auto_accept_recommendations,omitempty"`
+	ReviewEffortPolicy        string `json:"review_effort_policy,omitempty"`
+	ImplementationSpeed       string `json:"implementation_speed,omitempty"`
+	ReviewSpeed               string `json:"review_speed,omitempty"`
+	Implementation            Model  `json:"implementation"`
+	Review                    Model  `json:"review"`
 }
 
 type Input struct {
@@ -276,6 +277,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	AutoRecommendationHeads   []string                `json:"auto_recommendation_heads,omitempty"`
 	PRCheckpoints             []PRCheckpoint          `json:"pr_checkpoints,omitempty"`
 	ReviewEffort              *ReviewEffortDecision   `json:"review_effort_selection,omitempty"`
 	ReviewInterruption        *ReviewInterruption     `json:"interrupted_independent_review,omitempty"`

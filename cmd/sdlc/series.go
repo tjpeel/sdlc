@@ -515,6 +515,9 @@ func selectSeriesSettings(ctx context.Context, directory string, plan workseries
 		if err != nil {
 			return settings, err
 		}
+		if options.supplied["auto-accept-recommendations"] {
+			roles.AutoAcceptRecommendations = options.autoAcceptRecommendations
+		}
 		settings.Roles[ticket.File] = roles
 	}
 	return settings, nil

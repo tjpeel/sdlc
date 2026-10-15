@@ -2190,7 +2190,11 @@ writing files, contacting remote services or starting agents. The real command
 records your acceptance privately as revision-bound local feedback and resumes
 the original implementation session. Acceptance authorises the proposed changes,
 including related contract, documentation and test updates when scope changes.
-Materially ambiguous alternatives still require a question. Required checks,
+Within accepted recommendations, the implementer is authorised to choose the
+primary proposed improvement or the smallest supported alternative using repository
+evidence. Ordinary removal/retention or equivalent implementation choices do not
+require another prompt. Security, privacy, data-retention and external-service
+constraints remain binding; genuine access or irreducible domain blockers stop work. Required checks,
 signing, publication, CI and a fresh independent review remain in place. No
 GitHub feedback comment is posted; correction commits and normal PR updates
 still publish through the existing workflow.
@@ -2202,6 +2206,53 @@ recommendations superseded by a later report, accept defects as recommendations,
 or grant additional recovery allowances. Use local feedback to accept a subset
 or specify a different resolution. The option cannot be combined with another
 resume action; `--timeout` remains an optional explicit controller deadline.
+
+### Automatically accept review recommendations
+
+Enable automatic acceptance for a new run or adoption with
+`--auto-accept-recommendations`. For a completed run, accept the current selection
+and enable the same policy for later reviews:
+
+```sh
+sdlc resume --run RUN_ID --auto-accept-recommendations --dry-run
+sdlc resume --run RUN_ID --auto-accept-recommendations
+```
+
+If an earlier acceptance paused only to choose between alternatives in those same
+recorded recommendations, this command supplies delegated decision authority and
+continues that original session. It rejects unrelated questions and stale selections.
+`--accept-recommendations` also supports that narrowly bound recovery without
+enabling automatic future acceptance. Repeating ordinary resume after an interruption
+retains the recorded policy and existing work.
+
+To default future runs to automatic acceptance, merge these fields into the private
+`models.json` beside the runtime record (preserve other configured model fields):
+
+```json
+{
+  "version": 1,
+  "codex": {"auto_accept_recommendations": true},
+  "claude": {"auto_accept_recommendations": true}
+}
+```
+
+The built-in default remains false. A new-run `--auto-accept-recommendations=false`
+overrides a persisted default; the same explicit false option on ordinary resume
+disables the saved policy. Existing saved runs do not inherit a later default change.
+
+Each automatic selection uses only the latest completed review of the exact
+published base/head. Acceptance is retained privately through local feedback,
+including the proposed change and decision authority. Repairs still require the
+configured checks, signing, publication, CI and fresh independent review. If the
+same head returns recommendations after an accepted repair cycle, the run stops
+for lack of source progress rather than approving unchanged work repeatedly.
+This introduces no new time, token or repair-round allowance.
+
+Review-only adoption still parks for human follow-up, even when a default enables
+automatic acceptance. No implementation or publication begins from that entry
+point without an explicit later acceptance. An actual blocker remains a stop;
+automatic acceptance is not permission to invent facts, bypass access controls,
+merge a PR or modify unrelated scope.
 
 ### Mark PR feedback as already handled
 

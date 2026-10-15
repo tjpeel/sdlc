@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.92 - 2026-10-16
+
+### Added
+
+- Opt into automatic independent-review recommendation acceptance per run or through private model defaults. Retain revision-bound acceptance and the normal repair, verification, signing, publication and fresh-review cycle; stop repeated acceptance without source progress and preserve review-only boundaries.
+
+### Changed
+
+- Delegate evidence-backed choices within accepted recommendations instead of asking again about ordinary scope alternatives. Allow an explicitly renewed acceptance to supply that decision authority for a question arising from the same recorded acceptance, without answering unrelated questions or overriding genuine blockers.
+
+
 ## 0.1.0-beta.91 - 2026-10-16
 
 ### Added

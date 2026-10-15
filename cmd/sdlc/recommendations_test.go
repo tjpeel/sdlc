@@ -55,3 +55,16 @@ func TestResumeRecommendationAcceptanceValidatesExplicitTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomaticRecommendationRunOptionsAndOptOut(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		options, err := parseRunOptions(runArgs("--auto-accept-recommendations="+value, "--dry-run"))
+		if err != nil || options.autoAcceptRecommendations != (value == "true") {
+			t.Fatal("new-run policy not parsed", err)
+		}
+		options, err = parseRunOptions(runArgs("--resume", "saved", "--auto-accept-recommendations="+value, "--dry-run"))
+		if err != nil || options.autoAcceptRecommendations != (value == "true") {
+			t.Fatal("resume policy not parsed", err)
+		}
+	}
+}
