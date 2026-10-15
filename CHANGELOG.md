@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.87 - 2026-10-15
+
+### Changed
+
+- Continue accessible unfinished PR inspection in the same independent native session and pinned checkout, including standalone adoption reviews. Inspection turns retain model, effort, speed and accounting without consuming implementation repair rounds.
+- Require full material inspection for review completion. Named unfinished areas and explicit completed areas establish progress; lack of progress retains the session and stops for attention instead of restarting reviews. Genuine blockers and native failures keep their holds.
+- Retain interim findings and review reports while allowing the final reviewer to explain a withdrawn suspicion. Verify snapshot, selected inputs, publication and CI before continuation; old saved reports remain readable.
+
 ## 0.1.0-beta.86 - 2026-10-15
 
 ### Changed

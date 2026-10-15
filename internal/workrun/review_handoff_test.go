@@ -327,10 +327,10 @@ func TestReviewHumanAnswerPreservedSeparatelyFromProcessOutput(t *testing.T) {
 	}
 }
 
-func TestCompletedPartialReviewReachesReadyWithWarning(t *testing.T) {
+func TestCompletedInspectionRetainsExternalVerificationWarning(t *testing.T) {
 	dir, j := testRun(t)
 	review := testOutcome("reviewed")
-	review.Limitations = []string{"Only two files were reviewed; remaining diff was not inspected."}
+	review.Limitations = []string{"Deployed dependency settings could not be independently verified."}
 	writer := eventWriter{provider: "codex", output: &bytes.Buffer{}}
 	if _, err := writer.Write([]byte(codexEvents(review))); err != nil {
 		t.Fatal(err)

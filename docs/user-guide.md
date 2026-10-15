@@ -589,8 +589,13 @@ findings return to the original implementation session; repairs repeat checks, s
 new review. Evidence-backed design or scope recommendations are retained for human consideration and do
 not enter the automatic repair loop or authorise changes to approved requirements. Each review reports
 its exact PR base/head and whether it inspected the full change, part of it, or only a repair delta.
-Partial coverage reaches the human checkpoint with a warning; earlier gaps remain visible until a later
-full inspection supersedes them. Older runs without coverage metadata are shown as unknown. Review
+Available unfinished inspection uses `review_incomplete` and continues with the same reviewer, native
+session, execution settings and pinned checkout. The reviewer names bounded remaining areas and records
+which earlier areas it finished. No progress stops with the original session retained; actual access,
+evidence, usage and decision blockers do not trigger automatic retries. A repair-only pass cannot complete
+whole-PR inspection. Full inspection can still report genuine unavailable external-verification evidence.
+Earlier inspection gaps remain in history until full inspection supersedes them. Older saved reports
+without coverage metadata remain readable and are shown as unknown. Review
 recommendations retain their original revision even after later reviews, so compare them with the current
 PR before acting. Passing current CI and a completed review produce `ready` for human review, with any
 coverage warnings and recommendations. SDLC never merges. Inspect the actual PR, author, signatures/Verified attribution, CI and changes.

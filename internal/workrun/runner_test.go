@@ -202,7 +202,8 @@ func (p *fakePublisher) Checks(context.Context, Plan, Publication) (CIResult, er
 }
 func fakeRunner(p *fakeProvider, c *fakeChecker, pub *fakePublisher, repo *fakeRepository) Runner {
 	return Runner{Provider: p, Checker: c, Publisher: pub, Repository: repo, Output: io.Discard, PollInterval: time.Millisecond, ReviewWorkspace: func(_ context.Context, j Journal, _ string) (string, error) {
-		return filepath.Join(j.Workspace, "fresh-review"), nil
+		path := filepath.Join(j.Workspace, "fresh-review")
+		return path, os.MkdirAll(path, 0700)
 	}}
 }
 func TestRunnerLifecycleAndNativeSession(t *testing.T) {

@@ -20,7 +20,7 @@ var reviewOutcomeSchema = func() string {
 		properties[key] = all[key]
 	}
 	status := properties["status"].(map[string]any)
-	status["enum"] = []string{"reviewed", "checks_requested", "waiting_for_human", "blocked", "failed"}
+	status["enum"] = []string{"reviewed", "review_incomplete", "checks_requested", "waiting_for_human", "blocked", "failed"}
 	properties["repository_requests"].(map[string]any)["description"] = "Request missing read-only companion source with checks_requested. Return [] when unused."
 	schema["properties"], schema["required"] = properties, keys
 	data, err := json.Marshal(schema)

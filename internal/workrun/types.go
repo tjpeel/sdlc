@@ -176,14 +176,16 @@ type Finding struct {
 
 // ReviewCoverage records inspection scope separately from test evidence.
 type ReviewCoverage struct {
-	BaseSHA string   `json:"base_sha"`
-	HeadSHA string   `json:"head_sha"`
-	Scope   string   `json:"scope"`
-	Gaps    []string `json:"gaps"`
+	BaseSHA       string   `json:"base_sha"`
+	HeadSHA       string   `json:"head_sha"`
+	Scope         string   `json:"scope"`
+	Gaps          []string `json:"gaps"`
+	CompletedGaps []string `json:"completed_gaps,omitempty"`
 }
 
 // ReviewReport retains bounded review evidence across repair rounds.
 type ReviewReport struct {
+	Findings        []Finding       `json:"findings,omitempty"`
 	Publication     Publication     `json:"publication"`
 	Attempt         int             `json:"attempt"`
 	Coverage        *ReviewCoverage `json:"coverage,omitempty"`
@@ -315,6 +317,7 @@ type Journal struct {
 	ReviewRepairIncreases     []ReviewRepairIncrease  `json:"review_repair_increases,omitempty"`
 	ReviewHumanInput          *ReviewHumanInput       `json:"review_human_input,omitempty"`
 	ReviewRepairBudget        *ReviewRepairBudget     `json:"review_repair_budget,omitempty"`
+	ReviewContinuation        *ReviewContinuation     `json:"review_continuation,omitempty"`
 	ReviewReports             []ReviewReport          `json:"review_reports,omitempty"`
 	ReviewAssessment          *ReviewAssessment       `json:"review_assessment,omitempty"`
 	CIRepairBudget            *CIRepairBudget         `json:"ci_repair_budget,omitempty"`

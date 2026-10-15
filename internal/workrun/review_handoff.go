@@ -65,6 +65,9 @@ type ReviewAssessment struct {
 }
 
 func validateReviewJournal(j *Journal) error {
+	if err := validateReviewContinuation(j); err != nil {
+		return err
+	}
 	if err := validateReviewReports(j); err != nil {
 		return err
 	}

@@ -363,3 +363,14 @@ Awaiting feedback makes no provider call; checks-only work stays in the existing
 credential-free check worker. Human-review declarations are local metadata, not
 provider review results. Provider, policy, access and usage holds cannot be cleared
 by choosing a new entry point.
+
+## Independent inspection continuation
+
+Continuation was checked on 15 October 2026 against the official
+[Codex non-interactive session resume guide](https://learn.chatgpt.com/docs/non-interactive-mode#resume-a-non-interactive-session)
+and [Claude headless session guidance](https://code.claude.com/docs/en/headless).
+It reuses the existing native resume argument and private session directory with
+the same selected provider, model, effort and speed. It adds no authentication
+route, account switch, replacement session or custom provider client. Native
+failures and usage restrictions stop work; unfinished review evidence cannot be
+converted into a skipped review. Tests use offline native-event fixtures only.

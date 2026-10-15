@@ -39,6 +39,16 @@ func validateReviewDetails(out Outcome, role string) error {
 	default:
 		return fmt.Errorf("unknown review coverage scope")
 	}
+	if len(c.CompletedGaps) > 32 {
+		return fmt.Errorf("too many completed review gaps")
+	}
+	completed := map[string]bool{}
+	for _, gap := range c.CompletedGaps {
+		if strings.TrimSpace(gap) == "" || !utf8.ValidString(gap) || completed[gap] {
+			return fmt.Errorf("invalid completed review gap")
+		}
+		completed[gap] = true
+	}
 	for _, gap := range c.Gaps {
 		if strings.TrimSpace(gap) == "" || !utf8.ValidString(gap) {
 			return fmt.Errorf("invalid review coverage gap")
@@ -55,7 +65,7 @@ func recordReviewReport(j *Journal) error {
 	if c != nil && (c.BaseSHA != j.Publication.BaseSHA || c.HeadSHA != j.Publication.HeadSHA) {
 		return fmt.Errorf("review coverage does not match the published PR boundary")
 	}
-	report := ReviewReport{Publication: j.Publication, Attempt: j.Attempt, Coverage: c, Limitations: j.Outcome.Limitations, Recommendations: j.Outcome.Recommendations}
+	report := ReviewReport{Publication: j.Publication, Attempt: j.Attempt, Findings: append([]Finding(nil), j.Outcome.Findings...), Coverage: c, Limitations: j.Outcome.Limitations, Recommendations: j.Outcome.Recommendations}
 	data, err := json.Marshal(report)
 	if err != nil || len(data) > 32*1024 {
 		return fmt.Errorf("review report exceeds its retention bound")
@@ -78,7 +88,15 @@ func validateReviewReports(j *Journal) error {
 		if c := report.Coverage; c != nil && (c.BaseSHA != report.Publication.BaseSHA || c.HeadSHA != report.Publication.HeadSHA) {
 			return fmt.Errorf("retained review coverage boundary changed")
 		}
-		if err := validateReviewDetails(Outcome{ReviewCoverage: report.Coverage, Recommendations: report.Recommendations}, "review"); err != nil {
+		findings := report.Findings
+		if findings == nil {
+			findings = []Finding{}
+		}
+		limitations := report.Limitations
+		if limitations == nil {
+			limitations = []string{}
+		}
+		if err := validateOutcome(Outcome{Status: "blocked", Summary: "Retained review report", Questions: []string{}, Findings: findings, Limitations: limitations, ReviewCoverage: report.Coverage, Recommendations: report.Recommendations}, "review"); err != nil {
 			return err
 		}
 		previous = report.Attempt

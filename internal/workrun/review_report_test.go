@@ -75,15 +75,13 @@ func TestRecommendationsReachHumanWithoutRepair(t *testing.T) {
 	}
 }
 
-func TestDeltaReviewPreservesEarlierGapsAndRecommendations(t *testing.T) {
+func TestDeltaReviewContinuesAndRetainsEarlierEvidence(t *testing.T) {
 	dir, j := testRun(t)
-	first := reviewedFinding("P2")
-	first.ReviewCoverage = coverage("partial", "Assertions in the remaining tests were not inspected.")
-	first.Limitations = []string{"A required behaviour could not be confirmed."}
+	first := testOutcome("reviewed")
+	first.ReviewCoverage = coverage("delta", "Only the repair was inspected")
 	first.Recommendations = []Finding{{Priority: "P3", Path: "app.go", Line: 1, Scenario: "Two copies of a rule may drift.", Recommendation: "Consider sharing the rule."}}
-	last := testOutcome("reviewed")
-	last.ReviewCoverage = coverage("delta", "Only the repair was inspected; earlier changes were not reviewed again.")
-	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), first, testOutcome("implemented"), last}}
+	final := testOutcome("reviewed")
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), first, final}}
 	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
 	var output bytes.Buffer
 	r.Output = &output
@@ -94,16 +92,14 @@ func TestDeltaReviewPreservesEarlierGapsAndRecommendations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.ReviewReports) != 2 {
-		t.Fatal("review history lost")
+	if saved.State != "ready" || len(saved.ReviewReports) != 2 || len(p.calls) != 3 || p.calls[2].ResumeID != testNative || p.calls[2].Directory != p.calls[1].Directory {
+		t.Fatal("delta review completed without same-session inspection")
 	}
-	for _, text := range []string{"remaining tests", "required behaviour", "Only the repair", "Consider sharing the rule"} {
-		if !strings.Contains(output.String(), text) {
-			t.Fatalf("human warning lost %q: %s", text, output.String())
-		}
+	if saved.ReviewReports[0].Coverage.Gaps[0] != "Only the repair was inspected" || !strings.Contains(output.String(), "Consider sharing the rule") {
+		t.Fatal("earlier evidence lost")
 	}
-	if !strings.Contains(p.calls[3].Prompt, "previous_review_report") || !strings.Contains(p.calls[3].Prompt, "remaining tests") {
-		t.Fatal("reviewer did not receive earlier coverage")
+	if !strings.Contains(p.calls[2].Prompt, "remaining_inspection") || !strings.Contains(p.calls[2].Prompt, "Only the repair") {
+		t.Fatal("focused continuation omitted named work")
 	}
 }
 
@@ -195,16 +191,16 @@ func TestStandaloneReviewDisplaysCoverageAndRecommendations(t *testing.T) {
 	out := testOutcome("reviewed")
 	out.ReviewCoverage = coverage("partial", "Uninspected dependency behaviour")
 	out.Recommendations = []Finding{{Priority: "P3", Path: "api.go", Line: 1, Scenario: "Duplicated policy could drift.", Recommendation: "Consider one policy boundary."}}
-	provider.outcomes = []Outcome{out}
+	provider.outcomes = []Outcome{out, testOutcome("reviewed")}
 	var output bytes.Buffer
 	r.Output = &output
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "awaiting_feedback" || checks.calls != 0 || pub.calls != 0 || len(provider.sessions) != 1 {
+	if j.State != "awaiting_feedback" || checks.calls != 0 || pub.calls != 0 || len(provider.sessions) != 2 {
 		t.Fatal("standalone review started repairs")
 	}
-	if !strings.Contains(output.String(), "Uninspected dependency") || !strings.Contains(output.String(), "one policy boundary") {
+	if !strings.Contains(output.String(), "one policy boundary") {
 		t.Fatal("standalone review hid evidence", output.String())
 	}
 }

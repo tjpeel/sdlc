@@ -243,14 +243,14 @@ func (r Runner) runPRCheckpointReview(ctx context.Context, dir string, j *Journa
 	if r.ReviewWorkspace == nil {
 		return r.stop(dir, j, "blocked", "independent review snapshot unavailable")
 	}
-	workspace, err := r.ReviewWorkspace(ctx, *j, dir)
+	workspace, err := r.prepareIndependentReview(ctx, dir, j)
 	if err != nil {
 		return r.stop(dir, j, "blocked", err.Error())
 	}
 	if err := r.selectReviewEffort(ctx, dir, j, workspace); err != nil {
 		return r.stop(dir, j, "blocked", err.Error())
 	}
-	result, err := r.session(ctx, dir, j, "review", workspace, "")
+	result, err := r.independentReview(ctx, dir, j, workspace)
 	if result.ReviewInterruption != nil {
 		interruption := *result.ReviewInterruption
 		interruption.Publication, interruption.Attempt, interruption.Provider, interruption.Model = j.Publication, j.Attempt, j.Plan.Roles.Review.Provider, j.Plan.Roles.Review.Name
