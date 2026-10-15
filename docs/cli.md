@@ -1447,6 +1447,16 @@ source to add the baked publisher before using the new publication route; the
 credential volumes remain separate. See Docker's [image tagging](https://docs.docker.com/reference/cli/docker/image/tag/)
 and [image removal](https://docs.docker.com/reference/cli/docker/image/rm/) documentation.
 
+### Refresh dependencies in a named runtime build
+
+`runtime build --name NAME --dependencies` resolves current supported public
+versions for a new or existing named runtime. Combine it with `--skills-source`
+and `--agents-source` to retain exact clean local catalogue commits. Preview
+with `--dry-run`; this contacts public metadata but makes no Docker changes or
+saved selections. Do not combine it with `--source-pins`. See
+[named runtime builds](runtime-variants.md#refresh-dependencies-while-retaining-local-catalogues)
+for commands, release-track rules and candidate validation.
+
 ## Inspect the runtime
 
 ```sh

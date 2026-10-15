@@ -30,7 +30,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.72`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.73`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -131,8 +131,11 @@ Runtime update resolves exact public releases, refreshes the installed packages 
 rebuilds `sdlc:local`. It selects the candidate after tool, inventory and package
 checks pass. Selected pins stay in private installation state; source pins and
 login storage are preserved. Ordinary `runtime build` retains these local pins;
-`runtime build --source-pins` explicitly returns to the checkout's pins. See [runtime updates](docs/cli.md#update-the-runtime)
-for release tracks and dependencies controlled by their parent packages.
+`runtime build --source-pins` explicitly returns to the checkout's pins. Named
+builds can combine `--dependencies` with local skills and agents; see
+[named runtimes](docs/runtime-variants.md). See
+[runtime updates](docs/cli.md#update-the-runtime) for release tracks and
+dependencies controlled by their parent packages.
 
 Login opens a browser flow through the terminal. Credentials stay in separate
 local Docker storage and survive CLI reinstallation and image rebuilds. These

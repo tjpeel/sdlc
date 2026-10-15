@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.73 - 2026-10-15
+
+### Added
+
+- Refresh supported dependencies when building a named runtime with `--dependencies`, while retaining exact local skills and agents commits. Preview resolved versions and image digests with `--dry-run`; fresh builds do not require an installed runtime, and candidate validation precedes selection.
+
 ## 0.1.0-beta.72 - 2026-10-15
 
 ### Added

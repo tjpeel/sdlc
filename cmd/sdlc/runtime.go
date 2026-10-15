@@ -49,6 +49,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	var githubProfile string
 	var dryRun bool
 	var all bool
+	var dependencies bool
 	var sourcePins bool
 	var force bool
 	var agentTools bool
@@ -57,6 +58,8 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if args[0] == "build" || args[0] == "update" {
 		flags.StringVar(&source, "source", "", "SDLC source (uses bundled Homebrew source or saved source when omitted)")
 		if args[0] == "build" {
+			flags.BoolVar(&dependencies, "dependencies", false, "resolve current supported dependencies for a named runtime")
+			flags.BoolVar(&dryRun, "dry-run", false, "with --dependencies, preview public metadata without rebuilding")
 			flags.StringVar(&agentsSource, "agents-source", "", "clean committed local agents Git catalogue (requires --name)")
 			flags.StringVar(&skillsSource, "skills-source", "", "clean committed local skills Git catalogue (requires --name)")
 			flags.BoolVar(&sourcePins, "source-pins", false, "use source Dockerfile pins instead of private dependency overrides")
@@ -89,6 +92,17 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	if updateDockerfile && (!agentTools || source == "") {
 		return fmt.Errorf("--update-dockerfile requires --agent-tools and an explicit --source checkout")
 	}
+	if args[0] == "build" {
+		if dependencies && name == "" {
+			return fmt.Errorf("runtime build --dependencies requires --name")
+		}
+		if dependencies && sourcePins {
+			return fmt.Errorf("--dependencies cannot combine with --source-pins")
+		}
+		if dryRun && !dependencies {
+			return fmt.Errorf("runtime build --dry-run requires --dependencies")
+		}
+	}
 	manager, err := runtimeimage.NewNamed(output, diagnostics, name)
 	if err != nil {
 		return err
@@ -107,6 +121,9 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 			return fmt.Errorf("named runtimes use runtime build --name NAME; runtime update manages the default runtime")
 		}
 		return runtimeUpdateWithSourcePolicy(ctx, manager, runtimeupdates.New(), source, dryRun, agentTools, updateDockerfile, output)
+	}
+	if dependencies {
+		return runtimeBuildDependencies(ctx, manager, runtimeupdates.New(), manager.Directory, dependencyBuildOptions{Name: name, Source: source, SkillsSource: skillsSource, AgentsSource: agentsSource, DryRun: dryRun, Force: force}, output)
 	}
 	policy := "retain private dependency pins for the same source"
 	if sourcePins {

@@ -340,3 +340,21 @@ func localAgentsRecipe(recipe []byte, revision string) ([]byte, error) {
 	text = argument.ReplaceAllString(text, "ARG AGENTS_REVISION="+revision)
 	return []byte(strings.Replace(text, "ARG LOCAL_AGENTS=0\n", "ARG LOCAL_AGENTS=1\n", 1)), nil
 }
+
+// CatalogueRevision validates the same bounded archive used by a build before
+// dependency planning contacts upstreams. Build rechecks the selected revision.
+func CatalogueRevision(ctx context.Context, source, catalogue string) (string, error) {
+	if catalogue != "skills" && catalogue != "agents" {
+		return "", errors.New("unsupported catalogue")
+	}
+	directory, err := os.MkdirTemp("", "sdlc-catalogue-plan-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(directory)
+	if err = os.Mkdir(filepath.Join(directory, "local-catalogues"), 0700); err != nil {
+		return "", err
+	}
+	_, revision, err := snapshotCatalogue(ctx, source, directory, catalogue)
+	return revision, err
+}

@@ -449,3 +449,39 @@ func TestLocalAgentsOnlyBuildPreservesSourceDefaults(t *testing.T) {
 		t.Fatal("actual local recipe or provenance differs")
 	}
 }
+
+func TestPlannedLocalCatalogueChangeStopsBeforeDocker(t *testing.T) {
+	for _, kind := range []string{"skills", "agents"} {
+		t.Run(kind, func(t *testing.T) {
+			manager, docker, source, _, _ := pinsFixture(t)
+			manager.Name = "planned"
+			catalogue, _ := skillsFixture(t)
+			if kind == "agents" {
+				if err := os.Rename(filepath.Join(catalogue, "scripts/install-skills"), filepath.Join(catalogue, "scripts/install-agents")); err != nil {
+					t.Fatal(err)
+				}
+				skillGit(t, catalogue, "add", ".")
+				skillGit(t, catalogue, "-c", "user.name=Example", "-c", "user.email=example@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "Add agent installer")
+			}
+			revision, err := CatalogueRevision(context.Background(), catalogue, kind)
+			if err != nil || revision != skillGit(t, catalogue, "rev-parse", "HEAD") {
+				t.Fatal(revision, err)
+			}
+			options := BuildOptions{}
+			if kind == "skills" {
+				options.SkillsSource = catalogue
+				options.ExpectedSkillsRevision = strings.Repeat("f", 40)
+			} else {
+				options.AgentsSource = catalogue
+				options.ExpectedAgentsRevision = strings.Repeat("f", 40)
+			}
+			before := len(docker.calls)
+			if _, err := manager.BuildWithOptions(context.Background(), source, options); err == nil || !strings.Contains(err.Error(), "changed after dependency planning") {
+				t.Fatal("accepted changed catalogue", err)
+			}
+			if len(docker.calls) != before {
+				t.Fatal("changed catalogue reached Docker")
+			}
+		})
+	}
+}

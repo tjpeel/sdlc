@@ -42,8 +42,10 @@ type State struct {
 }
 
 type BuildOptions struct {
-	AgentsSource string
-	SkillsSource string
+	ExpectedSkillsRevision string
+	ExpectedAgentsRevision string
+	AgentsSource           string
+	SkillsSource           string
 	// SourcePins ignores private dependency overrides and uses the source Dockerfile.
 	SourcePins bool
 	// SourceRevision supplies verified archive provenance when no Git checkout exists.
@@ -251,6 +253,11 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	if options.ExpectedImageID != "" && !imageID.MatchString(options.ExpectedImageID) {
 		return State{}, errors.New("expected runtime image identity is invalid")
 	}
+	for _, selection := range []struct{ source, expected string }{{options.SkillsSource, options.ExpectedSkillsRevision}, {options.AgentsSource, options.ExpectedAgentsRevision}} {
+		if selection.expected != "" && (selection.source == "" || !sourceCommitID.MatchString(selection.expected)) {
+			return State{}, errors.New("planned catalogue revision requires its local source and full commit identity")
+		}
+	}
 	if options.SourcePins && options.Pins != nil {
 		return State{}, errors.New("source pins cannot be combined with explicit dependency pins")
 	}
@@ -317,6 +324,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 		if err != nil {
 			return State{}, err
 		}
+		if options.ExpectedSkillsRevision != "" && skillsRevision != options.ExpectedSkillsRevision {
+			return State{}, errors.New("local skills changed after dependency planning")
+		}
 		if pins != nil {
 			pins.Arguments["SKILLS_REVISION"] = skillsRevision
 		}
@@ -330,6 +340,9 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 		agentsSource, agentsRevision, err = snapshotCatalogue(ctx, options.AgentsSource, contextDirectory, "agents")
 		if err != nil {
 			return State{}, fmt.Errorf("local agents: %w", err)
+		}
+		if options.ExpectedAgentsRevision != "" && agentsRevision != options.ExpectedAgentsRevision {
+			return State{}, errors.New("local agents changed after dependency planning")
 		}
 		if pins != nil {
 			pins.Arguments["AGENTS_REVISION"] = agentsRevision
