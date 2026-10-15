@@ -34,6 +34,10 @@ as warnings at the human-review checkpoint. Findings still enter repair, and
 required human decisions and operational failures still stop the run.
 Adopt an existing open same-repository PR with `sdlc adopt --pr PR_URL` to assess
 review comments and publish verified corrections; a local ticket is optional.
+Use `--start-at awaiting-feedback --human-reviewed` to capture and park a PR
+without starting agents or verification. Other entry points are `checks`, `review`
+and the default `feedback`. Eligible unchanged stopped runs can use
+`sdlc resume --run RUN_ID --start-at awaiting-feedback`.
 Human PR comments can resume the original implementation session through checks
 and a fresh independent review with `sdlc resume --run RUN_ID --pr-feedback`.
 Supply private pasted or file feedback with
@@ -58,7 +62,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.84`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.85`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

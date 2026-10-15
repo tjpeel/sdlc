@@ -73,7 +73,7 @@ func diagnosticHash(value string) string {
 }
 func diagnosticState(value string) string {
 	switch value {
-	case "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "ready", "blocked", "failed", "waiting_for_human":
+	case "awaiting_feedback", "checkpoint_checks", "checkpoint_review", "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "ready", "blocked", "failed", "waiting_for_human":
 		return value
 	}
 	return "unknown"
@@ -98,7 +98,7 @@ func diagnosticReview(j workrun.Journal) string {
 	if j.Outcome.Status == "reviewed" {
 		return "reviewed"
 	}
-	if j.State == "reviewing" || j.State == "awaiting_reviewer" || j.ResumeState == "reviewing" || j.ResumeState == "awaiting_reviewer" {
+	if j.State == "checkpoint_review" || j.ResumeState == "checkpoint_review" || j.State == "reviewing" || j.State == "awaiting_reviewer" || j.ResumeState == "reviewing" || j.ResumeState == "awaiting_reviewer" {
 		return "pending"
 	}
 	return "not_completed"
@@ -114,6 +114,9 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	if live {
 		return NextAction{Category: "observe", Instruction: "The controller is active; inspect its saved state without starting another controller.", Command: dump}
 	}
+	if j.State == "awaiting_feedback" {
+		return NextAction{Category: "feedback", Instruction: "PR captured; supply feedback without asserting skipped verification passed.", Command: "sdlc feedback --run " + id}
+	}
 	if j.PendingInputs != nil {
 		return NextAction{Category: "input_recovery", Instruction: "Finish the immutable saved input transaction before resuming.", Command: "sdlc inputs --run " + id}
 	}
@@ -128,6 +131,9 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	}
 	if workrun.CanReplaySavedPRFeedback(j) {
 		return NextAction{Category: "feedback_recovery", Instruction: "Resume to validate and replay the saved feedback outcome before another native turn.", Command: "sdlc resume --run " + id}
+	}
+	if j.State == "blocked" && workrun.ValidatePRCheckpointResume(j) == nil {
+		return NextAction{Category: "feedback_checkpoint", Instruction: "Archive the rejected feedback selection and wait for new feedback; requires the clean, unchanged published candidate.", Command: "sdlc resume --run " + id + " --start-at awaiting-feedback"}
 	}
 	if j.State == "ready" && workrun.ReviewSkipNotice(j) != "" {
 		return NextAction{Category: "human_review", Instruction: workrun.ReviewSkipNotice(j), Command: "sdlc resume --run " + id + " --pr-feedback"}

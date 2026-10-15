@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--speed normal|fast] [--review-speed normal|fast]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--speed normal|fast] [--review-speed normal|fast]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -48,6 +48,8 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	startAt                                                                                                                                                                           string
+	humanReviewed                                                                                                                                                                     bool
 	adoptURL                                                                                                                                                                          string
 	adoptGenerated                                                                                                                                                                    bool
 	overrideRunLimits                                                                                                                                                                 bool
@@ -89,6 +91,8 @@ func parseRunOptions(args []string) (runOptions, error) {
 	var options runOptions
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.StringVar(&options.startAt, "start-at", "", "PR entry point: awaiting-feedback, checks, review or feedback")
+	flags.BoolVar(&options.humanReviewed, "human-reviewed", false, "declare the captured PR head reviewed by a human")
 	flags.StringVar(&options.adoptURL, "pr", "", "adopt an existing same-repository PR by URL")
 	flags.StringVar(&options.reference, "reference", "", "selected work folder")
 	flags.StringVar(&options.ticket, "ticket", "", "exact numbered ticket filename")
@@ -161,6 +165,16 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.supplied["start-at"] || options.supplied["human-reviewed"] {
+		if options.startAt == "" || !workrun.ValidPRStartAt(options.startAt) || options.all || options.adoptURL == "" && options.resume == "" {
+			return options, fmt.Errorf("--start-at requires an adoption or single resume and awaiting-feedback, checks, review or feedback")
+		}
+		for _, name := range []string{"pr-feedback", "pr-feedback-file", "answer-file", "ci-feedback-file", "override-run-limits", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "review-repair-limit"} {
+			if options.supplied[name] {
+				return options, fmt.Errorf("--start-at cannot combine with --%s", name)
+			}
+		}
+	}
 	if options.supplied["pr-feedback-file"] {
 		if options.prFeedbackFile == "" || options.resume == "" || options.all {
 			return options, fmt.Errorf("--pr-feedback-file requires a nonempty path and single --resume")
@@ -298,7 +312,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -728,6 +742,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 	}
+	if options.startAt != "" && options.resume != "" {
+		if err := workrun.ValidatePRCheckpointResume(journal); err != nil {
+			return err
+		}
+	}
 	localPRFeedback := ""
 	if options.prFeedbackFile != "" {
 		data, err := readHumanAnswer(options.prFeedbackFile)
@@ -796,6 +815,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		fmt.Fprintf(output, "Run %s: numerical allowances overridden at its saved ready checkpoint. No work started.\n", current.ID)
 		return nil
+	}
+	if options.dryRun && options.startAt != "" {
+		return json.NewEncoder(output).Encode(map[string]any{"action": "pr_checkpoint", "start_at": options.startAt, "human_reviewed": options.humanReviewed, "run": journal.ID, "head": journal.Publication.HeadSHA, "offline": true, "remote_verified": false})
 	}
 	if options.dryRun {
 		if options.resume != "" {
@@ -881,7 +903,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	}
 	runner := workrun.Runner{ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
 		return workrun.ValidateDependencyContext(ctx, directory, plan, publisher)
-	}, CIFeedback: ciFeedback, OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, LocalPRFeedback: localPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, ReviewRepairLimit: options.reviewRepairLimit, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	}, StartAt: options.startAt, HumanReviewed: options.humanReviewed, CIFeedback: ciFeedback, OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, LocalPRFeedback: localPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, ReviewRepairLimit: options.reviewRepairLimit, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)
@@ -908,6 +930,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 	}
 	startingAttempt := journal.Attempt
 	err = runner.Run(ctx, directory, &journal, answer)
+	printPRCheckpointResult(output, journal)
 	printCompletedRunUsage(output, directory, journal, startingAttempt)
 	if errors.Is(err, workrun.ErrStopped) || journal.State == "waiting_for_human" || journal.State == "blocked" || journal.State == "failed" {
 		if reportErr := printRunAttention(output, journal); reportErr != nil {

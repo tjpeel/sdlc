@@ -255,6 +255,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	PRCheckpoints             []PRCheckpoint          `json:"pr_checkpoints,omitempty"`
 	ReviewEffort              *ReviewEffortDecision   `json:"review_effort_selection,omitempty"`
 	ReviewInterruption        *ReviewInterruption     `json:"interrupted_independent_review,omitempty"`
 	ReviewSkip                *ReviewSkip             `json:"independent_review_skipped,omitempty"`

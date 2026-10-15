@@ -2075,9 +2075,70 @@ The resulting run appears in the dashboard. Resume an interrupted adoption with
 `sdlc resume --run RUN_ID --pr-feedback`. Adoption freezes accounts, runtime,
 models and revisions under the same saved-run rules as ticket execution.
 
+### Choose a PR entry point
+
+Adoption can capture a PR without starting the full engineering cycle:
+
+```sh
+sdlc adopt --pr PR_URL --start-at awaiting-feedback --human-reviewed
+sdlc adopt --pr PR_URL --start-at checks
+sdlc adopt --pr PR_URL --start-at review
+```
+
+| Entry point | Behaviour |
+| --- | --- |
+| `awaiting-feedback` | Verify access, capture the exact PR and park; no provider, repository checks, publication or independent review. |
+| `checks` | Run the configured isolated checks against the captured candidate, then park. Failures stay held for inspection; no automatic agent repair or publication. |
+| `review` | Run an independent review of the captured PR and retain findings, questions and coverage limitations. No implementation, repository checks, signing, publication or CI certification. A completed review parks for your next feedback. |
+| `feedback` | The default adoption workflow: assess current comments, verify supported corrections, publish and independently review. |
+
+`--human-reviewed` requires an explicit `--start-at`. It records a declaration by
+the local OS user, with its time and exact PR head, separately from an SDLC review
+result. It does not set verification, CI or independent-review success. Check and
+review results are retained only when those actions actually run.
+
+A parked run accepts both private feedback and GitHub feedback, even before an
+implementation session exists:
+
+```sh
+sdlc feedback --run RUN_ID
+sdlc feedback --run RUN_ID --file /PATH/TO/PRIVATE_FEEDBACK.md
+sdlc resume --run RUN_ID --pr-feedback
+```
+
+The first actionable feedback starts the implementation session. Existing sessions
+are reused. Subsequent changes retain the normal repository checks, signing,
+publication, CI and fresh independent review. An empty GitHub feedback pass stays
+parked and starts no provider. Ordinary resume of an idle parked run also stays
+parked. The dashboard and diagnose output identify the awaiting-feedback state.
+
+An unchanged existing PR run can select a new entry point:
+
+```sh
+sdlc resume --run RUN_ID --start-at awaiting-feedback --human-reviewed --dry-run
+sdlc resume --run RUN_ID --start-at awaiting-feedback --human-reviewed
+```
+
+Recovery is restricted to a ready or parked run, or the corroborated feedback
+holds for an invalid correction-commit claim or harmless acknowledgement of already
+inactive feedback. The workspace must be clean and exactly match the captured
+published head; the remote PR head, base and account are checked again. Pending
+input recovery, interrupted review work, push rejection and unrelated provider,
+access, usage, CI or implementation failures cannot be overridden this way.
+
+Before replacing a rejected feedback selection, SDLC archives the complete prior
+journal privately under `pr-checkpoints/`. Checkpoint records link the archive and
+retain the selected entry point and PR revision. The implementation session,
+metrics, attempt counters, budgets, companion source, required verification requests
+and actual existing evidence remain retained. Superseded feedback and outcome
+fields are archived rather than replayed. No run is declared ready by this action.
+
+`--dry-run` is offline and saves nothing. Entry-point selection cannot be combined
+with an answer, feedback file, feedback refresh or allowance-recovery action.
+
 ### Supply private feedback from pasted text or a file
 
-For a saved run whose PR is ready, submit a block of feedback without posting it
+For a saved run whose PR is ready or awaiting feedback, submit a block of feedback without posting it
 on GitHub:
 
 ```sh
@@ -2101,7 +2162,7 @@ publication, CI and a fresh independent review. The source and assessment remain
 in the private run history; SDLC does not create a GitHub comment or post a reply
 for local feedback. Normal PR updates and correction commits are still published.
 
-The run must meet the existing PR-feedback eligibility checks. This command cannot
+The run must be ready or parked at awaiting feedback and meet its captured PR boundary checks. This command cannot
 bypass CI, implementation, access, provider or independent-review holds, and cannot
 be combined with budget recovery. An interrupted active feedback cycle continues
 with ordinary `sdlc resume --run RUN_ID`; answer any recorded question with
@@ -2136,7 +2197,7 @@ keeps the run held rather than silently ignoring feedback.
 
 ### Address human PR feedback
 
-After adding comments to a ready PR, resume its saved run:
+After adding comments to a ready or parked PR, resume its saved run:
 
 ```sh
 sdlc resume --run RUN_ID --pr-feedback

@@ -74,9 +74,9 @@ func currentReviewFeedback(history *PRFeedbackHistory) *PRFeedbackHistory {
 	return &packet
 }
 
-// Omit explicitly ignored comment bodies from provider context while retaining
+// Omit ignored, resolved and deleted comment bodies from provider context while retaining
 // their full evidence and prior revisions in the private journal.
-func feedbackWithoutIgnored(history *PRFeedbackHistory) *PRFeedbackHistory {
+func feedbackForPrompt(history *PRFeedbackHistory) *PRFeedbackHistory {
 	if history == nil {
 		return nil
 	}
@@ -87,7 +87,8 @@ func feedbackWithoutIgnored(history *PRFeedbackHistory) *PRFeedbackHistory {
 	packet := *history
 	packet.Entries = nil
 	for _, e := range history.Entries {
-		if latest[e.Comment.ID].Ignored == nil {
+		current := latest[e.Comment.ID]
+		if current.Ignored == nil && !current.Resolved && !current.Deleted {
 			packet.Entries = append(packet.Entries, e)
 		}
 	}

@@ -17,7 +17,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
-const adoptUsage = "Usage: sdlc adopt --pr https://github.com/OWNER/REPO/pull/NUMBER [--reference REF --ticket FILE] [new-run model, runtime and check options] [--dry-run]"
+const adoptUsage = "Usage: sdlc adopt --pr https://github.com/OWNER/REPO/pull/NUMBER [--reference REF --ticket FILE] [--start-at awaiting-feedback|checks|review|feedback] [--human-reviewed] [new-run model, runtime and check options] [--dry-run]"
 
 func adoptCommand(ctx context.Context, args []string, output io.Writer) error {
 	options, err := parseRunOptions(args)
@@ -77,7 +77,11 @@ func adoptSelectedCommand(ctx context.Context, options runOptions, output io.Wri
 			}
 		}
 		if options.jsonOutput {
-			return json.NewEncoder(output).Encode(map[string]any{"action": "adopt", "dry_run": true, "pr": options.adoptURL, "reference": options.reference, "ticket": options.ticket, "runtime": options.runtimeName, "provider": options.provider, "remote_verified": false})
+			return json.NewEncoder(output).Encode(map[string]any{"action": "adopt", "dry_run": true, "pr": options.adoptURL, "reference": options.reference, "ticket": options.ticket, "runtime": options.runtimeName, "provider": options.provider, "remote_verified": false, "start_at": options.startAt, "human_reviewed": options.humanReviewed})
+		}
+		if options.startAt != "" {
+			_, err = fmt.Fprintf(output, "Offline PR adoption plan: %s\nEntry point: %s; human-reviewed declaration: %t. No remote state or access has been checked; skipped stages remain unverified.\n", options.adoptURL, options.startAt, options.humanReviewed)
+			return err
 		}
 		_, err = fmt.Fprintf(output, "Offline PR adoption plan: %s\nWork: %s/%s\nA fresh session will assess comments, verify corrections and update this PR. Remote state, branch ownership, account access and comments have not been checked.\n", options.adoptURL, options.reference, options.ticket)
 		return err

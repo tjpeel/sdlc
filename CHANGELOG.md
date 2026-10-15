@@ -7,6 +7,17 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.85 - 2026-10-15
+
+### Added
+
+- Choose PR adoption entry points: await feedback without agents, run checks only, review only, or use the normal feedback flow. Optional human-review declarations bind the local operator and time to the captured PR head without claiming skipped checks or independent review passed.
+- Park eligible unchanged existing PR runs through `resume --start-at awaiting-feedback`. Archive superseded feedback selections and rejected outcomes while retaining sessions, accounting, budgets and actual evidence; later file or GitHub feedback enters the normal verification and publication flow.
+
+### Fixed
+
+- Omit resolved and deleted feedback from provider context as well as explicitly ignored comments. Discard only matching no-change acknowledgements for inactive revisions, preventing harmless resolved-comment assessments from blocking adoption while retaining correction-commit validation.
+
 ## 0.1.0-beta.84 - 2026-10-15
 
 ### Added

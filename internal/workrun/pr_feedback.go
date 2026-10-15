@@ -120,6 +120,13 @@ func sameFeedbackRevision(captured, current PRFeedbackComment) bool {
 }
 
 func ValidatePRFeedbackResume(j Journal) error {
+	if j.State == "awaiting_feedback" || j.PRFeedback != nil && j.PRFeedback.FetchPending && j.PRFeedback.FetchResumeState == "awaiting_feedback" {
+		if err := validateParkedPR(j); err != nil {
+			return err
+		}
+		return validatePRFeedbackJournal(&j)
+	}
+
 	if j.SessionID == "" || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) {
 		return fmt.Errorf("PR feedback requires an existing PR and its original implementation session")
 	}
@@ -141,7 +148,10 @@ func ValidatePRFeedbackResume(j Journal) error {
 		}
 		return validatePRFeedbackJournal(&j)
 	}
-	return fmt.Errorf("PR feedback requires a ready PR; it cannot bypass an implementation or independent-review failure")
+	if j.State == "blocked" && ValidatePRCheckpointResume(j) == nil {
+		return fmt.Errorf("park this recoverable feedback hold before supplying new feedback: sdlc resume --run %s --start-at awaiting-feedback", j.ID)
+	}
+	return fmt.Errorf("PR feedback requires a ready or awaiting-feedback PR; it cannot bypass an implementation or independent-review failure")
 }
 
 func validatePRFeedbackJournal(j *Journal) error {
@@ -153,7 +163,7 @@ func validatePRFeedbackJournal(j *Journal) error {
 	if err != nil || len(data) > 384*1024 || h.Version != 1 || h.Cycle < 1 || len(h.Entries) > 300 || !objectID.MatchString(h.CandidateStart) {
 		return fmt.Errorf("invalid bounded PR feedback history")
 	}
-	if h.FetchResumeState != "" && h.FetchResumeState != "ready" && h.FetchResumeState != "publishing" {
+	if h.FetchResumeState != "" && h.FetchResumeState != "ready" && h.FetchResumeState != "publishing" && h.FetchResumeState != "awaiting_feedback" {
 		return fmt.Errorf("invalid feedback fetch recovery stage")
 	}
 	if h.CompletedHead != "" && !objectID.MatchString(h.CompletedHead) {
@@ -315,12 +325,21 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 		return err
 	}
 	h := j.PRFeedback
+	parked := j.State == "awaiting_feedback" || h != nil && h.FetchPending && h.FetchResumeState == "awaiting_feedback"
+	expectedHead, expectedTree := j.Evidence.Head, j.Evidence.Tree
+	if parked {
+		c := latestPRCheckpoint(j)
+		expectedHead, expectedTree = c.Head, c.Tree
+	}
 	revision, inspectErr := r.Repository.Inspect(ctx, j.Workspace)
-	if inspectErr != nil || !revision.Clean || revision.Head != j.Evidence.Head || revision.Tree != j.Evidence.Tree {
+	if inspectErr != nil || !revision.Clean || revision.Head != expectedHead || revision.Tree != expectedTree {
 		return fmt.Errorf("feedback requires the unchanged previously tested candidate")
 	}
-	if j.State == "ready" || j.State == "blocked" && j.ResumeState == "publishing" {
+	if j.State == "ready" || j.State == "awaiting_feedback" || j.State == "blocked" && j.ResumeState == "publishing" {
 		resumeState := "ready"
+		if parked {
+			resumeState = "awaiting_feedback"
+		}
 		if j.State == "blocked" {
 			resumeState = "publishing"
 		}
@@ -424,9 +443,13 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			h.FetchResumeState = ""
 			return r.transition(dir, j, "publishing")
 		}
+		state := "ready"
+		if h.FetchResumeState == "awaiting_feedback" {
+			state = "awaiting_feedback"
+		}
 		h.FetchResumeState = ""
 		h.Active = false
-		return r.transition(dir, j, "ready")
+		return r.transition(dir, j, state)
 	}
 	if h.CompletedHead != "" {
 		h.Cycle++
@@ -699,4 +722,28 @@ func CanReplaySavedPRFeedback(j Journal) bool {
 	}
 	pending := pendingFeedback(&j)
 	return pending == nil || pending == target
+}
+
+// An agent can remember a resolved comment from an earlier native turn. Ignore
+// only a matching, harmless no-change acknowledgement of an inactive revision.
+// Unknown revisions, correction claims and actionable feedback retain validation.
+func withoutInactiveFeedbackAssessments(j *Journal, out Outcome) Outcome {
+	if j.PRFeedback == nil {
+		return out
+	}
+	latest := map[string]PRFeedbackEntry{}
+	for _, e := range j.PRFeedback.Entries {
+		latest[e.Comment.ID] = e
+	}
+	result := []PRFeedbackAssessment{}
+	for _, a := range out.PRFeedbackAssessments {
+		e, ok := latest[a.ID]
+		inactive := ok && (e.Comment.Resolved || e.Comment.Deleted || e.Comment.Ignored != nil)
+		if inactive && a.Fingerprint == e.Fingerprint && a.Disposition == "no_change" && len(a.Commits) == 0 && validateFeedbackAssessment(a) == nil {
+			continue
+		}
+		result = append(result, a)
+	}
+	out.PRFeedbackAssessments = result
+	return out
 }

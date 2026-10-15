@@ -110,7 +110,7 @@ func main() {
 		fmt.Println("       sdlc references [--json] | tickets REFERENCE [--json] (local ticket metadata)")
 		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
 		fmt.Println("  sdlc feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]")
-		fmt.Println("       sdlc adopt --pr PR_URL [--reference REFERENCE --ticket NUMBERED_FILE] [--dry-run]")
+		fmt.Println("       sdlc adopt --pr PR_URL [--start-at awaiting-feedback|checks|review|feedback] [--human-reviewed] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
 		fmt.Println("       sdlc dependencies --reference REFERENCE --ticket NUMBERED_FILE --depends-on PARENT_FILE [--dry-run] [--json]")

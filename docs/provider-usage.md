@@ -349,3 +349,17 @@ statistics and fixed risk signals; the controller selects low, medium or high
 before starting the exact-boundary review. Explicit settings and old saved runs
 remain fixed. This policy does not raise effort or restart jobs in response to
 usage limits, authentication failures or access denials.
+
+## PR entry points
+
+The PR entry-point extension was checked on 15 October 2026 against the official
+[Codex non-interactive guidance](https://learn.chatgpt.com/docs/non-interactive-mode),
+[Claude programmatic execution guide](https://code.claude.com/docs/en/headless),
+and [Claude account rules](https://code.claude.com/docs/en/legal-and-compliance).
+Review-only work uses the existing unmodified native client, selected account,
+model, reasoning settings and isolated review snapshot. It adds no authentication,
+credential extraction, SDK request, account switch or subscription-sharing route.
+Awaiting feedback makes no provider call; checks-only work stays in the existing
+credential-free check worker. Human-review declarations are local metadata, not
+provider review results. Provider, policy, access and usage holds cannot be cleared
+by choosing a new entry point.

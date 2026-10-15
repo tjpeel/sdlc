@@ -207,7 +207,7 @@ func project(j workrun.Journal, directory string) View {
 	}
 	return View{ID: j.ID, Root: j.Plan.Root, Reference: j.Plan.Reference, Ticket: j.Plan.Ticket, Directory: directory, State: j.State,
 		Role: role, Provider: model.Provider, Model: model.Name, Effort: model.Effort, StartedAt: started, UpdatedAt: j.UpdatedAt,
-		Available: true, NeedsAttention: j.State == "ready" || j.State == "waiting_for_human" || j.State == "blocked" || j.State == "failed" || j.StopReason != "",
+		Available: true, NeedsAttention: j.State == "awaiting_feedback" || j.State == "ready" || j.State == "waiting_for_human" || j.State == "blocked" || j.State == "failed" || j.StopReason != "",
 		StopReason: func() string {
 			if j.StopReason != "" {
 				return j.StopReason
@@ -217,7 +217,7 @@ func project(j workrun.Journal, directory string) View {
 }
 
 func terminal(state string) bool {
-	return state == "ready" || state == "waiting_for_human" || state == "blocked" || state == "failed"
+	return state == "awaiting_feedback" || state == "ready" || state == "waiting_for_human" || state == "blocked" || state == "failed"
 }
 
 func currentModel(j workrun.Journal) (string, workrun.Model) {
@@ -228,7 +228,7 @@ func currentModel(j workrun.Journal) (string, workrun.Model) {
 	if state == "blocked" || state == "failed" {
 		state = j.ResumeState
 	}
-	if state == "review" || state == "reviewing" || state == "awaiting_reviewer" {
+	if state == "checkpoint_review" || state == "review" || state == "reviewing" || state == "awaiting_reviewer" {
 		return "review", j.Plan.Roles.Review
 	}
 	return "implementation", j.Plan.Roles.Implementation

@@ -30,7 +30,7 @@ type runAction struct {
 
 func resumableStage(state string) bool {
 	switch state {
-	case "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback":
+	case "awaiting_feedback", "checkpoint_checks", "checkpoint_review", "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback":
 		return true
 	}
 	return false
@@ -244,6 +244,8 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	id := flags.String("run", "", "run ID or unique prefix")
 	dry := flags.Bool("dry-run", false, "offline preview")
 	var text, path string
+	var startAt string
+	var humanReviewed bool
 	var ciFeedbackPath string
 	var stdin bool
 	var reviewRepairLimit int
@@ -252,6 +254,8 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var override bool
 	var timeout time.Duration
 	if !answer {
+		flags.StringVar(&startAt, "start-at", "", "PR entry point")
+		flags.BoolVar(&humanReviewed, "human-reviewed", false, "declare captured PR reviewed by a human")
 		flags.StringVar(&ciFeedbackPath, "ci-feedback-file", "", "bounded supplemental CI context")
 		flags.IntVar(&reviewRepairLimit, "review-repair-limit", 0, "increase the saved review allowance to at most 12")
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
@@ -268,7 +272,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -339,9 +343,19 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	if sources == 1 && !suppliedText && !stdin && path == "" {
 		return fmt.Errorf("--answer-file cannot be empty")
 	}
-	action, err := resolveRunAction(ctx, *id, answer, feedback, override)
+	if startAt != "" || humanReviewed {
+		if !workrun.ValidPRStartAt(startAt) || feedback || override || extensionSupplied || reviewLimitSupplied || ciFeedbackSupplied {
+			return fmt.Errorf("--start-at requires a valid PR entry point without another recovery action")
+		}
+	}
+	action, err := resolveRunAction(ctx, *id, answer, feedback, override || startAt != "")
 	if err != nil {
 		return err
+	}
+	if startAt != "" {
+		if err := workrun.ValidatePRCheckpointResume(*action.View.Journal); err != nil {
+			return err
+		}
 	}
 	if reviewLimitSupplied {
 		if err := workrun.ValidateReviewRepairIncrease(*action.View.Journal, reviewRepairLimit); err != nil {
@@ -414,7 +428,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			return err
 		}
 	}
-	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback, override)
+	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback, override || startAt != "")
 	if err != nil {
 		return err
 	}
@@ -422,6 +436,12 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if startAt != "" {
+		runArgs = append(runArgs, "--start-at", startAt)
+		if humanReviewed {
+			runArgs = append(runArgs, "--human-reviewed")
+		}
+	}
 	if ciFeedbackSupplied {
 		runArgs = append(runArgs, "--ci-feedback-file", ciFeedbackPath)
 	}
