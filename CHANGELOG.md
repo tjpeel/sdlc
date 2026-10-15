@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.77 - 2026-10-15
+
+### Fixed
+
+- Isolate shared Docker check caches by frozen daemon recipe, allowing old and new daemon versions to coexist without resetting another run's cache. Legacy caches remain untouched; the first check under the new controller starts a separate compatible cache.
+
 ## 0.1.0-beta.76 - 2026-10-15
 
 ### Fixed

@@ -169,3 +169,29 @@ func TestPinnedCombinedCheckRecoveryUsesValidSharedSessionAndPreservesDaemon(t *
 		}
 	}
 }
+
+func TestSharedDaemonCachesAreScopedToFrozenRecipe(t *testing.T) {
+	checker := DockerChecker{Runtime: runtimeimage.Manager{Directory: t.TempDir()}}
+	state := runtimeimage.State{Engine: "offline-engine"}
+	images := []string{"docker:29.8.2-dind@sha256:" + strings.Repeat("a", 64), "docker:29.9.0-dind@sha256:" + strings.Repeat("b", 64), "docker:29.9.0-dind@sha256:" + strings.Repeat("c", 64)}
+	seen := map[string]bool{}
+	for _, image := range images {
+		first, err := newSharedChecks(checker, state, image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		same, err := newSharedChecks(checker, state, image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.name != same.name || first.directory != same.directory || first.workVolume != same.workVolume {
+			t.Fatal("same frozen recipe cannot reuse its cache")
+		}
+		if seen[first.name] || seen[first.directory] || seen[first.workVolume] {
+			t.Fatal("different daemon pins share cache identity", image)
+		}
+		seen[first.name] = true
+		seen[first.directory] = true
+		seen[first.workVolume] = true
+	}
+}

@@ -41,9 +41,11 @@ func newSharedChecks(checker DockerChecker, state runtimeimage.State, image stri
 	if err != nil {
 		return nil, err
 	}
-	key := sha256.Sum256([]byte(root + "\x00" + state.Engine))
-	name := "sdlc-tests-" + hex.EncodeToString(key[:8])
 	recipe := sha256.Sum256([]byte(SharedTestDaemon + "\x00" + image + "\x00overlay2"))
+	// Different frozen daemon recipes must never compete for one data store.
+	// A new namespace leaves legacy caches and active older checks untouched.
+	key := sha256.Sum256([]byte(root + "\x00" + state.Engine + "\x00" + hex.EncodeToString(recipe[:])))
+	name := "sdlc-tests-" + hex.EncodeToString(key[:8])
 	directory := filepath.Join(root, "test-cache", name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err

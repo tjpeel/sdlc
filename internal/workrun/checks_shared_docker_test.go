@@ -573,3 +573,73 @@ print('NUGET_WARM_NO_SOURCE_PASSED',flush=True)`
 type checkCacheOutput func([]byte) (int, error)
 
 func (writer checkCacheOutput) Write(data []byte) (int, error) { return writer(data) }
+
+// Exercise coexistence with two already-cached immutable daemon images. No
+// provider, repository scripts or external image pulls are involved.
+func TestOfflineSharedDockerDaemonRecipesCoexist(t *testing.T) {
+	if os.Getenv("SDLC_OFFLINE_SHARED_DOCKER_TESTS") != "1" {
+		t.Skip("set SDLC_OFFLINE_SHARED_DOCKER_TESTS=1 for daemon coexistence checks")
+	}
+	var images []string
+	if value := os.Getenv("SDLC_SHARED_DAEMON_TEST_IMAGES"); value == "" {
+		t.Skip("set SDLC_SHARED_DAEMON_TEST_IMAGES to a JSON pair of cached immutable daemon references")
+	} else if err := json.Unmarshal([]byte(value), &images); err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 2 || images[0] == images[1] {
+		t.Fatal("two different cached daemon references are required")
+	}
+	manager := runtimeimage.Manager{Directory: t.TempDir(), Docker: runtimeimage.LocalDocker{}}
+	checker := DockerChecker{Runtime: manager}
+	state := runtimeimage.State{Engine: "offline-recipe-coexistence"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var daemons []*sharedChecks
+	for _, image := range images {
+		if err := runtimepins.ValidateDaemonImage(image); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.Docker.Output(ctx, "image", "inspect", image); err != nil {
+			t.Fatal("test daemon must already be cached", err)
+		}
+		s, err := newSharedChecks(checker, state, image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ensured := false
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
+			defer stop()
+			if _, err := s.host(cleanup, "rm", "-f", s.name); err != nil && ensured {
+				t.Errorf("remove scratch daemon: %v", err)
+			}
+			for _, volume := range []string{s.name + "-data", s.workVolume, s.name + "-socket"} {
+				if _, err := s.host(cleanup, "volume", "rm", volume); err != nil && ensured {
+					t.Errorf("remove scratch volume: %v", err)
+				}
+			}
+		})
+		if err := s.ensure(ctx, image); err != nil {
+			t.Fatal(err)
+		}
+		ensured = true
+		if _, err := s.inner(ctx, "volume", "inspect", "disposable-isolation-marker"); err == nil {
+			t.Fatal("second daemon can see first daemon's volumes")
+		}
+		if _, err := s.inner(ctx, "volume", "create", "disposable-isolation-marker"); err != nil {
+			t.Fatal(err)
+		}
+		daemons = append(daemons, s)
+	}
+	if daemons[0].name == daemons[1].name {
+		t.Fatal("daemon recipes share identity")
+	}
+	for i, s := range daemons {
+		if err := s.ensure(ctx, images[i]); err != nil {
+			t.Fatal("coexisting recipe cannot be reused", err)
+		}
+		if _, err := s.inner(ctx, "volume", "inspect", "disposable-isolation-marker"); err != nil {
+			t.Fatal("another recipe changed the existing data store", err)
+		}
+	}
+}

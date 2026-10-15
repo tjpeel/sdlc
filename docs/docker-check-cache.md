@@ -1,8 +1,8 @@
 # Shared Docker check cache
 
 New Docker-enabled ticket and feature runs use one persistent test daemon per
-SDLC state directory and local Docker engine. Named runtimes use the same daemon
-when their frozen daemon pins agree. The daemon owns its image store exclusively;
+SDLC state directory, local Docker engine and frozen daemon recipe. Named runtimes
+use the same daemon when their frozen daemon pins agree. The daemon owns its image store exclusively;
 SDLC refuses another container using that data volume, a different daemon pin,
 unexpected mounts or a changed daemon command.
 
@@ -163,14 +163,27 @@ check can still race filesystem changes against daemon mount resolution.
 
 ## Cache lifetime
 
-Cache volumes grow until explicitly removed. Daemon upgrades never silently
-reuse or downgrade an existing data store. If the frozen daemon pin changes,
-stop SDLC Docker checks before removing the corresponding idle test daemon and
-its volumes. Identify them through the `io.sdlc.test-owner` label; each daemon
-owns `<daemon>-data`, `<daemon>-work` and `<daemon>-socket`. Removing these volumes
-also removes retained images, build cache, source templates and the NuGet seed. Do not remove a
-daemon while its check sessions are active, or mount its data volume in a second
-daemon.
+Cache volumes grow until explicitly removed. Each frozen daemon recipe has its
+own daemon and data/work/socket volumes. A version or digest change selects a
+separate cache; it does not reuse, downgrade or delete an existing data store.
+Older pinned runs can coexist with newer runtimes. Ownership, mounts and image
+checks still reject an incompatible object within the selected namespace.
+
+Caches created before beta.77 use the earlier state-directory/engine identity.
+They remain untouched, including any active older controllers. The first check
+under the new controller creates a recipe-specific cache, so it starts cold once
+instead of adopting or resetting the legacy data store. Saved run pins, provider
+sessions and repair/check counters remain unchanged. Interrupted legacy sessions also retain their
+workers and proxies inside the old daemon; recipe-scoped recovery does not scan
+that legacy namespace. Inspect its inner containers and session records before
+reclaiming it, and keep active older controllers running on their existing cache.
+
+To reclaim an old idle cache, stop its SDLC Docker checks before removing the
+corresponding daemon and volumes. Identify them through the
+`io.sdlc.test-owner` label; each daemon owns `<daemon>-data`, `<daemon>-work` and
+`<daemon>-socket`. Removing volumes also removes retained images, build cache,
+source templates and the NuGet seed. Do not remove a daemon while its check
+sessions are active, or mount its data volume in a second daemon.
 
 Dockerfiles that copy source or frozen inputs into an image leave those bytes
 in retained Docker layers and build cache. Source-template exclusions do not
