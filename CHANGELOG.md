@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.78 - 2026-10-15
+
+### Changed
+
+- Quote the original top-level PR comment or review summary, with a direct link, before the response. Inline replies keep their original thread; retries recognise earlier ID-only acknowledgements without posting duplicates.
+
 ## 0.1.0-beta.77 - 2026-10-15
 
 ### Fixed

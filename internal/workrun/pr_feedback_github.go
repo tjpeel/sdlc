@@ -287,13 +287,24 @@ func (p GitHubPublisher) ReplyFeedback(ctx context.Context, plan Plan, pr Public
 		return PRFeedbackReply{}, err
 	}
 	text := body + "\n\n" + marker
+	legacyText := text
 	if c.Kind != "inline" {
-		text = "Response to " + c.ID + ":\n\n" + text
+		legacyText = "Response to " + c.ID + ":\n\n" + text
+		anchor, label := "issuecomment-", "original comment"
+		if c.Kind == "review" {
+			anchor, label = "pullrequestreview-", "original review"
+		}
+		id := strings.TrimPrefix(c.ID, c.Kind+":")
+		// Build links from the verified PR boundary, never an untrusted body URL.
+		original := pr.URL + "#" + anchor + id
+		quoted := strings.ReplaceAll(strings.ReplaceAll(c.Body, "\r\n", "\n"), "\r", "\n")
+		quoted = "> " + strings.ReplaceAll(quoted, "\n", "\n> ")
+		text = "In reply to [the " + label + "](" + original + "):\n\n" + quoted + "\n\n" + text
 	}
 	var acknowledged *PRFeedbackReply
 	for _, item := range replies {
 		if strings.Contains(item.Body, marker) {
-			if item.User.Login != p.Frozen.GitHubLogin || item.Body != text || c.Kind == "inline" && item.ReplyTo != c.ReplyID {
+			if item.User.Login != p.Frozen.GitHubLogin || (item.Body != text && item.Body != legacyText) || c.Kind == "inline" && item.ReplyTo != c.ReplyID {
 				return PRFeedbackReply{}, fmt.Errorf("remote feedback marker differs from saved reply intent")
 			}
 			if acknowledged != nil {

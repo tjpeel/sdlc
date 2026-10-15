@@ -39,6 +39,10 @@ func TestGitHubInlineRenameAcknowledgesOriginalThreadExactlyOnce(t *testing.T) {
 	if len(replies) != 2 || replies[1].ReplyTo != captured.ReplyID {
 		t.Fatal("relocated feedback reply escaped its original thread")
 	}
+	if replies[1].Body != "Renamed the handler in the correction commit.\n\n"+marker {
+		t.Fatal("inline response unexpectedly quoted or reformatted the original comment")
+	}
+
 }
 
 func TestInlineHumanOrOriginalAnchorChangesStillReconcile(t *testing.T) {

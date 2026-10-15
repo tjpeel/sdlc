@@ -2112,7 +2112,10 @@ once a coherent candidate is ready, rather than after each comment. Partial fina
 assessments continue the session without forcing configured checks. A final
 assessment must still match the current unreplied comment revision. Only then
 can SDLC post
-the reply; it does not resolve the thread.
+the reply; it does not resolve the thread. Top-level comment and review-summary
+responses link to and quote the original feedback, then put the response beneath
+it. Retries also recognise exact acknowledgements posted by older ID-only reply
+formatters, preserving the existing saved intent and marker.
 
 An assessment accompanying a human question also remains provisional until the
 session completes it after the answer.

@@ -226,3 +226,61 @@ func TestGitHubPRFeedbackPreservesHumanQuotesOfControllerMarkers(t *testing.T) {
 		t.Fatalf("human quote lost: %+v err=%v", comments, err)
 	}
 }
+
+func TestGitHubTopLevelRepliesQuoteAndLinkOriginalFeedback(t *testing.T) {
+	for _, kind := range []string{"comment", "review"} {
+		t.Run(kind, func(t *testing.T) {
+			p, f, plan, pr := githubFeedbackSetup(t)
+			source := "repos/example/project/issues/1/comments"
+			anchor := "issuecomment-1"
+			label := "original comment"
+			if kind == "review" {
+				source = "repos/example/project/pulls/1/reviews"
+				anchor = "pullrequestreview-1"
+				label = "original review"
+			}
+			f.items[source] = []githubFeedbackItem{githubItem(1, "First paragraph.\r\n\r\n```go\rreturn nil\n```", "reviewer", "User")}
+			comments, err := p.Feedback(context.Background(), plan, pr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := comments[0]
+			marker := feedbackMarker("run-one", c.ID, feedbackFingerprint(c))
+			if _, err := p.ReplyFeedback(context.Background(), plan, pr, c, marker, "Corrected in the signed commit."); err != nil {
+				t.Fatal(err)
+			}
+			replies := f.items["repos/example/project/issues/1/comments"]
+			got := replies[len(replies)-1].Body
+			want := "In reply to [the " + label + "](" + pr.URL + "#" + anchor + "):\n\n> First paragraph.\n> \n> ```go\n> return nil\n> ```\n\nCorrected in the signed commit.\n\n" + marker
+			if got != want {
+				t.Fatalf("quote reply differs:\ngot %q\nwant %q", got, want)
+			}
+			if _, err := p.ReplyFeedback(context.Background(), plan, pr, c, marker, "Corrected in the signed commit."); err != nil || f.posts != 1 {
+				t.Fatal("quote reply duplicated on resume", err, f.posts)
+			}
+		})
+	}
+}
+
+func TestGitHubQuoteReplyReconcilesEarlierIDOnlyAcknowledgement(t *testing.T) {
+	p, f, plan, pr := githubFeedbackSetup(t)
+	endpoint := "repos/example/project/issues/1/comments"
+	f.items[endpoint] = []githubFeedbackItem{githubItem(1, "Original question", "reviewer", "User")}
+	comments, err := p.Feedback(context.Background(), plan, pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := comments[0]
+	marker := feedbackMarker("run-one", c.ID, feedbackFingerprint(c))
+	body := "Recorded correction."
+	legacy := githubItem(901, "Response to comment:1:\n\n"+body+"\n\n"+marker, "example", "User")
+	f.items[endpoint] = append(f.items[endpoint], legacy)
+	ack, err := p.ReplyFeedback(context.Background(), plan, pr, c, marker, body)
+	if err != nil || ack.ID != "901" || f.posts != 0 {
+		t.Fatal("upgrade duplicated or rejected the saved acknowledgement", ack, err, f.posts)
+	}
+	f.items[endpoint][1].Body = "Response to comment:1:\n\nUnrelated response.\n\n" + marker
+	if _, err := p.ReplyFeedback(context.Background(), plan, pr, c, marker, body); err == nil || f.posts != 0 {
+		t.Fatal("legacy reconciliation accepted different saved intent", err, f.posts)
+	}
+}
