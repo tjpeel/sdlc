@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.86 - 2026-10-15
+
+### Changed
+
+- Separate evidence-backed review recommendations from defects. Recommendations reach human review without authorising automatic repairs, and remain visible with their original revision after later review rounds.
+- Record independent review scope and the exact published boundary. Preserve coverage gaps and limitations through repair rounds, warn on partial or repair-only inspection, and retain unknown coverage for older saved runs.
+- Align native reviewer schemas and controller instructions with the review skill. Include earlier review evidence in the next review packet and expose recommendations and coverage in private reports and dashboard details.
+
 ## 0.1.0-beta.85 - 2026-10-15
 
 ### Added

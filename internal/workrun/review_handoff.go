@@ -65,6 +65,9 @@ type ReviewAssessment struct {
 }
 
 func validateReviewJournal(j *Journal) error {
+	if err := validateReviewReports(j); err != nil {
+		return err
+	}
 	if h := j.ReviewHumanInput; h != nil {
 		data, err := json.Marshal(h.Questions)
 		if err != nil || len(h.Questions) == 0 || len(data) > 64*1024 || len(h.Answer) > 64*1024 || strings.TrimSpace(h.Answer) == "" || !utf8.ValidString(h.Answer) {

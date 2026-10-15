@@ -370,17 +370,27 @@ func Reason(v runstatus.View) string {
 		}
 		return "Waiting for another " + v.Activity.WaitingProvider + " operation to release its account cache."
 	}
-	if v.Stopped && v.NeedsAttention && v.State != "ready" {
+	if v.Stopped && v.NeedsAttention && v.State != "ready" && v.State != "awaiting_feedback" {
 		return "Controller stopped; checkpoint retained."
 	}
-	if v.State == "ready" {
+	if v.State == "ready" || v.State == "awaiting_feedback" {
 		if v.Journal != nil {
+			notices := []string{}
 			if notice := workrun.ReviewWarningNotice(*v.Journal); notice != "" {
-				return notice
+				notices = append(notices, notice)
+			}
+			if notice := workrun.ReviewRecommendationNotice(*v.Journal); notice != "" {
+				notices = append(notices, notice)
+			}
+			if len(notices) > 0 {
+				return strings.Join(notices, "\n")
 			}
 			if notice := workrun.ReviewSkipNotice(*v.Journal); notice != "" {
 				return notice
 			}
+		}
+		if v.State == "awaiting_feedback" {
+			return "PR is awaiting feedback."
 		}
 		return "Draft PR is ready for human review."
 	}

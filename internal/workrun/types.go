@@ -174,7 +174,26 @@ type Finding struct {
 	Recommendation string `json:"recommendation"`
 }
 
+// ReviewCoverage records inspection scope separately from test evidence.
+type ReviewCoverage struct {
+	BaseSHA string   `json:"base_sha"`
+	HeadSHA string   `json:"head_sha"`
+	Scope   string   `json:"scope"`
+	Gaps    []string `json:"gaps"`
+}
+
+// ReviewReport retains bounded review evidence across repair rounds.
+type ReviewReport struct {
+	Publication     Publication     `json:"publication"`
+	Attempt         int             `json:"attempt"`
+	Coverage        *ReviewCoverage `json:"coverage,omitempty"`
+	Limitations     []string        `json:"limitations,omitempty"`
+	Recommendations []Finding       `json:"recommendations,omitempty"`
+}
+
 type Outcome struct {
+	Recommendations []Finding       `json:"recommendations,omitempty"`
+	ReviewCoverage  *ReviewCoverage `json:"review_coverage,omitempty"`
 	// PRFeedbackAssessments may cover any subset of the current requested batch.
 	PRFeedbackAssessments []PRFeedbackAssessment       `json:"pr_feedback_assessments,omitempty"`
 	RepositoryRequests    []CompanionRepositoryRequest `json:"repository_requests,omitempty"`
@@ -296,6 +315,7 @@ type Journal struct {
 	ReviewRepairIncreases     []ReviewRepairIncrease  `json:"review_repair_increases,omitempty"`
 	ReviewHumanInput          *ReviewHumanInput       `json:"review_human_input,omitempty"`
 	ReviewRepairBudget        *ReviewRepairBudget     `json:"review_repair_budget,omitempty"`
+	ReviewReports             []ReviewReport          `json:"review_reports,omitempty"`
 	ReviewAssessment          *ReviewAssessment       `json:"review_assessment,omitempty"`
 	CIRepairBudget            *CIRepairBudget         `json:"ci_repair_budget,omitempty"`
 	ConfiguredRepairBudget    *ConfiguredRepairBudget `json:"configured_repair_budget,omitempty"`

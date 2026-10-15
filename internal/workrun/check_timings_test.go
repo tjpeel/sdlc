@@ -83,6 +83,7 @@ func TestControllerRecordsQueryTimeAndCommandTimings(t *testing.T) {
 func TestLegacyTimingHistoriesRemainExplicitlyPartial(t *testing.T) {
 	for _, version := range []int{0, 1} {
 		directory, journal := testRun(t)
+		journal.Publication = Publication{Number: 1, URL: "https://github.com/example/project/pull/1", BaseSHA: testBase, HeadSHA: testHead}
 		journal.State = "ci"
 		journal.Attempt = 1
 		journal.Timings.Version = version

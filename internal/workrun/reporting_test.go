@@ -118,6 +118,7 @@ func TestCheckLogsCannotEnterNativeEventObserver(t *testing.T) {
 
 func TestFreshReviewerReceivesRecordedHumanQuestions(t *testing.T) {
 	dir, j := testRun(t)
+	j.Publication = Publication{Number: 1, URL: "https://github.com/example/project/pull/1", BaseSHA: testBase, HeadSHA: testHead}
 	j.State, j.PendingRole = "waiting_for_human", "review"
 	question := "Should missing records return 404?"
 	j.Outcome.Questions = []string{question}

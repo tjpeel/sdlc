@@ -284,6 +284,9 @@ func (r Runner) runPRCheckpointReview(ctx context.Context, dir string, j *Journa
 	if result.Outcome.Status != "reviewed" {
 		return r.stop(dir, j, "blocked", "independent review did not complete")
 	}
+	if err := recordReviewReport(j); err != nil {
+		return r.stop(dir, j, "blocked", err.Error())
+	}
 	after, err := r.checkpointBoundary(ctx, j)
 	if err != nil || after.Head != revision.Head || after.Tree != revision.Tree {
 		return r.stop(dir, j, "blocked", "PR changed during independent review")

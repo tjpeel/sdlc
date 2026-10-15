@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -19,8 +20,32 @@ const testTree = "3333333333333333333333333333333333333333"
 const testNative = "00000000-0000-4000-8000-000000000001"
 
 func testOutcome(status string) Outcome {
-	return Outcome{Status: status, Summary: "Selected work complete", Questions: []string{}, Findings: []Finding{}, Limitations: []string{}, LocalReview: true, PRTitle: "TASK-1 selected work", PRBody: "Implements TASK-1."}
+	out := Outcome{Status: status, Summary: "Selected work complete", Questions: []string{}, Findings: []Finding{}, Limitations: []string{}, LocalReview: true, PRTitle: "TASK-1 selected work", PRBody: "Implements TASK-1."}
+	if status == "reviewed" {
+		out.ReviewCoverage = coverage("full")
+	}
+	return out
 }
+
+// Scripted reviewers echo the captured publication rather than a fixed fixture SHA.
+func bindTestReviewBoundary(out *Outcome, session Session) {
+	if session.Role != "review" || out.ReviewCoverage == nil {
+		return
+	}
+	start := strings.Index(session.Prompt, "{")
+	if start < 0 {
+		return
+	}
+	var packet struct {
+		Publication Publication `json:"publication"`
+	}
+	if json.NewDecoder(strings.NewReader(session.Prompt[start:])).Decode(&packet) == nil {
+		copy := *out.ReviewCoverage
+		copy.BaseSHA, copy.HeadSHA = packet.Publication.BaseSHA, packet.Publication.HeadSHA
+		out.ReviewCoverage = &copy
+	}
+}
+
 func testRun(t *testing.T) (string, *Journal) {
 	t.Helper()
 	parent, err := filepath.EvalSymlinks(t.TempDir())
@@ -78,6 +103,7 @@ func (p *fakeProvider) Execute(_ context.Context, s Session, out, diag io.Writer
 		return SessionResult{}, errors.New("unexpected session")
 	}
 	o := p.outcomes[0]
+	bindTestReviewBoundary(&o, s)
 	if s.Role == "implementation" {
 		p.lastImplementation = o
 	}
@@ -709,6 +735,7 @@ func TestRunnerWaitsForCIStartupWithoutRepeatingImplementation(t *testing.T) {
 
 func TestRunnerMissingCIGracePersistsAcrossResume(t *testing.T) {
 	dir, j := testRun(t)
+	j.Publication = Publication{Number: 1, URL: "https://github.com/example/project/pull/1", BaseSHA: testBase, HeadSHA: testHead}
 	j.State = "ci"
 	p, c, pub, repo := &fakeProvider{}, &fakeChecker{}, &fakePublisher{statuses: []string{"missing"}}, &fakeRepository{}
 	r := fakeRunner(p, c, pub, repo)

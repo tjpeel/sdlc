@@ -15,6 +15,9 @@ import (
 // Explicit projection avoids copying authentication metadata, prompts, session
 // identifiers, raw logs, private input bytes or the captured source workspace.
 type Report struct {
+	ReviewReports      []workrun.ReviewReport      `json:"review_reports,omitempty"`
+	Recommendations    []workrun.Finding           `json:"recommendations,omitempty"`
+	ReviewCoverage     *workrun.ReviewCoverage     `json:"review_coverage,omitempty"`
 	ReviewInterruption *workrun.ReviewInterruption `json:"interrupted_independent_review,omitempty"`
 	ReviewSkip         *workrun.ReviewSkip         `json:"independent_review_skipped,omitempty"`
 	RunLimitOverride   *RunLimitOverrideSummary    `json:"run_limit_override,omitempty"`
@@ -84,6 +87,7 @@ func reportSnapshot(v View) (Report, error) {
 		questions = j.Outcome.Questions
 	}
 	return Report{
+		ReviewReports: j.ReviewReports, Recommendations: j.Outcome.Recommendations, ReviewCoverage: j.Outcome.ReviewCoverage,
 		ReviewInterruption: j.ReviewInterruption,
 		ReviewSkip:         j.ReviewSkip,
 		Timings:            j.Timings.Recorded(),

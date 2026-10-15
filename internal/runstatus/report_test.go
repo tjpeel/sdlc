@@ -211,3 +211,27 @@ func TestStableRunOverrideStatusPreservesAuditWithoutInventingLimit(t *testing.T
 		t.Fatal("stable permission display exposed session identity")
 	}
 }
+
+func TestPrivateReportRetainsReviewHistoryAndRecommendations(t *testing.T) {
+	view := reportView()
+	coverage := &workrun.ReviewCoverage{BaseSHA: strings.Repeat("1", 40), HeadSHA: strings.Repeat("2", 40), Scope: "partial", Gaps: []string{"Remaining behaviour uninspected"}}
+	recommendation := workrun.Finding{Priority: "P3", Path: "app.go", Line: 1, Scenario: "Unnecessary state has operating cost", Recommendation: "Reconsider the scope"}
+	view.Journal.Outcome.ReviewCoverage = coverage
+	view.Journal.Outcome.Recommendations = []workrun.Finding{recommendation}
+	view.Journal.ReviewReports = []workrun.ReviewReport{{Coverage: coverage, Recommendations: []workrun.Finding{recommendation}}}
+	report, err := reportSnapshot(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Report
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ReviewCoverage.Scope != "partial" || len(decoded.ReviewReports) != 1 || len(decoded.Recommendations) != 1 || decoded.ReviewReports[0].Coverage.Gaps[0] != coverage.Gaps[0] {
+		t.Fatal("private export lost review evidence")
+	}
+}

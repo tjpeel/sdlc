@@ -586,8 +586,14 @@ requests to the controller. Passing project checks do not replace that additiona
 publisher recreates delivered commits with the frozen Git identity and approved SSH key, preserving the tested
 tree, and publishes a **draft** PR. Current-head CI must pass before fresh independent review. Actionable
 findings return to the original implementation session; repairs repeat checks, signed publication, CI and a
-new review. A complete clean review and passing current CI produce `ready` for human review. SDLC never
-merges. Inspect the actual PR, author, signatures/Verified attribution, CI and changes.
+new review. Evidence-backed design or scope recommendations are retained for human consideration and do
+not enter the automatic repair loop or authorise changes to approved requirements. Each review reports
+its exact PR base/head and whether it inspected the full change, part of it, or only a repair delta.
+Partial coverage reaches the human checkpoint with a warning; earlier gaps remain visible until a later
+full inspection supersedes them. Older runs without coverage metadata are shown as unknown. Review
+recommendations retain their original revision even after later reviews, so compare them with the current
+PR before acting. Passing current CI and a completed review produce `ready` for human review, with any
+coverage warnings and recommendations. SDLC never merges. Inspect the actual PR, author, signatures/Verified attribution, CI and changes.
 
 The implementation login is required. Missing opposite-reviewer login allows checks, draft publication and CI,
 then pauses at `awaiting_reviewer`. Log in that provider and resume. Questions, denials, usage limits and

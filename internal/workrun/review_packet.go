@@ -15,7 +15,7 @@ var reviewOutcomeSchema = func() string {
 	}
 	all := schema["properties"].(map[string]any)
 	properties := map[string]any{}
-	keys := []string{"status", "summary", "questions", "findings", "limitations", "repository_requests"}
+	keys := []string{"status", "summary", "questions", "findings", "limitations", "repository_requests", "recommendations", "review_coverage"}
 	for _, key := range keys {
 		properties[key] = all[key]
 	}

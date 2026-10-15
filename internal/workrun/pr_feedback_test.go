@@ -44,6 +44,7 @@ func (p *feedbackScriptProvider) Execute(_ context.Context, s Session, _, _ io.W
 		return SessionResult{}, errors.New("unexpected native turn")
 	}
 	out := p.outcomes[0]
+	bindTestReviewBoundary(&out, s)
 	p.outcomes = p.outcomes[1:]
 	return SessionResult{Outcome: out, SessionID: testNative, ReportedModel: s.Model.Name}, nil
 }

@@ -399,3 +399,18 @@ func TestDetailShowsContextPercentageOnlyForReportedMatchingWindow(t *testing.T)
 		})
 	}
 }
+
+func TestStoppedHumanCheckpointsShowReviewConcerns(t *testing.T) {
+	for _, state := range []string{"ready", "awaiting_feedback"} {
+		j := &workrun.Journal{Outcome: workrun.Outcome{
+			Status: "reviewed", Limitations: []string{},
+			ReviewCoverage:  &workrun.ReviewCoverage{Scope: "delta", Gaps: []string{"Earlier changes were not inspected"}},
+			Recommendations: []workrun.Finding{{Priority: "P3", Path: "app.go", Line: 1, Scenario: "Duplicated policy may drift", Recommendation: "Consider sharing it"}},
+		}}
+		view := runstatus.View{State: state, Stopped: true, NeedsAttention: true, Journal: j}
+		text := Reason(view)
+		if !strings.Contains(text, "Earlier changes") || !strings.Contains(text, "Duplicated policy") {
+			t.Fatalf("%s hid review concerns: %s", state, text)
+		}
+	}
+}

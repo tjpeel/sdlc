@@ -286,7 +286,8 @@ func TestCodexTopLevelUsageErrorRemainsNativeCompletionFailure(t *testing.T) {
 }
 
 func TestReviewSpecificHandoffDoesNotRequireImplementationFields(t *testing.T) {
-	out := `{"status":"reviewed","summary":"No actionable findings","questions":[],"findings":[],"limitations":[],"repository_requests":[]}`
+	raw, _ := json.Marshal(map[string]any{"status": "reviewed", "summary": "No actionable findings", "questions": []string{}, "findings": []Finding{}, "limitations": []string{}, "repository_requests": []CompanionRepositoryRequest{}, "recommendations": []Finding{}, "review_coverage": coverage("full")})
+	out := string(raw)
 	w := eventWriter{provider: "claude"}
 	data := `{"type":"result","subtype":"success","session_id":"` + testNative + `","structured_output":` + out + `}`
 	_, _ = w.Write([]byte(data + "\n"))
