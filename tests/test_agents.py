@@ -226,6 +226,8 @@ import os, signal, time
 from pathlib import Path
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 path = Path(os.environ['STUB_ROOT']) / 'heartbeat'
+path.write_text(str(time.monotonic()))
+path.with_name('child-ready').write_text('ready')
 while True:
     path.write_text(str(time.monotonic()))
     time.sleep(0.02)
@@ -234,8 +236,23 @@ while True:
             sys.stdin.read()
             time.sleep(30)
         ''')
-        with self.assertRaisesRegex(agents.AgentError, 'time limit'):
-            self.run_agent(timeout=0.4)
+        communicate = agents.subprocess.Popen.communicate
+
+        def timeout_after_child_ready(process, *args, **kwargs):
+            # Exercise the timeout after both interpreters have started and the
+            # child has installed SIGTERM handling and produced a heartbeat.
+            # Interpreter startup is not the process-group cleanup under test.
+            ready = self.root / 'child-ready'
+            deadline = time.monotonic() + 10
+            while not ready.is_file() or not (self.root / 'child-pid').is_file():
+                self.assertIsNone(process.poll(), 'stub exited before child readiness')
+                self.assertLess(time.monotonic(), deadline, 'child fixture did not become ready')
+                time.sleep(0.01)
+            return communicate(process, *args, **kwargs)
+
+        with patch.object(agents.subprocess.Popen, 'communicate', timeout_after_child_ready):
+            with self.assertRaisesRegex(agents.AgentError, 'time limit'):
+                self.run_agent(timeout=0.4)
         self.assertTrue((self.root / 'child-pid').is_file())
         first = (self.root / 'heartbeat').read_text()
         time.sleep(0.15)
