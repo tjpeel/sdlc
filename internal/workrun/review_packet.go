@@ -2,6 +2,25 @@ package workrun
 
 import "encoding/json"
 
+// Implementation self-review must not populate the independent review report.
+// Restrict the native output schema as well as validating the returned role.
+var implementationOutcomeSchema = func() string {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(outcomeSchema), &schema); err != nil {
+		panic(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	properties["recommendations"].(map[string]any)["maxItems"] = 0
+	properties["recommendations"].(map[string]any)["description"] = "Implementation role: return []. Put self-review recommendations in summary."
+	properties["review_coverage"] = map[string]any{"type": "null", "description": "Implementation role: return null. Put self-review inspection evidence in summary."}
+	properties["status"].(map[string]any)["enum"] = []string{"implemented", "checks_requested", "diagnostics_requested", "waiting_for_human", "blocked", "failed"}
+	data, err := json.Marshal(schema)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}()
+
 type reviewCIEvidence struct {
 	Status string `json:"status"`
 }

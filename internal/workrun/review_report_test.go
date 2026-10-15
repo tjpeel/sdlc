@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -202,5 +203,65 @@ func TestStandaloneReviewDisplaysCoverageAndRecommendations(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "one policy boundary") {
 		t.Fatal("standalone review hid evidence", output.String())
+	}
+}
+
+func TestImplementationSelfReviewUsesRoleRestrictedSchema(t *testing.T) {
+	dir, j := testRun(t)
+	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("reviewed")}}
+	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
+	if err := r.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	var implementation, review map[string]any
+	if err := json.Unmarshal([]byte(p.calls[0].Schema), &implementation); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(p.calls[1].Schema), &review); err != nil {
+		t.Fatal(err)
+	}
+	props := implementation["properties"].(map[string]any)
+	if props["recommendations"].(map[string]any)["maxItems"] != float64(0) || props["review_coverage"].(map[string]any)["type"] != "null" {
+		t.Fatal("implementation can emit independent-review details")
+	}
+	for _, status := range props["status"].(map[string]any)["enum"].([]any) {
+		if status == "reviewed" || status == "review_incomplete" {
+			t.Fatal("implementation can claim independent review")
+		}
+	}
+	reviewProps := review["properties"].(map[string]any)
+	if reviewProps["recommendations"].(map[string]any)["maxItems"] != float64(32) || reviewProps["review_coverage"].(map[string]any)["anyOf"] == nil {
+		t.Fatal("independent-review reporting was restricted")
+	}
+}
+
+func TestNativeImplementationSelfReviewRoleBoundary(t *testing.T) {
+	for _, provider := range []string{"codex", "claude"} {
+		for _, invalidCoverage := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/coverage=%t", provider, invalidCoverage), func(t *testing.T) {
+				out := testOutcome("checks_requested")
+				out.Summary = "Self-review trace and non-blocking scope recommendation retained here."
+				out.LocalReview = true
+				if invalidCoverage {
+					out.ReviewCoverage = coverage("full")
+				}
+				data := codexEvents(out)
+				if provider == "claude" {
+					raw, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "session_id": testNative, "structured_output": out})
+					data = string(raw)
+				}
+				w := eventWriter{provider: provider}
+				if _, err := w.Write([]byte(data)); err != nil {
+					t.Fatal(err)
+				}
+				err := w.finish("implementation")
+				if invalidCoverage && err == nil {
+					t.Fatal("implementation review coverage accepted")
+				}
+				if !invalidCoverage && err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
 	}
 }

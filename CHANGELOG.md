@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.88 - 2026-10-15
+
+### Fixed
+- Keep implementation self-review in its own role: constrain native handoffs to empty independent-review recommendations and null review coverage, and retain self-review evidence in the summary. Independent PR review retains its existing structured report and validation.
+
+
 ## 0.1.0-beta.87 - 2026-10-15
 
 ### Changed
