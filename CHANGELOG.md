@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.80 - 2026-10-15
+
+### Changed
+
+- Choose Claude review effort from the exact published PR by default: low for small documentation changes, medium for ordinary or uncertain changes, and high for large or sensitive changes. Retain the selected model, record the decision and reasons, and respect explicit effort overrides and previously saved settings.
+- Shorten completion usage reports to model/role, requested effort and speed, elapsed time, measured tokens, observed subagents and available subscription percentages. Omit repeated missing fields and duplicate session totals; full details remain available through usage and JSON.
+
 ## 0.1.0-beta.79 - 2026-10-15
 
 ### Changed

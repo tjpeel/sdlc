@@ -182,7 +182,7 @@ func TestFinishedRunUsageReadsSessionSettingsWithoutChangingRecords(t *testing.T
 	before := dashboardTree(t, directory)
 	var text bytes.Buffer
 	printCompletedRunUsage(&text, directory, workrun.Journal{ID: "run-one", Attempt: 1})
-	for _, want := range []string{"1 provider attempts", "1 session records", "reasoning high; speed fast", "effective reasoning unknown; speed unknown", "Session 1 codex", "input 100", "cache read 40", "sdlc usage --run run-one"} {
+	for _, want := range []string{"1 attempt across 1 session", "high effort", "fast speed", "in 100", "cached 40", "sdlc usage --run run-one"} {
 		if !strings.Contains(text.String(), want) {
 			t.Errorf("missing %q in %s", want, text.String())
 		}

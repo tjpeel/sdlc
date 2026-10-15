@@ -36,6 +36,8 @@ var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 // Attempt is private native-client telemetry. SessionID never appears in Summary.
 // Elapsed time covers the entire attempt, including setup and queueing.
 type Attempt struct {
+	ReviewEffortSelection *ReviewEffortSelection `json:"review_effort_selection,omitempty"`
+
 	RequestedSpeed string          `json:"requested_speed,omitempty"`
 	EffectiveSpeed string          `json:"effective_speed,omitempty"`
 	ReviewBoundary *ReviewBoundary `json:"review_boundary,omitempty"`
@@ -168,6 +170,14 @@ func openMetricsRoot(dir string, create bool) (*os.Root, error) {
 }
 
 func validateAttempt(a Attempt) error {
+	if s := a.ReviewEffortSelection; s != nil {
+		if a.Role != "review" || a.Provider != "claude" || a.ReviewBoundary == nil || a.Effort != s.Effort {
+			return fmt.Errorf("invalid review effort metrics boundary")
+		}
+		if err := s.Validate(); err != nil {
+			return err
+		}
+	}
 	if a.RequestedSpeed != "" && a.RequestedSpeed != "normal" && a.RequestedSpeed != "fast" || a.EffectiveSpeed != "" && a.EffectiveSpeed != "unknown" {
 		return fmt.Errorf("invalid native speed evidence")
 	}

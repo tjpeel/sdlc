@@ -51,6 +51,7 @@ func TestReviewerNativeUsageExhaustionReachesVisibleHumanCheckpoint(t *testing.T
 			j.State, j.Outcome = "reviewing", testOutcome("implemented")
 			if provider == "codex" {
 				j.Plan.Roles = DefaultModels().Claude
+				j.ReviewEffort = nil
 			}
 			p := &exhaustedReviewProvider{event: rejectedClaudeReview, err: errNativeIncomplete}
 			if provider == "codex" {
@@ -125,13 +126,20 @@ func TestReviewUsageDoesNotBypassOtherHolds(t *testing.T) {
 }
 
 func TestLegacyReviewUsageHoldReusesCorroboratedAttempt(t *testing.T) {
-	for _, fault := range []string{"", "no_snapshot", "other_boundary", "wrong_model", "wrong_category", "warning", "new_record_missing_marker", "safety_error", "retained_auth", "no_after"} {
+	for _, fault := range []string{"", "auto_high", "auto_low", "wrong_effort", "no_snapshot", "other_boundary", "wrong_model", "wrong_category", "warning", "new_record_missing_marker", "safety_error", "retained_auth", "no_after"} {
 		t.Run(fault, func(t *testing.T) {
 			dir, j, r, _, _ := feedbackReadyRun(t)
 			j.Attempt++
 			j.State, j.ResumeState, j.StopReason, j.Outcome = "failed", "reviewing", errNativeIncomplete.Error(), testOutcome("implemented")
+			if fault == "auto_high" || fault == "auto_low" || fault == "wrong_effort" {
+				selection := assessReviewEffort(ReviewDiff{Sensitive: true})
+				if fault == "auto_low" {
+					selection = assessReviewEffort(ReviewDiff{Files: []ReviewDiffFile{{Path: "README.md", Added: 1}}})
+				}
+				j.ReviewEffort = &ReviewEffortDecision{Base: j.Publication.BaseSHA, Head: j.Publication.HeadSHA, Model: j.Plan.Roles.Review.Name, Selection: selection}
+			}
 			now := time.Now().UTC()
-			a := runusage.Attempt{Version: 1, RunID: j.ID, Attempt: j.Attempt, Role: "review", Provider: j.Plan.Roles.Review.Provider, Model: j.Plan.Roles.Review.Name, Effort: j.Plan.Roles.Review.Effort, ImageID: j.ImageID, StartedAt: now.Add(-time.Minute), EndedAt: now.Add(-time.Second), Outcome: "failed", OptimizerMode: "off", Usage: runusage.Usage{RateLimits: map[string]runusage.RateLimit{"five_hour": {Source: "claude.rate_limit_event", Status: "rejected", ObservedAt: now.Add(-2 * time.Second)}}}}
+			a := runusage.Attempt{Version: 1, RunID: j.ID, Attempt: j.Attempt, Role: "review", Provider: j.Plan.Roles.Review.Provider, Model: j.Plan.Roles.Review.Name, Effort: selectedReviewModel(j).Effort, ImageID: j.ImageID, StartedAt: now.Add(-time.Minute), EndedAt: now.Add(-time.Second), Outcome: "failed", OptimizerMode: "off", Usage: runusage.Usage{RateLimits: map[string]runusage.RateLimit{"five_hour": {Source: "claude.rate_limit_event", Status: "rejected", ObservedAt: now.Add(-2 * time.Second)}}}}
 			snapshot := filepath.Join(dir, fmt.Sprintf("review-source-%d-fixture", j.Attempt))
 			if fault != "no_snapshot" {
 				if err := os.Mkdir(snapshot, 0700); err != nil {
@@ -142,6 +150,8 @@ func TestLegacyReviewUsageHoldReusesCorroboratedAttempt(t *testing.T) {
 			case "other_boundary":
 				a.ReviewBoundary = reviewAttemptBoundary(j)
 				a.ReviewBoundary.Head = testBase
+			case "wrong_effort":
+				a.Effort = "medium"
 			case "wrong_model":
 				a.Model = "different-review-model"
 			case "wrong_category":
@@ -183,10 +193,23 @@ func TestLegacyReviewUsageHoldReusesCorroboratedAttempt(t *testing.T) {
 			r.Provider = p
 			attempt, checks, rounds := j.Attempt, j.CheckAttempt, j.Rounds
 			err := r.Run(context.Background(), dir, j, "")
-			if fault == "" {
+			if fault == "" || fault == "auto_high" || fault == "auto_low" {
 				if err != nil || j.State != "ready" || j.ReviewSkip == nil || len(p.calls) != 0 || j.Attempt != attempt || j.CheckAttempt != checks || j.Rounds != rounds {
 					t.Fatal("corroborated legacy stop retried native review", err)
 				}
+				if fault == "auto_high" || fault == "auto_low" {
+					// A later published revision must not reinterpret this historical skip's effort.
+					j.State, j.Outcome = "ci", testOutcome("implemented")
+					j.Publication.HeadSHA = strings.Repeat("d", 40)
+					j.ReviewEffort = &ReviewEffortDecision{Base: j.Publication.BaseSHA, Head: j.Publication.HeadSHA, Model: j.Plan.Roles.Review.Name, Selection: assessReviewEffort(ReviewDiff{})}
+					if err := validateReviewSkip(j); err != nil {
+						t.Fatal("historical effort reinterpreted", err)
+					}
+					if ReviewSkipNotice(*j) != "" {
+						t.Fatal("old skip applied to unrelated head")
+					}
+				}
+
 			} else if err == nil || j.ReviewSkip != nil || j.State == "ready" {
 				t.Fatal("uncorroborated legacy stop bypassed hold", fault)
 			}
@@ -288,6 +311,7 @@ func TestNativeQuotaAfterStructuredFindingsRetainsKnownWorkWithoutApproval(t *te
 	}
 	dir, j, r, _, _ := feedbackReadyRun(t)
 	j.State, j.Outcome, j.Plan.Roles = "reviewing", testOutcome("implemented"), DefaultModels().Claude
+	j.ReviewEffort = nil
 	result, err := provider.Execute(context.Background(), Session{Model: j.Plan.Roles.Review, Role: "review", Workspace: j.Workspace, Directory: filepath.Join(dir, "native-stream"), Prompt: "offline fixture", Schema: reviewOutcomeSchema}, io.Discard, io.Discard)
 	if err == nil || result.ReviewInterruption == nil || len(result.ReviewInterruption.Findings) != 1 {
 		t.Fatal("failed native stream discarded valid known findings", err)

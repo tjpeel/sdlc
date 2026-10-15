@@ -301,7 +301,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			fmt.Fprintf(output, "Branch %s: %s\n", ticket.File, branches[ticket.File])
 			fmt.Fprintf(output, "Requirement inputs for %s: %v\n", ticket.File, selections.ticketInputs(plan.Reference, ticket.File))
 			roles := selections.Roles[ticket.File]
-			fmt.Fprintf(output, "%s: implementation %s/%s (%s); review %s/%s (%s).\n", ticket.File, roles.Implementation.Provider, roles.Implementation.Name, roles.Implementation.Effort, roles.Review.Provider, roles.Review.Name, roles.Review.Effort)
+			fmt.Fprintf(output, "%s: implementation %s/%s (%s); review %s/%s (%s).\n", ticket.File, roles.Implementation.Provider, roles.Implementation.Name, roles.Implementation.Effort, roles.Review.Provider, roles.Review.Name, workrun.ReviewEffortLabel(roles))
 		}
 		fmt.Fprintf(output, "Docker integration-test daemon: %t.\n", selections.DockerTests)
 		fmt.Fprintf(output, "Headroom: %s; checks: %v; check inputs: %v; additional inputs: %v.\n", seriesHeadroomMode(selections.Headroom), selections.Config.Checks, selections.Config.InputFiles, selections.Inputs)

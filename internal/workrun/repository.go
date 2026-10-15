@@ -35,13 +35,47 @@ func mount(source, destination string, readonly bool) string {
 	return strings.TrimSuffix(result.String(), "\n")
 }
 
-const repositoryHelper = `import json,os,pathlib,stat,subprocess,sys
+const repositoryHelper = `import json,os,pathlib,re,stat,subprocess,sys
 env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":"/tmp","GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null","GIT_TERMINAL_PROMPT":"0","GIT_OPTIONAL_LOCKS":"0"}
 root=pathlib.Path('/workspace')
 if not stat.S_ISDIR((root/'.git').lstat().st_mode): raise ValueError('invalid Git directory')
 def git(*args):
  return subprocess.run(['git','-c','safe.directory=/workspace','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','core.pager=cat',*args],cwd=root,env=env,check=True,capture_output=True).stdout
-if sys.argv[1]=='inspect':
+if sys.argv[1].startswith('review_diff:'):
+    _,base,head=sys.argv[1].split(':')
+    env['GIT_NO_REPLACE_OBJECTS']='1'
+    if git('rev-parse','HEAD').decode().strip()!=head: raise ValueError('review snapshot differs')
+    args=('--no-ext-diff','--no-textconv','--no-renames',base,head,'--')
+    stats=git('diff','--numstat','-z',*args).split(b'\0')
+    files=[]
+    for row in stats[:2000]:
+        if not row: continue
+        added,deleted,name=row.split(b'\t',2)
+        files.append({'path':name.decode('utf-8','replace'),'added':int(added) if added!=b'-' else 0,'deleted':int(deleted) if deleted!=b'-' else 0,'binary':added==b'-'})
+    generated={'package-lock.json','npm-shrinkwrap.json','pnpm-lock.yaml','yarn.lock','go.sum','cargo.lock','gemfile.lock','composer.lock','packages.lock.json','poetry.lock','uv.lock'}
+    code_paths=[]
+    for f in files:
+        p=f['path'].lower(); name=pathlib.PurePosixPath(p).name
+        suffix=pathlib.PurePosixPath(p).suffix
+        doc=(suffix in ('.md','.rst') or suffix=='.txt' and (p.startswith('docs/') or '/docs/' in p or name in ('readme.txt','license.txt','changelog.txt'))) and name not in ('agents.md','claude.md','skill.md') and not p.startswith(('.codex/','.claude/','.agents/','.cursor/')) and p!='.github/copilot-instructions.md' and '/.claude/' not in p and '/.codex/' not in p
+        if not doc and name not in generated and not p.endswith('.g.cs') and '.generated.' not in p: code_paths.append(f['path'])
+    patch=b''; truncated=len(stats)>2001
+    if sum(len(p.encode()) for p in code_paths)>65536:
+        truncated=True
+    elif code_paths:
+        proc=subprocess.Popen(['git','-c','safe.directory=/workspace','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','diff','--unified=0','--no-ext-diff','--no-textconv','--no-renames',base,head,'--',*code_paths],cwd=root,env=env,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        patch=proc.stdout.read(2097153)
+        truncated=truncated or len(patch)>2097152
+        if truncated: proc.terminate()
+        try: code=proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill(); proc.wait(); raise ValueError('diff inspection did not finish')
+        if code and not truncated: raise ValueError('diff inspection failed')
+    # Fixed lexical signals are conservative; no source text leaves this inspector.
+    risk=re.compile(rb'(?i)\b(authenticat\w*|authoriz\w*|password|credential\w*|permission\w*|secret\w*|encrypt\w*|decrypt\w*|mutex|semaphore|lock\s*\(|synchronized|interlocked|drop\s+table|alter\s+table|begin\s+transaction)')
+    sensitive=any(risk.search(line[1:]) for line in patch[:2097152].splitlines() if line[:1] in (b'+',b'-') and not line.startswith((b'+++',b'---')))
+    print(json.dumps({'files':files,'sensitive':sensitive,'truncated':truncated}))
+elif sys.argv[1]=='inspect':
  head=git('rev-parse','--verify','HEAD').decode().strip(); tree=git('rev-parse','HEAD^{tree}').decode().strip()
  status=git('status','--porcelain','--untracked-files=normal','--ignore-submodules=all')
  paths=git('ls-tree','-r','--name-only','-z','HEAD').decode().split('\0')
@@ -248,6 +282,23 @@ func (repository DockerRepository) Rebase(ctx context.Context, workspace, bundle
 	for _, path := range result.Paths {
 		if path == "" || filepath.IsAbs(path) || strings.Contains(path, "..") {
 			return RebaseResult{}, fmt.Errorf("credential-free rebase returned unsafe conflict path")
+		}
+	}
+	return result, nil
+}
+
+func (repository DockerRepository) ReviewDiff(ctx context.Context, workspace, base, head string) (ReviewDiff, error) {
+	if !objectID.MatchString(base) || !objectID.MatchString(head) {
+		return ReviewDiff{}, fmt.Errorf("invalid review diff boundary")
+	}
+	data, err := repository.run(ctx, workspace, "review_diff:"+base+":"+head, "")
+	var result ReviewDiff
+	if err != nil || len(data) > 1024*1024 || json.Unmarshal(data, &result) != nil || len(result.Files) > 2000 {
+		return ReviewDiff{}, fmt.Errorf("review diff statistics unavailable")
+	}
+	for _, f := range result.Files {
+		if !safeRelative(f.Path) || f.Added < 0 || f.Deleted < 0 || f.Added > 1000000000 || f.Deleted > 1000000000 {
+			return ReviewDiff{}, fmt.Errorf("invalid review diff statistics")
 		}
 	}
 	return result, nil

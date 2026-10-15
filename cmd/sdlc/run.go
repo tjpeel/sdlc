@@ -104,7 +104,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.reviewSpeed, "review-speed", "", "review native speed: normal or fast")
 	flags.StringVar(&options.effort, "effort", "", "implementation lead reasoning effort")
 	flags.StringVar(&options.reviewModel, "review-model", "", "opposite-provider review lead model")
-	flags.StringVar(&options.reviewEffort, "review-effort", "", "review lead reasoning effort")
+	flags.StringVar(&options.reviewEffort, "review-effort", "", "override PR-based Claude review effort")
 	flags.StringVar(&options.root, "run-root", "", "internal recorded root for resume")
 	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
 	flags.StringVar(&options.resume, "resume", "", "recorded run ID or unique prefix of at least three characters")

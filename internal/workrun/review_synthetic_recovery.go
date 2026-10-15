@@ -16,7 +16,7 @@ func recoverSyntheticQuotaModel(dir string, j *Journal, a *runusage.Attempt) err
 	refuse := func() error {
 		return fmt.Errorf("saved synthetic reviewer model hold lacks corroborated safe native quota evidence")
 	}
-	if a.Provider != "claude" || a.Model != j.Plan.Roles.Review.Name || a.Effort != j.Plan.Roles.Review.Effort || a.ImageID != j.ImageID || a.Outcome != "failed" || a.StopCategory != "operational" || a.Usage.ReportedModel != "<synthetic>" || a.Resumed || a.ReviewBoundary == nil || a.Usage.NativeFinalization == nil || a.Usage.NativeFinalization.Provider != "claude" || a.Usage.NativeFinalization.ExitCode != 1 {
+	if a.Provider != "claude" || a.Model != j.Plan.Roles.Review.Name || a.Effort != selectedReviewModel(j).Effort || a.ImageID != j.ImageID || a.Outcome != "failed" || a.StopCategory != "operational" || a.Usage.ReportedModel != "<synthetic>" || a.Resumed || a.ReviewBoundary == nil || a.Usage.NativeFinalization == nil || a.Usage.NativeFinalization.Provider != "claude" || a.Usage.NativeFinalization.ExitCode != 1 {
 		return refuse()
 	}
 	expected := reviewAttemptBoundary(j)

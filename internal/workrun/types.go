@@ -20,6 +20,7 @@ type Model struct {
 }
 
 type Roles struct {
+	ReviewEffortPolicy  string `json:"review_effort_policy,omitempty"`
 	ImplementationSpeed string `json:"implementation_speed,omitempty"`
 	ReviewSpeed         string `json:"review_speed,omitempty"`
 	Implementation      Model  `json:"implementation"`
@@ -254,6 +255,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	ReviewEffort              *ReviewEffortDecision   `json:"review_effort_selection,omitempty"`
 	ReviewInterruption        *ReviewInterruption     `json:"interrupted_independent_review,omitempty"`
 	ReviewSkip                *ReviewSkip             `json:"independent_review_skipped,omitempty"`
 	CIFeedbackRecoveries      []CIFeedbackRecovery    `json:"ci_feedback_recoveries,omitempty"`

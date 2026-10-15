@@ -8,6 +8,25 @@ inspecting the shared runtime, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions, and single-ticket or feature execution through checks, draft
 PRs, CI and independent review, with a live dashboard of local runs.
+New Claude review sessions select effort from the published PR by default: low for
+small documentation-only diffs, medium for ordinary or uncertain changes, and high
+for large diffs or security, data integrity and concurrency signals. The initial
+policy uses diff statistics and conservative path/content rules, not a second model
+call. It retains the selected model and never automatically chooses xhigh or max.
+The decision is recorded per PR base/head; a changed revision is reassessed.
+Explicit `--review-effort` (or `--reasoning`) overrides it. Existing saved runs
+retain their settings, as do explicit review efforts in older `models.json` files.
+New generated
+model defaults include `review_effort_policy: "pr-v1"`; custom defaults can retain
+that field for automatic Claude selection or omit it for fixed effort.
+
+Completion usage reports show model/role, requested effort and speed, elapsed
+provider time, native token counts and observed subagents. Missing values are
+omitted with a note; omitted does not mean zero. `sdlc usage --run RUN_ID` and
+`--json` retain session, subagent and measurement details. Provider time includes
+setup, queueing and tools; it is not inference latency. Codex input includes cache
+reads, while Claude input excludes cache reads/writes.
+
 A completed independent review may report coverage limitations: these are retained
 as warnings at the human-review checkpoint. Findings still enter repair, and
 required human decisions and operational failures still stop the run.
@@ -33,7 +52,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.79`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.80`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

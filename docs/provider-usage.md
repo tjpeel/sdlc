@@ -335,3 +335,17 @@ missing usage remain unknown. Claude initialization may additionally report
 `fast_mode_state`, as declared in the official SDK system initialization type;
 this client state is not a delivered-speed measurement. Tests use disposable
 offline events only.
+
+## PR-based Claude review effort
+
+The default review selection was checked on 15 October 2026 against the official
+[Claude Code effort documentation](https://code.claude.com/docs/en/model-config#adjust-effort-level),
+[headless execution guide](https://code.claude.com/docs/en/headless) and
+[legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance).
+It uses the existing unmodified official client's native `--effort` option and
+account route. No classifier model call, replacement model, account change or
+extra authentication route is added. Offline source inspection supplies diff
+statistics and fixed risk signals; the controller selects low, medium or high
+before starting the exact-boundary review. Explicit settings and old saved runs
+remain fixed. This policy does not raise effort or restart jobs in response to
+usage limits, authentication failures or access denials.

@@ -213,6 +213,9 @@ func Load(directory string) (Journal, error) {
 	if err := ValidateModel(journal.Plan.Roles.Review); err != nil {
 		return Journal{}, err
 	}
+	if err := validateReviewEffort(&journal); err != nil {
+		return Journal{}, err
+	}
 	if err := ValidateSpeeds(journal.Plan.Roles); err != nil {
 		return Journal{}, err
 	}

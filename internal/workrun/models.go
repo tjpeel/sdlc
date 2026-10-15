@@ -20,7 +20,7 @@ type ModelDefaults struct {
 
 func DefaultModels() ModelDefaults {
 	return ModelDefaults{Version: 1,
-		Codex:  Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "low"}},
+		Codex:  Roles{ReviewEffortPolicy: "pr-v1", ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "medium"}},
 		Claude: Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"claude", "claude-sonnet-5-5", "low"}, Review: Model{"codex", "gpt-6.1-sol", "low"}},
 	}
 }
@@ -50,10 +50,32 @@ func LoadModels(directory string) (ModelDefaults, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
+	// Honour an explicitly configured effort in older files; partial files that
+	// only customize implementation must still inherit automatic review selection.
+
+	type configuredRole struct {
+		Review map[string]json.RawMessage `json:"review"`
+		Policy *string                    `json:"review_effort_policy"`
+	}
+	var configured struct {
+		Codex  configuredRole `json:"codex"`
+		Claude configuredRole `json:"claude"`
+	}
+	_ = json.Unmarshal(data, &configured)
+	if c := configured.Codex; c.Policy == nil && c.Review["effort"] != nil {
+		defaults.Codex.ReviewEffortPolicy = ""
+	}
+	if c := configured.Claude; c.Policy == nil && c.Review["effort"] != nil {
+		defaults.Claude.ReviewEffortPolicy = ""
+	}
+
 	if decoder.Decode(&defaults) != nil || decoder.Decode(new(any)) != io.EOF || defaults.Version != 1 {
 		return defaults, fmt.Errorf("model defaults require version 1 JSON with codex and claude role settings")
 	}
 	for provider, roles := range map[string]Roles{"codex": defaults.Codex, "claude": defaults.Claude} {
+		if roles.ReviewEffortPolicy != "" && (roles.ReviewEffortPolicy != "pr-v1" || roles.Review.Provider != "claude") {
+			return defaults, fmt.Errorf("unsupported review effort policy")
+		}
 		if roles.Implementation.Provider != provider || roles.Review.Provider == provider {
 			return defaults, fmt.Errorf("model defaults must use the selected implementer and the opposite reviewer")
 		}
@@ -107,6 +129,7 @@ func ResolveModels(defaults ModelDefaults, provider, model, effort, reviewModel,
 	}
 	if reviewEffort != "" {
 		roles.Review.Effort = reviewEffort
+		roles.ReviewEffortPolicy = ""
 	}
 	if roles.Implementation.Provider != provider || roles.Review.Provider == provider {
 		return Roles{}, fmt.Errorf("implementation and review must use different providers")
@@ -134,6 +157,9 @@ func ResolveSpeeds(roles Roles, speed, reviewSpeed string) (Roles, error) {
 }
 
 func ValidateSpeeds(roles Roles) error {
+	if roles.ReviewEffortPolicy != "" && (roles.ReviewEffortPolicy != "pr-v1" || roles.Review.Provider != "claude") {
+		return fmt.Errorf("unsupported review effort policy")
+	}
 	for _, role := range []struct {
 		model Model
 		speed string

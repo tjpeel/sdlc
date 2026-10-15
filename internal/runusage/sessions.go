@@ -20,6 +20,8 @@ type SessionSummary struct {
 	AgentsTruncated  bool                  `json:"subagents_truncated,omitempty"`
 }
 type SessionInvocation struct {
+	ReviewEffortSelection *ReviewEffortSelection `json:"review_effort_selection,omitempty"`
+
 	FastModeState   string `json:"native_fast_mode_state,omitempty"`
 	Attempt         int    `json:"attempt"`
 	Role            string `json:"role"`
@@ -53,7 +55,7 @@ func sessionSummaries(records []Attempt) []SessionSummary {
 		if speed == "" {
 			speed = "unknown"
 		}
-		s.Invocations = append(s.Invocations, SessionInvocation{FastModeState: a.Usage.FastModeState, Attempt: a.Attempt, Role: a.Role, Outcome: a.Outcome, RequestedModel: a.Model, ReportedModel: a.Usage.ReportedModel, RequestedEffort: a.Effort, ReportedEffort: "unknown", RequestedSpeed: a.RequestedSpeed, EffectiveSpeed: speed})
+		s.Invocations = append(s.Invocations, SessionInvocation{ReviewEffortSelection: a.ReviewEffortSelection, FastModeState: a.Usage.FastModeState, Attempt: a.Attempt, Role: a.Role, Outcome: a.Outcome, RequestedModel: a.Model, ReportedModel: a.Usage.ReportedModel, RequestedEffort: a.Effort, ReportedEffort: "unknown", RequestedSpeed: a.RequestedSpeed, EffectiveSpeed: speed})
 		s.Tokens, s.Models = nil, nil
 		s.Completeness = "incomplete"
 		if totals, known := wholeTree(a.Usage, a.Provider); known && a.Usage.Completeness == "observed" && a.Outcome != "running" {

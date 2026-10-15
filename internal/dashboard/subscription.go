@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/tjpeel/sdlc/internal/runusage"
 )
@@ -50,5 +51,45 @@ func WriteSubscriptions(output io.Writer, subscriptions map[string]*runusage.Sub
 			}
 			fmt.Fprintf(output, " Subscription %s %s: remaining %s before -> %s after; used %s.\n", SafeText(provider), SafeText(name), percent(change.BeforeRemainingPercent), percent(change.AfterRemainingPercent), used)
 		}
+	}
+}
+
+// WriteSubscriptionOverview omits unavailable percentages, without treating them as zero.
+func WriteSubscriptionOverview(output io.Writer, subscriptions map[string]*runusage.SubscriptionUsage) {
+	providers := make([]string, 0, len(subscriptions))
+	for p := range subscriptions {
+		providers = append(providers, p)
+	}
+	sort.Strings(providers)
+	unavailable := []string{}
+	for _, p := range providers {
+		u := subscriptions[p]
+		if u == nil || len(u.Windows) == 0 {
+			unavailable = append(unavailable, p)
+			continue
+		}
+		windows := make([]string, 0, len(u.Windows))
+		for w := range u.Windows {
+			windows = append(windows, w)
+		}
+		sort.Strings(windows)
+		for _, name := range windows {
+			w := u.Windows[name]
+			fmt.Fprintf(output, "  Subscription %s %s:", SafeText(p), SafeText(name))
+			if w.AfterRemainingPercent != nil {
+				fmt.Fprintf(output, " %.1f%% remaining", *w.AfterRemainingPercent)
+			} else {
+				fmt.Fprint(output, " remaining allowance unavailable")
+			}
+			if w.UsedPercentagePoints != nil {
+				fmt.Fprintf(output, "; %.1f percentage points used", *w.UsedPercentagePoints)
+			} else {
+				fmt.Fprint(output, "; change unavailable")
+			}
+			fmt.Fprintln(output, ".")
+		}
+	}
+	if len(unavailable) > 0 {
+		fmt.Fprintf(output, "  Subscription measurements unavailable: %s.\n", SafeText(strings.Join(unavailable, ", ")))
 	}
 }

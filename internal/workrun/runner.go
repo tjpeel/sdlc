@@ -641,6 +641,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
+			if err := runner.selectReviewEffort(ctx, directory, journal, workspace); err != nil {
+				return err
+			}
 			if err := runner.transition(directory, journal, "reviewing"); err != nil {
 				return err
 			}
@@ -829,7 +832,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	model := journal.Plan.Roles.Implementation
 	nativeDirectory := filepath.Join(directory, "native-implementation")
 	if role == "review" {
-		model = journal.Plan.Roles.Review
+		model = selectedReviewModel(journal)
 		nativeDirectory = filepath.Join(directory, fmt.Sprintf("native-review-%d", journal.Attempt))
 	}
 	prompt := runner.prompt(*journal, role)
@@ -856,6 +859,10 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	}
 	if role == "review" {
 		attempt.ReviewBoundary = reviewAttemptBoundary(journal)
+		if attempt.ReviewBoundary != nil && journal.ReviewEffort != nil && journal.Plan.Roles.ReviewEffortPolicy != "" {
+			copy := journal.ReviewEffort.Selection
+			attempt.ReviewEffortSelection = &copy
+		}
 	}
 	if err := runusage.SaveAttempt(directory, attempt); err != nil {
 		return result, err

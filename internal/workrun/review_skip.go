@@ -17,6 +17,8 @@ import (
 
 // ReviewSkip records missing independent review, never an approval.
 type ReviewSkip struct {
+	EffortSelection *runusage.ReviewEffortSelection `json:"effort_selection,omitempty"`
+
 	ModelEvidenceSource string      `json:"model_evidence_source,omitempty"`
 	Publication         Publication `json:"publication"`
 	Tree                string      `json:"tree"`
@@ -70,6 +72,17 @@ func validateReviewSkip(j *Journal) error {
 	if s == nil {
 		return nil
 	}
+	expectedEffort := j.Plan.Roles.Review.Effort
+	if s.EffortSelection != nil {
+		if j.Plan.Roles.ReviewEffortPolicy != "pr-v1" || s.Provider != "claude" {
+			return fmt.Errorf("invalid review skip effort policy")
+		}
+		if err := s.EffortSelection.Validate(); err != nil {
+			return err
+		}
+		expectedEffort = s.EffortSelection.Effort
+	}
+
 	if s.ModelEvidenceSource != "" && s.ModelEvidenceSource != "retained_native_events" {
 		return fmt.Errorf("invalid review model recovery evidence")
 	}
@@ -79,7 +92,7 @@ func validateReviewSkip(j *Journal) error {
 	if j.State == "ready" && j.Outcome.Status != "reviewed" && (s.Publication != j.Publication || s.Tree != j.Evidence.Tree || s.EvidenceKey != j.Evidence.Key || !j.Evidence.Passed || j.CI.Status != "passed") {
 		return fmt.Errorf("independent review skip differs from ready verification boundary")
 	}
-	if s.Attempt < 1 || s.Attempt > j.Attempt || s.RecordedAt.IsZero() || s.ObservedAt.IsZero() || s.RecordedAt.Before(s.ObservedAt) || s.Publication.Number < 1 || s.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, s.Publication.Number) || !objectID.MatchString(s.Publication.HeadSHA) || !objectID.MatchString(s.Publication.BaseSHA) || !objectID.MatchString(s.Tree) || (s.EvidenceKey != "" && len(s.EvidenceKey) != 64) || s.Provider != j.Plan.Roles.Review.Provider || s.Model != j.Plan.Roles.Review.Name || s.Effort != j.Plan.Roles.Review.Effort || (s.StopCategory != "native_execution" && s.StopCategory != "native_incomplete") || !validReviewUsageSignal(s.Provider, s.Source, s.Window) {
+	if s.Attempt < 1 || s.Attempt > j.Attempt || s.RecordedAt.IsZero() || s.ObservedAt.IsZero() || s.RecordedAt.Before(s.ObservedAt) || s.Publication.Number < 1 || s.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, s.Publication.Number) || !objectID.MatchString(s.Publication.HeadSHA) || !objectID.MatchString(s.Publication.BaseSHA) || !objectID.MatchString(s.Tree) || (s.EvidenceKey != "" && len(s.EvidenceKey) != 64) || s.Provider != j.Plan.Roles.Review.Provider || s.Model != j.Plan.Roles.Review.Name || s.Effort != expectedEffort || (s.StopCategory != "native_execution" && s.StopCategory != "native_incomplete") || !validReviewUsageSignal(s.Provider, s.Source, s.Window) {
 		return fmt.Errorf("invalid retained independent review skip")
 	}
 	return nil
@@ -145,7 +158,7 @@ func (r Runner) reviewUsageProof(ctx context.Context, dir string, j *Journal, ca
 	if err != nil {
 		return nil, err
 	}
-	m := j.Plan.Roles.Review
+	m := selectedReviewModel(j)
 	if reconcileSynthetic {
 		if err := recoverSyntheticQuotaModel(dir, j, &a); err != nil {
 			return nil, err
@@ -202,6 +215,14 @@ func (r Runner) reviewUsageProof(ctx context.Context, dir string, j *Journal, ca
 		}
 	}
 	result := &ReviewSkip{Publication: j.Publication, Tree: j.Evidence.Tree, EvidenceKey: j.Evidence.Key, Provider: m.Provider, Model: m.Name, Effort: m.Effort, Attempt: a.Attempt, StopCategory: category, Source: limit.Source, Window: window, ObservedAt: limit.ObservedAt, ResetsAt: limit.ResetsAt}
+	if a.ReviewEffortSelection != nil {
+		copy := *a.ReviewEffortSelection
+		result.EffortSelection = &copy
+	} else if d := j.ReviewEffort; j.Plan.Roles.ReviewEffortPolicy == "pr-v1" && d != nil && d.Head == result.Publication.HeadSHA && d.Base == result.Publication.BaseSHA && d.Model == result.Model {
+		copy := d.Selection
+		result.EffortSelection = &copy
+	}
+
 	if reconcileSynthetic {
 		result.ModelEvidenceSource = "retained_native_events"
 	}

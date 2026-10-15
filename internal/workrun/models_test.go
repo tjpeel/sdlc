@@ -96,7 +96,11 @@ func TestDefaultModelPolicyAndNativeSpeed(t *testing.T) {
 			if m.Provider == "claude" {
 				want = "claude-sonnet-5-5"
 			}
-			if m.Name != want || m.Effort != "low" {
+			wantEffort := "low"
+			if roles.ReviewEffortPolicy != "" && m == roles.Review {
+				wantEffort = "medium"
+			}
+			if m.Name != want || m.Effort != wantEffort {
 				t.Fatal("unexpected default", m)
 			}
 		}
