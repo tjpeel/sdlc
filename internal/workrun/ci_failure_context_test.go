@@ -48,6 +48,51 @@ func actionsCIFailureFixture() *ciFailureFixture {
 	return f
 }
 
+func TestSkippedActionsJobRetainsMetadataWithoutRequestingLogs(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stable", true: "changed boundary"}[changed], func(t *testing.T) {
+			f := actionsCIFailureFixture()
+			f.checks[0].Bucket = "skipping"
+			check := f.responses["repos/example/project/check-runs/41"].(map[string]any)
+			check["conclusion"] = "skipped"
+			job := f.responses["repos/example/project/actions/jobs/99"].(map[string]any)
+			job["conclusion"], job["steps"] = "skipped", []any{}
+			logs, jobReads := 0, 0
+			command := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				endpoint := args[len(args)-1]
+				if strings.HasSuffix(endpoint, "/logs") {
+					logs++
+					return nil, &ciRequestError{Status: 404}
+				}
+				if endpoint == "repos/example/project/actions/jobs/99" {
+					jobReads++
+					if changed && jobReads == 2 {
+						job["conclusion"] = "failure"
+					}
+				}
+				return f.command(ctx, name, args...)
+			}
+			result, err := (GitHubPublisher{Command: command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+			if logs != 0 {
+				t.Fatalf("requested nonexistent skipped-job logs %d times: %v", logs, err)
+			}
+			if changed {
+				if err == nil || result.FailureContext != nil {
+					t.Fatal("skipped job boundary change accepted", result, err)
+				}
+				return
+			}
+			if err != nil || result.Status != "failed" || result.FailureContext == nil || len(result.FailureContext.Checks) != 1 {
+				t.Fatal("skipped metadata blocked collection or certified CI", result, err)
+			}
+			entry := result.FailureContext.Checks[0]
+			if entry.Conclusion != "skipped" || entry.JobID != 99 || entry.RunID != 88 || entry.RunAttempt != 2 || !strings.Contains(entry.Text, "skipped") || jobReads != 2 {
+				t.Fatal("verified skipped-job evidence lost", entry, jobReads)
+			}
+		})
+	}
+}
+
 func (f *ciFailureFixture) command(_ context.Context, name string, args ...string) ([]byte, error) {
 	if name != "gh" {
 		return nil, errors.New("unexpected client")

@@ -448,48 +448,57 @@ func (p GitHubPublisher) collectCIActionFailure(ctx context.Context, plan Plan, 
 			text += fmt.Sprintf("\nFailed step %d (%s): %s", step.Number, step.Conclusion, step.Name)
 		}
 	}
-	data, err := readCIJobLog(ctx, func() ([]byte, error) {
-		return p.command(ctx, "gh", "api", "--hostname", "github.com", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
-	}, waitCIJobLog)
-	var sizeFailure *ciResponseSizeError
-	if len(data) > maxActionsJobLogBytes || errors.As(err, &sizeFailure) {
-		return fail(fmt.Sprintf("Actions job log exceeds %d-byte intake bound", maxActionsJobLogBytes))
-	}
-	if err != nil {
-		if request, ok := err.(*ciRequestError); ok {
-			return fail("Actions job log API could not be read: " + request.Error())
-		}
-		return fail("Actions job log API could not be read (request, cancellation or cleanup failure)")
-	}
-	clean, redacted, err := sanitizeCITextWithinBound(string(data), p.CIPrivateValues, maxActionsJobLogBytes)
-	if err != nil {
-		return CIFailedCheck{}, err
-	}
-	reports, reportsRedacted, reportsTruncated, err := p.collectCIArtifactReports(ctx, plan.Repository, run, job, clean)
-	if err != nil {
-		return CIFailedCheck{}, err
-	}
-	selected := ""
-	if reports != "" {
-		selected = "Actions report facts:\n" + reports
-	}
-	remaining := maxCIJobExcerpt - len(selected) - len("\nActions job log evidence:\n")
-	truncated := reportsTruncated
-	if remaining > 0 {
-		excerpt, logTruncated := ciActionLogExcerpt(clean, job.Steps, remaining)
-		truncated = truncated || logTruncated
-		if strings.TrimSpace(excerpt) != "" {
-			selected += "\nActions job log evidence:\n" + excerpt
-		}
+	redacted, truncated := false, false
+	if job.Conclusion == "skipped" {
+		// A skipped job never ran and has no execution log to download. Keep its
+		// verified check/job metadata; the CI result remains failed and all ordinary
+		// post-collection boundary checks still apply.
+		text += "\nJob was skipped; no execution log is expected. Inspect prerequisite checks and workflow conditions."
 	} else {
-		truncated = truncated || strings.TrimSpace(clean) != ""
+		data, err := readCIJobLog(ctx, func() ([]byte, error) {
+			return p.command(ctx, "gh", "api", "--hostname", "github.com", "--allow-escape-sequences", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", plan.Repository, jobID))
+		}, waitCIJobLog)
+		var sizeFailure *ciResponseSizeError
+		if len(data) > maxActionsJobLogBytes || errors.As(err, &sizeFailure) {
+			return fail(fmt.Sprintf("Actions job log exceeds %d-byte intake bound", maxActionsJobLogBytes))
+		}
+		if err != nil {
+			if request, ok := err.(*ciRequestError); ok {
+				return fail(fmt.Sprintf("Actions job log API could not be read (run %d, job %d): %s", runID, jobID, request.Error()))
+			}
+			return fail(fmt.Sprintf("Actions job log API could not be read (run %d, job %d; request, cancellation or cleanup failure)", runID, jobID))
+		}
+		clean, masked, err := sanitizeCITextWithinBound(string(data), p.CIPrivateValues, maxActionsJobLogBytes)
+		if err != nil {
+			return CIFailedCheck{}, err
+		}
+		reports, reportsRedacted, reportsTruncated, err := p.collectCIArtifactReports(ctx, plan.Repository, run, job, clean)
+		if err != nil {
+			return CIFailedCheck{}, err
+		}
+		selected := ""
+		if reports != "" {
+			selected = "Actions report facts:\n" + reports
+		}
+		remaining := maxCIJobExcerpt - len(selected) - len("\nActions job log evidence:\n")
+		truncated = reportsTruncated
+		if remaining > 0 {
+			excerpt, logTruncated := ciActionLogExcerpt(clean, job.Steps, remaining)
+			truncated = truncated || logTruncated
+			if strings.TrimSpace(excerpt) != "" {
+				selected += "\nActions job log evidence:\n" + excerpt
+			}
+		} else {
+			truncated = truncated || strings.TrimSpace(clean) != ""
+		}
+		selected, selectedTruncated := ciTextExcerpt(selected, maxCIJobExcerpt)
+		truncated = truncated || selectedTruncated
+		if selected != "" {
+			text += "\n" + selected
+		}
+		redacted = masked || reportsRedacted
 	}
-	selected, selectedTruncated := ciTextExcerpt(selected, maxCIJobExcerpt)
-	truncated = truncated || selectedTruncated
-	if selected != "" {
-		text += "\n" + selected
-	}
-	redacted = redacted || reportsRedacted
+
 	var afterRun ciActionRun
 	var afterJob ciActionJob
 	if err := p.ciAPI(ctx, fmt.Sprintf("repos/%s/actions/runs/%d", plan.Repository, runID), &afterRun); err != nil {

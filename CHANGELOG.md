@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.82 - 2026-10-15
+
+### Fixed
+
+- Keep verified metadata for skipped Actions jobs without requiring nonexistent execution logs or artifacts. Skipped checks remain in failed CI context; publication, run, job and attempt identity checks still apply before and after collection.
+- Include numeric Actions run and job identifiers in log retrieval failures so the failing endpoint can be identified.
+
 ## 0.1.0-beta.81 - 2026-10-15
 
 ### Fixed
