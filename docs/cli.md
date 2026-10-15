@@ -2174,6 +2174,35 @@ the text size and digest. It saves no feedback, contacts no remote service and
 starts no provider. Without an input source, dry-run previews without prompting.
 The explicit single-ticket resume also accepts `--pr-feedback-file FILE`.
 
+### Accept recorded review recommendations
+
+For a ready run or a completed review parked awaiting feedback, accept all
+recommendations in its latest completed independent review without writing a
+feedback prompt:
+
+```sh
+sdlc resume --run RUN_ID --accept-recommendations --dry-run
+sdlc resume --run RUN_ID --accept-recommendations
+```
+
+The preview shows each recommendation and the exact reviewed base/head without
+writing files, contacting remote services or starting agents. The real command
+records your acceptance privately as revision-bound local feedback and resumes
+the original implementation session. Acceptance authorises the proposed changes,
+including related contract, documentation and test updates when scope changes.
+Materially ambiguous alternatives still require a question. Required checks,
+signing, publication, CI and a fresh independent review remain in place. No
+GitHub feedback comment is posted; correction commits and normal PR updates
+still publish through the existing workflow.
+
+This selects all recommendations from the latest report only. It rejects stale
+publication boundaries, incomplete or unknown review coverage, an empty latest
+recommendation list and unresolved run holds. It does not resurrect historical
+recommendations superseded by a later report, accept defects as recommendations,
+or grant additional recovery allowances. Use local feedback to accept a subset
+or specify a different resolution. The option cannot be combined with another
+resume action; `--timeout` remains an optional explicit controller deadline.
+
 ### Mark PR feedback as already handled
 
 Add a **🚀 (rocket)** reaction to the specific comment using the run's configured

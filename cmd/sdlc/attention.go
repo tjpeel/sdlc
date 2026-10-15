@@ -251,6 +251,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var reviewRepairLimit int
 	var extension int
 	var feedback bool
+	var acceptRecommendations bool
 	var override bool
 	var timeout time.Duration
 	if !answer {
@@ -259,6 +260,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		flags.StringVar(&ciFeedbackPath, "ci-feedback-file", "", "bounded supplemental CI context")
 		flags.IntVar(&reviewRepairLimit, "review-repair-limit", 0, "increase the saved review allowance to at most 12")
 		flags.IntVar(&extension, "extend-session-turn-budget", 0, "one-time additional native session turns (1-24)")
+		flags.BoolVar(&acceptRecommendations, "accept-recommendations", false, "accept all recommendations in the latest completed review of the current PR revision")
 		flags.BoolVar(&feedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
 		flags.BoolVar(&override, "override-run-limits", false, "persistently lift SDLC numeric run allowances")
 		flags.DurationVar(&timeout, "timeout", 0, "optional controller deadline (1m-24h; default: none)")
@@ -272,7 +274,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -280,6 +282,26 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if *id == "" || flags.NArg() != 0 {
 		return fmt.Errorf("%s requires --run RUN_ID", name)
+	}
+	if acceptRecommendations {
+		var invalid string
+		var acceptanceTimeoutSupplied bool
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "timeout":
+				acceptanceTimeoutSupplied = true
+			case "run", "accept-recommendations", "dry-run":
+			default:
+				invalid = f.Name
+			}
+		})
+		if invalid != "" {
+			return fmt.Errorf("--accept-recommendations cannot be combined with --%s", invalid)
+		}
+		if acceptanceTimeoutSupplied && (timeout < time.Minute || timeout > 24*time.Hour) {
+			return fmt.Errorf("timeout must be between 1m and 24h")
+		}
+		return acceptRecommendationsCommand(ctx, *id, *dry, timeout, output)
 	}
 	extensionSupplied := false
 	flags.Visit(func(f *flag.Flag) {

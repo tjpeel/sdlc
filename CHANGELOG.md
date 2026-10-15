@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.91 - 2026-10-16
+
+### Added
+
+- Accept all recommendations from the latest completed review of the current PR revision with `sdlc resume --run RUN_ID --accept-recommendations`. Preview the selected changes offline with `--dry-run`; retain acceptance privately and reuse the original implementation, verification, signing, publication and independent-review cycle. Reject stale or unfinished review evidence and conflicting recovery actions.
+
+
 ## 0.1.0-beta.90 - 2026-10-15
 
 ### Changed
