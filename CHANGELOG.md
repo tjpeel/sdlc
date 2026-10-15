@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.89 - 2026-10-15
+
+### Fixed
+
+- Give native implementation, review and interactive sessions 2 GiB of temporary working space, matching the check worker, instead of the authentication helper's 64 MiB budget. Retain read-only mounts and temporary-file execution restrictions.
+
+
 ## 0.1.0-beta.88 - 2026-10-15
 
 ### Fixed

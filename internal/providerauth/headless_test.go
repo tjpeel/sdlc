@@ -262,3 +262,29 @@ exit 9
 		t.Fatal("native streams lost during orderly stop")
 	}
 }
+
+func TestAgentSessionsHaveWorkingTemporarySpace(t *testing.T) {
+	for _, provider := range []string{"codex", "claude"} {
+		for _, action := range []string{"headless", "interactive", "login"} {
+			t.Run(provider+"/"+action, func(t *testing.T) {
+				args := containerArgs("image", "worker", "sdlc-auth-example-"+provider, provider, action)
+				expected := "/tmp:rw,nosuid,nodev,noexec,size=2g,mode=1777"
+				if action == "login" {
+					expected = "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777"
+				}
+				found := 0
+				for i, arg := range args {
+					if arg == "--tmpfs" && strings.HasPrefix(args[i+1], "/tmp:") {
+						found++
+						if args[i+1] != expected {
+							t.Fatalf("temporary mount: %s", args[i+1])
+						}
+					}
+				}
+				if found != 1 {
+					t.Fatal("missing or repeated temporary mount")
+				}
+			})
+		}
+	}
+}

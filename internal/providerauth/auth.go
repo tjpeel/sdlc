@@ -252,13 +252,17 @@ func (manager Manager) guardVolume(ctx context.Context, volume, id, provider str
 
 func containerArgs(image, name, volume, provider, action string) []string {
 	memory, cpus, pids := "1g", "2", "128"
+	temporary := "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777"
+	if action == "interactive" || action == "headless" {
+		temporary = "/tmp:rw,nosuid,nodev,noexec,size=2g,mode=1777"
+	}
 	if action == "interactive" {
 		memory, cpus, pids = "4g", "4", "512"
 	}
 	args := []string{"run", "--rm", "--name", name, "--pull", "never", "--log-driver", "none",
 		"--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--pids-limit", pids, "--memory", memory, "--cpus", cpus,
-		"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777",
+		"--tmpfs", temporary,
 		"--tmpfs", "/home/node/:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=1000,gid=1000"}
 	installation := strings.TrimSuffix(strings.TrimPrefix(volume, "sdlc-auth-"), "-"+provider)
 	for _, key := range []string{"io.sdlc.managed", "io.sdlc.kind", "io.sdlc.installation", "io.sdlc.provider"} {
