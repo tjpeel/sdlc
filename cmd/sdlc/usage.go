@@ -209,7 +209,11 @@ func writeUsageRows(output io.Writer, rows []usageRow, detailed ...bool) error {
 			}
 			for _, group := range s.Groups {
 				fmt.Fprintf(output, " %s %s (%s; optimizer %s): input %s, cache read %s, cache creation %s, output %s; measured %d/%d attempts.\n", dashboard.SafeText(group.Provider), dashboard.SafeText(group.Model), dashboard.SafeText(group.Role), dashboard.SafeText(group.OptimizerMode), usageCount(group.Tokens.InputTokens), usageCount(group.Tokens.CachedInputTokens), usageCount(group.Tokens.CacheCreationInputTokens), usageCount(group.Tokens.OutputTokens), group.MeasuredAttempts, group.Attempts)
+				dashboard.WriteUsageSettings(output, group)
 			}
+		}
+		if row.Metrics != nil {
+			dashboard.WriteSessions(output, *row.Metrics)
 		}
 		fmt.Fprintln(output, textview.Heading("Gaps and capacity observations"))
 		if !row.outcomeRecorded {
@@ -249,4 +253,15 @@ func usageCount(value *int64) string {
 		return "unknown"
 	}
 	return strconv.FormatInt(*value, 10)
+}
+
+// Telemetry is best effort: reporting must not change the saved workflow result.
+func printCompletedRunUsage(output io.Writer, directory string, journal workrun.Journal) {
+	summary, err := runusage.LoadSummary(directory, journal.ID, journal.Attempt)
+	if err != nil {
+		fmt.Fprintln(output, "Run usage: unavailable (recorded metrics could not be read).")
+		return
+	}
+	dashboard.WriteUsageOverview(output, summary)
+	fmt.Fprintf(output, "Session and subagent details: sdlc usage --run %s (or --json).\n", dashboard.SafeText(journal.ID))
 }

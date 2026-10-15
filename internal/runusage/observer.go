@@ -18,25 +18,28 @@ const maxTokenCount int64 = 1_000_000_000_000
 // guarantee. Nil fields mean unknown. Aggregate counters are replaced, never
 // added across resumes, and cannot establish a current request's context size.
 type Usage struct {
-	NativeFinalization *NativeFinalization   `json:"native_finalization,omitempty"`
-	NativeStop         *NativeStop           `json:"native_stop,omitempty"`
-	Subscription       *SubscriptionUsage    `json:"subscription,omitempty"`
-	Aggregate          *TokenUsage           `json:"aggregate,omitempty"`
-	Context            *ContextUsage         `json:"context,omitempty"`
-	ClientVersion      string                `json:"client_version,omitempty"`
-	ReportedModel      string                `json:"reported_model,omitempty"`
-	ModelMatches       bool                  `json:"model_matches"`
-	Models             map[string]TokenUsage `json:"models,omitempty"`
-	EstimatedCostUSD   *float64              `json:"estimated_cost_usd,omitempty"`
-	DurationMS         *int64                `json:"duration_ms,omitempty"`
-	APIDurationMS      *int64                `json:"api_duration_ms,omitempty"`
-	Turns              *int64                `json:"turns,omitempty"`
-	RateLimits         map[string]RateLimit  `json:"rate_limits,omitempty"`
-	PeakContextTokens  *int64                `json:"peak_context_tokens,omitempty"`
-	Compactions        int64                 `json:"compactions,omitempty"`
-	Retries            int64                 `json:"retries,omitempty"`
-	CompletedTurns     int64                 `json:"completed_turns,omitempty"`
-	Completeness       string                `json:"completeness,omitempty"`
+	FastModeState      string                    `json:"native_fast_mode_state,omitempty"`
+	Agents             map[string]*AgentEvidence `json:"agents,omitempty"`
+	AgentsTruncated    bool                      `json:"agents_truncated,omitempty"`
+	NativeFinalization *NativeFinalization       `json:"native_finalization,omitempty"`
+	NativeStop         *NativeStop               `json:"native_stop,omitempty"`
+	Subscription       *SubscriptionUsage        `json:"subscription,omitempty"`
+	Aggregate          *TokenUsage               `json:"aggregate,omitempty"`
+	Context            *ContextUsage             `json:"context,omitempty"`
+	ClientVersion      string                    `json:"client_version,omitempty"`
+	ReportedModel      string                    `json:"reported_model,omitempty"`
+	ModelMatches       bool                      `json:"model_matches"`
+	Models             map[string]TokenUsage     `json:"models,omitempty"`
+	EstimatedCostUSD   *float64                  `json:"estimated_cost_usd,omitempty"`
+	DurationMS         *int64                    `json:"duration_ms,omitempty"`
+	APIDurationMS      *int64                    `json:"api_duration_ms,omitempty"`
+	Turns              *int64                    `json:"turns,omitempty"`
+	RateLimits         map[string]RateLimit      `json:"rate_limits,omitempty"`
+	PeakContextTokens  *int64                    `json:"peak_context_tokens,omitempty"`
+	Compactions        int64                     `json:"compactions,omitempty"`
+	Retries            int64                     `json:"retries,omitempty"`
+	CompletedTurns     int64                     `json:"completed_turns,omitempty"`
+	Completeness       string                    `json:"completeness,omitempty"`
 }
 
 // NativeStop retains the category of a fatal native protocol event, without
@@ -193,6 +196,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 		usage.NativeFinalization = &NativeFinalization{Provider: provider, ExitCode: *completion.ExitCode, ObservedAt: o.receivedAt}
 	}
 	var event struct {
+		FastModeState string          `json:"fast_mode_state"`
 		ClientVersion string          `json:"claude_code_version"`
 		Type          string          `json:"type"`
 		Provider      string          `json:"provider"`
@@ -245,6 +249,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 		o.observeEvent()
 	}
 	if len(event.Parent) != 0 && !bytes.Equal(bytes.TrimSpace(event.Parent), []byte("null")) {
+		observeAgents(line, provider, usage)
 		return
 	}
 	if event.SessionID != "" && o.sessionID != ([32]byte{}) && !(event.Type == "system" && event.Subtype == "init") {
@@ -268,8 +273,13 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 			o.nativeSession = id
 		}
 	}
+	observeAgents(line, provider, usage)
 	if provider == "claude" && event.Type == "system" && event.Subtype == "init" {
 		o.initializedModel = event.Model
+		switch event.FastModeState {
+		case "on", "off", "cooldown":
+			usage.FastModeState = event.FastModeState
+		}
 	}
 	if provider == "claude" && event.Type == "system" && event.Subtype == "init" && clientVersion.MatchString(event.ClientVersion) {
 		usage.ClientVersion = event.ClientVersion

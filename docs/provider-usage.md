@@ -311,3 +311,27 @@ On subscription plans, fast mode draws paid usage credits outside the included
 allowance, even when allowance remains. Selecting the flag does not enable or
 purchase credits, establish account access, or prove the effective service speed.
 No live fast-mode provider request was made while validating these controls.
+
+
+## Native session and delegation telemetry
+
+The session reporting extension was checked on 15 October 2026 against the
+[Codex non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode),
+the pinned official
+[Codex 0.162.1 exec event schema](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/exec/src/exec_events.rs),
+[Claude headless documentation](https://code.claude.com/docs/en/headless),
+[Claude cost tracking](https://code.claude.com/docs/en/agent-sdk/cost-tracking),
+and the official
+[Claude Agent SDK message types](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/types.py).
+Claude's [Agent tool result reference](https://code.claude.com/docs/en/hooks#agent)
+distinguishes resolved models and final-request token counts from whole-agent
+usage. These are optional observations, not an inference of served settings.
+
+The host collector reads the existing official clients' JSONL output. It adds no
+provider request, authentication path, transcript reader, SDK execution route or
+hook. Existing hook restrictions remain in force. Requested controller settings
+are recorded separately from native observations; child reasoning, speed and
+missing usage remain unknown. Claude initialization may additionally report
+`fast_mode_state`, as declared in the official SDK system initialization type;
+this client state is not a delivered-speed measurement. Tests use disposable
+offline events only.

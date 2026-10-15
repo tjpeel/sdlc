@@ -70,6 +70,11 @@ type ReviewBoundary struct {
 }
 
 type Group struct {
+	FastModeStates    []string              `json:"native_fast_mode_states,omitempty"`
+	ReportedEffort    string                `json:"reported_effort"`
+	Effort            string                `json:"requested_effort,omitempty"`
+	RequestedSpeed    string                `json:"requested_speed,omitempty"`
+	EffectiveSpeed    string                `json:"effective_speed,omitempty"`
 	Subscription      *SubscriptionUsage    `json:"subscription,omitempty"`
 	Models            map[string]TokenUsage `json:"models,omitempty"`
 	PeakContextTokens *int64                `json:"peak_context_tokens,omitempty"`
@@ -90,6 +95,7 @@ type Group struct {
 	EventTiming       *EventTimingSummary   `json:"native_event_timing,omitempty"`
 }
 type Summary struct {
+	Sessions        []SessionSummary              `json:"sessions"`
 	Subscriptions   map[string]*SubscriptionUsage `json:"subscriptions,omitempty"`
 	Version         int                           `json:"version"`
 	RunID           string                        `json:"run_id"`
@@ -439,6 +445,7 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 		}
 		return records[i].StartedAt.Before(records[j].StartedAt)
 	})
+	s.Sessions = sessionSummaries(records)
 	groups := map[string]*Group{}
 	baselines := map[string]TokenUsage{}
 	modelBaselines := map[string]map[string]TokenUsage{}
@@ -458,13 +465,29 @@ func LoadSummary(directory, runID string, expectedAttempts int) (Summary, error)
 		default:
 			s.Pending++
 		}
-		key := a.Provider + "\x00" + a.Model + "\x00" + a.Role + "\x00" + a.OptimizerMode
+		effectiveSpeed := a.EffectiveSpeed
+		if effectiveSpeed == "" {
+			effectiveSpeed = "unknown"
+		}
+		key := a.Provider + "\x00" + a.Model + "\x00" + a.Role + "\x00" + a.OptimizerMode + "\x00" + a.Effort + "\x00" + a.RequestedSpeed + "\x00" + effectiveSpeed
 		g := groups[key]
 		if g == nil {
-			g = &Group{Provider: a.Provider, Model: a.Model, Role: a.Role, OptimizerMode: a.OptimizerMode, Tokens: TokenUsage{Source: "native.metrics", Scope: "compatible_attempt_deltas"}}
+			g = &Group{ReportedEffort: "unknown", Effort: a.Effort, RequestedSpeed: a.RequestedSpeed, EffectiveSpeed: effectiveSpeed, Provider: a.Provider, Model: a.Model, Role: a.Role, OptimizerMode: a.OptimizerMode, Tokens: TokenUsage{Source: "native.metrics", Scope: "compatible_attempt_deltas"}}
 			groups[key] = g
 		}
 		g.Attempts++
+		if state := a.Usage.FastModeState; state != "" {
+			seen := false
+			for _, old := range g.FastModeStates {
+				if old == state {
+					seen = true
+				}
+			}
+			if !seen {
+				g.FastModeStates = append(g.FastModeStates, state)
+				sort.Strings(g.FastModeStates)
+			}
+		}
 		g.Subscription = combineSubscription(g.Subscription, a.Usage.Subscription)
 		if g.EventTiming == nil {
 			g.EventTiming = &EventTimingSummary{}
@@ -690,6 +713,14 @@ func addTokens(dst *TokenUsage, src TokenUsage, first bool) error {
 }
 
 func validateUsage(u Usage) error {
+	switch u.FastModeState {
+	case "", "on", "off", "cooldown":
+	default:
+		return fmt.Errorf("invalid native fast mode state")
+	}
+	if err := validateAgents(u); err != nil {
+		return err
+	}
 	if err := validateSubscription(u.Subscription); err != nil {
 		return err
 	}

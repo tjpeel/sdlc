@@ -67,3 +67,29 @@ func TestObserverFinishAndSessionChange(t *testing.T) {
 		t.Fatal("session boundary retained totals")
 	}
 }
+
+func TestNativeFastModeStateIsAnInitializationObservation(t *testing.T) {
+	o := NewObserver("claude", "main-model")
+	read(o, `{"type":"system","subtype":"init","session_id":"native","model":"main-model","fast_mode_state":"cooldown","fast_mode_disabled_reason":"private-reason"}`)
+	read(o, `{"type":"assistant","parent_tool_use_id":"child","message":{"model":"child-model"},"fast_mode_state":"on"}`)
+	read(o, `{"type":"assistant","message":{"model":"main-model"},"fast_mode_state":"on"}`)
+	u := o.Snapshot()
+	if u.FastModeState != "cooldown" {
+		t.Fatal("initialization state was replaced by unrelated event", u.FastModeState)
+	}
+	data, _ := json.Marshal(u)
+	if strings.Contains(string(data), "private-reason") {
+		t.Fatal("unprojected speed metadata retained")
+	}
+	a := attempt(1, "implementation", "native", 100)
+	a.Provider = "claude"
+	a.Usage = u
+	d := dir(t)
+	if err := SaveAttempt(d, a); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := LoadSummary(d, "run-one", 1)
+	if err != nil || len(summary.Groups) != 1 || len(summary.Groups[0].FastModeStates) != 1 || summary.Groups[0].FastModeStates[0] != "cooldown" || summary.Sessions[0].Invocations[0].FastModeState != "cooldown" {
+		t.Fatal("native state lost from reporting", summary, err)
+	}
+}

@@ -476,8 +476,12 @@ func Detail(output io.Writer, v runstatus.View, now time.Time, logs bool) error 
 				group.Provider, group.Model, group.Role, group.OptimizerMode,
 				tokenCount(group.Tokens.InputTokens), tokenCount(group.Tokens.CachedInputTokens), tokenCount(group.Tokens.OutputTokens),
 				group.MeasuredAttempts, group.Attempts, durationText(time.Duration(group.ElapsedMS)*time.Millisecond))
+			WriteUsageSettings(&text, group)
 			WriteUsageSignals(&text, group)
 		}
+	}
+	if v.Metrics != nil {
+		WriteSessions(&text, *v.Metrics)
 	}
 	if v.PR.URL != "" {
 		fmt.Fprintf(&text, "PR: %s\n", v.PR.URL)

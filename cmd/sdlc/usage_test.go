@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +167,70 @@ func TestUsageJournalWithoutCheckEvidenceDoesNotClaimFailedChecks(t *testing.T) 
 		}
 		if !strings.Contains(out.String(), "Check result: "+result) || strings.Contains(out.String(), "Check result: not run") {
 			t.Fatalf("recorded result lost: %s", out.String())
+		}
+	}
+}
+
+func TestFinishedRunUsageReadsSessionSettingsWithoutChangingRecords(t *testing.T) {
+	directory := t.TempDir()
+	start := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	input, cached, output := int64(100), int64(40), int64(12)
+	a := runusage.Attempt{Version: 1, RunID: "run-one", Attempt: 1, Role: "implementation", Provider: "codex", Model: "example-model", Effort: "high", RequestedSpeed: "fast", EffectiveSpeed: "unknown", SessionID: "private-native-id", OptimizerMode: "off", StartedAt: start, EndedAt: start.Add(time.Second), Outcome: "completed", Usage: runusage.Usage{Completeness: "observed", Aggregate: &runusage.TokenUsage{InputTokens: &input, CachedInputTokens: &cached, OutputTokens: &output}}}
+	if err := runusage.SaveAttempt(directory, a); err != nil {
+		t.Fatal(err)
+	}
+	before := dashboardTree(t, directory)
+	var text bytes.Buffer
+	printCompletedRunUsage(&text, directory, workrun.Journal{ID: "run-one", Attempt: 1})
+	for _, want := range []string{"1 provider attempts", "1 session records", "reasoning high; speed fast", "effective reasoning unknown; speed unknown", "Session 1 codex", "input 100", "cache read 40", "sdlc usage --run run-one"} {
+		if !strings.Contains(text.String(), want) {
+			t.Errorf("missing %q in %s", want, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "private-native-id") {
+		t.Fatal("native identifier exposed")
+	}
+	if after := dashboardTree(t, directory); !reflect.DeepEqual(before, after) {
+		t.Fatal("report modified records")
+	}
+}
+
+func TestUsageCommandIncludesRegisteredSessionSettingsAndDelegates(t *testing.T) {
+	_, _, journals := dashboardFixture(t)
+	j := journals[0]
+	start := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	input, cached, output := int64(100), int64(40), int64(12)
+	a := runusage.Attempt{Version: 1, RunID: j.ID, Attempt: 1, Role: "implementation", Provider: "claude", Model: "example-model", Effort: "high", RequestedSpeed: "fast", EffectiveSpeed: "unknown", SessionID: "private-native-id", OptimizerMode: "off", StartedAt: start, EndedAt: start.Add(time.Second), Outcome: "completed", Usage: runusage.Usage{Completeness: "observed", FastModeState: "cooldown", Models: map[string]runusage.TokenUsage{"example-model": {InputTokens: &input, CachedInputTokens: &cached, CacheCreationInputTokens: &output, OutputTokens: &output}}, Agents: map[string]*runusage.AgentEvidence{strings.Repeat("a", 64): {Source: "claude.agent_tool", Type: "reader", ReportedModels: []string{"child-model"}, Status: "completed", TotalTokens: &input}}}}
+	if err := runusage.SaveAttempt(filepath.Dir(j.Workspace), a); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := usageCommand(context.Background(), []string{"--run", j.ID, "--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Runs []usageRow `json:"runs"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Runs) != 1 || document.Runs[0].Metrics == nil || len(document.Runs[0].Metrics.Sessions) != 1 {
+		t.Fatal("registered session omitted", out.String())
+	}
+	session := document.Runs[0].Metrics.Sessions[0]
+	if session.Invocations[0].RequestedEffort != "high" || session.Invocations[0].RequestedSpeed != "fast" || session.Invocations[0].FastModeState != "cooldown" || len(session.Agents) != 1 || session.Agents[0].ReportedModels[0] != "child-model" || session.Tokens == nil || *session.Tokens.InputTokens != 100 {
+		t.Fatal("settings or usage lost", session)
+	}
+	if strings.Contains(out.String(), "private-native-id") || strings.Contains(out.String(), strings.Repeat("a", 64)) {
+		t.Fatal("private identifier exposed")
+	}
+	out.Reset()
+	if err := usageCommand(context.Background(), []string{"--run", j.ID}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"reasoning high; speed fast", "cooldown", "reported models child-model", "task tokens 100"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in %s", want, out.String())
 		}
 	}
 }

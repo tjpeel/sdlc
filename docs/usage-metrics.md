@@ -30,7 +30,8 @@ reported-model confirmation remain unknown when the client does not emit them.
 The `repair` role also includes ordinary resumed implementation after checks.
 Use the journal's repair rounds to count failed checks, CI or review findings.
 
-Summaries group attempts by provider, requested model, role and optimizer mode.
+Summaries group attempts by provider, requested model, reasoning effort, requested
+speed, effective speed, role and optimizer mode.
 They expose token categories, measured/unknown attempt coverage, elapsed time,
 native model breakdown, peak observed input context, compaction/retry/turn event
 counts and last recorded quota signals when available. The private attempt record
@@ -60,6 +61,54 @@ compute time. Agent-tool start/completion messages in the private progress log
 help distinguish reported delegation waits. Only parsed native events count;
 malformed or oversized lines do not contribute timing. Older records have no
 such timing.
+
+## Completion and session details
+
+Each controller invocation prints a compact usage summary when it returns,
+including completion, failure and human checkpoints. Feature runs print the
+same summary for each ticket. Reporting reads existing private records and never
+starts provider work. A telemetry read failure is reported without changing the
+workflow outcome.
+
+`sdlc usage --run RUN_ID`, dashboard details and their JSON include provider
+sessions and their implementation, repair and review invocations. Sessions use
+report-local numbers; native identifiers stay private. Resumes of an observed
+native session retain one session entry. An invocation without an observed
+session ID stays separate rather than guessing its identity. Session token
+checkpoints are cumulative and must not be added to the attempt deltas. An
+incomplete latest checkpoint leaves current session totals unknown.
+
+Each invocation shows requested model, reasoning effort and speed alongside
+native reported model and effective settings. The current event protocols do
+not establish effective reasoning effort or service speed, so these remain
+unknown. Claude can additionally report a native fast-mode state at
+initialization (`on`, `off` or `cooldown`); this is shown separately from service
+speed and does not establish the speed of every request or child. Older records
+can also lack requested settings. A fast request does
+not prove the service delivered fast execution.
+
+New controllers collect bounded subagent evidence from existing native JSONL:
+
+- Codex collaboration items identify observed child agents and lifecycle status.
+  The pinned exec protocol does not expose child model, effort, speed or tokens.
+- Claude Agent/Task calls identify the requested agent type and optional model.
+  Forwarded child messages and structured tool results identify native-reported
+  models. Nested Agent calls retain their observed parent relationship.
+- Claude task progress/notification events retain reported token, tool-use and
+  duration counters. Background task updates also retain terminal states.
+  Structured Agent results can report the resolved model and **final request**
+  token categories; those counters are labelled separately because they do not
+  measure whole-agent usage.
+
+Subagent evidence is partial and is never added to session or model totals.
+Multiple child models do not establish per-model child token attribution.
+Subagent reasoning and speed remain unknown when unreported; the parent settings
+are never silently inherited in the report. Agent prompts, descriptions, tool
+arguments, responses, native IDs and transcript paths are excluded. Collection
+limits are explicit; missing lifecycle events do not prove that no agent ran.
+Older metrics cannot recover subagent evidence that was never recorded. Rebuilding
+the runtime is not required for the new host-side collector; an older native
+client may expose fewer supported events.
 
 ## Counter meanings
 

@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.75 - 2026-10-15
+
+### Added
+
+- Print recorded usage when a run stops or finishes. Usage and dashboard details now show provider sessions, resumed invocations, requested model/reasoning/speed and available subagent lifecycle, model and usage observations. Missing native settings remain unknown; child counters are kept separate from session totals.
+
+### Fixed
+
+- Keep different reasoning and speed requests separate in usage groups, while preserving cumulative-session reconciliation across resumes.
+
 ## 0.1.0-beta.74 - 2026-10-15
 
 ### Fixed

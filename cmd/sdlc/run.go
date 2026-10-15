@@ -883,6 +883,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		return err
 	}
 	err = runner.Run(ctx, directory, &journal, answer)
+	printCompletedRunUsage(output, directory, journal)
 	if errors.Is(err, workrun.ErrStopped) || journal.State == "waiting_for_human" || journal.State == "blocked" || journal.State == "failed" {
 		if reportErr := printRunAttention(output, journal); reportErr != nil {
 			err = errors.Join(err, reportErr)
