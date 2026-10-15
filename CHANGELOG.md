@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.93 - 2026-10-16
+
+### Fixed
+
+- Recognise feedback corrections already present in an adopted PR, validate their commit IDs against PR history, and acknowledge published corrections without requiring a new signing mapping. Existing corrections still pass verification and review.
+
+
 ## 0.1.0-beta.92 - 2026-10-16
 
 ### Added

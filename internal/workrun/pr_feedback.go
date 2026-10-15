@@ -552,7 +552,7 @@ func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, ou
 		if err != nil || !rev.Clean {
 			return false, fmt.Errorf("feedback correction must be committed")
 		}
-		commits, err := repo.FeedbackCommits(ctx, j.Workspace, j.PRFeedback.CandidateStart, rev.Head)
+		commits, err := repo.FeedbackCommits(ctx, j.Workspace, j.Publication.BaseSHA, rev.Head)
 		if err != nil {
 			return false, err
 		}
@@ -624,13 +624,34 @@ func (r Runner) replyPRFeedback(ctx context.Context, dir string, j *Journal) err
 		}
 		// Original-to-signed mappings are saved by the trusted signing publisher.
 		if len(e.Assessment.Commits) > 0 {
-			mapping, err := readFeedbackSigningMap(dir)
+			// Commits already in the adopted publication need no new signing mapping.
+			repo, ok := r.Repository.(FeedbackCommitRepository)
+			if !ok {
+				return fmt.Errorf("repository cannot verify published feedback history")
+			}
+			published, err := repo.FeedbackCommits(ctx, j.Workspace, j.Publication.BaseSHA, j.Publication.HeadSHA)
 			if err != nil {
 				return err
+			}
+			known := map[string]bool{}
+			for _, sha := range published {
+				known[sha] = true
+			}
+			mapping, err := readFeedbackSigningMap(dir)
+			if err != nil {
+				// Missing mapping is acceptable only if every cited commit is already published.
+				for _, sha := range e.Assessment.Commits {
+					if !known[sha] {
+						return err
+					}
+				}
 			}
 			e.SignedCommits = map[string]string{}
 			for _, sha := range e.Assessment.Commits {
 				signed := mapping[sha]
+				if known[sha] {
+					signed = sha
+				}
 				if !objectID.MatchString(signed) {
 					return fmt.Errorf("feedback commit has no retained signed mapping")
 				}

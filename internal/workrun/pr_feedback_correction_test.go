@@ -106,6 +106,7 @@ func TestPRFeedbackRealCorrectionAndInterruptedResumePreserveCommitAndSignedRepl
 			repo.git(j.Workspace, "commit", "-m", "Base fixture")
 			j.Plan.SourceSHA = repo.git(j.Workspace, "rev-parse", "HEAD")
 			j.Plan.StartingSHA = j.Plan.SourceSHA
+			j.Plan.BaseSHA = j.Plan.SourceSHA
 			if err := os.WriteFile(file, []byte("ticket implementation\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -184,5 +185,37 @@ func TestPRFeedbackRealCorrectionAndInterruptedResumePreserveCommitAndSignedRepl
 				t.Fatal("fresh independent review omitted signed correction/human feedback")
 			}
 		})
+	}
+}
+
+func TestPRFeedbackAcceptsCorrectionAlreadyInAdoptedHead(t *testing.T) {
+	dir, j, r, pub, _ := feedbackReadyRun(t)
+	repo := feedbackGitRepository{t: t}
+	repo.git(j.Workspace, "init")
+	repo.git(j.Workspace, "config", "user.name", "Test Candidate")
+	repo.git(j.Workspace, "config", "user.email", "candidate@example.invalid")
+	repo.git(j.Workspace, "commit", "--allow-empty", "-m", "Base")
+	base := repo.git(j.Workspace, "rev-parse", "HEAD")
+	repo.git(j.Workspace, "commit", "--allow-empty", "-m", "Existing correction")
+	head := repo.git(j.Workspace, "rev-parse", "HEAD")
+	j.Publication.BaseSHA, j.Publication.HeadSHA = base, head
+	comment := generalFeedback("comment:1", "Correct the behaviour")
+	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: head, Entries: []PRFeedbackEntry{{StartedAttempt: j.Attempt, Comment: comment, Fingerprint: feedbackFingerprint(comment)}}}
+	r.Repository = repo
+	out := assessedOutcome(comment, "addressed")
+	out.PRFeedbackAssessments[0].Commits = []string{head}
+	if _, err := r.acceptPRFeedback(context.Background(), dir, j, out); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.replyPRFeedback(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	entry := j.PRFeedback.Entries[0]
+	if entry.SignedCommits[head] != head || entry.Reply == nil || pub.replies != 1 {
+		t.Fatalf("existing published correction lost: %+v", entry)
+	}
+	out.PRFeedbackAssessments[0].Commits = []string{base}
+	if _, err := r.acceptPRFeedback(context.Background(), dir, j, out); err == nil {
+		t.Fatal("commit outside PR accepted")
 	}
 }

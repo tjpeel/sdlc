@@ -277,6 +277,7 @@ func TestPRFeedbackAssessmentDoesNotDropCompanionSourceRequest(t *testing.T) {
 
 func TestPRFeedbackRepliesUseRetainedSignedCorrectionIDs(t *testing.T) {
 	dir, j, r, pub, _ := feedbackReadyRun(t)
+	r.Repository = feedbackHistoryRepository{fakeRepository: &fakeRepository{}}
 	comment := generalFeedback("comment:1", "Correct response")
 	assessment := PRFeedbackAssessment{ID: comment.ID, Fingerprint: feedbackFingerprint(comment), Disposition: "addressed", Reason: "Corrected the response.", Commits: []string{testSigned}}
 	entry := PRFeedbackEntry{Comment: comment, Fingerprint: feedbackFingerprint(comment), Assessment: &assessment, ReplyBody: assessment.Reason}
