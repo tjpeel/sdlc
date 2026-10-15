@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.76 - 2026-10-15
+
+### Fixed
+
+- Include the validated local agents archive in Docker's runtime build context, allowing builds that select local skills and agents to reach catalogue installation. Add an offline Docker regression check for prepared-file completeness and excluded private files.
+
 ## 0.1.0-beta.75 - 2026-10-15
 
 ### Added

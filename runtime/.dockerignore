@@ -32,3 +32,4 @@ source/**/*_test.go
 local-catalogues/**
 !local-catalogues/.keep
 !local-catalogues/skills.tar
+!local-catalogues/agents.tar
