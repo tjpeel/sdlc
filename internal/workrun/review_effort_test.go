@@ -59,6 +59,8 @@ func (r *effortRepository) ReviewDiff(context.Context, string, string, string) (
 
 func TestReviewEffortDispatchAndSavedBoundary(t *testing.T) {
 	dir, j := testRun(t)
+	j.Plan.Roles.ReviewEffortPolicy = "pr-v1"
+	j.Plan.Roles.Review.Effort = "medium"
 	p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("reviewed")}}
 	repo := &effortRepository{diff: ReviewDiff{Sensitive: true}}
 	r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &repo.fakeRepository)
@@ -137,8 +139,8 @@ func TestExplicitAndLegacyEffortRemainFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err = LoadModels(dir)
-	if err != nil || loaded.Codex.ReviewEffortPolicy != "pr-v1" {
-		t.Fatal("partial defaults disabled automatic review", loaded, err)
+	if err != nil || loaded.Codex.ReviewEffortPolicy != "" || loaded.Codex.Review.Effort != "high" {
+		t.Fatal("partial defaults changed high review baseline", loaded, err)
 	}
 
 }
@@ -201,4 +203,25 @@ func TestReviewDiffInspectorUsesExactRangeWithoutExternalCommands(t *testing.T) 
 		t.Fatal("docs or generated metadata inflated risk", string(data))
 	}
 
+}
+
+func TestDefaultIndependentReviewerDispatchesHighForBothProviders(t *testing.T) {
+	for _, provider := range []string{"codex", "claude"} {
+		t.Run(provider, func(t *testing.T) {
+			dir, j := testRun(t)
+			roles, err := ResolveModels(DefaultModels(), provider, "", "", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.Plan.Roles = roles
+			p := &fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("reviewed")}}
+			r := fakeRunner(p, &fakeChecker{}, &fakePublisher{}, &fakeRepository{})
+			if err := r.Run(context.Background(), dir, j, ""); err != nil {
+				t.Fatal(err)
+			}
+			if len(p.calls) != 2 || p.calls[1].Model.Provider == provider || p.calls[1].Model.Effort != "high" || j.ReviewEffort != nil {
+				t.Fatal("default independent review was not fixed high effort", p.calls)
+			}
+		})
+	}
 }

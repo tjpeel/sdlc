@@ -20,8 +20,8 @@ type ModelDefaults struct {
 
 func DefaultModels() ModelDefaults {
 	return ModelDefaults{Version: 1,
-		Codex:  Roles{ReviewEffortPolicy: "pr-v1", ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "medium"}},
-		Claude: Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"claude", "claude-sonnet-5-5", "low"}, Review: Model{"codex", "gpt-6.1-sol", "low"}},
+		Codex:  Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "high"}},
+		Claude: Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"claude", "claude-sonnet-5-5", "low"}, Review: Model{"codex", "gpt-6.1-sol", "high"}},
 	}
 }
 

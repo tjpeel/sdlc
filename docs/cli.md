@@ -593,16 +593,16 @@ opposite reviewer providers:
   "version": 1,
   "codex": {
     "implementation": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "low"},
-    "review": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "low"}
+    "review": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "high"}
   },
   "claude": {
     "implementation": {"provider": "claude", "model": "claude-sonnet-5-5", "effort": "low"},
-    "review": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "low"}
+    "review": {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"}
   }
 }
 ```
 
-Flags override that file for new runs. `--reasoning` sets both lead bands;
+Independent reviewers default to high effort for either provider. Flags override that file for new runs. `--reasoning` sets both lead bands;
 `--effort` and `--review-effort` can override either one. Band names express a
 workload choice, not equal model performance across providers. Resume preserves
 the recorded models, effort, speed, runtime image, inputs, checks and shared

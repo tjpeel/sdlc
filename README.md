@@ -8,17 +8,11 @@ inspecting the shared runtime, Codex/Claude account login, shared instruction
 settings, local project initialization, ordered ticket discovery and interactive
 provider sessions, and single-ticket or feature execution through checks, draft
 PRs, CI and independent review, with a live dashboard of local runs.
-New Claude review sessions select effort from the published PR by default: low for
-small documentation-only diffs, medium for ordinary or uncertain changes, and high
-for large diffs or security, data integrity and concurrency signals. The initial
-policy uses diff statistics and conservative path/content rules, not a second model
-call. It retains the selected model and never automatically chooses xhigh or max.
-The decision is recorded per PR base/head; a changed revision is reassessed.
-Explicit `--review-effort` (or `--reasoning`) overrides it. Existing saved runs
-retain their settings, as do explicit review efforts in older `models.json` files.
-New generated
-model defaults include `review_effort_policy: "pr-v1"`; custom defaults can retain
-that field for automatic Claude selection or omit it for fixed effort.
+New independent reviews default to high reasoning effort for both Claude and
+Codex. Explicit `--review-effort` (or `--reasoning`), private model settings and
+existing saved runs retain their selected effort. The diff-based `pr-v1` policy
+remains available as an explicit `review_effort_policy` setting; it is not the
+new-run default.
 
 Completion usage reports cover only the current run/resume invocation, using prior
 native checkpoints as subtraction baselines. They show model/role, requested effort and speed, elapsed
@@ -62,7 +56,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.89`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.90`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

@@ -132,6 +132,7 @@ func TestLegacyReviewUsageHoldReusesCorroboratedAttempt(t *testing.T) {
 			j.Attempt++
 			j.State, j.ResumeState, j.StopReason, j.Outcome = "failed", "reviewing", errNativeIncomplete.Error(), testOutcome("implemented")
 			if fault == "auto_high" || fault == "auto_low" || fault == "wrong_effort" {
+				j.Plan.Roles.ReviewEffortPolicy = "pr-v1"
 				selection := assessReviewEffort(ReviewDiff{Sensitive: true})
 				if fault == "auto_low" {
 					selection = assessReviewEffort(ReviewDiff{Files: []ReviewDiffFile{{Path: "README.md", Added: 1}}})

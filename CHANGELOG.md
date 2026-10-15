@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.90 - 2026-10-15
+
+### Changed
+
+- Default both Claude and Codex independent reviewers to high reasoning effort. Preserve explicit effort overrides, private settings and saved-run choices; keep diff-based effort selection available as an opt-in policy.
+
+
 ## 0.1.0-beta.89 - 2026-10-15
 
 ### Fixed
