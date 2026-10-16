@@ -177,6 +177,11 @@ events remain separate last observations and do not replace either boundary.
 
 ## Comparing Headroom
 
+New runs use the required saved external proxy. Its shared aggregate statistics
+are not collected or attributed to individual runs; Headroom savings remain
+unknown. Native provider usage is still recorded. The comparison guidance below
+applies to legacy invocation-scoped managed proxies and separately measured trials.
+
 Use equivalent disposable tickets and checks with the same models, effort,
 runtime and inputs. Start with direct runs, then passthrough to measure forwarding
 overhead, then conservative optimization. Compare several runs rather than

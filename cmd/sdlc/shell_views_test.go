@@ -209,7 +209,7 @@ func TestOnboardRecordedRuntimeIsUnverifiedAndBadIdentityIsAProblem(t *testing.T
 		t.Run(fmt.Sprintf("valid=%t", valid), func(t *testing.T) {
 			runGitFixture(t)
 			dir := os.Getenv("SDLC_STATE_DIR")
-			if err := os.Mkdir(dir, 0700); err != nil {
+			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
 			id, category := "not-an-image", "problem"

@@ -131,15 +131,16 @@ def native_command(provider, model, effort, resume, readonly):
 
 
 def apply_headroom_route(provider, command, env):
-    # SDLC supplies this marker only after starting its private sidecar. Never
-    # copy a URL or authentication override from the host environment.
+    # The controller supplies only the validated route saved with this run.
     if os.environ.get("SDLC_HEADROOM") != "1":
         return
+    base = os.environ.get("SDLC_HEADROOM_URL", "http://127.0.0.1:8787").rstrip("/")
     if provider == "codex":
-        command += ["-c", 'openai_base_url="http://127.0.0.1:8787/v1"']
-        env["OPENAI_BASE_URL"] = "http://127.0.0.1:8787/v1"
+        endpoint = base + "/v1"
+        command += ["-c", "openai_base_url=" + json.dumps(endpoint)]
+        env["OPENAI_BASE_URL"] = endpoint
     elif provider == "claude":
-        env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:8787"
+        env["ANTHROPIC_BASE_URL"] = base
     else:
         raise ValueError("unsupported Headroom provider")
 

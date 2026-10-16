@@ -103,7 +103,7 @@ func TestNativeProxyRoutePreservesDefaultsAndCredentials(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python unavailable")
 	}
-	script := `import ast,os
+	script := `import ast,os,json
 source = ` + strconv.Quote(headlessHelper) + `
 tree=ast.parse(source)
 function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=="apply_headroom_route")
@@ -124,8 +124,52 @@ for provider in ("codex","claude"):
   assert env["OPENAI_BASE_URL"]=="http://127.0.0.1:8787/v1" and command[1:]==["-c",'openai_base_url="http://127.0.0.1:8787/v1"']
  else:
   assert env["ANTHROPIC_BASE_URL"]=="http://127.0.0.1:8787" and command==[provider]
+os.environ["SDLC_HEADROOM_URL"]="http://host.docker.internal:9797"
+for provider in ("codex","claude"):
+ command=[provider];env={"NATIVE_CREDENTIAL":"opaque"}
+ apply_headroom_route(provider,command,env)
+ assert env["NATIVE_CREDENTIAL"]=="opaque"
+ assert "AUTH_TOKEN" not in env and "OPENAI_API_KEY" not in env
+ if provider=="codex":
+  assert env["OPENAI_BASE_URL"]=="http://host.docker.internal:9797/v1"
+  assert command[1:]==["-c",'openai_base_url="http://host.docker.internal:9797/v1"']
+ else:
+  assert env["ANTHROPIC_BASE_URL"]=="http://host.docker.internal:9797" and command==[provider]
 `
 	if output, err := exec.Command("python3", "-c", script).CombinedOutput(); err != nil {
 		t.Fatalf("route: %v %s", err, output)
+	}
+}
+
+func TestExternalHeadlessProxyBoundary(t *testing.T) {
+	manager, base := readyInteractive(t, "codex")
+	request := headlessFixture(t)
+	request.Headroom = headroom.Config{Mode: "external", ProxyURL: "http://127.0.0.1:8787"}
+	d := &streamDocker{fakeDocker: base}
+	manager.Docker = d
+	streamed := false
+	request.OnHeadroomStats = func(headroom.Stats) { t.Fatal("shared proxy statistics attributed to this invocation") }
+	d.stream = func(ctx context.Context, in io.Reader, out, diagnostics io.Writer, args []string) error {
+		streamed = true
+		if !has(args, "SDLC_HEADROOM_URL=http://host.docker.internal:8787") || !has(args, "SDLC_HEADROOM=1") {
+			t.Fatal("external route missing", args)
+		}
+		for i, value := range args {
+			if value == "--network" && args[i+1] != "bridge" {
+				t.Fatal("external worker joined a managed proxy", args)
+			}
+		}
+		return nil
+	}
+	if err := manager.Headless(context.Background(), request, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !streamed {
+		t.Fatal("worker was not invoked")
+	}
+	for _, args := range d.calls {
+		if strings.Contains(strings.Join(args, " "), "-headroom") {
+			t.Fatal("external proxy lifecycle managed", args)
+		}
 	}
 }

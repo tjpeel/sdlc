@@ -227,9 +227,9 @@ portable status exports omit it. Ordinary recovery of an eligible saved
 missing-context stop reuses the existing CI grant and original session rather
 than resetting accounting or changing the account route.
 
-## Opt-in local proxy
+## Saved external inference proxy
 
-Ticket and feature runs can explicitly select the [Headroom variant](headroom.md).
+New ticket, feature and PR-adoption runs require the saved [Headroom proxy](headroom.md) address. Existing runs retain their recorded route.
 The official client still owns login, refresh, account selection and model requests.
 Only inference forwarding changes; login and status remain direct. SDLC does not
 read token fields, construct authenticated provider requests itself or provide a
@@ -254,12 +254,17 @@ Headroom forwards the native OAuth capability headers and does not substitute
 authentication. Gateway instructions do not grant permission for other account
 types, shared access or execution outside the native client's documented conditions.
 
-The proxy is private to one provider invocation, has no host port or credential
-mount and retains no request logs. Its local aggregate estimates are collected
-after the worker stops. SDLC disables Headroom beacon/update calls, semantic cache,
-CCR retrieval, model routing and learned compression for this variant. Connected
-quality and subscription trials require separate authorisation; offline validation
-alone does not establish real account access or savings on engineering work.
+External proxy routing was checked against the official authentication,
+configuration and subscriptions-and-gateways references above on 16 October 2026.
+It uses the same native-client forwarding settings and account route. The proxy
+operator controls logging, retention, compression, routing, retries and telemetry;
+SDLC cannot attest to an external proxy's policy. The address is an explicit trust
+choice and must not be a shared subscription gateway or replace account handling.
+SDLC never manages the external process or attributes its shared aggregate totals
+to one run. Legacy managed proxies retain their invocation-scoped lifecycle and
+conservative policy. Connected quality and subscription trials require separate
+authorisation; offline validation alone does not establish real account access
+or savings on engineering work.
 
 ## Independent reviewer usage exhaustion
 

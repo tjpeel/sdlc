@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -155,7 +156,7 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 		}
 	}
 	network := "bridge"
-	if request.Headroom.Enabled() {
+	if request.Headroom.Enabled() && request.Headroom.Mode != "external" {
 		network = "container:" + name + "-headroom"
 	}
 	args = append(args, "--init", "--interactive", "--network", network, "--workdir", "/workspace",
@@ -184,6 +185,12 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 	}
 	if request.Headroom.Enabled() {
 		args = append(args, "--env", "SDLC_HEADROOM=1")
+		if request.Headroom.Mode == "external" {
+			args = append(args, "--env", "SDLC_HEADROOM_URL="+request.Headroom.WorkerURL())
+			if runtime.GOOS == "linux" {
+				args = append(args, "--add-host", "host.docker.internal:host-gateway")
+			}
+		}
 	}
 	encoded, _ := json.Marshal(helper)
 	quota, _ := json.Marshal(subscriptionHelper)

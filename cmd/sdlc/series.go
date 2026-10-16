@@ -239,6 +239,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			options.provider, options.alternate, options.inputs = previous.Provider, previous.Alternate, selectedInputs(previous.Inputs)
 			options.repository, options.githubProfile = previous.Repository, previous.GitHubProfile
 			options.headroomMode = seriesHeadroomMode(previous.Headroom)
+			options.frozenHeadroom = &previous.Headroom
 			manager, managerErr := runtimeimage.New(io.Discard, io.Discard)
 			if managerErr != nil {
 				return managerErr
@@ -454,7 +455,7 @@ func seriesHeadroomMode(config headroom.Config) string {
 }
 
 func seriesHeadroomImage(config headroom.Config) string {
-	if config.Enabled() {
+	if config.Enabled() && config.Mode != "external" {
 		return headroom.Image
 	}
 	return ""
@@ -462,12 +463,8 @@ func seriesHeadroomImage(config headroom.Config) string {
 
 func selectSeriesSettings(ctx context.Context, directory string, plan workseries.Plan, options runOptions) (seriesSettings, error) {
 	settings := seriesSettings{Provider: options.provider, Alternate: options.alternate, Inputs: options.inputs, DockerTests: options.dockerTests, Roles: map[string]workrun.Roles{}}
-	mode := options.headroomMode
-	if mode == "" {
-		mode = "off"
-	}
 	var err error
-	settings.Headroom, err = headroom.Selection(mode)
+	settings.Headroom, err = selectRunHeadroom(directory, options)
 	if err != nil {
 		return settings, err
 	}
@@ -557,7 +554,11 @@ func freezeSelectedSeriesSettings(ctx context.Context, runtime runtimeimage.Mana
 	settings.Version, settings.Repository = 1, identity.RepositoryName
 	settings.GitHubProfile, settings.SigningProfile = pair.GitHubProfile, pair.SigningProfile
 	settings.ImageID, settings.Identity = state.ImageID, identity
-	settings.Headroom, err = headroom.Resolve(ctx, runtime.Docker, seriesHeadroomMode(settings.Headroom))
+	if settings.Headroom.Mode != "external" {
+		settings.Headroom, err = headroom.Resolve(ctx, runtime.Docker, seriesHeadroomMode(settings.Headroom))
+	} else {
+		err = settings.Headroom.Validate()
+	}
 	if err != nil {
 		return settings, err
 	}

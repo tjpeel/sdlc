@@ -27,7 +27,8 @@ func TestFeaturePreviewRejectsDuplicateBranchNames(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "same branch TASK-1-selected") {
 		t.Fatalf("duplicate branch was not rejected: %v", err)
 	}
-	for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR"), filepath.Join(root, ".sdlc/work/TASK-1/series")} {
+	assertOnlyHeadroomSettings(t)
+	for _, path := range []string{marker, filepath.Join(root, ".sdlc/work/TASK-1/series")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("duplicate branch preview touched %s", path)
 		}
@@ -64,12 +65,13 @@ func TestFeaturePreviewTracksExecutionSelections(t *testing.T) {
 	if result.Roles["01-selected.md"] != workrun.DefaultModels().Codex || result.Roles["02-other.md"] != workrun.DefaultModels().Claude || !reflect.DeepEqual(result.CheckInputs, []string{"README.md"}) || len(result.Checks) == 0 {
 		t.Fatalf("missing resolved selections: %s", baseline)
 	}
-	for _, mode := range []string{"passthrough", "optimize"} {
-		changed := preview(append(append([]string{}, args...), "--headroom", mode))
-		if planHash(changed) == planHash(baseline) {
-			t.Fatalf("%s selector omitted from hash", mode)
-		}
+	if _, err := headroom.Save(os.Getenv("SDLC_STATE_DIR"), "http://localhost:9797"); err != nil {
+		t.Fatal(err)
 	}
+	if planHash(preview(args)) == planHash(baseline) {
+		t.Fatal("saved proxy address omitted from plan hash")
+	}
+
 	if planHash(preview(append(append([]string{}, args...), "--input", "README.md"))) == planHash(baseline) {
 		t.Fatal("additional input omitted from hash")
 	}

@@ -17,6 +17,7 @@ const Version = "0.39.1"
 const PolicyVersion = "lossless-v1"
 
 type Config struct {
+	ProxyURL      string `json:"proxy_url,omitempty"`
 	Mode          string `json:"mode,omitempty"`
 	ImageID       string `json:"image_id,omitempty"`
 	PolicyVersion string `json:"policy_version,omitempty"`
@@ -28,10 +29,20 @@ var imageID = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func (c Config) Validate() error {
 	if !c.Enabled() {
-		if c.ImageID != "" || c.PolicyVersion != "" {
+		if c.ImageID != "" || c.PolicyVersion != "" || c.ProxyURL != "" {
 			return fmt.Errorf("direct provider mode cannot carry Headroom settings")
 		}
 		return nil
+	}
+	if c.Mode == "external" {
+		if c.ImageID != "" || c.PolicyVersion != "" {
+			return fmt.Errorf("external Headroom cannot carry managed image or policy settings")
+		}
+		_, err := ValidateProxyURL(c.ProxyURL)
+		return err
+	}
+	if c.ProxyURL != "" {
+		return fmt.Errorf("managed Headroom cannot carry an external proxy URL")
 	}
 	if c.Mode != "passthrough" && c.Mode != "optimize" {
 		return fmt.Errorf("Headroom mode must be off, passthrough or optimize")
@@ -116,7 +127,7 @@ func Start(ctx context.Context, docker Docker, c Config, name string) (*Instance
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if !c.Enabled() {
+	if !c.Enabled() || c.Mode == "external" {
 		return nil, nil
 	}
 	// Recorded identity must still exist; never resolve the tag again on resume.

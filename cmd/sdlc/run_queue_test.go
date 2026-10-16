@@ -47,6 +47,7 @@ func queuedRunFixture(t *testing.T) (string, string, string) {
 		t.Fatal(err)
 	}
 	t.Setenv("SDLC_STATE_DIR", state)
+	configureTestHeadroom(t, state)
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
 	for _, variable := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILD_BUILDID"} {

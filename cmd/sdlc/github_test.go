@@ -204,9 +204,7 @@ func TestMissingPairFailsBeforeCaptureRuntimeOrProviderRequests(t *testing.T) {
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("unconfigured selection contacted Docker/provider")
 	}
-	if _, err := os.Stat(os.Getenv("SDLC_STATE_DIR")); !os.IsNotExist(err) {
-		t.Fatal("unconfigured selection created runtime state")
-	}
+	assertOnlyHeadroomSettings(t)
 	entries, err := os.ReadDir(filepath.Join(root, ".sdlc", "work", "TASK-1"))
 	if err != nil {
 		t.Fatal(err)
@@ -227,6 +225,7 @@ func TestSavedRepositoryStatusAndRunResolvePairedSignerOffline(t *testing.T) {
 	marker := forbidConnectedRunCommands(t, root)
 	directory, profile := pairingFixture(t)
 	t.Setenv("SDLC_STATE_DIR", directory)
+	configureTestHeadroom(t, directory)
 	pair := githubprofile.Pair{Version: 1, GitHubProfile: "personal", AccountID: 123, Login: "example-user", SigningProfile: "personal-key", SigningID: profile.ID, PublicKey: profile.PublicKey, Fingerprint: profile.Fingerprint}
 	if err := githubprofile.Store(directory, pair, false); err != nil {
 		t.Fatal(err)

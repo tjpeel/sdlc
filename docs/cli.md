@@ -1183,10 +1183,11 @@ never sums those live aggregate snapshots across resumes. Separate
 native totals. Read them with `sdlc usage --since 7d --json`; dashboard details and
 JSON also expose them. The pinned clients may omit fields.
 
-Ticket and feature runs can select `--headroom passthrough` or `--headroom optimize`
-after `sdlc runtime headroom build`. The [Headroom guide](headroom.md) explains its
-separate image, native forwarding route, frozen resume settings and comparison
-criteria. Direct execution is the default.
+New ticket, feature and PR-adoption runs require a saved Headroom proxy address:
+`sdlc runtime headroom set --proxy-url http://127.0.0.1:8787`.
+Inspect it with `sdlc runtime headroom status`. New runs use it automatically;
+resumed runs retain their recorded route. See the [Headroom guide](headroom.md)
+for Docker connectivity, external proxy ownership and legacy managed runs.
 
 Closing the dashboard leaves controllers working. `sdlc run` remains a foreground
 process; its original terminal must stay open. Headless means no provider terminal

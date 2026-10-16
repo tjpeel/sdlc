@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.96 - 2026-10-16
+
+### Changed
+
+- Require a saved external Headroom proxy address for new ticket, feature and PR-adoption runs. Configure it independently with `sdlc runtime headroom set --proxy-url URL`; inspect it with `sdlc runtime headroom status`. New runs use this address automatically, without starting a managed proxy.
+- Preserve each saved run's proxy route on resume. Translate host loopback addresses for local Docker workers and leave shared proxy statistics unattributed to individual runs. Existing direct and managed-proxy runs retain their recorded behaviour.
+
 ## 0.1.0-beta.95 - 2026-10-16
 
 ### Fixed

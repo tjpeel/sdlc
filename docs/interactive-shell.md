@@ -70,6 +70,8 @@ Useful commands:
 | `/answer RUN_ID` | Read the questions, type a reply, then Ctrl+S to answer and resume. |
 | `/inputs --run RUN_ID [--add RELATIVE_PATH] [--dry-run]` | Inspect captured requirements or attach missing files to an unpublished paused implementation without starting it. |
 | `/resume RUN_ID` | Inspect a stopped run, then Ctrl+S to resume its saved stage. |
+| `/runtime headroom set --proxy-url URL` | Save the required external Headroom proxy for new runs. |
+| `/runtime headroom status` | Show the saved proxy and its Docker worker address. |
 | `/usage` | Read recorded provider tokens, Headroom estimates and completion outcomes. |
 | `/update` | Install SDLC and its runtime; `--agent-tools` refreshes Codex, Claude, skills and agents; add `--update-dockerfile` to write those source pins; `--sdlc-only` keeps the entire runtime. |
 | `/scope all` | Browse installation-wide history from multiple projects. |

@@ -487,7 +487,8 @@ func TestFeatureDryRunIsOfflineAndDoesNotCreateCheckpoints(t *testing.T) {
 			t.Fatalf("missing %q: %s", fragment, output.String())
 		}
 	}
-	for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR"), filepath.Join(root, ".sdlc/work/TASK-1/series")} {
+	assertOnlyHeadroomSettings(t)
+	for _, path := range []string{marker, filepath.Join(root, ".sdlc/work/TASK-1/series")} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("dry run wrote or connected: %s", path)
 		}

@@ -40,6 +40,7 @@ func TestRunCaptureFailureIsVisibleBeforeExecutionJournal(t *testing.T) {
 			marker := forbidConnectedRunCommands(t, root)
 			state, profile := pairingFixture(t)
 			t.Setenv("SDLC_STATE_DIR", state)
+			configureTestHeadroom(t, state)
 			for _, name := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "BUILD_BUILDID"} {
 				t.Setenv(name, "")
 			}
@@ -133,9 +134,7 @@ func TestRejectedRunSelectionsDoNotCreateRuntimeLeaseState(t *testing.T) {
 		if err := runCommand(context.Background(), args, io.Discard); err == nil {
 			t.Fatalf("invalid selection accepted: %v", args)
 		}
-		if _, err := os.Stat(os.Getenv("SDLC_STATE_DIR")); !os.IsNotExist(err) {
-			t.Fatalf("invalid selection created runtime state: %v", args)
-		}
+		assertOnlyHeadroomSettings(t)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("invalid selection reached a connected command")
@@ -342,6 +341,7 @@ func runGitFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("SDLC_STATE_DIR", filepath.Join(stateParent, "private-state"))
+	configureTestHeadroom(t, os.Getenv("SDLC_STATE_DIR"))
 	return root
 }
 func forbidConnectedRunCommands(t *testing.T, root string) string {
@@ -397,7 +397,8 @@ func TestRunDryRunIsOfflineAndPreservesProviderRoles(t *testing.T) {
 					t.Fatalf("offline plan disclosed input body %q", body)
 				}
 			}
-			for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR")} {
+			assertOnlyHeadroomSettings(t)
+			for _, path := range []string{marker} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Fatalf("offline plan touched %s", path)
 				}
@@ -422,7 +423,8 @@ func TestRunDryRunResolvesDefaultWorkReferenceBranch(t *testing.T) {
 	if preview.Plan.Branch != "TASK-1-selected" {
 		t.Fatalf("unexpected planned branch: %q", preview.Plan.Branch)
 	}
-	for _, path := range []string{marker, os.Getenv("SDLC_STATE_DIR"), filepath.Join(root, ".sdlc/work/TASK-1/runs")} {
+	assertOnlyHeadroomSettings(t)
+	for _, path := range []string{marker, filepath.Join(root, ".sdlc/work/TASK-1/runs")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("offline branch planning touched %s", path)
 		}

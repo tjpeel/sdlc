@@ -1,66 +1,68 @@
-# Headroom variant
+# Headroom proxy
 
-Headroom is optional. Direct native execution remains the default. The variant
-uses a separate local Docker image and one proxy per provider invocation, so the
-shared SDLC runtime does not need another Python dependency or a rebuild.
+New ticket, feature and PR-adoption runs require a saved external Headroom proxy
+address. Configure it once, independently of a run:
 
 ```sh
-sdlc runtime headroom build
+sdlc runtime headroom set --proxy-url http://127.0.0.1:8787
 sdlc runtime headroom status
-sdlc run --reference EXAMPLE --ticket 01-example.md --headroom passthrough
-sdlc run --reference EXAMPLE --ticket 01-example.md --headroom optimize
-sdlc run --reference EXAMPLE --all --headroom optimize --dry-run
+sdlc run --reference EXAMPLE --ticket 01-example.md --dry-run
 ```
 
-Use separate equivalent tickets for comparisons; do not launch the same owned
-ticket twice concurrently. Review [provider usage](provider-usage.md) and
-[usage metrics](usage-metrics.md) before a connected trial.
+Use the proxy origin, without `/dashboard` or `/v1`. HTTP and HTTPS are supported;
+credentials, paths, query strings and fragments are rejected. Settings live in
+`headroom.json` in SDLC's private state directory (`SDLC_STATE_DIR`, or the OS
+configuration directory followed by `sdlc`). No project-file or per-run flag is
+needed. A missing or invalid address stops new plans and runs with setup guidance.
+Setting or inspecting the address makes no network request and does not verify
+connectivity, proxy version, compression settings or account access.
 
-## Modes
+New runs freeze the address in their private plan. Changing the saved address
+applies to later runs; resumed tickets and features retain their recorded route.
+This includes existing direct and managed-proxy runs. New runs cannot use
+`--headroom off|passthrough|optimize` to override the saved setting. The flag and
+`sdlc runtime headroom build` remain available for legacy saved runs only.
 
-| Selection | Behaviour |
-| --- | --- |
-| `off` | Existing direct native route; no proxy |
-| `passthrough` | Native requests pass through Headroom with optimization disabled |
-| `optimize` | Conservative cache-aware, lossless tool-output compression |
+## Docker connectivity
 
-The CLI builds Headroom `0.39.1` from the fixed embedded recipe, labels the
-`lossless-v1` policy and records the resulting Docker image ID. Building uses the
-Dockerfile over stdin, with no checkout or credential build context. Public image
-and package downloads are needed at build time; tokenizers are baked into the
-image for runtime use. Runs use `--pull never` with the recorded image ID.
+Provider workers run in Docker. SDLC translates `localhost`, `127.0.0.1` and other
+loopback IP addresses to `host.docker.internal`, preserving the port. Docker
+Desktop supplies this hostname; on Linux SDLC adds the Docker host-gateway
+mapping. A proxy bound only to the host's loopback interface may need a listen
+address reachable from Docker. On Linux, the host-gateway mapping does not expose
+a loopback-only listener. Use a reachable host interface and restrict access to
+trusted local workers. Remote Docker engines require an address reachable from
+that engine; a loopback address refers to the Docker host, not the CLI machine.
 
-The image and policy are frozen before execution. Resume uses the saved selection
-and refuses a mode change or missing image. Feature previews include the mode,
-models, checks and input selections; an executing feature resolves one image and
-uses it for each ticket. A tag update cannot silently change a saved run.
+SDLC does not start, configure, stop, restart or collect aggregate statistics from
+your external proxy. You control its availability, logging, compression, routing,
+retry policy and telemetry. Native provider token and context observations remain
+available; per-run Headroom savings are unknown because shared totals may include
+other clients. There is no automatic fallback to direct inference or a managed
+proxy when the external proxy fails.
 
-## Native routing
+## Native routing and trust
 
-The official Codex or Claude client performs authentication and sends requests.
-Codex receives the built-in inference URL override; Claude receives only its
-documented base URL. Native login/status still use the direct route. This supports
-the documented account-auth forwarding route; it does not convert subscriptions
-into API credentials or approve other execution modes.
+The unmodified official clients retain authentication and account handling. Codex
+uses its built-in inference URL override with `/v1`; Claude uses
+`ANTHROPIC_BASE_URL`. Login and status remain direct. Selecting a proxy trusts it
+with native inference headers and request bodies, including account authentication
+in transit. Configure only a proxy you control. SDLC neither extracts credentials
+nor supplies replacement authentication.
 
-The proxy listens on loopback in its own Docker network namespace. The provider
-worker joins that namespace and reaches it at `127.0.0.1:8787`. No host port is
-published, and no credentials or workspace are mounted into the proxy. Authentication
-headers necessarily pass through its memory on the way to the provider. Container
-logs are disabled, writable state is temporary, and the proxy is removed after
-worker cleanup and numeric stats collection. Cleanup failures stop the invocation.
-
-The policy disables CCR retrieval, semantic response cache, learned compression
-and its fallback, user-message compression, tool search/deduplication, output
-shaping, model routing and read-lifecycle transformations. Headroom retries are
-limited to one attempt. Beacon/update calls and external telemetry are disabled;
-local aggregate statistics remain enabled. Optimization can leave an output
-unchanged when it cannot classify it safely. Engineering quality still needs
-comparison with the direct run.
-
+Review [provider usage](provider-usage.md) before connected work. The external
+proxy must preserve native protocols, authentication headers and provider limits;
+setting an address does not establish that its configuration meets these rules.
 Interactive provider sessions, login, checks and publication workers do not use
-this variant. It applies to native headless ticket implementation, repairs and
-independent review, including those scheduled by a feature controller.
+this inference route.
+
+## Legacy managed proxy
+
+Existing saved `passthrough` and `optimize` plans retain their pinned Headroom
+0.39.1 image and `lossless-v1` policy. They still start an invocation-scoped proxy,
+collect its bounded numeric statistics and remove it after worker cleanup. The
+image can be rebuilt with `sdlc runtime headroom build`; new runs use the required
+external address instead.
 
 ## Validation
 

@@ -100,7 +100,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.githubProfile, "github-profile", "", "registered GitHub account/key pair; defaults to repository selection")
 	flags.StringVar(&options.provider, "provider", "codex", "implementation provider")
 	flags.StringVar(&options.runtimeName, "runtime", "", "named runtime for one ticket; resume uses the recorded selection")
-	flags.StringVar(&options.headroomMode, "headroom", "off", "provider route: off, passthrough or optimize (opt-in local Headroom)")
+	flags.StringVar(&options.headroomMode, "headroom", "off", "legacy resume route; new runs require the saved external Headroom proxy")
 	flags.StringVar(&options.base, "base", "main", "PR base branch")
 	flags.StringVar(&options.branch, "branch", "", "explicit destination branch; defaults to project branch_format")
 	flags.StringVar(&options.repository, "repo", "", "GitHub owner/repo; defaults to saved SDLC identity, then origin")
@@ -543,7 +543,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 		journal.Plan.NugetCache = &budget
-		journal.Plan.Headroom, err = headroom.Selection(options.headroomMode)
+		journal.Plan.Headroom, err = selectRunHeadroom(runtime.Directory, options)
 		if err != nil {
 			return err
 		}
@@ -656,12 +656,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		journal.ImageID = state.ImageID
 		journal.Plan.RuntimeProvenance = workrun.CaptureRuntimeProvenance(state)
-		if options.frozenHeadroom == nil {
-			journal.Plan.Headroom, err = headroom.Resolve(ctx, runtime.Docker, options.headroomMode)
-			if err != nil {
-				return err
-			}
-		} else if err := journal.Plan.Headroom.Validate(); err != nil {
+		if err := journal.Plan.Headroom.Validate(); err != nil {
 			return err
 		}
 		if options.frozenImage != "" && state.ImageID != options.frozenImage {

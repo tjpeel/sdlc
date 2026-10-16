@@ -217,10 +217,12 @@ func TestPublisherWireRequestRetainsFrozenPublicationBoundary(t *testing.T) {
 }
 
 func TestPublisherWireRequestOmitsEveryHeadroomMode(t *testing.T) {
-	for _, mode := range []string{"", "off", "passthrough", "optimize"} {
+	for _, mode := range []string{"", "off", "passthrough", "optimize", "external"} {
 		t.Run(mode, func(t *testing.T) {
 			config := headroom.Config{Mode: mode}
-			if config.Enabled() {
+			if config.Mode == "external" {
+				config.ProxyURL = "http://localhost:8787"
+			} else if config.Enabled() {
 				config.ImageID = "sha256:" + strings.Repeat("a", 64)
 				config.PolicyVersion = headroom.PolicyVersion
 			}

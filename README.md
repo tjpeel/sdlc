@@ -61,14 +61,15 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.95`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.96`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
 Ticket and feature runs retain [usage metrics](docs/usage-metrics.md) across
 attempts and resumes. Read them with `sdlc usage --since 7d --json`.
-An [opt-in Headroom variant](docs/headroom.md) adds a local proxy for passthrough
-comparison or conservative tool-output compression. Direct execution is the default.
+New ticket and feature runs require a saved [Headroom proxy address](docs/headroom.md).
+Configure it once with `sdlc runtime headroom set --proxy-url http://127.0.0.1:8787`;
+new runs use it automatically. Existing runs keep their recorded route.
 
 ## Get started
 

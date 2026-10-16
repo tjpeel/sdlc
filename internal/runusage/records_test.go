@@ -364,3 +364,16 @@ func TestClaudeOptionalCategoriesRequireEveryModel(t *testing.T) {
 		t.Fatalf("unknown child categories became whole tree counts: %+v", g)
 	}
 }
+
+func TestExternalProxyUsageHasNoSharedSavings(t *testing.T) {
+	d := dir(t)
+	a := attempt(1, "implementation", "", 100)
+	a.OptimizerMode = "external"
+	if err := SaveAttempt(d, a); err != nil {
+		t.Fatal(err)
+	}
+	a.HeadroomStats = &headroom.Stats{Version: headroom.Version, Mode: "external", Source: "headroom_proxy_aggregate"}
+	if err := SaveAttempt(d, a); err == nil {
+		t.Fatal("shared external statistics attributed to an invocation")
+	}
+}

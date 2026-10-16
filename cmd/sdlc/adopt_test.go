@@ -27,6 +27,7 @@ func TestAdoptSelectionAndOfflinePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SDLC_STATE_DIR", state)
+	configureTestHeadroom(t, state)
 	var out bytes.Buffer
 	if err := adoptCommand(context.Background(), []string{"--pr", "https://github.com/example/project/pull/17", "--dry-run", "--json"}, &out); err != nil {
 		t.Fatal(err)

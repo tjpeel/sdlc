@@ -235,7 +235,7 @@ func validateAttempt(a Attempt) error {
 		return fmt.Errorf("invalid metrics effort")
 	}
 	switch a.OptimizerMode {
-	case "off", "passthrough", "optimize":
+	case "off", "passthrough", "optimize", "external":
 	default:
 		return fmt.Errorf("invalid metrics optimizer mode")
 	}
@@ -244,7 +244,7 @@ func validateAttempt(a Attempt) error {
 	}
 	if a.HeadroomStats != nil {
 		st := a.HeadroomStats
-		if st.Version != headroom.Version || st.Source != "headroom_proxy_aggregate" || st.Mode != a.OptimizerMode || a.OptimizerMode == "off" || (st.Error != "" && st.Error != "proxy metrics unavailable") {
+		if st.Version != headroom.Version || st.Source != "headroom_proxy_aggregate" || st.Mode != a.OptimizerMode || a.OptimizerMode == "off" || a.OptimizerMode == "external" || (st.Error != "" && st.Error != "proxy metrics unavailable") {
 			return fmt.Errorf("invalid proxy metadata")
 		}
 		all := st.Requests != nil && st.InputTokens != nil && st.OutputTokens != nil && st.SavedTokens != nil

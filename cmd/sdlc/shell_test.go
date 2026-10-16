@@ -131,9 +131,7 @@ func TestStructuredPlansAndShellPreviewAreOffline(t *testing.T) {
 			t.Fatal("explicit dry run dispatched")
 		}
 	}
-	if _, err := os.Stat(os.Getenv("SDLC_STATE_DIR")); !os.IsNotExist(err) {
-		t.Fatal("plan created installation state", err)
-	}
+	assertOnlyHeadroomSettings(t)
 	assertDashboardReadOnly(t, root, marker, before)
 }
 
@@ -158,9 +156,7 @@ func TestShellLaunchRequiresCurrentReview(t *testing.T) {
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("preview connected", err)
 	}
-	if _, err := os.Stat(os.Getenv("SDLC_STATE_DIR")); !os.IsNotExist(err) {
-		t.Fatal("stale preview dispatched", err)
-	}
+	assertOnlyHeadroomSettings(t)
 }
 
 func TestDashboardProjectScopeUsesCurrentCheckout(t *testing.T) {
