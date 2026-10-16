@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/tjpeel/sdlc/internal/workrun"
 	"github.com/tjpeel/sdlc/internal/workseries"
 	"os"
 	"os/exec"
@@ -118,5 +120,47 @@ func TestTicketStatusUsesJournalDependenciesAndCanReadBeforeFeatureStarts(t *tes
 	}
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil || rows[0].State != "merged" || !rows[0].MetadataStale || len(rows[1].BlockedBy) != 0 {
 		t.Fatal(out.String(), err)
+	}
+}
+
+func TestTicketStatusFindsIndividualRunsWithoutGuessingBetweenOwners(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", root, "init").CombinedOutput(); err != nil {
+		t.Fatalf("%s %v", out, err)
+	}
+	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".sdlc/work/\n"), 0600)
+	tickets := filepath.Join(root, ".sdlc", "work", "EXAMPLE", "tickets")
+	os.MkdirAll(tickets, 0700)
+	os.WriteFile(filepath.Join(tickets, "01-a.md"), []byte("# Requirement\n**Status:** ready-for-agent\n**Blocked by:** None\n"), 0600)
+	original := ticketLoadRun
+	defer func() { ticketLoadRun = original }()
+	ticketLoadRun = func(dir string) (workrun.Journal, error) {
+		return workrun.Journal{ID: filepath.Base(dir), State: "ready", Plan: workrun.Plan{Root: root, Reference: "EXAMPLE", Ticket: ".sdlc/work/EXAMPLE/tickets/01-a.md"}}, nil
+	}
+	for i := 1; i <= 2; i++ {
+		id := strings.Repeat(fmt.Sprint(i), 24)
+		dir, err := workrun.RunDirectory(root, "EXAMPLE", "01-a.md", id, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dir, "journal.json"), []byte("offline loader fixture"), 0600)
+		var out bytes.Buffer
+		if err = ticketCommand(context.Background(), []string{"status", "--reference", "EXAMPLE", "--run-root", root, "--json"}, &out); err != nil {
+			t.Fatal(err)
+		}
+		var rows []ticketStatus
+		if err = json.Unmarshal(out.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		expected := "ready"
+		if i == 2 {
+			expected = "multiple_saved_runs"
+		}
+		if len(rows) != 1 || rows[0].State != expected || len(rows[0].SavedRuns) != i {
+			t.Fatal(out.String())
+		}
 	}
 }

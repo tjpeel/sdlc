@@ -171,3 +171,24 @@ func TestCompletedTicketPreservesLineEndingsAndDoesNotEditOtherStatusMentions(t 
 		t.Fatal(string(after))
 	}
 }
+
+func TestRepeatedCompletionDoesNotHideFrozenHashDrift(t *testing.T) {
+	root, dir, _, e, _ := completionFixture(t)
+	if _, err := CompleteTicket(context.Background(), root, "Example", "01-a.md", e, false); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]json.RawMessage
+	json.Unmarshal(s.Settings, &settings)
+	settings["InputHashes"] = json.RawMessage(`{".sdlc/work/Example/tickets/01-a.md":"incorrect"}`)
+	s.Settings, _ = json.Marshal(settings)
+	if err = Save(dir, &s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = CompleteTicket(context.Background(), root, "Example", "01-a.md", e, false); err == nil {
+		t.Fatal("idempotent completion hid frozen input drift")
+	}
+}

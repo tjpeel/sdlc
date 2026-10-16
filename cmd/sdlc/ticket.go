@@ -23,18 +23,24 @@ const ticketUsage = `Usage: sdlc ticket status --reference REFERENCE [--ticket N
        sdlc ticket complete --reference REFERENCE --ticket NUMBERED_FILE --pr PR_URL [--dry-run] [--json]
 Status is local unless --refresh is supplied. Completion verifies a merged PR and integration ancestry, updates the journal and descriptive ticket metadata, and preserves previous run history.`
 
+type ticketSavedRun struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+}
+
 type ticketStatus struct {
-	Ticket           string   `json:"ticket"`
-	State            string   `json:"state"`
-	DeclaredStatus   string   `json:"declared_status"`
-	DeclaredBlockers string   `json:"declared_blockers"`
-	BlockedBy        []string `json:"blocked_by"`
-	MetadataStale    bool     `json:"metadata_stale"`
-	PR               string   `json:"pr,omitempty"`
-	HeadSHA          string   `json:"head_sha,omitempty"`
-	MergeSHA         string   `json:"merge_sha,omitempty"`
-	RemoteState      string   `json:"remote_state,omitempty"`
-	NeedsCompletion  bool     `json:"needs_completion"`
+	SavedRuns        []ticketSavedRun `json:"saved_runs,omitempty"`
+	Ticket           string           `json:"ticket"`
+	State            string           `json:"state"`
+	DeclaredStatus   string           `json:"declared_status"`
+	DeclaredBlockers string           `json:"declared_blockers"`
+	BlockedBy        []string         `json:"blocked_by"`
+	MetadataStale    bool             `json:"metadata_stale"`
+	PR               string           `json:"pr,omitempty"`
+	HeadSHA          string           `json:"head_sha,omitempty"`
+	MergeSHA         string           `json:"merge_sha,omitempty"`
+	RemoteState      string           `json:"remote_state,omitempty"`
+	NeedsCompletion  bool             `json:"needs_completion"`
 }
 
 var ticketGH = func(ctx context.Context, root string, args ...string) ([]byte, error) {
@@ -215,6 +221,7 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 		if *structured {
 			return json.NewEncoder(output).Encode(preview)
 		}
+		evidence = preview.Evidence
 		verb := "Recorded"
 		if *dry {
 			verb = "Would record"
@@ -245,7 +252,24 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 			return err
 		}
 		declared, blockers := workseries.TicketMetadata(data)
-		r := state.Results[t.File]
+		r, recorded := state.Results[t.File]
+		saved := []ticketSavedRun{}
+		if !recorded {
+			runs, err := inspectUnlinkedTicketRuns(*root, *reference, t.File)
+			if err != nil {
+				return err
+			}
+			for _, j := range runs {
+				saved = append(saved, ticketSavedRun{ID: j.ID, State: j.State})
+			}
+			if len(runs) == 1 {
+				j := runs[0]
+				r = workseries.Result{RunID: j.ID, State: j.State, PRNumber: j.Publication.Number, URL: j.Publication.URL, HeadSHA: j.Publication.HeadSHA}
+			}
+			if len(runs) > 1 {
+				r.State = "multiple_saved_runs"
+			}
+		}
 		effective := r.State
 		if effective == "" {
 			effective = "pending"
@@ -261,7 +285,7 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 			effective = "waiting_for_dependencies"
 		}
 		done := effective == "merged"
-		row := ticketStatus{Ticket: t.File, State: effective, DeclaredStatus: declared, DeclaredBlockers: blockers, BlockedBy: blocked, MetadataStale: (done && declared != "completed") || (!done && declared == "completed") || (len(blocked) > 0 && strings.HasPrefix(blockers, "None")), PR: r.URL, HeadSHA: r.HeadSHA, MergeSHA: r.MergeSHA}
+		row := ticketStatus{SavedRuns: saved, Ticket: t.File, State: effective, DeclaredStatus: declared, DeclaredBlockers: blockers, BlockedBy: blocked, MetadataStale: (done && declared != "completed") || (!done && declared == "completed") || (len(blocked) > 0 && strings.HasPrefix(blockers, "None")), PR: r.URL, HeadSHA: r.HeadSHA, MergeSHA: r.MergeSHA}
 		row.NeedsCompletion = done && row.MetadataStale
 		if *refresh && r.PRNumber > 0 {
 			repository, _, err := workrun.ParsePRURL(r.URL)
@@ -287,6 +311,9 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 		if _, err = fmt.Fprintf(output, "%s: %s; ticket status: %s; blockers: %v", r.Ticket, r.State, r.DeclaredStatus, r.BlockedBy); err != nil {
 			return err
 		}
+		if len(r.SavedRuns) > 0 {
+			fmt.Fprintf(output, "; saved runs: %v", r.SavedRuns)
+		}
 		if r.RemoteState != "" {
 			fmt.Fprintf(output, "; GitHub: %s", r.RemoteState)
 		}
@@ -299,4 +326,53 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 		fmt.Fprintln(output)
 	}
 	return nil
+}
+
+var ticketLoadRun = workrun.Load
+
+// Individual runs need not be owned by a feature checkpoint. Do not guess between
+// multiple retained runs; report all of them until completion is reconciled.
+func inspectUnlinkedTicketRuns(root, reference, ticket string) ([]workrun.Journal, error) {
+	result := []workrun.Journal{}
+	parent := filepath.Join(root, ".sdlc", "work", reference, "runs")
+	for _, path := range []string{parent, filepath.Join(parent, strings.TrimSuffix(ticket, ".md"))} {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("unsafe saved ticket run directory")
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(parent, strings.TrimSuffix(ticket, ".md")))
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directory, err := workrun.RunDirectory(root, reference, ticket, entry.Name(), false)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = os.Lstat(filepath.Join(directory, "journal.json")); os.IsNotExist(err) {
+			result = append(result, workrun.Journal{ID: entry.Name(), State: "preparing"})
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		j, err := ticketLoadRun(directory)
+		if err != nil {
+			return nil, err
+		}
+		if j.Plan.Root != root || j.Plan.Reference != reference || filepath.Base(j.Plan.Ticket) != ticket || j.ID != entry.Name() {
+			return nil, errors.New("saved run does not belong to selected ticket")
+		}
+		result = append(result, j)
+	}
+	return result, nil
 }

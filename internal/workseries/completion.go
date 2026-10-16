@@ -294,7 +294,17 @@ func CompleteTicket(ctx context.Context, root, reference, ticket string, e Merge
 		}
 		after := completedTicketText(current, e.URL)
 		r := old.Results[ticket]
+		// A repeated operation still must not hide a drifted frozen ticket hash.
+		var settings struct{ InputHashes map[string]string }
+		if len(old.Settings) > 0 && json.Unmarshal(old.Settings, &settings) != nil {
+			return preview, errors.New("invalid frozen settings")
+		}
+		relative := filepath.ToSlash(filepath.Join(".sdlc", "work", reference, "tickets", ticket))
+		if hash, ok := settings.InputHashes[relative]; ok && hash != amendmentHash(current) {
+			return preview, errors.New("ticket content changed outside frozen inputs; reconcile it before completion")
+		}
 		if r.State == "merged" && r.PRNumber == e.Number && r.HeadSHA == e.HeadSHA && r.MergeSHA == e.MergeSHA && bytes.Equal(current, after) {
+			preview.Evidence.IntegrationSHA = r.BaseSHA
 			return preview, nil
 		}
 		next, err := completionState(old, ticket, e, current, after)

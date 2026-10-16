@@ -358,6 +358,11 @@ sdlc ticket status --reference EXAMPLE
 sdlc ticket status --reference EXAMPLE --ticket 01-first.md --refresh --json
 ```
 
+When a ticket has no feature result, status also inspects its individual saved
+runs. A single run supplies the observed state; multiple retained runs are listed
+explicitly rather than choosing an owner. Recorded merged feature results remain
+authoritative over superseded old runs.
+
 Status is local by default. `--refresh` reads the current GitHub state for PRs
 already recorded in the journal; it does not guess which unlinked PR implements a
 ticket, mutate files, start work or reconcile a merge automatically.
