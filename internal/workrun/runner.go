@@ -393,6 +393,18 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	} else if answer != "" {
 		return fmt.Errorf("this run has no pending human question")
 	}
+	if journal.State == "blocked" && journal.ResumeState == "implementing" && journal.StopReason == "claimed feedback commit is absent from candidate history" {
+		_, receiptErr := runner.acceptPRFeedback(ctx, directory, journal, journal.Outcome)
+		if receiptErr != nil {
+			handled, recoveryErr := runner.correctFeedbackReceipt(directory, journal, receiptErr)
+			if !handled {
+				return receiptErr
+			}
+			if recoveryErr != nil {
+				return recoveryErr
+			}
+		}
+	}
 	if journal.State == "blocked" || journal.State == "failed" {
 		if journal.ResumeState == "" {
 			return fmt.Errorf("stopped run has no resumable stage")
@@ -1227,6 +1239,9 @@ func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory 
 		var err error
 		moreFeedback, err = runner.acceptPRFeedback(ctx, directory, journal, journal.Outcome)
 		if err != nil {
+			if handled, recoveryErr := runner.correctFeedbackReceipt(directory, journal, err); handled {
+				return recoveryErr
+			}
 			return runner.stop(directory, journal, "blocked", err.Error())
 		}
 		if override != nil && override.PendingVerificationReplay {

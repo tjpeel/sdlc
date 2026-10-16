@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -617,7 +618,7 @@ func (r Runner) acceptPRFeedback(ctx context.Context, dir string, j *Journal, ou
 		}
 		for _, sha := range claimed {
 			if !known[sha] {
-				return false, fmt.Errorf("claimed feedback commit is absent from candidate history")
+				return false, &feedbackReceiptError{Claimed: sha, Head: rev.Head, Commits: commits}
 			}
 		}
 	}
@@ -880,4 +881,28 @@ func (r Runner) verifyReviewRepairReceipts(ctx context.Context, j *Journal, out 
 		}
 	}
 	return nil
+}
+
+// feedbackReceiptError rejects the handoff, never the committed implementation.
+// The controller supplies exact history rather than guessing a replacement SHA.
+type feedbackReceiptError struct {
+	Claimed string
+	Head    string
+	Commits []string
+}
+
+func (e *feedbackReceiptError) Error() string {
+	return "claimed feedback commit is absent from candidate history"
+}
+
+func (runner Runner) correctFeedbackReceipt(directory string, j *Journal, err error) (bool, error) {
+	if j.State == "blocked" && j.StopReason == noPendingFeedbackHold {
+		return false, nil
+	}
+	var receipt *feedbackReceiptError
+	if !errors.As(err, &receipt) {
+		return false, nil
+	}
+	j.Feedback = fmt.Sprintf("Your feedback receipt was rejected: commit %s is absent from candidate %s. No assessment was accepted. Correct only the structured handoff in this same session; do not edit source or create replacement commits to satisfy this validation. Inspect Git if needed and copy full SHAs exactly from the authoritative base-to-candidate history below. Do not infer a SHA from a prefix. Preserve the existing correction work and request the configured checks again. Existing checks, review and publication gates still apply.\n%s", receipt.Claimed, receipt.Head, strings.Join(receipt.Commits, "\n"))
+	return true, runner.transition(directory, j, "repairing")
 }

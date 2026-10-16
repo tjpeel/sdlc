@@ -2640,3 +2640,5 @@ Journals with an override require beta.45 or newer. Saved runs without an overri
 remain compatible, and their existing default ceilings remain in force.
 
 Shared `sdlc-tests-*` Docker daemons stop after their last check session finishes. Cached images and volumes remain available for the next check; active concurrent sessions keep their daemon running. Cleanup failures are reported rather than treated as successful checks.
+
+An invalid correction commit in a feedback receipt returns to the same implementation session with the rejected SHA and authoritative candidate history. The agent must correct its structured handoff without changing source to satisfy receipt validation. Ordinary resume also recovers saved stops for an absent claimed feedback commit. Existing turn limits, verification, independent review and publication gates remain in force. Repository and dirty-worktree failures still stop the run.

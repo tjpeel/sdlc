@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.108 - 2026-10-16
+
+- Return invalid feedback commit receipts to the original implementation session with exact candidate history. Recover existing receipt-validation stops through ordinary resume without guessing commit IDs or bypassing checks.
+
 ## 0.1.0-beta.107 - 2026-10-16
 
 - Stop the shared Docker test daemon after its final session, retaining cache volumes and protecting concurrent checks.
