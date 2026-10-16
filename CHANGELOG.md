@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.103 - 2026-10-16
+
+- Keep stable runtime tool installations ahead of changing agent clients, catalogues and SDLC binaries, and scope version arguments to their installation layers so routine updates reuse more Docker cache.
+
 ## 0.1.0-beta.102 - 2026-10-16
 
 - Pin the revised specification, ticket-authoring, implementation and review skills in the default runtime baseline.

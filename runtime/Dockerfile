@@ -12,60 +12,21 @@ FROM docker:29.8.2-cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68
 
 FROM node:24.21.0-bookworm@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0
 
-ARG CODEX_VERSION=0.163.0
-ARG GH_VERSION=2.102.0
-ARG CLAUDE_VERSION=2.1.301
-ARG DOTNET_VERSION=10.0.401
-ARG LOCAL_SKILLS=0
-ARG LOCAL_AGENTS=0
-ARG SKILLS_REVISION=f305c79fdfbdff20e2fe0999d27b7b6377a2e115
-ARG AGENTS_REVISION=aa462b3cb0da633815506588951168d92f93b98f
 # An installation update can override these defaults in its private build recipe.
 # Source builds use the explicit auxiliary tool versions below.
-ARG NPM_VERSION=11.19.0
-ARG YARN_VERSION=1.22.22
-ARG COMPOSE_VERSION=5.5.1
-ARG BUILDX_VERSION=0.37.2
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
     ca-certificates curl git gosu jq libicu72 libssl3 libunwind8 \
     openssh-client openssh-server python3 ripgrep zlib1g \
     && rm -rf /var/lib/apt/lists/*
-RUN set -eu; \
-    case "$(dpkg --print-architecture)" in amd64) arch=amd64 ;; arm64) arch=arm64 ;; *) exit 1 ;; esac; \
-    archive="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
-    release="https://github.com/cli/cli/releases/download/v${GH_VERSION}"; \
-    curl -fsSL "$release/$archive" -o "/tmp/$archive"; \
-    curl -fsSL "$release/gh_${GH_VERSION}_checksums.txt" -o /tmp/gh-checksums.txt; \
-    cd /tmp; \
-    awk -v name="$archive" '$2 == name { print }' gh-checksums.txt > gh-selected-checksum.txt; \
-    test -s gh-selected-checksum.txt; \
-    sha256sum -c gh-selected-checksum.txt; \
-    tar -xzf "$archive"; \
-    install -m 0755 "gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
-    rm -rf /tmp/gh_*
-# npm 12 blocks install scripts by default. Permit only the two pinned clients.
-RUN set -eu; \
-    if [ -n "$NPM_VERSION" ]; then npm install -g "npm@${NPM_VERSION}"; fi; \
-    if [ -n "$YARN_VERSION" ]; then \
-        rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg; \
-        npm install -g "yarn@${YARN_VERSION}"; \
-    fi; \
-    set --; \
-    npm_release="$(npm --version)"; \
-    if [ "${npm_release%%.*}" -ge 12 ]; then \
-        set -- "--allow-scripts=@openai/codex@${CODEX_VERSION},@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
-    fi; \
-    npm install -g "$@" "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
-    && codex --version && claude --version && gh --version
-
-COPY --from=publisher-build /out/sdlc-publisher /usr/local/bin/sdlc-publisher
 COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-tools /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 # Docker's image can bundle older plugins than their independent releases.
 # Installation updates replace only the selected plugins with verified official
 # release binaries; ordinary builds keep the pinned image's bundled versions.
+ARG COMPOSE_VERSION=5.5.1
+ARG BUILDX_VERSION=0.37.2
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
         amd64) arch=amd64; compose_arch=x86_64 ;; \
@@ -90,6 +51,7 @@ RUN set -eu; \
     install_plugin buildx "$BUILDX_VERSION" "buildx-v$BUILDX_VERSION.linux-$arch" docker-buildx
 # Microsoft publishes SHA-512 hashes for every SDK archive. Select an exact
 # version and architecture and verify before extraction; do not execute an installer.
+ARG DOTNET_VERSION=10.0.401
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; *) exit 1 ;; esac; \
     curl -fsSL https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json \
@@ -107,6 +69,51 @@ RUN set -eu; \
     tar -xzf /tmp/dotnet-sdk.tar.gz -C /opt/dotnet; \
     rm /tmp/dotnet-releases.json /tmp/dotnet-archive.txt /tmp/dotnet-sdk.tar.gz
 
+# The bootstrap runs as root to initialise private tmpfs and named volumes.
+# Codex and the project tools run as the existing non-root node user.
+RUN mkdir -p /workspace /home/node/.codex /home/node/.claude /home/node/.t3 /run/sdlc /run/sshd \
+    && chown node:node /workspace /home/node/.codex /home/node/.claude /home/node/.t3 \
+    && passwd -d node
+
+ARG GH_VERSION=2.102.0
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in amd64) arch=amd64 ;; arm64) arch=arm64 ;; *) exit 1 ;; esac; \
+    archive="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
+    release="https://github.com/cli/cli/releases/download/v${GH_VERSION}"; \
+    curl -fsSL "$release/$archive" -o "/tmp/$archive"; \
+    curl -fsSL "$release/gh_${GH_VERSION}_checksums.txt" -o /tmp/gh-checksums.txt; \
+    cd /tmp; \
+    awk -v name="$archive" '$2 == name { print }' gh-checksums.txt > gh-selected-checksum.txt; \
+    test -s gh-selected-checksum.txt; \
+    sha256sum -c gh-selected-checksum.txt; \
+    tar -xzf "$archive"; \
+    install -m 0755 "gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh_*
+ARG NPM_VERSION=11.19.0
+ARG YARN_VERSION=1.22.22
+# npm 12 blocks install scripts by default. Permit only the two pinned clients.
+RUN set -eu; \
+    if [ -n "$NPM_VERSION" ]; then npm install -g "npm@${NPM_VERSION}"; fi; \
+    if [ -n "$YARN_VERSION" ]; then \
+        rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg; \
+        npm install -g "yarn@${YARN_VERSION}"; \
+    fi
+
+ARG CODEX_VERSION=0.163.0
+ARG CLAUDE_VERSION=2.1.301
+RUN set -eu; \
+    set --; \
+    npm_release="$(npm --version)"; \
+    if [ "${npm_release%%.*}" -ge 12 ]; then \
+        set -- "--allow-scripts=@openai/codex@${CODEX_VERSION},@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
+    fi; \
+    npm install -g "$@" "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+    && codex --version && claude --version && gh --version
+
+ARG LOCAL_SKILLS=0
+ARG LOCAL_AGENTS=0
+ARG SKILLS_REVISION=f305c79fdfbdff20e2fe0999d27b7b6377a2e115
+ARG AGENTS_REVISION=aa462b3cb0da633815506588951168d92f93b98f
 COPY local-catalogues/ /tmp/sdlc-local-catalogues/
 
 # Keep pinned catalogue sources for provenance and generated packages outside
@@ -145,11 +152,7 @@ RUN set -eu; \
 # catalogue instructions and must be owned by the non-root client user.
 RUN chown -R node:node /etc/codex/agents /opt/sdlc/claude/agents
 
-# The bootstrap runs as root to initialise private tmpfs and named volumes.
-# Codex and the project tools run as the existing non-root node user.
-RUN mkdir -p /workspace /home/node/.codex /home/node/.claude /home/node/.t3 /run/sdlc /run/sshd \
-    && chown node:node /workspace /home/node/.codex /home/node/.claude /home/node/.t3 \
-    && passwd -d node
+COPY --from=publisher-build /out/sdlc-publisher /usr/local/bin/sdlc-publisher
 COPY Dockerfile /opt/sdlc/runtime.Dockerfile
 COPY dependencies.py /usr/local/lib/sdlc-dependencies.py
 COPY entrypoint.py /usr/local/bin/sdlc-entrypoint
