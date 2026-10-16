@@ -83,6 +83,12 @@ elif sys.argv[1]=='inspect':
   parts=path.lower().split('/')
   if path.lower().startswith('.sdlc/work/') or '.secrets' in parts or 'profiles.local.json' in parts: raise ValueError('private inputs are tracked')
  print(json.dumps({'head':head,'tree':tree,'clean':not bool(status)}))
+elif sys.argv[1].startswith('review_files:'):
+ _,base,head=sys.argv[1].split(':')
+ env['GIT_NO_REPLACE_OBJECTS']='1'
+ if git('rev-parse','HEAD').decode().strip()!=head: raise ValueError('review snapshot differs')
+ paths=git('diff','--no-ext-diff','--no-textconv','--no-renames','--name-only','-z',base,head,'--').decode()
+ print(json.dumps(paths.rstrip('\0').split('\0') if paths else []))
 elif sys.argv[1].startswith('feedback_commits:'):
  _,base,head=sys.argv[1].split(':')
  git('merge-base','--is-ancestor',base,head)

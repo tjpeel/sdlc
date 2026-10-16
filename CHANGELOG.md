@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.100 - 2026-10-16
+
+### Fixed
+
+- Require file-level inspection accounting in native review handoffs. Check completed review claims against the pinned changed-file list and continue the same reviewer session when material files are omitted or declared unfinished, without repeating completed checks. Preserve readability of older saved reports.
+
+
 ## 0.1.0-beta.99 - 2026-10-16
 
 ### Fixed

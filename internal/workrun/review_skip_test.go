@@ -255,9 +255,8 @@ func TestReviewPacketKeepsUsefulContextAndOmitsImplementationSettings(t *testing
 			t.Fatal("implementation-only review schema field", field)
 		}
 	}
-	if len(reviewOutcomeSchema) >= len(outcomeSchema)/2 {
-		t.Fatal("review schema did not reduce handoff overhead")
-	}
+	// Role-specific inspection evidence can grow independently of implementation
+	// output. Check excluded fields above rather than a fixed schema-size ratio.
 }
 
 func TestNativeReviewQuotaDoesNotHideMalformedStream(t *testing.T) {

@@ -27,6 +27,14 @@ func validateReviewDetails(out Outcome, role string) error {
 	if !objectID.MatchString(c.BaseSHA) || !objectID.MatchString(c.HeadSHA) || c.Gaps == nil || len(c.Gaps) > 32 {
 		return fmt.Errorf("review coverage requires exact revisions and bounded gaps")
 	}
+	seenPaths := map[string]bool{}
+	for _, item := range c.Inspection {
+		if !safeRelative(item.Path) || seenPaths[item.Path] || strings.TrimSpace(item.Evidence) == "" || !utf8.ValidString(item.Evidence) {
+			return fmt.Errorf("review inspection requires unique safe paths and substantive evidence")
+		}
+		seenPaths[item.Path] = true
+	}
+
 	switch c.Scope {
 	case "full":
 		if len(c.Gaps) > 0 {

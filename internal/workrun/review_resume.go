@@ -108,6 +108,11 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 			return result, fmt.Errorf("independent reviewer changed its native session")
 		}
 		out := result.Outcome
+		if err := r.reconcileReviewInspection(ctx, workspace, &out); err != nil {
+			return result, err
+		}
+		result.Outcome = out
+
 		if out.Status == "reviewed" && out.ReviewCoverage != nil && out.ReviewCoverage.Scope != "full" {
 			out.Status = "review_incomplete"
 		}

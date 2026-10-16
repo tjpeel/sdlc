@@ -176,12 +176,19 @@ type Finding struct {
 }
 
 // ReviewCoverage records inspection scope separately from test evidence.
+type ReviewFileInspection struct {
+	Path     string `json:"path"`
+	Complete bool   `json:"complete"`
+	Evidence string `json:"evidence"`
+}
+
 type ReviewCoverage struct {
-	BaseSHA       string   `json:"base_sha"`
-	HeadSHA       string   `json:"head_sha"`
-	Scope         string   `json:"scope"`
-	Gaps          []string `json:"gaps"`
-	CompletedGaps []string `json:"completed_gaps,omitempty"`
+	Inspection    []ReviewFileInspection `json:"inspection,omitempty"`
+	BaseSHA       string                 `json:"base_sha"`
+	HeadSHA       string                 `json:"head_sha"`
+	Scope         string                 `json:"scope"`
+	Gaps          []string               `json:"gaps"`
+	CompletedGaps []string               `json:"completed_gaps,omitempty"`
 }
 
 // ReviewReport retains bounded review evidence across repair rounds.
