@@ -161,7 +161,7 @@ func serveDiagnosticMailbox(ctx context.Context, requests, responses string, cal
 			continue
 		}
 		if err != nil {
-			return errors.New("live diagnostic mailbox integrity failure")
+			return fmt.Errorf("live diagnostic mailbox integrity failure: %w", err)
 		}
 		request := LiveDiagnosticRequest{}
 		if err := uniqueJSON(data); err != nil {
