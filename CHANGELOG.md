@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.107 - 2026-10-16
+
+- Stop the shared Docker test daemon after its final session, retaining cache volumes and protecting concurrent checks.
+
+- Restrict implementation feedback receipts to pending human revisions, and recover corroborated independent-review repairs that repeated completed receipts without repeating model work or posting duplicate replies.
+- Use the official Codex same-thread compaction API to recover an interrupted native tool-call history before resuming model work; preserve the selected account, route, session and usage accounting.
+
 ## 0.1.0-beta.106 - 2026-10-16
 
 - Track independent-review inspection cumulatively by exact changed-file paths. Use structured pending-file records instead of giant narrative gap strings, reject grouped paths without credit, and recover older continuation accounting within the original pinned reviewer session and snapshot.

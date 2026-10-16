@@ -185,6 +185,12 @@ func nativeTexts(line []byte) []string {
 		return []string{str(e, "result")}
 	case "error":
 		return []string{"Native error: " + str(e, "message")}
+	case "sdlc.native_session_recovery":
+		phase := str(e, "phase")
+		if phase == "started" || phase == "completed" {
+			return []string{"Native same-thread history compaction " + phase + "; original session retained"}
+		}
+		return nil
 	case "thread.started", "turn.started", "turn.completed", "system":
 		return []string{"Native event: " + kind}
 	case "item.updated", "stream_event", "content_block_delta", "message_delta":

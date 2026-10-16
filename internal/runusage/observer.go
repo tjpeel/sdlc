@@ -86,6 +86,7 @@ type ContextUsage struct {
 // The Claude 2.1.287 CLI may omit contextWindow: no window or percentage is
 // inferred from model names, aggregate usage, or a provider's advertised limit.
 type Observer struct {
+	nativeSessionRecovery                          bool
 	initializedModel                               string
 	nativeStarted                                  bool
 	subscriptionRevision                           uint64
@@ -227,6 +228,13 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 		} `json:"message"`
 	}
 	if json.Unmarshal(line, &event) != nil {
+		return
+	}
+	if event.Type == "sdlc.native_session_recovery" && provider == "codex" && event.Provider == provider {
+		o.nativeSessionRecovery = true
+		if event.Phase == "completed" {
+			usage.Compactions++
+		}
 		return
 	}
 	if event.Type == "sdlc.native_work_boundary" {
@@ -503,6 +511,9 @@ func (o *Observer) Finish() {
 	if o.finishedAt.IsZero() {
 		o.finishedAt = o.now()
 	}
+	if o.nativeSessionRecovery {
+		o.usage.Completeness = "partial"
+	}
 	if o.usage.Completeness == "" {
 		if o.usage.Context != nil || o.usage.Aggregate != nil {
 			o.usage.Completeness = "partial"
@@ -511,7 +522,15 @@ func (o *Observer) Finish() {
 		}
 	}
 }
-func (o *Observer) Snapshot() Usage { o.mu.Lock(); defer o.mu.Unlock(); return Clone(o.usage) }
+func (o *Observer) Snapshot() Usage {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	u := Clone(o.usage)
+	if o.nativeSessionRecovery {
+		u.Completeness = "partial"
+	}
+	return u
+}
 func (o *Observer) SubscriptionRevision() uint64 {
 	o.mu.Lock()
 	defer o.mu.Unlock()

@@ -16,8 +16,9 @@ the original disposable daemon. Resuming those runs does not migrate them.
 
 ## Reuse and performance
 
-The persistent daemon retains pulled image layers and classic build cache after
-each check session. Before checks start, SDLC examines the selected project's
+The daemon stops after its last check session finishes. Its data volumes retain
+pulled image layers and classic build cache for the next session. Concurrent
+sessions keep the daemon running until all have finished. Before checks start, SDLC examines the selected project's
 Compose configuration and ordinary Dockerfile image references in a worker
 without network access or host credentials. Required images already cached on
 the host are streamed into the test daemon by immutable image ID, once per ID.

@@ -93,3 +93,15 @@ func TestNativeFastModeStateIsAnInitializationObservation(t *testing.T) {
 		t.Fatal("native state lost from reporting", summary, err)
 	}
 }
+
+func TestNativeSessionRecoveryDoesNotInventUsageOrCompletedWork(t *testing.T) {
+	o := NewObserver("codex", "m")
+	read(o, `{"type":"sdlc.native_session_recovery","provider":"codex","phase":"started"}`)
+	read(o, `{"type":"sdlc.native_session_recovery","provider":"codex","phase":"completed"}`)
+	read(o, `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}`)
+	o.Finish()
+	u := o.Snapshot()
+	if u.Compactions != 1 || u.CompletedTurns != 1 || u.Completeness != "partial" || u.Aggregate == nil || *u.Aggregate.InputTokens != 100 {
+		t.Fatalf("recovery accounting: %+v", u)
+	}
+}

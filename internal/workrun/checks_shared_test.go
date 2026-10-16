@@ -195,3 +195,49 @@ func TestSharedDaemonCachesAreScopedToFrozenRecipe(t *testing.T) {
 		seen[first.workVolume] = true
 	}
 }
+
+type idleDaemonProbe struct{ calls []string }
+
+func (d *idleDaemonProbe) Run(ctx context.Context, args ...string) error {
+	_, err := d.Output(ctx, args...)
+	return err
+}
+func (d *idleDaemonProbe) Output(_ context.Context, args ...string) ([]byte, error) {
+	call := strings.Join(args, " ")
+	d.calls = append(d.calls, call)
+	if strings.HasPrefix(call, "ps -q ") {
+		return []byte("owned-daemon"), nil
+	}
+	return nil, nil
+}
+
+func TestSharedDaemonStopsOnlyAfterLastSession(t *testing.T) {
+	engine := &idleDaemonProbe{}
+	checker := DockerChecker{Runtime: runtimeimage.Manager{Directory: t.TempDir(), Docker: engine}}
+	s, err := newSharedChecks(checker, runtimeimage.State{Engine: "offline"}, "docker:29.8.2-dind@sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(s.directory, "sdlc-check-"+strings.Repeat("b", 24)+".session")
+	if err := os.WriteFile(marker, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.stopIdle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.calls) != 0 {
+		t.Fatal("touched daemon while another session exists", engine.calls)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.stopIdle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.calls) != 2 || engine.calls[1] != "stop "+s.name {
+		t.Fatal("idle daemon not stopped", engine.calls)
+	}
+	if !strings.Contains(engine.calls[0], "label="+testOwnerLabel+"="+s.name) || !strings.Contains(engine.calls[0], "label="+testRecipeLabel+"="+s.recipe) {
+		t.Fatal("ownership not checked", engine.calls)
+	}
+}

@@ -342,6 +342,34 @@ func (s *sharedChecks) cleanup(ctx context.Context, name string) error {
 	return os.Remove(filepath.Join(s.directory, name+".session"))
 }
 
+// stopIdle serialises with session registration so a finishing check cannot
+// stop the daemon between another check starting it and recording its lease.
+func (s *sharedChecks) stopIdle(ctx context.Context) error {
+	lock, err := s.lease(ctx, "lifecycle")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	entries, err := os.ReadDir(s.directory)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".session") {
+			return nil
+		}
+	}
+	ids, err := s.host(ctx, "ps", "-q", "--filter", "name=^/"+s.name+"$", "--filter", "label="+testOwnerLabel+"="+s.name, "--filter", "label="+testRecipeLabel+"="+s.recipe)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(ids)) == "" {
+		return nil
+	}
+	_, err = s.host(ctx, "stop", s.name)
+	return err
+}
+
 func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs string, commands [][]string, output io.Writer, baseline *VerificationBaseline, name string, state runtimeimage.State, daemonImage string, phase candidatePhase) (result error) {
 	if output == nil {
 		output = io.Discard
@@ -351,6 +379,22 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 		return err
 	}
 	s.baseline = baseline
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		if err := s.stopIdle(cleanup); err != nil {
+			result = errors.Join(result, fmt.Errorf("stop idle test daemon: %w", err))
+		}
+	}()
+	registration, err := s.lease(ctx, "lifecycle")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if registration != nil {
+			registration.Close()
+		}
+	}()
 	daemonStarted := time.Now()
 	err = s.ensure(ctx, daemonImage)
 	checker.recordTiming("daemon_ready", baseline, 0, daemonStarted)
@@ -365,6 +409,8 @@ func (checker DockerChecker) checkShared(ctx context.Context, workspace, inputs 
 	if err = os.WriteFile(filepath.Join(s.directory, name+".session"), []byte(name+"\n"), 0600); err != nil {
 		return err
 	}
+	registration.Close()
+	registration = nil
 	defer func() {
 		cleanupStarted := time.Now()
 		defer checker.recordTiming("cleanup", baseline, 0, cleanupStarted)

@@ -28,6 +28,18 @@ does not decode credentials, and never consumes a quota-reset credit. The probe
 is bounded and optional; unavailable quota information does not restart work or
 change the selected account.
 
+For a resumed Codex thread with a recorded unmatched native tool call, the same
+worker can request the documented `thread/resume` and `thread/compact/start`
+methods through the unmodified `codex app-server`. Recovery requires the same
+idle thread and selected model, account, workspace and headroom route. Only the
+official client writes the compaction record; SDLC neither fabricates tool
+results nor edits the rollout. This is model work, included inside the native
+attempt's timing and before/after quota snapshots. Compaction is counted, and
+token measurement remains explicitly partial because its separate token usage
+is not inferred. A provider rejection stops recovery without a fallback account,
+new session, budget reset or automatic retry.
+See [the app-server protocol](https://developers.openai.com/codex/app-server/).
+
 Login does not authorise every later use of the account. Ticket runs are limited
 to the account owner's local single-user native CLI job, using trusted inputs.
 Review the chosen account, repository trust and execution mode against

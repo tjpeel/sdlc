@@ -131,3 +131,31 @@ func feedbackForPrompt(history *PRFeedbackHistory) *PRFeedbackHistory {
 	}
 	return &packet
 }
+
+// Independent-review repairs must not emit receipts for completed human work.
+func implementationSchemaForJournal(j *Journal) string {
+	pending := pendingFeedbackEntries(j)
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(implementationOutcomeSchema), &schema); err != nil {
+		panic(err)
+	}
+	field := schema["properties"].(map[string]any)["pr_feedback_assessments"].(map[string]any)
+	field["maxItems"] = len(pending)
+	if len(pending) == 0 {
+		field["description"] = "No human PR feedback revisions are pending. Return []; do not repeat completed assessments during independent-review or CI repair."
+	} else {
+		ids, fingerprints := []string{}, []string{}
+		for _, entry := range pending {
+			ids = append(ids, entry.Comment.ID)
+			fingerprints = append(fingerprints, entry.Fingerprint)
+		}
+		properties := field["items"].(map[string]any)["properties"].(map[string]any)
+		properties["id"].(map[string]any)["enum"] = ids
+		properties["fingerprint"].(map[string]any)["enum"] = fingerprints
+	}
+	data, err := json.Marshal(schema)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}

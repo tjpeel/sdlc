@@ -175,6 +175,105 @@ def process(command, env):
             signal.signal(number, handler)
 
 
+def unmatched_codex_calls(config, resume):
+    if not resume:
+        return False
+    matches = list((config / 'sessions').glob('????/??/??/rollout-*-' + resume + '.jsonl'))
+    if not matches:
+        return False
+    if len(matches) != 1 or matches[0].is_symlink():
+        raise ValueError('ambiguous native session history')
+    pending = set()
+    identity = False
+    with matches[0].open() as stream:
+        for line in stream:
+            record = json.loads(line)
+            payload = record.get('payload') or {}
+            if record.get('type') == 'session_meta':
+                if payload.get('id') != resume:
+                    raise ValueError('native session identity differs')
+                identity = True
+            if record.get('type') == 'compacted':
+                pending.clear()
+            if record.get('type') != 'response_item':
+                continue
+            kind, call = payload.get('type'), payload.get('call_id')
+            if kind in ('custom_tool_call', 'function_call') and isinstance(call, str):
+                pending.add(call)
+            elif kind in ('custom_tool_call_output', 'function_call_output'):
+                pending.discard(call)
+    if not identity:
+        raise ValueError('missing native session identity')
+    return bool(pending)
+
+
+def compact_interrupted_codex(config, resume, model, effort, env):
+    if not unmatched_codex_calls(config, resume):
+        return
+    command = ['codex', 'app-server', '-c', 'cli_auth_credentials_store="file"',
+               '-c', 'mcp_servers={}', '-c', 'features.hooks=false', '-c', 'features.plugins=false',
+               '-c', 'model=' + json.dumps(model), '-c', 'model_reasoning_effort=' + json.dumps(effort)]
+    apply_headroom_route('codex', command, env)
+    print(json.dumps({'type': 'sdlc.native_session_recovery', 'provider': 'codex',
+                      'phase': 'started', 'method': 'same_thread_compaction'}), flush=True)
+    child = subprocess.Popen(command, env=env, cwd=native.WORKSPACE, text=True,
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr)
+    def send(message):
+        child.stdin.write(json.dumps(message) + '\n')
+        child.stdin.flush()
+    def receive():
+        line = child.stdout.readline()
+        if not line:
+            raise ValueError('native recovery service stopped')
+        message = json.loads(line)
+        if 'error' in message or message.get('method') == 'error':
+            raise ValueError('native recovery failed')
+        return message
+    notifications = []
+    def response(identifier):
+        while True:
+            message = receive()
+            if message.get('id') == identifier:
+                return message.get('result') or {}
+            if message.get('method'):
+                notifications.append(message)
+    try:
+        send({'method': 'initialize', 'id': 1, 'params': {
+            'clientInfo': {'name': 'sdlc-session-recovery', 'version': '1'},
+            'capabilities': {'experimentalApi': True}}})
+        response(1)
+        send({'method': 'initialized', 'params': {}})
+        send({'method': 'thread/resume', 'id': 2, 'params': {'threadId': resume}})
+        thread = response(2).get('thread') or {}
+        status = thread.get('status')
+        if isinstance(status, dict):
+            status = status.get('type')
+        if thread.get('id') != resume or status != 'idle':
+            raise ValueError('native recovery requires the same idle thread')
+        send({'method': 'thread/compact/start', 'id': 3, 'params': {'threadId': resume}})
+        response(3)
+        while True:
+            message = notifications.pop(0) if notifications else receive()
+            params = message.get('params') or {}
+            if message.get('method') == 'turn/completed' and params.get('threadId') == resume:
+                if (params.get('turn') or {}).get('status') != 'completed':
+                    raise ValueError('native recovery did not complete')
+                break
+        if unmatched_codex_calls(config, resume):
+            raise ValueError('native recovery left an unmatched tool call')
+        print(json.dumps({'type': 'sdlc.native_session_recovery', 'provider': 'codex',
+                          'phase': 'completed', 'method': 'same_thread_compaction'}), flush=True)
+    finally:
+        child.stdin.close()
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+
+
 def headless(provider, model, effort, resume, readonly, directory=Path("/provider-auth")):
     os.umask(0o077)
     info = directory.lstat()
@@ -247,6 +346,8 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
             subscription.capture(provider, 'before', env)
             subscription.boundary(provider, 'start')
             try:
+                if provider == 'codex':
+                    compact_interrupted_codex(config, resume, model, effort, env)
                 code = process(command, env)
             finally:
                 subscription.boundary(provider, 'end')

@@ -824,7 +824,7 @@ func TestRunnerResumedPromptKeepsNewFeedbackWithoutDuplicatingContext(t *testing
 			t.Fatalf("compact resume lost %q", required)
 		}
 	}
-	if resumed.ResumeID != testNative || resumed.Model != first.Model || resumed.Schema != implementationOutcomeSchema {
+	if resumed.ResumeID != testNative || resumed.Model != first.Model || resumed.Schema != implementationSchemaForJournal(j) {
 		t.Fatal("compact prompt changed native session, model, or structured handoff")
 	}
 	for _, session := range []Session{first, review} {

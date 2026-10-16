@@ -790,6 +790,9 @@ func savedFeedbackTarget(j *Journal) *PRFeedbackEntry {
 // hold only. Commit ancestry and current candidate integrity are checked again
 // by acceptPRFeedback before any refinement is saved.
 func CanReplaySavedPRFeedback(j Journal) bool {
+	if j.ReviewAssessment != nil && j.ReviewAssessment.Pending {
+		return canReplayReviewRepair(j)
+	}
 	if j.State != "blocked" || j.ResumeState != "implementing" || j.StopReason != noPendingFeedbackHold || j.Outcome.Status != "checks_requested" || j.SessionID == "" || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.PRFeedback == nil || !j.PRFeedback.Active || j.PRFeedback.FetchPending || j.PRFeedback.CompletedHead != "" {
 		return false
 	}
@@ -823,4 +826,58 @@ func withoutInactiveFeedbackAssessments(j *Journal, out Outcome) Outcome {
 	}
 	out.PRFeedbackAssessments = result
 	return out
+}
+
+// A repair selected by independent review can echo old human receipts from the
+// same native session. They are not new human revisions or permission to reply.
+func repeatReviewRepairAssessments(j *Journal, out Outcome) bool {
+	if j.ReviewAssessment == nil || !j.ReviewAssessment.Pending || j.ReviewAssessment.Publication != j.Publication || j.ReviewRepairBudget == nil || j.ReviewRepairBudget.Used < 1 || j.ReviewRepairBudget.LastGrantedHead != j.Publication.HeadSHA || j.PRFeedback == nil || !j.PRFeedback.Active || j.PRFeedback.FetchPending || len(pendingFeedbackEntries(j)) != 0 || len(out.PRFeedbackAssessments) == 0 {
+		return false
+	}
+	latest := map[string]PRFeedbackEntry{}
+	for _, entry := range j.PRFeedback.Entries {
+		latest[entry.Comment.ID] = entry
+	}
+	seen := map[string]bool{}
+	for _, assessment := range out.PRFeedbackAssessments {
+		entry, ok := latest[assessment.ID]
+		if !ok || seen[assessment.ID] || entry.Provisional || entry.Assessment == nil || entry.Assessment.Fingerprint != entry.Fingerprint || assessment.Fingerprint != entry.Fingerprint || assessment.Disposition != entry.Assessment.Disposition || (assessment.Disposition != "addressed" && assessment.Disposition != "no_change") || validateFeedbackAssessment(assessment) != nil {
+			return false
+		}
+		seen[assessment.ID] = true
+	}
+	return true
+}
+
+func canReplayReviewRepair(j Journal) bool {
+	return j.State == "blocked" && j.ResumeState == "implementing" && j.StopReason == noPendingFeedbackHold && j.Outcome.Status == "checks_requested" && j.SessionID != "" && j.PendingInputs == nil && !j.CandidatePhasePending && j.Reconciliation == nil && len(j.Outcome.Questions) == 0 && len(j.Outcome.Findings) == 0 && len(j.Outcome.Limitations) == 0 && repeatReviewRepairAssessments(&j, j.Outcome)
+}
+
+func (r Runner) verifyReviewRepairReceipts(ctx context.Context, j *Journal, out Outcome) error {
+	repo, ok := r.Repository.(FeedbackCommitRepository)
+	if !ok {
+		return fmt.Errorf("repository cannot verify retained review-repair commits")
+	}
+	revision, err := r.Repository.Inspect(ctx, j.Workspace)
+	if err != nil || !revision.Clean || !objectID.MatchString(revision.Head) || !objectID.MatchString(revision.Tree) {
+		return fmt.Errorf("retained review repair must be committed and clean")
+	}
+	commits, err := repo.FeedbackCommits(ctx, j.Workspace, j.Publication.BaseSHA, revision.Head)
+	if err != nil {
+		return err
+	}
+	var claimed []string
+	for _, assessment := range out.PRFeedbackAssessments {
+		claimed = append(claimed, assessment.Commits...)
+	}
+	known := map[string]bool{}
+	for _, sha := range commits {
+		known[sha] = true
+	}
+	for _, sha := range claimed {
+		if !known[sha] {
+			return fmt.Errorf("retained review-repair receipt claims a commit absent from candidate history")
+		}
+	}
+	return nil
 }

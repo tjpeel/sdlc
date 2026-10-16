@@ -1021,7 +1021,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 			return runner.liveDiagnostics(ctx, directory, journal, request)
 		}
 	}
-	schema := implementationOutcomeSchema
+	schema := implementationSchemaForJournal(journal)
 	if role == "review" {
 		schema = reviewOutcomeSchema
 	}
@@ -1037,6 +1037,10 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	}
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
 	if role == "implementation" {
+		contextDiscipline += "Return human feedback assessments only for the currently pending IDs permitted by the supplied schema; never repeat completed comment revisions from earlier turns.\n"
+		if len(pendingFeedbackEntries(&journal)) == 0 {
+			contextDiscipline += "No human PR comment revisions are pending. Return an empty pr_feedback_assessments array; earlier completed comments are context only. Address only the current controller-selected repair or ticket scope.\n"
+		}
 		contextDiscipline += "Assess clear CI finding descriptions and source locations even when rule IDs are absent; never invent rule IDs. Repair the known actionable group while obtaining remaining evidence through focused diagnostic_requests or verification_requests. Aggregate coverage failures can be investigated with local file/line coverage diagnostics; local coverage guides repairs but does not prove Sonar new-code coverage calculations. If obtainable evidence is missing, request it through the existing machine interfaces instead of returning blocked without a request. Preserve actionable finding detail when keeping context concise.\n"
 		if liveDiagnosticsSupported {
 			contextDiscipline += "For narrow checks during this running turn, commit a candidate checkpoint and invoke python3 -I /sdlc-diagnostics.py with a JSON array of diagnostic requests on stdin. The helper also accepts existing bounded source_patch requests for private correction artifacts; review, apply and commit any correction yourself. The helper returns bounded untrusted process results without ending or restarting this native session. Inspect all results and commit repairs before retrying. Stop on a controller operational hold. Full configured checks and focused self-review remain required at readiness.\n"
@@ -1190,6 +1194,12 @@ func PrepareReview(ctx context.Context, journal Journal, directory string) (stri
 }
 
 func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory string, journal *Journal) error {
+	if repeatReviewRepairAssessments(journal, journal.Outcome) {
+		if err := runner.verifyReviewRepairReceipts(ctx, journal, journal.Outcome); err != nil {
+			return runner.stop(directory, journal, "blocked", err.Error())
+		}
+		journal.Outcome.PRFeedbackAssessments = []PRFeedbackAssessment{}
+	}
 	journal.Outcome = withoutInactiveFeedbackAssessments(journal, journal.Outcome)
 	if a := journal.ReviewAssessment; a != nil && (journal.Outcome.Status == "checks_requested" || journal.Outcome.Status == "diagnostics_requested" || journal.Outcome.Status == "implemented" || journal.Outcome.Status == "waiting_for_human") {
 		a.Acknowledged = true

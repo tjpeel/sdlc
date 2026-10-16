@@ -1041,6 +1041,24 @@ counts. Used grants and the last assessed head are retained. This option only
 increases an existing allowance; it does not permit another grant for the same
 published head.
 
+### Recover interrupted native history and completed feedback receipts
+
+Implementation output permits human-comment assessments only when a revision is
+pending. Independent-review and CI repairs must not repeat completed receipts.
+Ordinary resume can replay a saved `checks_requested` independent-review repair
+that stopped on `no pending human feedback revision`, after checking its exact
+review grant, completed comment fingerprints, clean candidate and commit ancestry.
+Completed human assessments and replies are preserved; the retained candidate
+still needs fresh checks and final self-review. No model turn or repair allowance
+is consumed merely to replay this verified handoff.
+
+If a resumed Codex rollout has an unmatched tool call from an interrupted turn,
+SDLC requests native compaction of that same idle thread before continuing. It
+preserves the rollout, account, model, route and session. Progress reports recovery
+start/completion. This can consume model capacity; timing and quota snapshots
+include it, while token totals are marked partial. A rejected or incomplete
+compaction stops safely. No synthetic tool results are inserted.
+
 ### Continue incomplete independent inspection
 
 Independent review records one exact changed-file path per inspection entry.
@@ -2620,3 +2638,5 @@ switching, session restarts or bypassing provider restrictions.
 
 Journals with an override require beta.45 or newer. Saved runs without an override
 remain compatible, and their existing default ceilings remain in force.
+
+Shared `sdlc-tests-*` Docker daemons stop after their last check session finishes. Cached images and volumes remain available for the next check; active concurrent sessions keep their daemon running. Cleanup failures are reported rather than treated as successful checks.
