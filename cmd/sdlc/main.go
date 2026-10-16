@@ -38,6 +38,8 @@ func main() {
 			command = func() error { return diagnoseCommand(ctx, os.Args[2:], os.Stdout) }
 		case "inputs":
 			command = func() error { return inputsCommand(ctx, os.Args[2:], os.Stdout) }
+		case "ticket":
+			command = func() error { return ticketCommand(ctx, os.Args[2:], os.Stdout) }
 		case "dependencies":
 			command = func() error { return dependenciesCommand(ctx, os.Args[2:], os.Stdout) }
 		case "adopt":

@@ -346,6 +346,59 @@ eligible ticket without waiting for other active tickets to finish. Provider
 calls have no separate SDLC concurrency limit. Host stream lines carry ticket labels; each private native event
 file retains its original bytes. The dashboard continues to show individual ticket runs.
 
+### Inspect and complete tickets
+
+The feature journal owns execution status. A ticket's `**Status:**` and
+`**Blocked by:**` lines describe planning intent; they do not schedule work or
+prove completion. Dependencies in the feature plan determine actual blockers.
+Use this command to compare the two, including stale metadata:
+
+```sh
+sdlc ticket status --reference EXAMPLE
+sdlc ticket status --reference EXAMPLE --ticket 01-first.md --refresh --json
+```
+
+Status is local by default. `--refresh` reads the current GitHub state for PRs
+already recorded in the journal; it does not guess which unlinked PR implements a
+ticket, mutate files, start work or reconcile a merge automatically.
+
+When work was completed outside the original feature run, associate its merged
+PR explicitly:
+
+```sh
+sdlc ticket complete --reference EXAMPLE --ticket 01-first.md \
+  --pr https://github.com/OWNER/REPO/pull/123 --dry-run
+sdlc ticket complete --reference EXAMPLE --ticket 01-first.md \
+  --pr https://github.com/OWNER/REPO/pull/123
+```
+
+Completion requires an existing feature checkpoint and a merged, same-repository
+PR targeting the feature's integration branch. The controller verifies merge
+ancestry against the exact current integration SHA. The explicit ticket/PR
+selection is the user's association; this command does not re-review acceptance
+criteria or infer that association from a matching branch name.
+
+It records the PR URL and number, source and target branches, final PR head SHA,
+merge SHA, observed integration SHA and merge time. The feature result becomes
+`merged`. Ticket metadata becomes `completed` with no remaining blockers and a
+link to the merged PR. Substantive requirements and acceptance checkboxes stay
+unchanged. Matching frozen requirement hashes are updated only when the original
+content still matches. Runtime, account, model and check selections stay frozen.
+
+The checkpoint keeps a completion audit with the previous result and before/after
+content hashes. Original run journals, tests and sessions are retained; the old
+blocked run is not relabelled successful. Completion refuses a different recorded
+merge, changed frozen ticket content, active run ownership or other retained
+unmerged ticket work which could rely on the old inputs. Stop controllers first.
+A durable private transaction protects the ticket and journal update. After an
+interruption, repeat the same command; normal execution remains held until both
+files agree. Repeating a completed operation makes no further change.
+
+After completion, repeat the feature command to continue its frozen configuration.
+To use the current default runtime for an unstarted ticket instead, run that ticket
+individually without `--runtime`. Completing previous tickets does not replace an
+existing feature's immutable runtime settings.
+
 ### Amend an unstarted ticket's dependencies
 
 Use the supported amendment command when a saved feature needs a different

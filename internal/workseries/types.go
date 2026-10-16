@@ -60,6 +60,7 @@ type Driver interface {
 }
 
 type State struct {
+	TicketCompletions    []TicketCompletionAudit    `json:"ticket_completions,omitempty"`
 	DependencyAmendments []DependencyAmendmentAudit `json:"dependency_amendments,omitempty"`
 	Version              int
 	Plan                 Plan

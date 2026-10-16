@@ -53,6 +53,9 @@ func realDir(path string) error {
 }
 
 func Load(directory string) (State, error) {
+	if _, err := os.Lstat(filepath.Join(directory, completionPending)); !os.IsNotExist(err) {
+		return State{}, errors.New("ticket completion pending; repeat ticket complete before running tickets")
+	}
 	if _, err := os.Lstat(filepath.Join(directory, amendmentPending)); !os.IsNotExist(err) {
 		return State{}, errors.New("dependency amendment is pending; repeat its dependencies command before running the feature")
 	}
@@ -90,6 +93,9 @@ func loadState(directory string) (State, error) {
 }
 
 func Save(directory string, state *State) error {
+	if _, err := os.Lstat(filepath.Join(directory, completionPending)); !os.IsNotExist(err) {
+		return errors.New("ticket completion pending; repeat ticket complete before running tickets")
+	}
 	if _, err := os.Lstat(filepath.Join(directory, amendmentPending)); !os.IsNotExist(err) {
 		return errors.New("dependency amendment is pending; feature checkpoint is held")
 	}
@@ -149,6 +155,9 @@ func privateSeriesDir(directory string) error {
 func validateState(s *State) error {
 	if s == nil || s.Version != 1 || s.Plan.Root == "" || !filepath.IsAbs(s.Plan.Root) || validatePlan(&s.Plan) != nil || s.Plan.DefinitionSHA == "" || s.Plan.DefinitionSHA != definitionSHA(s.Plan) || s.Results == nil {
 		return errors.New("invalid series state")
+	}
+	if err := validateCompletionAudit(s); err != nil {
+		return err
 	}
 	known := ticketMap(s.Plan.Tickets)
 	if err := validateAmendmentAudit(s); err != nil {

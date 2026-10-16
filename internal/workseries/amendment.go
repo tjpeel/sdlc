@@ -287,6 +287,12 @@ func amendmentOriginalPlan(saved Plan, data []byte, present bool) (Plan, error) 
 // CheckDependencyAmendment fences other feature operations until both files
 // have been durably saved by the authorized recovery command.
 func CheckDependencyAmendment(root, reference string) error {
+	if err := CheckTicketCompletion(root, reference); err != nil {
+		return err
+	}
+	return checkDependencyOnly(root, reference)
+}
+func checkDependencyOnly(root, reference string) error {
 	path := filepath.Join(root, ".sdlc", "work", reference, "series", amendmentPending)
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		return errors.New("dependency amendment is pending; repeat its dependencies command before running tickets")

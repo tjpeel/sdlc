@@ -39,6 +39,7 @@ func shellCommands() []shell.Command {
 		command("answer", "Work", "Read pending questions, type an answer and resume the recorded run; CLI: sdlc answer --run ID", "/answer [RUN_ID]", false, ""),
 		command("inputs", "Work", "Inspect captured requirements or attach missing files to an unpublished paused run without starting it", "/inputs --run ID [--add RELATIVE_PATH] [--dry-run]", true, "run add dry-run json"),
 		command("dependencies", "Work", "Amend one unstarted ticket's dependencies in its saved feature", "/dependencies --reference REF --ticket FILE --depends-on PARENT [--dry-run]", true, "reference ticket depends-on run-root dry-run json"),
+		command("ticket", "Work", "Inspect ticket status or record verified merged completion", "/ticket status|complete --reference REF [--ticket FILE] [--pr URL] [--refresh] [--dry-run] [--json]", true, "reference ticket pr refresh dry-run json run-root"),
 		command("resume", "Work", "Resume a stopped run using its saved project and settings; CLI: sdlc resume --run ID", "/resume [RUN_ID]", false, ""),
 		command("storage", "Monitor", "Inspect retained project storage without deleting files", "/storage [status] [--older-than DAYS] [--json]", false, "older-than json"),
 		command("storage purge", "Monitor", "Preview permanent deletion of stopped saved runs in this project", "/storage purge --run ID | --all [--yes | --dry-run]", true, "run all yes dry-run"),
