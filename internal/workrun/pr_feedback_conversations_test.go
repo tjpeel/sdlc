@@ -132,16 +132,56 @@ func TestFeedbackPromptIncludesAssessedConversationContext(t *testing.T) {
 	}
 }
 
-func TestRocketNoLongerMarksNewFeedbackIgnored(t *testing.T) {
+func TestRocketMarksParentAddressedButKeepsReplyActionable(t *testing.T) {
 	p, f, plan, pr, item := thumbsDownFixture(t, "comment")
+	reply := githubItem(2, "> "+item.Body+"\n\nPlease also cover the new failure case.", "reviewer", "User")
+	f.items["repos/example/project/issues/1/comments"] = []githubFeedbackItem{item, reply}
+	base := thumbsDownResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
 	f.reactionCommand = func(args []string) ([]byte, error) {
-		if !strings.Contains(strings.Join(args, " "), "query SDLCFeedbackReactionGroups") {
-			t.Fatal("rocket triggered ignore lookup")
+		if strings.Contains(strings.Join(args, " "), "query SDLCFeedbackReactionGroups") {
+			return json.Marshal(map[string]any{"data": map[string]any{"nodes": []any{
+				map[string]any{"id": item.NodeID, "reactionGroups": []any{map[string]any{"content": "ROCKET", "viewerHasReacted": true}}},
+				map[string]any{"id": reply.NodeID, "reactionGroups": []any{}},
+			}}})
 		}
-		return json.Marshal(map[string]any{"data": map[string]any{"nodes": []any{map[string]any{"id": item.NodeID, "reactionGroups": []any{map[string]any{"content": "ROCKET", "viewerHasReacted": true}}}}}})
+		data, err := base(args)
+		return []byte(strings.ReplaceAll(string(data), "THUMBS_DOWN", "ROCKET")), err
 	}
 	comments, err := p.Feedback(context.Background(), plan, pr)
-	if err != nil || len(comments) != 1 || comments[0].Ignored != nil {
-		t.Fatal("legacy reaction suppressed new feedback", err)
+	if err != nil || len(comments) != 2 {
+		t.Fatal("collection failed", err)
+	}
+	if comments[0].Addressed == nil || comments[0].Ignored != nil || comments[1].Addressed != nil || comments[1].Ignored != nil {
+		t.Fatal("rocket suppressed a reply or became ignore")
+	}
+	history := &PRFeedbackHistory{Active: true}
+	for _, c := range comments {
+		history.Entries = append(history.Entries, PRFeedbackEntry{Comment: c})
+	}
+	pending := pendingFeedbackEntries(&Journal{PRFeedback: history})
+	if len(pending) != 1 || pending[0].Comment.ID != "comment:2" {
+		t.Fatal("addressed parent became actionable or reply was lost")
+	}
+	conversations := feedbackConversations(history)
+	if len(conversations) != 1 || len(conversations[0].Comments) != 2 {
+		t.Fatal("addressed parent was lost as context")
+	}
+	status := PRFeedbackStatus(Journal{PRFeedback: history})
+	if status.Addressed != 1 || status.Ignored != 0 || status.Pending != 1 || status.OutstandingReplies != 0 {
+		t.Fatal("incorrect reaction status", status)
+	}
+}
+
+func TestRocketAddressedCommentDoesNotReceiveAnotherAcknowledgement(t *testing.T) {
+	dir, j, r, pub, _ := feedbackReadyRun(t)
+	comment := generalFeedback("comment:1", "This correction is already complete.")
+	comment.Addressed = &PRFeedbackIgnore{By: "example", UserID: 123, ReactionID: "rocket-1", CreatedAt: "2026-10-15T12:00:00Z"}
+	assessment := assessedOutcome(comment, "no_change").PRFeedbackAssessments[0]
+	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, Entries: []PRFeedbackEntry{{Comment: comment, Fingerprint: feedbackFingerprint(comment), Assessment: &assessment}}}
+	if err := r.replyPRFeedback(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if pub.replies != 0 {
+		t.Fatal("already-addressed comment received a duplicate reply")
 	}
 }

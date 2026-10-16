@@ -2257,7 +2257,11 @@ merge a PR or modify unrelated scope.
 
 ### Mark PR feedback as already handled
 
-Use **👎 (thumbs down)** rather than 🚀 for new ignore markers.
+Use **👎 (thumbs down)** to ignore a comment and its linked descendants.
+Use **🚀 (rocket)** to mark only that comment as already addressed. SDLC does not
+repeat work or post an acknowledgement for a 🚀 comment, but new replies remain
+actionable and receive the earlier discussion as context. A 👎 marker takes
+precedence if both reactions are present.
 Add the 👎 reaction to the specific comment using the run's configured
 GitHub account. Adoption and later `--pr-feedback` passes skip that comment while
 it remains unchanged since your reaction. This covers general PR comments, review

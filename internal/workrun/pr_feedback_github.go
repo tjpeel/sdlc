@@ -247,7 +247,7 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 	}
 	// IDs and kinds supply a stable order without trusting mutable API page order.
 	linkFeedbackConversations(result, pr.URL)
-	if err := p.markIgnoredFeedback(ctx, result, nodeIDs); err != nil {
+	if err := p.markFeedbackReactions(ctx, result, nodeIDs); err != nil {
 		return nil, err
 	}
 	inheritFeedbackIgnores(result)

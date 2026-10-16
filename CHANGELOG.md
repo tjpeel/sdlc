@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.99 - 2026-10-16
+
+### Fixed
+
+- Retain rocket reactions as an explicit already-addressed state, separate from thumbs-down conversation ignores. Do not repeat work or acknowledgements for addressed comments; retain their text as context for actionable new replies. Report addressed and ignored counts separately.
+
+
 ## 0.1.0-beta.98 - 2026-10-16
 
 ### Changed
