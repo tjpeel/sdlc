@@ -273,10 +273,11 @@ type Publication struct {
 }
 
 type CIResult struct {
-	FailureContext *CIFailureContext `json:"failure_context,omitempty"`
-	Diagnostics    []CIAnnotation    `json:"diagnostics,omitempty"`
-	Status         string            `json:"status"`
-	Details        string            `json:"details"`
+	SonarDuplication []SonarDuplication `json:"sonar_duplication,omitempty"`
+	FailureContext   *CIFailureContext  `json:"failure_context,omitempty"`
+	Diagnostics      []CIAnnotation     `json:"diagnostics,omitempty"`
+	Status           string             `json:"status"`
+	Details          string             `json:"details"`
 }
 
 type Publisher interface {

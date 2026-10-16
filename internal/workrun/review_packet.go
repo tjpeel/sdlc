@@ -25,7 +25,8 @@ var implementationOutcomeSchema = func() string {
 }()
 
 type reviewCIEvidence struct {
-	Status string `json:"status"`
+	SonarDuplication []SonarDuplication `json:"sonar_duplication,omitempty"`
+	Status           string             `json:"status"`
 }
 
 // Reuse the shared field definitions while omitting implementation-only work

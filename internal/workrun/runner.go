@@ -1086,7 +1086,10 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	packetFeedback := feedbackForPrompt(journal.PRFeedback)
 	if role == "review" {
 		reviewSources = journal.CompanionRepositories
-		packetCI = &reviewCIEvidence{Status: journal.CI.Status}
+		packetCI = &reviewCIEvidence{Status: journal.CI.Status, SonarDuplication: journal.CI.SonarDuplication}
+		if len(journal.CI.SonarDuplication) > 0 {
+			contextDiscipline += "\nSonar duplication measures in ci.sonar_duplication are advisory and bound to the published head. Inspect new duplicated logic in the checkout and report actionable maintenance or drift costs as recommendations. A nonzero percentage alone is not a defect or instruction to refactor. When groups are supplied, inspect those exact file ranges and their matching ranges. They come from files with new duplicated lines but individual groups may include existing duplication; establish which changes belong to this PR. If details_status is unavailable, state that location evidence was unavailable and inspect the checkout before making a recommendation."
+		}
 		packetPlan = selectedReviewRequirements(journal.Plan)
 		packetFeedback = currentReviewFeedback(packetFeedback)
 	}

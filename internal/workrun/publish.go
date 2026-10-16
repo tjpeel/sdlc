@@ -54,6 +54,7 @@ func localCommand(ctx context.Context, name string, args ...string) ([]byte, err
 // GitHubPublisher receives an exported bundle, never the worker's .git config.
 // Its repository and signing/publication credentials are not worker mounts.
 type GitHubPublisher struct {
+	SonarJSON                          func(context.Context, string, any) error
 	CIPrivateValues                    []string
 	Command                            Command
 	Frozen                             *PublicationIdentity
@@ -676,6 +677,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	result := CIResult{Status: "passed"}
 	sonarNames := map[string]bool{}
+	sonarMeasures := false
 	pending := false
 	// A name only selects a candidate; exact check-run app/head authority
 	// distinguishes native analysis from an Actions workflow mentioning Sonar.
@@ -683,6 +685,9 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 		result.Status = "missing"
 	}
 	for _, check := range checks {
+		if nativeSonarAnalysisName(check.Name) && check.Bucket != "pending" {
+			sonarMeasures = true
+		}
 		if (check.Bucket == "fail" || check.Bucket == "cancel") && strings.Contains(strings.ToLower(check.Name), "sonar") {
 			sonarNames[check.Name] = true
 		}
@@ -704,6 +709,12 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	if !pending && len(sonarNames) > 0 {
 		result.Diagnostics, err = publisher.collectCIAnnotations(ctx, plan, pr, sonarNames)
+		if err != nil {
+			return CIResult{}, err
+		}
+	}
+	if !pending && sonarMeasures {
+		result.SonarDuplication, err = publisher.collectSonarDuplication(ctx, plan, pr)
 		if err != nil {
 			return CIResult{}, err
 		}

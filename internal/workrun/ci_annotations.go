@@ -47,6 +47,9 @@ func ciSourcePath(path string) bool {
 }
 
 func validateCIResult(result CIResult, published Publication) error {
+	if err := validateSonarDuplication(result.SonarDuplication, published); err != nil {
+		return err
+	}
 	if err := validateCIFailureContext(result, published); err != nil {
 		return err
 	}

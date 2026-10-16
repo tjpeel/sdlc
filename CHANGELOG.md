@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.104 - 2026-10-16
+
+- Collect advisory new-code duplication measures from verified SonarCloud check summaries even when CI passes. Collect public duplicated-file and matching-block ranges with analysis-revision and committed-path validation; report unavailable details explicitly. Preserve exact-head evidence for independent review without turning duplication percentages into automatic failures or repair instructions.
+
 ## 0.1.0-beta.103 - 2026-10-16
 
 - Keep stable runtime tool installations ahead of changing agent clients, catalogues and SDLC binaries, and scope version arguments to their installation layers so routine updates reuse more Docker cache.

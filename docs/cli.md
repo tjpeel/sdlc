@@ -1050,6 +1050,16 @@ bounded log excerpts. Native Sonar rule, severity and committed-location finding
 remain included. Pending checks keep waiting; collection failures retain an
 operational hold before any repair grant.
 
+Successful native SonarCloud analyses also supply advisory new-code duplication
+measures. For a positive measure, SDLC reads public SonarCloud duplicated-file
+and matching-block ranges, verifies the analysis commit before and after
+collection, and restricts paths to regular files in the published GitHub tree.
+Independent review receives both sides of each duplication group; a percentage
+alone does not fail CI or authorise refactoring. Groups can include existing
+duplication, so the reviewer must establish what the PR introduced. Private,
+stale or unavailable Sonar details retain the percentage with an explicit
+unavailable status; no Sonar credentials or raw response prose are forwarded.
+
 Analyzer annotations retain their descriptions even when no rule ID is supplied.
 For verified current-job uploads, supported Trivy JSON reports add vulnerability
 IDs, affected packages, installed and fixed versions, severity and secret-finding
