@@ -18,7 +18,7 @@ ARG CLAUDE_VERSION=2.1.301
 ARG DOTNET_VERSION=10.0.401
 ARG LOCAL_SKILLS=0
 ARG LOCAL_AGENTS=0
-ARG SKILLS_REVISION=7198332a350fa04864df09d52386511ba7db21db
+ARG SKILLS_REVISION=f305c79fdfbdff20e2fe0999d27b7b6377a2e115
 ARG AGENTS_REVISION=aa462b3cb0da633815506588951168d92f93b98f
 # An installation update can override these defaults in its private build recipe.
 # Source builds use the explicit auxiliary tool versions below.

@@ -48,6 +48,7 @@ type seriesSettings struct {
 	Roles                     map[string]workrun.Roles
 	Inputs                    []string
 	TicketInputs              map[string][]string
+	TicketInputContext        map[string][]project.RequirementContext
 	InputHashes               map[string]string
 	Config                    project.Config
 	DockerTests               bool
@@ -213,6 +214,9 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if err != nil {
 		return err
 	}
+	if err := workseries.ValidateDeclaredDependencies(ctx, plan, ""); err != nil {
+		return err
+	}
 	if _, err := seriesGit(ctx, plan.Root, "check-ref-format", "--branch", plan.Base); err != nil {
 		return fmt.Errorf("feature base must be a valid branch name")
 	}
@@ -272,25 +276,26 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if options.dryRun {
 		if options.jsonOutput {
 			return json.NewEncoder(output).Encode(struct {
-				Version       int                          `json:"version"`
-				Mode          string                       `json:"mode"`
-				Offline       bool                         `json:"offline"`
-				Plan          workseries.Plan              `json:"plan"`
-				Parallel      int                          `json:"parallel"`
-				Watch         bool                         `json:"watch"`
-				Roles         map[string]workrun.Roles     `json:"roles"`
-				Branches      map[string]string            `json:"branches"`
-				Checks        [][]string                   `json:"checks"`
-				CheckInputs   []string                     `json:"check_inputs"`
-				Inputs        []string                     `json:"inputs"`
-				TicketInputs  map[string][]string          `json:"ticket_inputs"`
-				DockerTests   bool                         `json:"docker_tests"`
-				Headroom      headroom.Config              `json:"headroom"`
-				HeadroomImage string                       `json:"headroom_image,omitempty"`
-				InputHashes   map[string]string            `json:"input_hashes,omitempty"`
-				Saved         map[string]workseries.Result `json:"saved,omitempty"`
-				Notice        string                       `json:"notice"`
-			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
+				Version            int                                     `json:"version"`
+				Mode               string                                  `json:"mode"`
+				Offline            bool                                    `json:"offline"`
+				Plan               workseries.Plan                         `json:"plan"`
+				Parallel           int                                     `json:"parallel"`
+				Watch              bool                                    `json:"watch"`
+				Roles              map[string]workrun.Roles                `json:"roles"`
+				Branches           map[string]string                       `json:"branches"`
+				Checks             [][]string                              `json:"checks"`
+				CheckInputs        []string                                `json:"check_inputs"`
+				Inputs             []string                                `json:"inputs"`
+				TicketInputs       map[string][]string                     `json:"ticket_inputs"`
+				TicketInputContext map[string][]project.RequirementContext `json:"ticket_input_context,omitempty"`
+				DockerTests        bool                                    `json:"docker_tests"`
+				Headroom           headroom.Config                         `json:"headroom"`
+				HeadroomImage      string                                  `json:"headroom_image,omitempty"`
+				InputHashes        map[string]string                       `json:"input_hashes,omitempty"`
+				Saved              map[string]workseries.Result            `json:"saved,omitempty"`
+				Notice             string                                  `json:"notice"`
+			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.TicketInputContext, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
 		}
 		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
 		for _, ticket := range plan.Tickets {
@@ -346,6 +351,17 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	driver := &seriesDriver{runtime: runtime, options: options, directory: directory, output: writer, plan: plan}
 	runner := workseries.Runner{Driver: driver, Output: writer, Parallel: options.parallel, Watch: options.watch, PollInterval: 15 * time.Second}
 	runner.Initialize = func(ctx context.Context, checkpoint *workseries.State) error {
+		currentPlan, err := workseries.Discover(ctx, plan.Root, plan.Reference, plan.Base)
+		if err != nil {
+			return err
+		}
+		if currentPlan.DefinitionSHA != plan.DefinitionSHA {
+			return fmt.Errorf("feature definition changed while acquiring ownership; retry")
+		}
+		if err = workseries.ValidateDeclaredDependencies(ctx, currentPlan, ""); err != nil {
+			return err
+		}
+
 		if checkpoint.Plan.DefinitionSHA != plan.DefinitionSHA || checkpoint.Plan.Root != plan.Root {
 			return fmt.Errorf("feature checkpoint changed while acquiring ownership")
 		}
@@ -469,6 +485,7 @@ func selectSeriesSettings(ctx context.Context, directory string, plan workseries
 		return settings, err
 	}
 	settings.TicketInputs = map[string][]string{}
+	settings.TicketInputContext = map[string][]project.RequirementContext{}
 	for _, ticket := range plan.Tickets {
 		launch, err := project.Launch(ctx, plan.Root, plan.Reference, ticket.File, options.inputs)
 		if err != nil {
@@ -476,6 +493,7 @@ func selectSeriesSettings(ctx context.Context, directory string, plan workseries
 		}
 		settings.Config = launch.Config
 		settings.TicketInputs[ticket.File] = launch.Inputs
+		settings.TicketInputContext[ticket.File] = launch.InputContext
 	}
 	if !options.supplied["docker-tests"] {
 		settings.DockerTests = settings.Config.DockerTests

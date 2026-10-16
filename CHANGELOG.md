@@ -7,6 +7,15 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.102 - 2026-10-16
+
+- Pin the revised specification, ticket-authoring, implementation and review skills in the default runtime baseline.
+
+- Keep selected-ticket authority distinct from supporting documents, named prerequisites and other sibling context. Capture link provenance for new runs and retain it for independent review; legacy runs remain readable without invented roles.
+- Validate explicit ticket blocker metadata against scheduling dependencies before fresh launches and report mismatches in either direction. Individual-ticket checks do not read unrelated sibling readiness, and commented examples never become blockers.
+- Add `dependencies --from-tickets` to preview and compile the initial scheduling plan from explicit blocker links. Preserve frozen features through audited per-ticket amendments rather than rewriting their settings.
+- Keep dependency-only repairs separate from execution readiness: require unchanged frozen requirement inputs without refreshing or accepting drifted check/configuration hashes.
+
 ## 0.1.0-beta.101 - 2026-10-16
 
 - Advance the default provider CLI and skills/agents catalogue pins to the versions verified in the rebuilt default runtime.

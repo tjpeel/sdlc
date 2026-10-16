@@ -152,3 +152,33 @@ func TestDependenciesCLIRefusesCapturedDefinitionAndAliasBeforeWriting(t *testin
 		})
 	}
 }
+
+func TestDependencyMetadataPreservesExecutionHashesAndStillChecksRequirements(t *testing.T) {
+	driver, _ := featureAdoptionFixture(t, "ready")
+	extra := "config/verification.json"
+	if err := os.MkdirAll(filepath.Join(driver.plan.Root, "config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(driver.plan.Root, extra), []byte("changed check configuration"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	driver.settings.InputHashes[extra] = "old-frozen-check-hash"
+	before, _ := json.Marshal(driver.settings)
+	if err := checkDependencyRequirementInputs(driver); err != nil {
+		t.Fatal("unrelated check drift prevented metadata-only repair", err)
+	}
+	after, _ := json.Marshal(driver.settings)
+	if !bytes.Equal(before, after) {
+		t.Fatal("metadata validation refreshed execution settings")
+	}
+	if driver.checkInputs() == nil {
+		t.Fatal("execution no longer rejects frozen check drift")
+	}
+	selected := driver.settings.ticketInputs(driver.plan.Reference, driver.plan.Tickets[0].File)[0]
+	if err := os.WriteFile(filepath.Join(driver.plan.Root, selected), []byte("changed requirement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if checkDependencyRequirementInputs(driver) == nil {
+		t.Fatal("changed requirement was ignored")
+	}
+}

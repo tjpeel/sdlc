@@ -29,18 +29,21 @@ type ticketSavedRun struct {
 }
 
 type ticketStatus struct {
-	SavedRuns        []ticketSavedRun `json:"saved_runs,omitempty"`
-	Ticket           string           `json:"ticket"`
-	State            string           `json:"state"`
-	DeclaredStatus   string           `json:"declared_status"`
-	DeclaredBlockers string           `json:"declared_blockers"`
-	BlockedBy        []string         `json:"blocked_by"`
-	MetadataStale    bool             `json:"metadata_stale"`
-	PR               string           `json:"pr,omitempty"`
-	HeadSHA          string           `json:"head_sha,omitempty"`
-	MergeSHA         string           `json:"merge_sha,omitempty"`
-	RemoteState      string           `json:"remote_state,omitempty"`
-	NeedsCompletion  bool             `json:"needs_completion"`
+	DeclaredDependencies []string         `json:"declared_dependencies,omitempty"`
+	PlannedDependencies  []string         `json:"planned_dependencies,omitempty"`
+	DependencyMismatch   bool             `json:"dependency_mismatch"`
+	SavedRuns            []ticketSavedRun `json:"saved_runs,omitempty"`
+	Ticket               string           `json:"ticket"`
+	State                string           `json:"state"`
+	DeclaredStatus       string           `json:"declared_status"`
+	DeclaredBlockers     string           `json:"declared_blockers"`
+	BlockedBy            []string         `json:"blocked_by"`
+	MetadataStale        bool             `json:"metadata_stale"`
+	PR                   string           `json:"pr,omitempty"`
+	HeadSHA              string           `json:"head_sha,omitempty"`
+	MergeSHA             string           `json:"merge_sha,omitempty"`
+	RemoteState          string           `json:"remote_state,omitempty"`
+	NeedsCompletion      bool             `json:"needs_completion"`
 }
 
 var ticketGH = func(ctx context.Context, root string, args ...string) ([]byte, error) {
@@ -240,6 +243,14 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	dependencyMismatches, err := workseries.DeclaredDependencyMismatches(ctx, plan, *ticket)
+	if err != nil {
+		return err
+	}
+	mismatchByTicket := map[string]workseries.DependencyMismatch{}
+	for _, m := range dependencyMismatches {
+		mismatchByTicket[m.Ticket] = m
+	}
 	rows := []ticketStatus{}
 	found := *ticket == ""
 	for _, t := range plan.Tickets {
@@ -286,6 +297,12 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 		}
 		done := effective == "merged"
 		row := ticketStatus{SavedRuns: saved, Ticket: t.File, State: effective, DeclaredStatus: declared, DeclaredBlockers: blockers, BlockedBy: blocked, MetadataStale: (done && declared != "completed") || (!done && declared == "completed") || (len(blocked) > 0 && strings.HasPrefix(blockers, "None")), PR: r.URL, HeadSHA: r.HeadSHA, MergeSHA: r.MergeSHA}
+		if mismatch, ok := mismatchByTicket[t.File]; ok {
+			row.DependencyMismatch = true
+			row.DeclaredDependencies = mismatch.Declared
+			row.PlannedDependencies = mismatch.Planned
+			row.MetadataStale = true
+		}
 		row.NeedsCompletion = done && row.MetadataStale
 		if *refresh && r.PRNumber > 0 {
 			repository, _, err := workrun.ParsePRURL(r.URL)
@@ -316,6 +333,9 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 		}
 		if r.RemoteState != "" {
 			fmt.Fprintf(output, "; GitHub: %s", r.RemoteState)
+		}
+		if r.DependencyMismatch {
+			fmt.Fprintf(output, "; dependency mismatch: declared %v, planned %v", r.DeclaredDependencies, r.PlannedDependencies)
 		}
 		if r.NeedsCompletion {
 			fmt.Fprint(output, "; use ticket complete --pr to reconcile")

@@ -14,7 +14,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const dependenciesUsage = "Usage: sdlc dependencies --reference REFERENCE --ticket NUMBERED_FILE --depends-on PARENT_FILE [--depends-on PARENT_FILE] [--dry-run] [--json]\nUse --depends-on '' to clear the dependency set. Repeat the exact command to recover an interrupted amendment."
+const dependenciesUsage = "Usage: sdlc dependencies --reference REFERENCE --from-tickets [--dry-run] [--json]\n        sdlc dependencies --reference REFERENCE --ticket NUMBERED_FILE --depends-on PARENT_FILE [--depends-on PARENT_FILE] [--dry-run] [--json]\nUse --depends-on '' to clear the dependency set. Repeat the exact command to recover an interrupted amendment."
 
 type dependencySelections []string
 
@@ -29,6 +29,7 @@ func dependenciesCommand(ctx context.Context, args []string, output io.Writer) e
 	root := flags.String("run-root", "", "recorded project root")
 	dry := flags.Bool("dry-run", false, "preview without writing")
 	structured := flags.Bool("json", false, "JSON result")
+	fromTickets := flags.Bool("from-tickets", false, "import only declared blockers into an unstarted feature plan")
 	var dependencies dependencySelections
 	flags.Var(&dependencies, "depends-on", "complete dependency set (repeatable; empty clears)")
 	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
@@ -37,7 +38,7 @@ func dependenciesCommand(ctx context.Context, args []string, output io.Writer) e
 	} else if err != nil {
 		return err
 	}
-	if *reference == "" || *ticket == "" || flags.NArg() != 0 || len(dependencies) == 0 {
+	if *reference == "" || flags.NArg() != 0 || (!*fromTickets && (*ticket == "" || len(dependencies) == 0)) || (*fromTickets && (*ticket != "" || len(dependencies) > 0)) {
 		return errors.New(dependenciesUsage)
 	}
 	selected := []string{}
@@ -61,6 +62,24 @@ func dependenciesCommand(ctx context.Context, args []string, output io.Writer) e
 	if err != nil {
 		return err
 	}
+	if *fromTickets {
+		preview, err := workseries.ImportDeclaredDependencies(ctx, work.Root, *reference, "main", *dry)
+		if err != nil {
+			return err
+		}
+		if *structured {
+			return json.NewEncoder(output).Encode(preview)
+		}
+		verb := "Saved"
+		if *dry {
+			verb = "Would save"
+		}
+		if !preview.Changed {
+			verb = "Already reconciled"
+		}
+		_, err = fmt.Fprintf(output, "%s scheduling dependencies from explicit Blocked by metadata (%d mismatches).\n", verb, len(preview.Mismatches))
+		return err
+	}
 	preview, err := workseries.AmendDependencies(ctx, work.Root, *reference, *ticket, selected, *dry, func(state workseries.State) error {
 		settings, err := loadSeriesSettings(state.Settings)
 		if err != nil {
@@ -73,7 +92,7 @@ func dependenciesCommand(ctx context.Context, args []string, output io.Writer) e
 		if err := driver.validateSettings(); err != nil {
 			return err
 		}
-		return driver.checkInputs()
+		return checkDependencyRequirementInputs(driver)
 	})
 	if err != nil {
 		return err
@@ -103,6 +122,25 @@ func amendmentDefinitionIsNotInput(plan workseries.Plan, settings seriesSettings
 			if info, err := os.Lstat(selected); err == nil && os.SameFile(definition, info) {
 				return errors.New("dependency definition aliases a frozen input; amendment refused")
 			}
+		}
+	}
+	return nil
+}
+
+// A metadata amendment cannot refresh execution policy. Verify selected
+// requirements while retaining all original check/config hashes for execution.
+func checkDependencyRequirementInputs(driver *seriesDriver) error {
+	required := map[string]bool{}
+	for _, ticket := range driver.plan.Tickets {
+		for _, path := range driver.settings.ticketInputs(driver.plan.Reference, ticket.File) {
+			required[path] = true
+		}
+	}
+	for path := range required {
+		expected, ok := driver.settings.InputHashes[path]
+		actual, err := seriesInputHash(driver.plan.Root, path)
+		if !ok || err != nil || actual != expected {
+			return fmt.Errorf("feature requirement %q changed; restore frozen requirements before amending dependencies", path)
 		}
 	}
 	return nil

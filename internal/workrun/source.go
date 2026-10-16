@@ -262,6 +262,12 @@ func capture(ctx context.Context, launch project.LaunchResult, destination, bran
 		hash := sha256.Sum256(data)
 		plan.Inputs = append(plan.Inputs, Input{Path: path, SHA256: hex.EncodeToString(hash[:])})
 	}
+	if len(launch.Inputs) > 0 {
+		plan.InputContext, err = project.DescribeRequirementContext(destination, launch.Ticket, launch.Inputs)
+		if err != nil {
+			return plan, err
+		}
+	}
 	checkDir := filepath.Join(filepath.Dir(destination), "check-inputs")
 	if len(launch.Config.InputFiles) > 0 {
 		if _, e := os.Lstat(checkDir); !errors.Is(e, os.ErrNotExist) {

@@ -13,6 +13,7 @@ type LaunchResult struct {
 	Root, Reference, Ticket, Head, Branch string
 	Config                                Config
 	Inputs                                []string
+	InputContext                          []RequirementContext
 	CheckPreview                          [][]string
 }
 
@@ -95,6 +96,10 @@ func launch(ctx context.Context, directory, reference, ticket string, inputs []s
 	}
 	if resolve {
 		r.Inputs, err = ResolveRequirements(ctx, r.Root, reference, r.Inputs)
+		if err != nil {
+			return r, err
+		}
+		r.InputContext, err = DescribeRequirementContext(r.Root, r.Ticket, r.Inputs)
 		if err != nil {
 			return r, err
 		}

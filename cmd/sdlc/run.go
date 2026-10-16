@@ -488,6 +488,15 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if err != nil {
 			return err
 		}
+		if !options.featureOwned && !options.frozenInputs {
+			dependencyPlan, err := workseries.Discover(ctx, work.Root, options.reference, options.base)
+			if err != nil {
+				return err
+			}
+			if err = workseries.ValidateDeclaredDependencies(ctx, dependencyPlan, ticket); err != nil {
+				return err
+			}
+		}
 		// Feature controllers supply their already-resolved frozen selection.
 		// Only a fresh standalone run inherits the current project default.
 		if options.frozenConfig == nil && !options.supplied["docker-tests"] {
@@ -551,8 +560,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			journal.Plan.Headroom = *options.frozenHeadroom
 		}
 		if options.dryRun {
+			journal.Plan.InputContext = launch.InputContext
 			// Selection is known before capture; content hashes are not. Keep
-			// the offline plan useful without reading requirement bodies.
+			// the offline plan useful without copying requirement bodies or computing content hashes.
 			for _, path := range launch.Inputs {
 				journal.Plan.Inputs = append(journal.Plan.Inputs, workrun.Input{Path: path})
 			}

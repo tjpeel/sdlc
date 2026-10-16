@@ -404,6 +404,39 @@ To use the current default runtime for an unstarted ticket instead, run that tic
 individually without `--runtime`. Completing previous tickets does not replace an
 existing feature's immutable runtime settings.
 
+### Reconcile ticket blockers before execution
+
+Ticket authoring writes both `**Blocked by:**` metadata and work-level `plan.json`.
+Only links in that explicit field describe prerequisites. Specification links,
+ordinary references and deferred-boundary links do not schedule other tickets.
+
+For an existing ticket set without a feature checkpoint, preview and compile the
+initial scheduling handoff:
+
+```sh
+sdlc dependencies --reference EXAMPLE --from-tickets --dry-run
+sdlc dependencies --reference EXAMPLE --from-tickets
+```
+
+The command validates ticket names and cycles, preserves priorities and path
+metadata, and writes the private plan atomically. It refuses saved feature
+checkpoints and pending amendments; use the existing per-ticket amendment for an
+unstarted ticket in those features. A dry run writes nothing.
+
+Fresh launches reject disagreements between explicit blocker metadata and the
+scheduling plan. An individual launch checks only its selected ticket; unresolved
+metadata in an unselected sibling does not prevent independent work. Feature
+launches validate the whole planned set. Missing legacy blocker fields are not
+interpreted as a declaration of independence. Completed ticket metadata does not
+erase historical prerequisite edges. `ticket status` reports mismatches in either
+direction, including prose blockers missing from the plan.
+
+Dependency amendments retain the original runtime, accounts, models, checks and
+hashes. They require unchanged selected requirement documents. Drift in an
+unrelated check/configuration input does not prevent repairing scheduling metadata,
+but still prevents execution with that frozen feature until reconciled through
+its execution workflow. A metadata edit is not evidence that checks passed.
+
 ### Amend an unstarted ticket's dependencies
 
 Use the supported amendment command when a saved feature needs a different
@@ -456,8 +489,9 @@ omitted priorities use numeric filename order.
 Omitted dependencies and touches are empty. `touches` contains relative path
 prefixes: overlapping prefixes serialize those tickets. Declare known overlap;
 the controller does not infer it from ticket prose. Missing dependencies,
-cycles, unknown tickets and unsafe paths stop planning. Without a plan, tickets
-are independent and follow numeric filename order.
+cycles, unknown tickets and unsafe paths stop planning. Without a plan, scheduling starts with independent tickets in numeric filename
+order. Explicit blocker declarations must agree with the plan before a fresh
+launch; use `dependencies --from-tickets` for the initial handoff.
 
 A ticket with one dependency can start when its parent has a signed, tested and
 independently reviewed draft PR in `ready`. The child's source and PR base use
@@ -542,6 +576,33 @@ feature command. Keep feature checkpoints and native sessions private and
 intact. Offline tests cover scheduling and reconciliation; live provider,
 GitHub and signing behaviour for a complete feature still needs a connected
 trial in an authorised disposable repository.
+
+### Scope and captured context
+
+`inputs` and feature `TicketInputs` are capture inventories, not lists of work to
+implement. Whole linked documents are retained, including when a link names a
+section. New run plans also carry `input_context` entries with provenance:
+
+| Role | Meaning |
+| --- | --- |
+| `selected_ticket` | Selects behaviour due in this invocation. |
+| `supporting_context` | Constrains relevant contracts and shared invariants. |
+| `prerequisite_context` | A sibling named in explicit blocker metadata. |
+| `boundary_context` | Another sibling reference, including a deferred boundary. |
+
+`referenced_by` records which captured documents link to an input. Role labels do
+not add scope or prove a prerequisite has been delivered. New feature checkpoints
+retain equivalent `TicketInputContext`; old checkpoints are not rewritten. The
+independent reviewer receives the same optional roles. Older unclassified inputs
+retain the same scope rule: the selected ticket defines delivery, and broader
+context does not authorise sibling implementation.
+
+Implementation and review must connect proposed capabilities to the selected
+acceptance criteria or necessary invariants and their current callers/producers.
+An approved specification can still prescribe unnecessary preparation. Report and
+reconcile that scope concern rather than silently broadening delivery or dropping
+an approved requirement. Instruction and evidence checks support this judgement;
+they do not mechanically prove semantic scope correctness.
 
 ## Run one ticket
 

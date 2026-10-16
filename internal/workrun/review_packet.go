@@ -1,6 +1,9 @@
 package workrun
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/tjpeel/sdlc/internal/project"
+)
 
 // Implementation self-review must not populate the independent review report.
 // Restrict the native output schema as well as validating the returned role.
@@ -64,19 +67,20 @@ var reviewOutcomeSchema = func() string {
 // reviewRequirements retains requirement identity and relationships, without
 // repeating implementation launch, authentication and publication settings.
 type reviewRequirements struct {
-	Reference         string             `json:"reference"`
-	Ticket            string             `json:"ticket"`
-	Repository        string             `json:"repository"`
-	StartingSHA       string             `json:"starting_sha"`
-	SourceSHA         string             `json:"source_sha"`
-	Inputs            []Input            `json:"inputs"`
-	CheckInputs       []Input            `json:"check_inputs"`
-	Derived           *DerivedBoundary   `json:"derived,omitempty"`
-	DependencyContext *DependencyContext `json:"dependency_context,omitempty"`
+	InputContext      []project.RequirementContext `json:"input_context,omitempty"`
+	Reference         string                       `json:"reference"`
+	Ticket            string                       `json:"ticket"`
+	Repository        string                       `json:"repository"`
+	StartingSHA       string                       `json:"starting_sha"`
+	SourceSHA         string                       `json:"source_sha"`
+	Inputs            []Input                      `json:"inputs"`
+	CheckInputs       []Input                      `json:"check_inputs"`
+	Derived           *DerivedBoundary             `json:"derived,omitempty"`
+	DependencyContext *DependencyContext           `json:"dependency_context,omitempty"`
 }
 
 func selectedReviewRequirements(p Plan) reviewRequirements {
-	return reviewRequirements{p.Reference, p.Ticket, p.Repository, p.StartingSHA, p.SourceSHA, p.Inputs, p.CheckInputs, p.Derived, p.DependencyContext}
+	return reviewRequirements{InputContext: p.InputContext, Reference: p.Reference, Ticket: p.Ticket, Repository: p.Repository, StartingSHA: p.StartingSHA, SourceSHA: p.SourceSHA, Inputs: p.Inputs, CheckInputs: p.CheckInputs, Derived: p.Derived, DependencyContext: p.DependencyContext}
 }
 
 // The reviewer receives current comment revisions and acknowledgements, rather
