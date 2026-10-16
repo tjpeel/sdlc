@@ -624,12 +624,13 @@ func (r Runner) replyPRFeedback(ctx context.Context, dir string, j *Journal) err
 		}
 		// Original-to-signed mappings are saved by the trusted signing publisher.
 		if len(e.Assessment.Commits) > 0 {
-			// Commits already in the adopted publication need no new signing mapping.
+			// The source revision is the trusted starting publication. Signed rewrites
+			// live in the publisher repository, not the credential-free workspace.
 			repo, ok := r.Repository.(FeedbackCommitRepository)
 			if !ok {
 				return fmt.Errorf("repository cannot verify published feedback history")
 			}
-			published, err := repo.FeedbackCommits(ctx, j.Workspace, j.Publication.BaseSHA, j.Publication.HeadSHA)
+			published, err := repo.FeedbackCommits(ctx, j.Workspace, j.Publication.BaseSHA, j.Plan.SourceSHA)
 			if err != nil {
 				return err
 			}

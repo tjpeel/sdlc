@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.95 - 2026-10-16
+
+### Fixed
+
+- Verify existing feedback correction commits against the trusted source revision available in the credential-free workspace. Use publisher signing mappings for new corrections, without trying to inspect signed publication commits inside the unsigned workspace.
+
+
 ## 0.1.0-beta.94 - 2026-10-16
 
 ### Fixed

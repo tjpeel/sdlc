@@ -39,6 +39,19 @@ func (r feedbackGitRepository) FeedbackCommits(_ context.Context, root, start, h
 	return strings.Fields(r.git(root, "rev-list", "--reverse", "--first-parent", start+".."+head)), nil
 }
 
+// The credential-free workspace cannot inspect commits made by the signing publisher.
+type feedbackUnsignedWorkspaceRepository struct {
+	feedbackGitRepository
+	source string
+}
+
+func (r feedbackUnsignedWorkspaceRepository) FeedbackCommits(ctx context.Context, root, start, head string) ([]string, error) {
+	if head != r.source && head != r.git(root, "rev-parse", "HEAD") {
+		return nil, fmt.Errorf("signed publication is unavailable in credential-free workspace")
+	}
+	return r.feedbackGitRepository.FeedbackCommits(ctx, root, start, head)
+}
+
 type feedbackGitSigningPublisher struct {
 	feedbackPublisherFake
 	repo        feedbackGitRepository
@@ -114,7 +127,7 @@ func TestPRFeedbackRealCorrectionAndInterruptedResumePreserveCommitAndSignedRepl
 			repo.git(j.Workspace, "commit", "-m", "Implement selected ticket")
 			pub := &feedbackGitSigningPublisher{feedbackPublisherFake: feedbackPublisherFake{fakePublisher: &fakePublisher{}}, repo: repo}
 			r := fakeRunner(&fakeProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("reviewed")}}, &fakeChecker{}, pub.fakePublisher, &fakeRepository{})
-			r.Repository = repo
+			r.Repository = feedbackUnsignedWorkspaceRepository{feedbackGitRepository: repo, source: j.Plan.SourceSHA}
 			r.Publisher = pub
 			if err := r.Run(context.Background(), dir, j, ""); err != nil {
 				t.Fatal(err)
@@ -199,6 +212,7 @@ func TestPRFeedbackAcceptsCorrectionAlreadyInAdoptedHead(t *testing.T) {
 	repo.git(j.Workspace, "commit", "--allow-empty", "-m", "Existing correction")
 	head := repo.git(j.Workspace, "rev-parse", "HEAD")
 	j.Publication.BaseSHA, j.Publication.HeadSHA = base, head
+	j.Plan.SourceSHA = head
 	comment := generalFeedback("comment:1", "Correct the behaviour")
 	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: head, Entries: []PRFeedbackEntry{{StartedAttempt: j.Attempt, Comment: comment, Fingerprint: feedbackFingerprint(comment)}}}
 	r.Repository = repo
