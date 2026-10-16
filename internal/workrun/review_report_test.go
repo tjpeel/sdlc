@@ -96,9 +96,13 @@ func TestDeltaReviewContinuesAndRetainsEarlierEvidence(t *testing.T) {
 	if saved.State != "ready" || len(saved.ReviewReports) != 2 || len(p.calls) != 3 || p.calls[2].ResumeID != testNative || p.calls[2].Directory != p.calls[1].Directory {
 		t.Fatal("delta review completed without same-session inspection")
 	}
-	if saved.ReviewReports[0].Coverage.Gaps[0] != "Only the repair was inspected" || !strings.Contains(output.String(), "Consider sharing the rule") {
+	if saved.ReviewReports[0].Coverage.Gaps[0] != first.ReviewCoverage.Gaps[0] || len(saved.ReviewReports[0].Recommendations) != 1 || saved.ReviewReports[0].Recommendations[0] != first.Recommendations[0] {
 		t.Fatal("earlier evidence lost")
 	}
+	if strings.Contains(output.String(), first.Recommendations[0].Recommendation) {
+		t.Fatal("superseded recommendation still shown", output.String())
+	}
+
 	if !strings.Contains(p.calls[2].Prompt, "remaining_inspection") || !strings.Contains(p.calls[2].Prompt, "Only the repair") {
 		t.Fatal("focused continuation omitted named work")
 	}
@@ -176,14 +180,45 @@ func TestInterruptedReviewRetainsRecommendationsAndCoverage(t *testing.T) {
 	}
 }
 
-func TestLaterFullReviewDoesNotEraseEarlierRecommendations(t *testing.T) {
-	item := Finding{Priority: "P3", Path: "app.go", Line: 1, Scenario: "An advertised workflow has no supported input.", Recommendation: "Reconsider its public surface."}
-	j := Journal{Outcome: testOutcome("reviewed"), ReviewReports: []ReviewReport{
-		{Publication: Publication{HeadSHA: testHead}, Coverage: coverage("full"), Recommendations: []Finding{item}},
-		{Coverage: coverage("full")},
-	}}
+func TestRecommendationNoticeUsesSupersedingFullReview(t *testing.T) {
+	old := Finding{Priority: "P3", Path: "app.go", Line: 1, Scenario: "Unused capability.", Recommendation: "Defer until needed."}
+	current := Finding{Priority: "P3", Path: "other.go", Line: 2, Scenario: "Duplicated policy could drift.", Recommendation: "Share the policy."}
+	for _, tc := range []struct {
+		name, scope          string
+		recommendations      []Finding
+		wantOld, wantCurrent bool
+	}{
+		{name: "resolved by full review", scope: "full"},
+		{name: "remaining recommendation", scope: "full", recommendations: []Finding{old}, wantOld: true},
+		{name: "replacement recommendation", scope: "full", recommendations: []Finding{current}, wantCurrent: true},
+		{name: "partial cannot clear", scope: "partial", wantOld: true},
+		{name: "delta cannot clear", scope: "delta", recommendations: []Finding{current}, wantOld: true, wantCurrent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := Journal{Outcome: testOutcome("reviewed"), ReviewReports: []ReviewReport{
+				{Publication: Publication{HeadSHA: testHead}, Coverage: coverage("full"), Recommendations: []Finding{old}},
+				{Publication: Publication{HeadSHA: testSigned}, Coverage: coverage(tc.scope), Recommendations: tc.recommendations},
+			}}
+			notice := ReviewRecommendationNotice(j)
+			if strings.Contains(notice, old.Recommendation) != tc.wantOld || strings.Contains(notice, current.Recommendation) != tc.wantCurrent {
+				t.Fatalf("unexpected notice: %s", notice)
+			}
+			if !tc.wantOld && !tc.wantCurrent && notice != "" {
+				t.Fatalf("resolved recommendations still advertised: %s", notice)
+			}
+			if len(j.ReviewReports) != 2 || j.ReviewReports[0].Recommendations[0] != old {
+				t.Fatal("reporting changed retained history")
+			}
+		})
+	}
+}
+
+func TestRecommendationNoticePreservesLegacyOutcome(t *testing.T) {
+	item := Finding{Priority: "P3", Path: "app.go", Line: 1, Scenario: "Unused capability.", Recommendation: "Defer until needed."}
+	j := Journal{Outcome: testOutcome("reviewed")}
+	j.Outcome.Recommendations = []Finding{item}
 	if !strings.Contains(ReviewRecommendationNotice(j), item.Recommendation) {
-		t.Fatal("full inspection silently resolved a scope recommendation")
+		t.Fatal("legacy recommendation omitted")
 	}
 }
 
@@ -192,7 +227,9 @@ func TestStandaloneReviewDisplaysCoverageAndRecommendations(t *testing.T) {
 	out := testOutcome("reviewed")
 	out.ReviewCoverage = coverage("partial", "Uninspected dependency behaviour")
 	out.Recommendations = []Finding{{Priority: "P3", Path: "api.go", Line: 1, Scenario: "Duplicated policy could drift.", Recommendation: "Consider one policy boundary."}}
-	provider.outcomes = []Outcome{out, testOutcome("reviewed")}
+	completed := testOutcome("reviewed")
+	completed.Recommendations = out.Recommendations
+	provider.outcomes = []Outcome{out, completed}
 	var output bytes.Buffer
 	r.Output = &output
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {

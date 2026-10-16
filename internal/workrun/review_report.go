@@ -139,7 +139,7 @@ func ReviewRecommendationNotice(j Journal) string {
 		return ""
 	}
 	items := []string{}
-	reports := j.ReviewReports
+	reports := relevantReviewReports(j)
 	if len(reports) == 0 {
 		reports = []ReviewReport{{Recommendations: j.Outcome.Recommendations}}
 	}
@@ -156,7 +156,7 @@ func ReviewRecommendationNotice(j Journal) string {
 	if len(items) == 0 {
 		return ""
 	}
-	return "Recommendations recorded for human consideration (may predate repairs; not automatic repairs):\n  " + strings.Join(items, "\n  ")
+	return "Current review recommendations for human consideration (not automatic repairs):\n  " + strings.Join(items, "\n  ")
 }
 
 func reviewGapCount(c *ReviewCoverage) int {

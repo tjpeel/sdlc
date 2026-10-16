@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.94 - 2026-10-16
+
+### Fixed
+
+- Completion and dashboard notices show recommendations from the latest full review and any later partial reviews, instead of resurfacing superseded recommendations after repairs. Preserve earlier recommendations in run history and prevent partial reviews from clearing them.
+
+
 ## 0.1.0-beta.93 - 2026-10-16
 
 ### Fixed
