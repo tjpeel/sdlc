@@ -15,6 +15,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 - Present actionable PR conversations together, retaining prior assessed context when a new reply clarifies an issue, while preserving individual pending-comment assessments and excluding ignored conversations.
 
 
+### Fixed
+
+- Resume a saved feedback fetch after a completed review with limitations, matching the existing ready-state rules while retaining findings, questions, CI and verification gates.
+
 ## 0.1.0-beta.97 - 2026-10-16
 
 ### Fixed

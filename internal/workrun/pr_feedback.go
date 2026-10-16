@@ -140,7 +140,7 @@ func ValidatePRFeedbackResume(j Journal) error {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.PRFeedback.FetchPending && (j.State == "pr_feedback" || j.State == "blocked" && j.ResumeState == "pr_feedback") {
-		if j.PRFeedback.FetchResumeState == "ready" && ((j.Outcome.Status != "reviewed" && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || len(j.Outcome.Limitations) > 0 || j.CI.Status != "passed") {
+		if j.PRFeedback.FetchResumeState == "ready" && ((j.Outcome.Status != "reviewed" && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || (len(j.Outcome.Limitations) > 0 && j.Outcome.Status != "reviewed") || j.CI.Status != "passed") {
 			return fmt.Errorf("feedback fetch lost its ready boundary")
 		}
 		if j.PRFeedback.FetchResumeState == "publishing" && (j.Outcome.Status != "implemented" || pendingFeedback(&j) != nil) {

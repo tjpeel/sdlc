@@ -412,3 +412,37 @@ func TestPRFeedbackChangedCommentReplyHoldRefetchKeepsFreshReviewCycle(t *testin
 		t.Fatal("deleted comment recovery discarded history")
 	}
 }
+
+func TestFeedbackFetchResumePreservesReviewedLimitations(t *testing.T) {
+	for _, mode := range []string{"reviewed limitations", "reviewed clean", "unreviewed limitations", "findings", "questions", "CI pending", "checks missing"} {
+		t.Run(mode, func(t *testing.T) {
+			_, j, _, _, _ := feedbackReadyRun(t)
+			j.State, j.ResumeState = "blocked", "pr_feedback"
+			j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, FetchPending: true, FetchResumeState: "ready", Entries: []PRFeedbackEntry{}}
+			j.Outcome = testOutcome("reviewed")
+			j.Outcome.Limitations = []string{"External production behaviour was not independently measured."}
+			switch mode {
+			case "reviewed clean":
+				j.Outcome.Limitations = nil
+			case "unreviewed limitations":
+				j.Outcome.Status = "implemented"
+			case "findings":
+				j.Outcome.Findings = []Finding{{Priority: "P2", Path: "app.go", Line: 1, Scenario: "Failure", Recommendation: "Fix"}}
+			case "questions":
+				j.Outcome.Questions = []string{"Required domain decision"}
+			case "CI pending":
+				j.CI.Status = "pending"
+			case "checks missing":
+				j.Evidence.Passed = false
+			}
+			err := ValidatePRFeedbackResume(*j)
+			wantAllowed := mode == "reviewed limitations" || mode == "reviewed clean"
+			if (err == nil) != wantAllowed {
+				t.Fatalf("unexpected resume result: %v", err)
+			}
+			if mode == "reviewed limitations" && len(j.Outcome.Limitations) != 1 {
+				t.Fatal("review limitation was erased")
+			}
+		})
+	}
+}
