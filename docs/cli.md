@@ -1041,6 +1041,21 @@ counts. Used grants and the last assessed head are retained. This option only
 increases an existing allowance; it does not permit another grant for the same
 published head.
 
+### Continue incomplete independent inspection
+
+Independent review records one exact changed-file path per inspection entry.
+Completed files remain credited across turns in the same reviewer session and
+pinned publication. Pending entries identify the files still needing inspection;
+grouped names and wildcards receive no credit and prompt an exact-path correction.
+Progress is measured from newly completed files, not repeated narrative gap text.
+Separate unfinished investigations must still be preserved or explicitly completed.
+
+Ordinary resume reconstructs legacy file-accounting gaps from retained reports
+against the unchanged snapshot. It does not rewrite historical reports, mark
+uninspected files complete, change the reviewer session or bypass CI/revision
+checks. Findings and recommendations remain visible across incomplete turns;
+final review must carry supported items forward or explain their withdrawal.
+
 ### Supply missing CI failure context
 
 Failed CI checks automatically return relevant context for the exact published

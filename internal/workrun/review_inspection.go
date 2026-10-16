@@ -34,56 +34,176 @@ func (r DockerRepository) ReviewChangedPaths(ctx context.Context, workspace, bas
 	return paths, nil
 }
 
-// Old saved reports remain readable. Current native schemas require inspection
-// entries, and a declared incomplete or missing file cannot silently become full
-// coverage. This checks the report's accounting, not whether a model truly read.
-func (r Runner) reconcileReviewInspection(ctx context.Context, workspace string, out *Outcome) error {
+// File paths are stable inspection identifiers. Narrative gap text is not a
+// completion receipt, and grouped/wildcard labels never credit individual files.
+const fileInspectionGap = "Complete the pending exact file paths in inspection."
+
+func isFileInspectionGap(gap string) bool {
+	return gap == fileInspectionGap || strings.HasPrefix(gap, "Finish material file inspection:")
+}
+
+func withoutFileInspectionGaps(gaps []string) []string {
+	result := []string{}
+	for _, gap := range gaps {
+		if !isFileInspectionGap(gap) {
+			result = append(result, gap)
+		}
+	}
+	return result
+}
+
+func reviewInspectionHistory(j *Journal) [][]ReviewFileInspection {
+	var history [][]ReviewFileInspection
+	c := j.ReviewContinuation
+	if c == nil {
+		return history
+	}
+	if c.Inspection != nil {
+		history = append(history, c.Inspection)
+	}
+	for _, report := range j.ReviewReports {
+		if report.Publication == c.Publication && report.Attempt >= c.StartAttempt && report.Attempt <= c.LastAttempt && report.Coverage != nil && report.Coverage.BaseSHA == c.Publication.BaseSHA && report.Coverage.HeadSHA == c.Publication.HeadSHA {
+			history = append(history, report.Coverage.Inspection)
+		}
+	}
+	return history
+}
+
+func mergeReviewInspection(history ...[]ReviewFileInspection) map[string]ReviewFileInspection {
+	merged := map[string]ReviewFileInspection{}
+	for _, batch := range history {
+		for _, item := range batch {
+			merged[item.Path] = item
+		}
+	}
+	return merged
+}
+
+// Old reports remain unchanged. Only exact paths in the verified changed-file
+// manifest contribute to the current cumulative accounting.
+func (r Runner) reconcileReviewInspection(ctx context.Context, workspace string, out *Outcome, history ...[]ReviewFileInspection) error {
 	c := out.ReviewCoverage
-	if c == nil || c.Inspection == nil || out.Status != "reviewed" || c.Scope != "full" {
+	if c == nil || (out.Status != "reviewed" && out.Status != "review_incomplete") {
 		return nil
+	}
+	if c.Inspection == nil {
+		_, manifest := r.Repository.(reviewChangedPathRepository)
+		for _, batch := range history {
+			manifest = manifest || batch != nil
+		}
+		if !manifest {
+			return nil
+		}
+		c.Inspection = []ReviewFileInspection{}
 	}
 	if err := validateReviewDetails(*out, "review"); err != nil {
 		return err
 	}
-	seen := map[string]bool{}
-	pending := []string{}
-	for _, item := range c.Inspection {
-		seen[item.Path] = true
-		if !item.Complete {
-			pending = append(pending, item.Path+": "+item.Evidence)
-		}
-	}
+	batches := append(append([][]ReviewFileInspection(nil), history...), c.Inspection)
+	merged := mergeReviewInspection(batches...)
+	var paths []string
 	manifestAvailable := false
 	if repo, ok := r.Repository.(reviewChangedPathRepository); ok {
 		manifestAvailable = true
-		paths, err := repo.ReviewChangedPaths(ctx, workspace, c.BaseSHA, c.HeadSHA)
+		var err error
+		paths, err = repo.ReviewChangedPaths(ctx, workspace, c.BaseSHA, c.HeadSHA)
 		if err != nil {
 			return err
 		}
-		for _, path := range paths {
-			if !seen[path] {
-				pending = append(pending, path+": no file-inspection entry supplied")
-			}
+	} else {
+		for path := range merged {
+			paths = append(paths, path)
 		}
 	}
-	if len(c.Inspection) == 0 && !manifestAvailable {
-		pending = append(pending, "Record changed-file inspection, including test assertions, fixtures and supporting helpers")
+	sort.Strings(paths)
+	allowed := map[string]bool{}
+	for _, path := range paths {
+		allowed[path] = true
 	}
-	if len(pending) == 0 {
+	invalid := 0
+	for _, item := range c.Inspection {
+		if !allowed[item.Path] {
+			invalid++
+		}
+	}
+	c.Inspection = []ReviewFileInspection{}
+	pending := false
+	for _, path := range paths {
+		item, ok := merged[path]
+		if !ok {
+			item = ReviewFileInspection{Path: path, Evidence: "No exact per-file inspection supplied. Inspect this file and return one exact path per entry; do not group paths or use wildcards."}
+		}
+		c.Inspection = append(c.Inspection, item)
+		pending = pending || !item.Complete
+	}
+	if len(paths) == 0 && !manifestAvailable {
+		pending = true
+	}
+	c.Gaps = withoutFileInspectionGaps(c.Gaps)
+	c.CompletedGaps = withoutFileInspectionGaps(c.CompletedGaps)
+	if invalid > 0 {
+		out.Summary += fmt.Sprintf("\nInspection accounting: %d entries did not exactly match changed-file paths and received no credit. Use the pending exact paths in inspection; return one file per entry, with no grouped paths or wildcards.", invalid)
+	}
+	if pending {
+		c.Gaps = append(c.Gaps, fileInspectionGap)
+		c.Scope = "partial"
+		out.Status = "review_incomplete"
+	} else if len(c.Gaps) == 0 {
+		if out.Status == "review_incomplete" {
+			c.Gaps = []string{"Return the final independent review judgement for the recorded inspection."}
+			c.Scope = "partial"
+		} else {
+			c.Scope = "full"
+		}
+	}
+	return nil
+}
+
+// Refresh only derived inspection accounting after the saved snapshot and CI
+// checks pass. The publication, session, inputs and historical reports stay fixed.
+func (r Runner) restoreReviewInspection(ctx context.Context, workspace string, j *Journal) error {
+	c := j.ReviewContinuation
+	if c == nil {
 		return nil
 	}
-	sort.Strings(pending)
-	gap := "Finish material file inspection: " + strings.Join(pending, "; ")
-	exists := false
-	for _, existing := range c.Gaps {
-		if existing == gap {
-			exists = true
+	for _, report := range j.ReviewReports {
+		if report.Publication == c.Publication && report.Attempt >= c.StartAttempt && report.Attempt <= c.LastAttempt {
+			c.Recommendations = retainReviewFindings(c.Recommendations, report.Recommendations)
 		}
 	}
-	if !exists {
-		c.Gaps = append(c.Gaps, gap)
+	history := reviewInspectionHistory(j)
+	present := c.Inspection != nil
+	for _, batch := range history {
+		present = present || batch != nil
 	}
-	c.Scope = "partial"
-	out.Status = "review_incomplete"
+	for _, gap := range c.Gaps {
+		present = present || isFileInspectionGap(gap)
+	}
+	if !present {
+		return nil
+	}
+	out := Outcome{Status: "reviewed", ReviewCoverage: &ReviewCoverage{BaseSHA: c.Publication.BaseSHA, HeadSHA: c.Publication.HeadSHA, Scope: "full", Gaps: []string{}, Inspection: []ReviewFileInspection{}}}
+	if err := r.reconcileReviewInspection(ctx, workspace, &out, history...); err != nil {
+		return err
+	}
+	c.Inspection = out.ReviewCoverage.Inspection
+	gaps := withoutFileInspectionGaps(c.Gaps)
+	if out.Status == "review_incomplete" {
+		gaps = append(gaps, fileInspectionGap)
+	}
+	if len(gaps) == 0 {
+		gaps = append(gaps, "Return the final independent review judgement for the recorded inspection.")
+	}
+	c.Gaps = gaps
 	return nil
+}
+
+func reviewFilesAdvanced(j *Journal, coverage *ReviewCoverage) bool {
+	previous := mergeReviewInspection(reviewInspectionHistory(j)...)
+	for _, item := range coverage.Inspection {
+		if item.Complete && !previous[item.Path].Complete {
+			return true
+		}
+	}
+	return false
 }

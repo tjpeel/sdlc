@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.106 - 2026-10-16
+
+- Track independent-review inspection cumulatively by exact changed-file paths. Use structured pending-file records instead of giant narrative gap strings, reject grouped paths without credit, and recover older continuation accounting within the original pinned reviewer session and snapshot.
+
 ## 0.1.0-beta.105 - 2026-10-16
 
 - Retry diagnostic mailbox reads when an atomic request replacement unlinks an already opened file. Preserve hard-link, symlink and permission checks, and retain the underlying mailbox failure reason in controller diagnostics.

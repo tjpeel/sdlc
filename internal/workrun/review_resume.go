@@ -45,8 +45,16 @@ func (r Runner) prepareIndependentReview(ctx context.Context, dir string, j *Jou
 	return workspace, nil
 }
 
-func reviewInspectionAdvanced(previous []string, coverage *ReviewCoverage) bool {
-	if len(coverage.CompletedGaps) == 0 {
+func reviewInspectionAdvanced(previous []string, coverage *ReviewCoverage, filesAdvanced ...bool) bool {
+	fileProgress := len(filesAdvanced) > 0 && filesAdvanced[0]
+	if len(filesAdvanced) > 0 {
+		previous = withoutFileInspectionGaps(previous)
+		copy := *coverage
+		copy.Gaps = withoutFileInspectionGaps(copy.Gaps)
+		copy.CompletedGaps = withoutFileInspectionGaps(copy.CompletedGaps)
+		coverage = &copy
+	}
+	if len(coverage.CompletedGaps) == 0 && !fileProgress {
 		return false
 	}
 	prior := map[string]bool{}
@@ -95,6 +103,11 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 				return SessionResult{}, err
 			}
 		}
+		if resume != "" {
+			if err := r.restoreReviewInspection(ctx, workspace, j); err != nil {
+				return SessionResult{}, err
+			}
+		}
 		result, err := r.session(ctx, dir, j, "review", workspace, resume)
 		if err != nil {
 			// A later native failure cannot erase already known unfinished work.
@@ -108,7 +121,7 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 			return result, fmt.Errorf("independent reviewer changed its native session")
 		}
 		out := result.Outcome
-		if err := r.reconcileReviewInspection(ctx, workspace, &out); err != nil {
+		if err := r.reconcileReviewInspection(ctx, workspace, &out, reviewInspectionHistory(j)...); err != nil {
 			return result, err
 		}
 		result.Outcome = out
@@ -134,13 +147,15 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 		}
 		if c := j.ReviewContinuation; c != nil {
 			out.Findings = retainReviewFindings(c.Findings, out.Findings)
+			out.Recommendations = retainReviewFindings(c.Recommendations, out.Recommendations)
 		}
+		filesAdvanced := reviewFilesAdvanced(j, out.ReviewCoverage)
 		j.Outcome = out
 		if err := recordReviewReport(j); err != nil {
 			return result, err
 		}
 		c := j.ReviewContinuation
-		stalled := c != nil && !reviewInspectionAdvanced(c.Gaps, out.ReviewCoverage)
+		stalled := c != nil && !reviewInspectionAdvanced(c.Gaps, out.ReviewCoverage, filesAdvanced)
 		if c == nil {
 			relative, err := filepath.Rel(dir, workspace)
 			if err != nil || !sessionIdentifier.MatchString(result.SessionID) {
@@ -159,9 +174,11 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 		}
 		c.LastAttempt = j.Attempt
 		if !stalled {
+			c.Inspection = append([]ReviewFileInspection(nil), out.ReviewCoverage.Inspection...)
 			c.Gaps = append([]string(nil), out.ReviewCoverage.Gaps...)
 		}
 		c.Findings = retainReviewFindings(c.Findings, out.Findings)
+		c.Recommendations = retainReviewFindings(c.Recommendations, out.Recommendations)
 		if err := validateReviewContinuation(j); err != nil {
 			return result, err
 		}

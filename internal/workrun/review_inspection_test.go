@@ -147,3 +147,177 @@ func TestEmptyChangedFileSetCanCompleteInspection(t *testing.T) {
 		t.Fatal("empty diff invented unfinished work", err)
 	}
 }
+
+func TestDisjointFileInspectionAccumulatesWithoutNarrativeReceipts(t *testing.T) {
+	first := inspectionOutcome(ReviewFileInspection{Path: "a.go", Complete: true, Evidence: "Inspected request parsing"})
+	second := inspectionOutcome(ReviewFileInspection{Path: "b.go", Complete: true, Evidence: "Inspected runtime wiring"})
+	third := inspectionOutcome(ReviewFileInspection{Path: "c.go", Complete: true, Evidence: "Inspected failure recovery"})
+	dir, j, r, p, workspace := continuationFixture(t, first, second, third)
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go", "b.go", "c.go"}}
+	result, err := r.independentReview(context.Background(), dir, j, workspace)
+	if err != nil || result.Outcome.Status != "reviewed" || len(p.calls) != 3 || j.ReviewContinuation != nil {
+		t.Fatal(result.Outcome.Status, err, len(p.calls))
+	}
+	if len(result.Outcome.ReviewCoverage.Inspection) != 3 {
+		t.Fatal("earlier file inspection lost")
+	}
+	for _, item := range result.Outcome.ReviewCoverage.Inspection {
+		if !item.Complete {
+			t.Fatal(item)
+		}
+	}
+	if len(j.ReviewReports) != 2 || len(j.ReviewReports[1].Coverage.Inspection) != 3 {
+		t.Fatal("cumulative interim evidence missing")
+	}
+	for _, call := range p.calls[1:] {
+		if call.ResumeID != testNative || call.Directory != p.calls[0].Directory {
+			t.Fatal("review owner changed")
+		}
+	}
+}
+
+func TestGroupedInspectionGetsNoCreditAndActionableExactPaths(t *testing.T) {
+	first := inspectionOutcome(ReviewFileInspection{Path: "a.go, b.go", Complete: true, Evidence: "Read both"})
+	second := inspectionOutcome(ReviewFileInspection{Path: "a.go", Complete: true, Evidence: "Read a"})
+	third := inspectionOutcome(ReviewFileInspection{Path: "b.go", Complete: true, Evidence: "Read b"})
+	dir, j, r, p, workspace := continuationFixture(t, first, second, third)
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go", "b.go"}}
+	result, err := r.independentReview(context.Background(), dir, j, workspace)
+	if err != nil || result.Outcome.Status != "reviewed" || len(p.calls) != 3 {
+		t.Fatal(result.Outcome.Status, err)
+	}
+	for _, entry := range j.ReviewReports[0].Coverage.Inspection {
+		if entry.Complete {
+			t.Fatal("grouped path credited", entry)
+		}
+	}
+	if !strings.Contains(p.calls[1].Prompt, "one per entry") || !strings.Contains(p.calls[1].Prompt, `"path":"a.go"`) {
+		t.Fatal("no exact-path correction in continuation")
+	}
+}
+
+func TestRepeatedCompletedFileDoesNotManufactureProgress(t *testing.T) {
+	first := inspectionOutcome(ReviewFileInspection{Path: "a.go", Complete: true, Evidence: "Inspected a"})
+	next := inspectionOutcome(ReviewFileInspection{Path: "a.go", Complete: true, Evidence: "Same inspection, different prose"})
+	dir, j, r, p, workspace := continuationFixture(t, first, next)
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go", "b.go"}}
+	result, err := r.independentReview(context.Background(), dir, j, workspace)
+	if err != nil || result.Outcome.Status != "blocked" || len(p.calls) != 2 {
+		t.Fatal(result.Outcome.Status, err)
+	}
+	if j.ReviewContinuation == nil || len(j.ReviewContinuation.Inspection) != 2 {
+		t.Fatal("pending file lost")
+	}
+}
+
+func TestLegacyContinuationRestoresExactReceiptsWithoutRewritingReports(t *testing.T) {
+	_, j, r, _, workspace := continuationFixture(t)
+	j.Attempt = 5
+	legacy := "Finish material file inspection: " + strings.Repeat("a.go: no file-inspection entry supplied; ", 100)
+	c := &ReviewContinuation{Publication: j.Publication, Model: selectedReviewModel(j), Speed: j.Plan.Roles.ReviewSpeed, Tree: testTree, SessionID: testNative, Workspace: "review-source-fixture", StartAttempt: 4, LastAttempt: 5, Gaps: []string{legacy}}
+	j.ReviewContinuation = c
+	old := &ReviewCoverage{BaseSHA: testBase, HeadSHA: testHead, Scope: "partial", Gaps: []string{legacy}, Inspection: []ReviewFileInspection{{Path: "a.go, b.go", Complete: true, Evidence: "Grouped claim"}}}
+	latest := &ReviewCoverage{BaseSHA: testBase, HeadSHA: testHead, Scope: "partial", Gaps: []string{legacy + "paraphrased"}, Inspection: []ReviewFileInspection{{Path: "b.go", Complete: true, Evidence: "Inspected b exactly"}}}
+	j.ReviewReports = []ReviewReport{{Publication: j.Publication, Attempt: 4, Coverage: old}, {Publication: j.Publication, Attempt: 5, Coverage: latest}}
+	original, _ := json.Marshal(j.ReviewReports)
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go", "b.go"}}
+	if err := r.restoreReviewInspection(context.Background(), workspace, j); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Gaps) != 1 || c.Gaps[0] != fileInspectionGap || len(c.Inspection) != 2 || c.Inspection[0].Complete || !c.Inspection[1].Complete {
+		t.Fatal("legacy accounting not recovered", c)
+	}
+	if err := validateReviewContinuation(j); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(reviewContinuationPrompt(*j), legacy) {
+		t.Fatal("giant legacy gap remains in prompt")
+	}
+	after, _ := json.Marshal(j.ReviewReports)
+	if string(original) != string(after) {
+		t.Fatal("historical reports rewritten")
+	}
+	out := inspectionOutcome(ReviewFileInspection{Path: "a.go", Complete: true, Evidence: "Finished a"})
+	if err := r.reconcileReviewInspection(context.Background(), workspace, &out, reviewInspectionHistory(j)...); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "reviewed" || len(out.ReviewCoverage.Inspection) != 2 {
+		t.Fatal("recovered file inspection not retained")
+	}
+}
+
+func TestFileProgressCannotEraseSeparateUnfinishedGap(t *testing.T) {
+	c := &ReviewCoverage{Gaps: []string{fileInspectionGap}, CompletedGaps: []string{}}
+	if reviewInspectionAdvanced([]string{fileInspectionGap, "Trace transaction rollback"}, c, true) {
+		t.Fatal("file progress erased independent unfinished work")
+	}
+	c.Gaps = append(c.Gaps, "Trace transaction rollback")
+	if !reviewInspectionAdvanced([]string{fileInspectionGap, "Trace transaction rollback"}, c, true) {
+		t.Fatal("file progress with preserved generic gap rejected")
+	}
+}
+
+func TestCumulativeFileInspectionRetainsRecommendationsUntilFinalJudgement(t *testing.T) {
+	recommendation := Finding{Priority: "P3", Path: "a.go", Line: 1, Scenario: "Repeated identity checks can drift", Recommendation: "Share the identity predicate"}
+	first := inspectionOutcome(ReviewFileInspection{Path: "a.go", Complete: true, Evidence: "Read identity checks"})
+	first.Recommendations = []Finding{recommendation}
+	second := inspectionOutcome(ReviewFileInspection{Path: "b.go", Complete: true, Evidence: "Read publication path"})
+	third := inspectionOutcome(ReviewFileInspection{Path: "c.go", Complete: true, Evidence: "Read tests"})
+	third.Recommendations = []Finding{recommendation}
+	dir, j, r, p, workspace := continuationFixture(t, first, second, third)
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go", "b.go", "c.go"}}
+	result, err := r.independentReview(context.Background(), dir, j, workspace)
+	if err != nil || result.Outcome.Status != "reviewed" {
+		t.Fatal(result.Outcome.Status, err)
+	}
+	if len(j.ReviewReports[1].Recommendations) != 1 || j.ReviewReports[1].Recommendations[0] != recommendation {
+		t.Fatal("intermediate turn lost advisory recommendation")
+	}
+	if !strings.Contains(p.calls[2].Prompt, "earlier_recommendations") || !strings.Contains(p.calls[2].Prompt, recommendation.Scenario) {
+		t.Fatal("next reviewer lost duplication recommendation")
+	}
+}
+
+func TestInspectionFromAnotherPublicationDoesNotCreditCurrentReview(t *testing.T) {
+	_, j, r, _, workspace := continuationFixture(t)
+	j.Attempt = 5
+	j.ReviewContinuation = &ReviewContinuation{Publication: j.Publication, StartAttempt: 4, LastAttempt: 5, Gaps: []string{fileInspectionGap}}
+	prior := j.Publication
+	prior.HeadSHA = testBase
+	j.ReviewReports = []ReviewReport{{Publication: prior, Attempt: 4, Coverage: &ReviewCoverage{BaseSHA: testBase, HeadSHA: testBase, Scope: "full", Gaps: []string{}, Inspection: []ReviewFileInspection{{Path: "a.go", Complete: true, Evidence: "Old source"}}}}}
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go"}}
+	if err := r.restoreReviewInspection(context.Background(), workspace, j); err != nil {
+		t.Fatal(err)
+	}
+	if len(j.ReviewContinuation.Inspection) != 1 || j.ReviewContinuation.Inspection[0].Complete {
+		t.Fatal("stale publication supplied current coverage")
+	}
+}
+
+func TestMissingInspectionCannotBypassPendingManifest(t *testing.T) {
+	r := Runner{Repository: inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go", "b.go"}}}
+	out := inspectionOutcome()
+	out.ReviewCoverage.Inspection = nil
+	prior := []ReviewFileInspection{{Path: "a.go", Complete: true, Evidence: "Read a"}}
+	if err := r.reconcileReviewInspection(context.Background(), "unused", &out, prior); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "review_incomplete" || len(out.ReviewCoverage.Inspection) != 2 || out.ReviewCoverage.Inspection[1].Complete {
+		t.Fatal("missing array bypassed unfinished work")
+	}
+}
+
+func TestCompleteFilesStillRequireReviewerFinalJudgement(t *testing.T) {
+	out := unfinishedReview(fileInspectionGap)
+	out.ReviewCoverage.Inspection = []ReviewFileInspection{{Path: "a.go", Complete: true, Evidence: "Read a"}}
+	r := Runner{Repository: inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"a.go"}}}
+	if err := r.reconcileReviewInspection(context.Background(), "unused", &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "review_incomplete" || len(out.ReviewCoverage.Gaps) != 1 {
+		t.Fatal("controller invented final judgement")
+	}
+	if err := validateOutcome(out, "review"); err != nil {
+		t.Fatal("controller produced invalid continuation", err)
+	}
+}

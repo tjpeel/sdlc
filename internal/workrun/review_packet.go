@@ -54,6 +54,7 @@ var reviewOutcomeSchema = func() string {
 			"type": "array", "description": "One entry per changed file, plus material unchanged supporting paths. Complete means inspected substantive bodies, assertions and fixtures; inventories or selected snippets are incomplete. Evidence states what was inspected or exactly what remains. Keep prose, gaps and these entries consistent.",
 			"items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "complete", "evidence"}, "properties": map[string]any{"path": map[string]any{"type": "string"}, "complete": map[string]any{"type": "boolean"}, "evidence": map[string]any{"type": "string"}}},
 		}
+		fields["inspection"].(map[string]any)["description"] = "One exact changed-file path per entry. Never group filenames or use wildcards. Complete only after substantive inspection; the controller retains completed entries across continuation turns."
 		object["required"] = append(object["required"].([]any), "inspection")
 	}
 	properties["repository_requests"].(map[string]any)["description"] = "Request missing read-only companion source with checks_requested. Return [] when unused."
