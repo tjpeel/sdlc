@@ -297,3 +297,27 @@ func TestGitHubQuoteReplyReconcilesEarlierIDOnlyAcknowledgement(t *testing.T) {
 		t.Fatal("legacy reconciliation accepted different saved intent", err, f.posts)
 	}
 }
+
+func TestGitHubFeedbackRetainsLongInlineDiffContext(t *testing.T) {
+	p, f, plan, pr := githubFeedbackSetup(t)
+	item := githubItem(1, "Inspect the failure path", "reviewer", "User")
+	item.Path = "api.go"
+	item.OriginalLine = 9
+	item.OriginalCommit = testBase
+	item.DiffHunk = "@@ -1 +1 @@\n" + strings.Repeat("+context\n", 1400)
+	f.items["repos/example/project/pulls/1/comments"] = []githubFeedbackItem{item}
+	f.threads = []map[string]any{{"id": "thread-1", "comments": map[string]any{"nodes": []map[string]any{{"databaseId": 1}}}}}
+	comments, err := p.Feedback(context.Background(), plan, pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("unexpected comments: %d", len(comments))
+	}
+	if err := validateFeedbackComment(comments[0]); err != nil {
+		t.Fatal(err)
+	}
+	if comments[0].DiffHunk != item.DiffHunk {
+		t.Fatal("inline diff context was lost or truncated")
+	}
+}

@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.97 - 2026-10-16
+
+### Fixed
+
+- Accept inline review diff context larger than 8 KiB without truncation, retaining existing API-response and journal-size safeguards. Include the comment identifier and field sizes when feedback validation fails.
+
+
 ## 0.1.0-beta.96 - 2026-10-16
 
 ### Changed

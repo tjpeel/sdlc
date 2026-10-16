@@ -252,8 +252,8 @@ func validateFeedbackComment(c PRFeedbackComment) error {
 		return nil
 	}
 
-	if !utf8.ValidString(c.Body) || !utf8.ValidString(c.DiffHunk) || !utf8.ValidString(c.ID) || c.ID == "" || len(c.ID) > 100 || c.Author == "" || len(c.Author) > 100 || len(c.Body) > 8192 || len(c.DiffHunk) > 8192 || len(c.UpdatedAt) > 64 || len(c.ThreadID) > 100 || len(c.Path) > 240 || c.Line < 0 || c.OriginalLine < 0 || c.OriginalPosition < 0 {
-		return fmt.Errorf("PR feedback exceeds bounded comment contract")
+	if !utf8.ValidString(c.Body) || !utf8.ValidString(c.DiffHunk) || !utf8.ValidString(c.ID) || c.ID == "" || len(c.ID) > 100 || c.Author == "" || len(c.Author) > 100 || len(c.Body) > 8192 || len(c.UpdatedAt) > 64 || len(c.ThreadID) > 100 || len(c.Path) > 240 || c.Line < 0 || c.OriginalLine < 0 || c.OriginalPosition < 0 {
+		return fmt.Errorf("PR feedback %.100s exceeds comment contract (body: %d bytes; diff context: %d bytes; path: %d bytes)", c.ID, len(c.Body), len(c.DiffHunk), len(c.Path))
 	}
 	if c.Kind != "inline" && c.Kind != "review" && c.Kind != "comment" {
 		return fmt.Errorf("unsupported feedback kind")
