@@ -9,6 +9,8 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## 0.1.0-beta.101 - 2026-10-16
 
+- Advance the default provider CLI and skills/agents catalogue pins to the versions verified in the rebuilt default runtime.
+
 - Add `ticket status` to compare descriptive ticket metadata with authoritative feature checkpoints, dependency blockers and optional GitHub observations.
 - Add `ticket complete --pr URL` to reconcile externally completed work against a verified merged PR and its presence in the integration branch. Record exact GitHub revisions, preserve prior run evidence, and update completion metadata and matching frozen input hashes under the feature lock.
 - Recover interrupted ticket/journal updates by repeating the original command; hold ticket preparation until recovery completes. Provide verification-only previews and refuse conflicting repository, base, requirements or retained work.
