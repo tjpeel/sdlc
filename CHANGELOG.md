@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.98 - 2026-10-16
+
+### Changed
+
+- Use the configured GitHub account’s thumbs-down reaction to ignore a PR comment and its linked descendants. Recognise inline reply parents and top-level replies linked by a same-PR comment URL or an unambiguous full quote. Keep unrelated comments actionable.
+- Present actionable PR conversations together, retaining prior assessed context when a new reply clarifies an issue, while preserving individual pending-comment assessments and excluding ignored conversations.
+
+
 ## 0.1.0-beta.97 - 2026-10-16
 
 ### Fixed

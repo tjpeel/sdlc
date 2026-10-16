@@ -217,6 +217,9 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 				if !ok {
 					return nil, fmt.Errorf("inline feedback lacks original review thread")
 				}
+				if item.ReplyTo > 0 {
+					c.ParentIDs = []string{"inline:" + strconv.FormatInt(item.ReplyTo, 10)}
+				}
 				c.ThreadID = t.ID
 				c.ReplyID = t.Root
 				c.Outdated = t.Outdated
@@ -243,9 +246,11 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 		}
 	}
 	// IDs and kinds supply a stable order without trusting mutable API page order.
+	linkFeedbackConversations(result, pr.URL)
 	if err := p.markIgnoredFeedback(ctx, result, nodeIDs); err != nil {
 		return nil, err
 	}
+	inheritFeedbackIgnores(result)
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	if err := p.feedbackBoundary(ctx, plan, pr); err != nil {
 		return nil, err

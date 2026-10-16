@@ -13,7 +13,7 @@ import (
 // reactionGroups bounds the common read; only the viewer's marked comments need
 // paginated reactions to establish the actor and compare reaction/edit times.
 const feedbackReactionGroupsQuery = `query SDLCFeedbackReactionGroups($ids:[ID!]!){nodes(ids:$ids){id ... on Reactable{reactionGroups{content viewerHasReacted}}}}`
-const feedbackRocketQuery = `query SDLCFeedbackRocket($id:ID!,$cursor:String){node(id:$id){id __typename ... on IssueComment{databaseId:fullDatabaseId body updatedAt:lastEditedAt createdAt} ... on PullRequestReview{databaseId:fullDatabaseId body updatedAt:lastEditedAt createdAt} ... on PullRequestReviewComment{databaseId:fullDatabaseId body updatedAt:lastEditedAt createdAt} ... on Reactable{reactions(content:ROCKET,first:100,after:$cursor){nodes{id content createdAt user{login databaseId}} pageInfo{hasNextPage endCursor}}}}}`
+const feedbackIgnoreReactionQuery = `query SDLCFeedbackIgnoreReaction($id:ID!,$cursor:String){node(id:$id){id __typename ... on IssueComment{databaseId:fullDatabaseId body updatedAt:lastEditedAt createdAt} ... on PullRequestReview{databaseId:fullDatabaseId body updatedAt:lastEditedAt createdAt} ... on PullRequestReviewComment{databaseId:fullDatabaseId body updatedAt:lastEditedAt createdAt} ... on Reactable{reactions(content:THUMBS_DOWN,first:100,after:$cursor){nodes{id content createdAt user{login databaseId}} pageInfo{hasNextPage endCursor}}}}}`
 
 func (p GitHubPublisher) markIgnoredFeedback(ctx context.Context, comments []PRFeedbackComment, nodeIDs map[string]string) error {
 	if p.Frozen == nil {
@@ -61,14 +61,14 @@ func (p GitHubPublisher) markIgnoredFeedback(ctx context.Context, comments []PRF
 			return fmt.Errorf("invalid feedback reaction group identity")
 		}
 		seen[node.ID] = true
-		rocket := false
+		marked := false
 		for _, g := range node.Groups {
-			if g.Content == "ROCKET" && g.Viewer {
-				rocket = true
+			if g.Content == "THUMBS_DOWN" && g.Viewer {
+				marked = true
 			}
 		}
-		if rocket {
-			ignored, err := p.feedbackRocket(ctx, comments[index], node.ID)
+		if marked {
+			ignored, err := p.feedbackIgnoreReaction(ctx, comments[index], node.ID)
 			if err != nil {
 				return err
 			}
@@ -78,13 +78,13 @@ func (p GitHubPublisher) markIgnoredFeedback(ctx context.Context, comments []PRF
 	return nil
 }
 
-func (p GitHubPublisher) feedbackRocket(ctx context.Context, comment PRFeedbackComment, nodeID string) (*PRFeedbackIgnore, error) {
+func (p GitHubPublisher) feedbackIgnoreReaction(ctx context.Context, comment PRFeedbackComment, nodeID string) (*PRFeedbackIgnore, error) {
 	cursor := ""
 	seen := map[string]bool{}
 	var ignored *PRFeedbackIgnore
 	firstUpdated := ""
 	for page := 0; page < 5; page++ {
-		args := []string{"api", "graphql", "-f", "query=" + feedbackRocketQuery, "-f", "id=" + nodeID}
+		args := []string{"api", "graphql", "-f", "query=" + feedbackIgnoreReactionQuery, "-f", "id=" + nodeID}
 		if cursor != "" {
 			args = append(args, "-f", "cursor="+cursor)
 		}
@@ -118,13 +118,13 @@ func (p GitHubPublisher) feedbackRocket(ctx context.Context, comment PRFeedbackC
 		}
 		data, err := p.command(ctx, "gh", args...)
 		if err != nil || len(data) > maxCIAPIBytes || json.Unmarshal(data, &response) != nil || len(response.Errors) != 0 {
-			return nil, fmt.Errorf("feedback rocket reactions could not be read within bounds")
+			return nil, fmt.Errorf("feedback thumbs-down reactions could not be read within bounds")
 		}
 		n := response.Data.Node
 		subjectID, subjectErr := n.DatabaseID.Int64()
 		expectedType := map[string]string{"inline": "PullRequestReviewComment", "review": "PullRequestReview", "comment": "IssueComment"}[comment.Kind]
 		if n.ID != nodeID || n.Type != expectedType || subjectErr != nil || comment.ID != comment.Kind+":"+strconv.FormatInt(subjectID, 10) || n.Body != comment.Body || n.Reactions.Nodes == nil || len(n.Reactions.Nodes) > 100 {
-			return nil, fmt.Errorf("feedback changed during rocket reaction collection")
+			return nil, fmt.Errorf("feedback changed during thumbs-down reaction collection")
 		}
 		editTime := n.Updated
 		if editTime == "" {
@@ -139,8 +139,8 @@ func (p GitHubPublisher) feedbackRocket(ctx context.Context, comment PRFeedbackC
 			return nil, fmt.Errorf("feedback edit time could not be verified")
 		}
 		for _, reaction := range n.Reactions.Nodes {
-			if reaction.Content != "ROCKET" || reaction.ID == "" || len(reaction.ID) > 200 {
-				return nil, fmt.Errorf("invalid feedback rocket reaction")
+			if reaction.Content != "THUMBS_DOWN" || reaction.ID == "" || len(reaction.ID) > 200 {
+				return nil, fmt.Errorf("invalid feedback thumbs-down reaction")
 			}
 			if reaction.User.ID != p.Frozen.GitHubID || !strings.EqualFold(reaction.User.Login, p.Frozen.GitHubLogin) {
 				continue
@@ -150,7 +150,7 @@ func (p GitHubPublisher) feedbackRocket(ctx context.Context, comment PRFeedbackC
 				return nil, fmt.Errorf("feedback reaction time could not be verified")
 			}
 			if ignored != nil {
-				return nil, fmt.Errorf("duplicate account rocket reaction")
+				return nil, fmt.Errorf("duplicate account thumbs-down reaction")
 			}
 			if !created.Before(updated) {
 				ignored = &PRFeedbackIgnore{By: p.Frozen.GitHubLogin, UserID: p.Frozen.GitHubID, ReactionID: reaction.ID, CreatedAt: reaction.Created}

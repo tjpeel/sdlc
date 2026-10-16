@@ -2257,7 +2257,8 @@ merge a PR or modify unrelated scope.
 
 ### Mark PR feedback as already handled
 
-Add a **🚀 (rocket)** reaction to the specific comment using the run's configured
+Use **👎 (thumbs down)** rather than 🚀 for new ignore markers.
+Add the 👎 reaction to the specific comment using the run's configured
 GitHub account. Adoption and later `--pr-feedback` passes skip that comment while
 it remains unchanged since your reaction. This covers general PR comments, review
 summaries and inline comments. Resolved inline threads are already skipped.
@@ -2272,7 +2273,15 @@ GitHub review approval, or bypass repository checks and independent review.
 A comment edited after the reaction is eligible again. Remove and re-add the
 reaction after reading the edit if it is still handled. Removing a marker makes
 unassessed feedback eligible at the next explicit adoption or feedback pass.
-Replies are separate comments: marking a parent does not suppress new replies.
+A marked comment also excludes its linked descendants, including replies added
+later. Inline replies use GitHub's parent metadata. General PR comments are linked
+when they quote the full text of one unambiguous parent or link to a comment on
+this PR. Merely posting later does not make a comment a reply. Use a comment link
+when quoting only part of a comment or when identical text makes a quote ambiguous.
+A marked reply excludes its own descendants; its parent and siblings remain actionable.
+For unmarked conversations, SDLC supplies the latest parent and replies together,
+including already assessed context when a new reply explains how to fix the issue.
+Each pending comment retains its own assessment and acknowledgement.
 SDLC reads reactions; it does not add or remove them. Unverifiable reaction data
 keeps the run held rather than silently ignoring feedback.
 

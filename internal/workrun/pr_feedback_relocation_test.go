@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -101,7 +102,7 @@ func TestRelocatedInlineFeedbackDoesNotStartNewImplementationCycle(t *testing.T)
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || j.Attempt != beforeAttempts || checker.calls != beforeChecks || pub.replies != beforeReplies || len(j.PRFeedback.Entries) != 1 || j.PRFeedback.Entries[0].Fingerprint != entry.Fingerprint || j.PRFeedback.Entries[0].Comment != entry.Comment || j.PRFeedback.Entries[0].Marker != entry.Marker {
+	if j.State != "ready" || j.Attempt != beforeAttempts || checker.calls != beforeChecks || pub.replies != beforeReplies || len(j.PRFeedback.Entries) != 1 || j.PRFeedback.Entries[0].Fingerprint != entry.Fingerprint || !reflect.DeepEqual(j.PRFeedback.Entries[0].Comment, entry.Comment) || j.PRFeedback.Entries[0].Marker != entry.Marker {
 		t.Fatal("derived location update redispatched or replaced captured feedback")
 	}
 	current.Body = "A new human correction"

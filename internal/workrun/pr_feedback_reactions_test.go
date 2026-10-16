@@ -11,7 +11,7 @@ import (
 
 // The fake is at the existing official gh boundary. Each test observes the
 // collected comment and its eligibility, not just the query text.
-func rocketFixture(t *testing.T, kind string) (GitHubPublisher, *feedbackGitHubFake, Plan, Publication, githubFeedbackItem) {
+func thumbsDownFixture(t *testing.T, kind string) (GitHubPublisher, *feedbackGitHubFake, Plan, Publication, githubFeedbackItem) {
 	p, f, plan, pr := githubFeedbackSetup(t)
 	item := githubItem(1, "Handled feedback", "reviewer", "User")
 	endpoint := "repos/example/project/issues/1/comments"
@@ -27,23 +27,23 @@ func rocketFixture(t *testing.T, kind string) (GitHubPublisher, *feedbackGitHubF
 	return p, f, plan, pr, item
 }
 
-func rocketResponses(item githubFeedbackItem, kind, actor string, actorID int64, created, updated string, viewer bool) func([]string) ([]byte, error) {
+func thumbsDownResponses(item githubFeedbackItem, kind, actor string, actorID int64, created, updated string, viewer bool) func([]string) ([]byte, error) {
 	return func(args []string) ([]byte, error) {
 		var result any
 		if strings.Contains(strings.Join(args, " "), "query SDLCFeedbackReactionGroups") {
-			result = map[string]any{"data": map[string]any{"nodes": []any{map[string]any{"id": item.NodeID, "reactionGroups": []any{map[string]any{"content": "ROCKET", "viewerHasReacted": viewer}}}}}}
+			result = map[string]any{"data": map[string]any{"nodes": []any{map[string]any{"id": item.NodeID, "reactionGroups": []any{map[string]any{"content": "THUMBS_DOWN", "viewerHasReacted": viewer}}}}}}
 		} else {
-			result = map[string]any{"data": map[string]any{"node": map[string]any{"id": item.NodeID, "__typename": map[string]string{"comment": "IssueComment", "review": "PullRequestReview", "inline": "PullRequestReviewComment"}[kind], "databaseId": fmt.Sprintf("%d", item.ID), "body": item.Body, "updatedAt": updated, "reactions": map[string]any{"nodes": []any{map[string]any{"id": "rocket-1", "content": "ROCKET", "createdAt": created, "user": map[string]any{"login": actor, "databaseId": actorID}}}, "pageInfo": map[string]any{"hasNextPage": false}}}}}
+			result = map[string]any{"data": map[string]any{"node": map[string]any{"id": item.NodeID, "__typename": map[string]string{"comment": "IssueComment", "review": "PullRequestReview", "inline": "PullRequestReviewComment"}[kind], "databaseId": fmt.Sprintf("%d", item.ID), "body": item.Body, "updatedAt": updated, "reactions": map[string]any{"nodes": []any{map[string]any{"id": "thumbs-down-1", "content": "THUMBS_DOWN", "createdAt": created, "user": map[string]any{"login": actor, "databaseId": actorID}}}, "pageInfo": map[string]any{"hasNextPage": false}}}}}
 		}
 		return json.Marshal(result)
 	}
 }
 
-func TestGitHubRocketIgnoresOnlyFrozenAccountReactionOnUnchangedFeedback(t *testing.T) {
+func TestGitHubThumbsDownIgnoresOnlyFrozenAccountReactionOnUnchangedFeedback(t *testing.T) {
 	for _, kind := range []string{"comment", "review", "inline"} {
 		for _, mode := range []string{"handled", "another account", "wrong numeric identity", "edited", "removed"} {
 			t.Run(kind+"/"+mode, func(t *testing.T) {
-				p, f, plan, pr, item := rocketFixture(t, kind)
+				p, f, plan, pr, item := thumbsDownFixture(t, kind)
 				actor, id, viewer := p.Frozen.GitHubLogin, p.Frozen.GitHubID, true
 				created, updated := "2026-10-15T12:00:00Z", item.Updated
 				switch mode {
@@ -56,7 +56,7 @@ func TestGitHubRocketIgnoresOnlyFrozenAccountReactionOnUnchangedFeedback(t *test
 				case "removed":
 					viewer = false
 				}
-				f.reactionCommand = rocketResponses(item, kind, actor, id, created, updated, viewer)
+				f.reactionCommand = thumbsDownResponses(item, kind, actor, id, created, updated, viewer)
 				comments, err := p.Feedback(context.Background(), plan, pr)
 				if err != nil || len(comments) != 1 {
 					t.Fatal(comments, err)
@@ -71,7 +71,7 @@ func TestGitHubRocketIgnoresOnlyFrozenAccountReactionOnUnchangedFeedback(t *test
 						t.Fatal("handled feedback remains actionable")
 					}
 					ignored := comments[0].Ignored
-					if ignored.By != p.Frozen.GitHubLogin || ignored.UserID != p.Frozen.GitHubID || ignored.ReactionID != "rocket-1" {
+					if ignored.By != p.Frozen.GitHubLogin || ignored.UserID != p.Frozen.GitHubID || ignored.ReactionID != "thumbs-down-1" {
 						t.Fatal("ignore evidence missing", ignored)
 					}
 				} else if len(pending) != 1 {
@@ -82,11 +82,11 @@ func TestGitHubRocketIgnoresOnlyFrozenAccountReactionOnUnchangedFeedback(t *test
 	}
 }
 
-func TestRocketReadFailuresCannotSilentlySuppressComments(t *testing.T) {
+func TestThumbsDownReadFailuresCannotSilentlySuppressComments(t *testing.T) {
 	for _, mode := range []string{"request", "partial GraphQL", "wrong node", "wrong subject", "changed body", "invalid edit time", "invalid reaction time", "pagination"} {
 		t.Run(mode, func(t *testing.T) {
-			p, f, plan, pr, item := rocketFixture(t, "comment")
-			base := rocketResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
+			p, f, plan, pr, item := thumbsDownFixture(t, "comment")
+			base := thumbsDownResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
 			f.reactionCommand = func(args []string) ([]byte, error) {
 				if mode == "request" {
 					return nil, errors.New("offline failure")
@@ -125,7 +125,7 @@ func TestRocketReadFailuresCannotSilentlySuppressComments(t *testing.T) {
 }
 
 func TestResolvedThreadDoesNotRequireReactionRead(t *testing.T) {
-	p, f, plan, pr, _ := rocketFixture(t, "inline")
+	p, f, plan, pr, _ := thumbsDownFixture(t, "inline")
 	f.threads[0]["isResolved"] = true
 	f.reactionCommand = func([]string) ([]byte, error) { return nil, fmt.Errorf("resolved thread should not need reactions") }
 	comments, err := p.Feedback(context.Background(), plan, pr)
@@ -134,15 +134,15 @@ func TestResolvedThreadDoesNotRequireReactionRead(t *testing.T) {
 	}
 }
 
-func TestIgnoredParentDoesNotSuppressNewReplies(t *testing.T) {
-	p, f, plan, pr, item := rocketFixture(t, "comment")
+func TestIgnoredCommentDoesNotSuppressUnrelatedComments(t *testing.T) {
+	p, f, plan, pr, item := thumbsDownFixture(t, "comment")
 	reply := githubItem(2, "New human follow-up", "reviewer", "User")
 	f.items["repos/example/project/issues/1/comments"] = []githubFeedbackItem{item, reply}
-	base := rocketResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
+	base := thumbsDownResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
 	f.reactionCommand = func(args []string) ([]byte, error) {
 		if strings.Contains(strings.Join(args, " "), "query SDLCFeedbackReactionGroups") {
 			return json.Marshal(map[string]any{"data": map[string]any{"nodes": []any{
-				map[string]any{"id": item.NodeID, "reactionGroups": []any{map[string]any{"content": "ROCKET", "viewerHasReacted": true}}},
+				map[string]any{"id": item.NodeID, "reactionGroups": []any{map[string]any{"content": "THUMBS_DOWN", "viewerHasReacted": true}}},
 				map[string]any{"id": reply.NodeID, "reactionGroups": []any{}},
 			}}})
 		}
@@ -162,7 +162,7 @@ func TestIgnoredParentDoesNotSuppressNewReplies(t *testing.T) {
 	}
 }
 
-func TestAdoptionRetainsRocketSkipAndLaterProcessesUnmarkedComment(t *testing.T) {
+func TestAdoptionRetainsThumbsDownSkipAndLaterProcessesUnmarkedComment(t *testing.T) {
 	dir, j := testRun(t)
 	a := adoptionBoundary()
 	j.Plan.Adoption = &a
@@ -172,7 +172,7 @@ func TestAdoptionRetainsRocketSkipAndLaterProcessesUnmarkedComment(t *testing.T)
 	j.State = "adopting"
 	j.Publication = Publication{a.URL, a.Number, a.BaseSHA, a.HeadSHA}
 	comment := generalFeedback("comment:1", "Unique ignored top-level feedback")
-	comment.Ignored = &PRFeedbackIgnore{By: "example", UserID: 123, ReactionID: "rocket-1", CreatedAt: "2026-10-15T12:00:00Z"}
+	comment.Ignored = &PRFeedbackIgnore{By: "example", UserID: 123, ReactionID: "thumbs-down-1", CreatedAt: "2026-10-15T12:00:00Z"}
 	pub := &feedbackPublisherFake{fakePublisher: &fakePublisher{}, comments: []PRFeedbackComment{comment}}
 	provider := &feedbackScriptProvider{outcomes: []Outcome{testOutcome("implemented"), testOutcome("implemented"), testOutcome("reviewed")}}
 	checks := &fakeChecker{}
@@ -205,11 +205,11 @@ func TestAdoptionRetainsRocketSkipAndLaterProcessesUnmarkedComment(t *testing.T)
 	}
 }
 
-func TestRocketFindsConfiguredAccountAfterFirstPageWithLargeCommentID(t *testing.T) {
-	p, f, plan, pr, _ := rocketFixture(t, "comment")
+func TestThumbsDownFindsConfiguredAccountAfterFirstPageWithLargeCommentID(t *testing.T) {
+	p, f, plan, pr, _ := thumbsDownFixture(t, "comment")
 	item := githubItem(6345345111, "Handled feedback", "reviewer", "User")
 	f.items["repos/example/project/issues/1/comments"] = []githubFeedbackItem{item}
-	base := rocketResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
+	base := thumbsDownResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", item.Updated, true)
 	reads := 0
 	f.reactionCommand = func(args []string) ([]byte, error) {
 		data, err := base(args)
@@ -230,11 +230,11 @@ func TestRocketFindsConfiguredAccountAfterFirstPageWithLargeCommentID(t *testing
 	}
 }
 
-func TestRocketUsesBodyEditTimeRatherThanOtherCommentUpdates(t *testing.T) {
-	p, f, plan, pr, item := rocketFixture(t, "comment")
+func TestThumbsDownUsesBodyEditTimeRatherThanOtherCommentUpdates(t *testing.T) {
+	p, f, plan, pr, item := thumbsDownFixture(t, "comment")
 	item.Updated = "2026-10-15T13:00:00Z" // An unrelated metadata update after the reaction.
 	f.items["repos/example/project/issues/1/comments"] = []githubFeedbackItem{item}
-	base := rocketResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", "", true)
+	base := thumbsDownResponses(item, "comment", p.Frozen.GitHubLogin, p.Frozen.GitHubID, "2026-10-15T12:00:00Z", "", true)
 	f.reactionCommand = func(args []string) ([]byte, error) {
 		data, err := base(args)
 		if err == nil && !strings.Contains(strings.Join(args, " "), "query SDLCFeedbackReactionGroups") {

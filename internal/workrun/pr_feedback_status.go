@@ -50,7 +50,7 @@ func PRFeedbackStatus(j Journal) PRFeedbackSummary {
 	if result.Pending > 0 || result.Unresolved > 0 || result.OutstandingReplies > 0 || result.Ignored > 0 {
 		result.Summary = fmt.Sprintf("PR feedback cycle %d: %d pending, %d unresolved, %d replies outstanding.", result.Cycle, result.Pending, result.Unresolved, result.OutstandingReplies)
 		if result.Ignored > 0 {
-			result.Summary += fmt.Sprintf(" %d ignored by rocket reaction.", result.Ignored)
+			result.Summary += fmt.Sprintf(" %d ignored by operator reaction (including replies).", result.Ignored)
 		}
 		if len(lines) > 0 {
 			result.Summary += "\n" + strings.Join(lines, "\n")
