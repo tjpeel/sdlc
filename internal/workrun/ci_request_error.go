@@ -99,3 +99,31 @@ func waitCIJobLog(ctx context.Context, delay time.Duration) error {
 		return nil
 	}
 }
+
+// Status reads retry only isolated transient transport failures. Cleanup,
+// authentication, rate limits and response validation retain their stop semantics.
+func readCIStatus(ctx context.Context, fetch func() ([]byte, error), wait func(context.Context, time.Duration) error) ([]byte, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := fetch()
+		request, isolated := err.(*ciRequestError)
+		transient := isolated && (request.Status == 500 || request.Status == 502 || request.Status == 503 || request.Status == 504 || request.Kind == "temporary network error")
+		if !transient || attempt == 2 {
+			return data, err
+		}
+		delay := time.Second
+		if attempt == 1 {
+			delay = 5 * time.Second
+		}
+		if err := wait(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("CI status retry exhausted")
+}
+
+func (publisher GitHubPublisher) ciStatusCommand(ctx context.Context, args ...string) ([]byte, error) {
+	return readCIStatus(ctx, func() ([]byte, error) { return publisher.command(ctx, "gh", args...) }, waitCIJobLog)
+}

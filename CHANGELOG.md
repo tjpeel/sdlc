@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.109 - 2026-10-17
+
+- Retry transient GitHub CI status reads up to three attempts with cancellable backoff. Preserve safe request categories and distinguish invalid responses; authentication, rate limits, cleanup failures and changed revisions still stop the run.
+
 ## 0.1.0-beta.108 - 2026-10-16
 
 - Return invalid feedback commit receipts to the original implementation session with exact candidate history. Recover existing receipt-validation stops through ordinary resume without guessing commit IDs or bypassing checks.

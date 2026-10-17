@@ -651,7 +651,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, err
 		}
 	}
-	data, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state")
+	data, err := publisher.ciStatusCommand(ctx, "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state")
 	if err != nil {
 		return CIResult{}, err
 	}
@@ -663,17 +663,20 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	if json.Unmarshal(data, &revision) != nil || revision.Base != pr.BaseSHA || revision.Head != pr.HeadSHA || revision.State != "OPEN" {
 		return CIResult{}, fmt.Errorf("PR revision changed while waiting for CI")
 	}
-	data, checkErr := publisher.command(ctx, "gh", "pr", "checks", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "name,bucket,state,link")
+	data, checkErr := publisher.ciStatusCommand(ctx, "pr", "checks", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "name,bucket,state,link")
 	// Only documented failure/pending exits may carry usable check JSON.
 	if checkErr != nil {
+		if request, isolated := checkErr.(*ciRequestError); isolated && (request.Status != 0 || request.Kind != "command or transport error") {
+			return CIResult{}, fmt.Errorf("CI checks could not be read: %s", request.Error())
+		}
 		var status interface{ ExitCode() int }
 		if !errors.As(checkErr, &status) || status.ExitCode() != 1 && status.ExitCode() != 8 {
-			return CIResult{}, fmt.Errorf("required CI checks could not be read")
+			return CIResult{}, fmt.Errorf("CI checks command failed with an unsupported exit status")
 		}
 	}
 	var checks []ciRequestedCheck
 	if len(data) > maxCIAPIBytes || !utf8.Valid(data) || json.Unmarshal(data, &checks) != nil || checks == nil || len(checks) > 200 {
-		return CIResult{}, fmt.Errorf("required CI checks could not be read")
+		return CIResult{}, fmt.Errorf("CI checks response is invalid, oversized or missing; expected a JSON check list")
 	}
 	result := CIResult{Status: "passed"}
 	sonarNames := map[string]bool{}
@@ -728,7 +731,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 
 	// Re-read the boundary after querying checks so results never certify a
 	// concurrently changed PR head or base.
-	after, err := publisher.command(ctx, "gh", "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state")
+	after, err := publisher.ciStatusCommand(ctx, "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state")
 	if err != nil {
 		return CIResult{}, err
 	}
