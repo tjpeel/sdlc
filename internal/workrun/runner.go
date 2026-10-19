@@ -704,6 +704,17 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "awaiting_reviewer", "reviewing":
+			if completedReviewAwaitingCI(journal) {
+				done, err := runner.finishCompletedReview(ctx, directory, journal)
+				if err != nil {
+					return err
+				}
+				if done {
+					return nil
+				}
+				continue
+			}
+
 			if savedReviewCategory != "" {
 				proof, err := runner.reviewUsageProof(ctx, directory, journal, savedReviewCategory, true)
 				savedReviewCategory = ""
@@ -721,10 +732,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if status != "stored" {
 				return runner.stop(directory, journal, "awaiting_reviewer", fmt.Sprintf("authenticate %s, then resume this run for independent review", journal.Plan.Roles.Review.Provider))
 			}
-			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
-			if err == nil {
-				err = validateCIResult(checks, journal.Publication)
-			}
+			checks, err := runner.readPublishedCI(ctx, directory, journal)
 			if err == nil {
 				journal.CI = checks
 			}
@@ -809,46 +817,19 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				}
 				continue
 			}
-			// A review is evidence for this exact PR boundary only.
-			checks, err = runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
-			if err == nil {
-				err = validateCIResult(checks, journal.Publication)
-			}
-			if err == nil {
-				journal.CI = checks
-			}
-			if err != nil || checks.Status != "passed" {
-				return runner.stop(directory, journal, "blocked", "PR or CI changed during independent review")
-			}
-			if feedbackStatus := PRFeedbackStatus(*journal); feedbackStatus.Pending > 0 || feedbackStatus.OutstandingReplies > 0 {
-				return runner.stop(directory, journal, "blocked", "human PR feedback assessments or replies remain outstanding")
-			}
-			if journal.PRFeedback != nil && journal.PRFeedback.Active {
-				journal.PRFeedback.Active = false
-				journal.PRFeedback.CompletedHead = journal.Publication.HeadSHA
-			}
-			if err := runner.transition(directory, journal, "ready"); err != nil {
+			// Save the completed review before any fallible CI read. An ordinary
+			// resume can finish verification without another native reviewer turn.
+			if err := runner.save(directory, journal); err != nil {
 				return err
 			}
-			if accepted, err := runner.autoAcceptRecommendations(ctx, directory, journal); err != nil {
-				return runner.stop(directory, journal, "blocked", err.Error())
-			} else if accepted {
-				continue
+			done, err := runner.finishCompletedReview(ctx, directory, journal)
+			if err != nil {
+				return err
 			}
-			if notice := ReviewSkipNotice(*journal); notice != "" {
-				fmt.Fprintln(runner.Output, notice)
+			if done {
+				return nil
 			}
-			if notice := ReviewRecommendationNotice(*journal); notice != "" {
-				fmt.Fprintln(runner.Output, notice)
-			}
-			if notice := ReviewWarningNotice(*journal); notice != "" {
-				fmt.Fprintln(runner.Output, notice)
-			}
-			fmt.Fprintln(runner.Output, "Ready for human review:", journal.Publication.URL)
-			if status := PRFeedbackStatus(*journal); status.Summary != "" {
-				fmt.Fprintln(runner.Output, status.Summary)
-			}
-			return nil
+			continue
 		default:
 			return fmt.Errorf("unknown recorded run stage %q", journal.State)
 		}

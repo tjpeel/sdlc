@@ -65,7 +65,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.116`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.117`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -451,3 +451,13 @@ Fresh checks and independent review are required before readiness. Publication u
 the recorded remote head as an exact lease. Recommendation policy and PR feedback
 are unchanged; `--rebase` cannot be combined with feedback or acceptance options.
 Use `--dry-run` for an offline plan; it does not query GitHub or modify history.
+
+### CI startup and review completion
+
+CI startup treats a confirmed empty or null check rollup as waiting for checks.
+If checks appear between GitHub reads, the next poll collects their outcomes.
+Final verification after independent review uses the same configured manual
+workflow evidence as ordinary CI polling. A completed full review is retained for
+its exact PR revision; resuming a failed final CI read rechecks CI without another
+reviewer turn. Errors retain their underlying cause. Changed revisions and failed
+checks still require the usual review or repair.

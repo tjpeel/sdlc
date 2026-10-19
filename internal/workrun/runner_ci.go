@@ -11,14 +11,8 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 	defer func() { journal.Timings.CIWallMS += time.Since(started).Milliseconds() }()
 	queryStarted := time.Now()
 
-	checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
+	checks, err := runner.readPublishedCI(ctx, directory, journal)
 	journal.Timings.CIQueryMS += time.Since(queryStarted).Milliseconds()
-	if err == nil {
-		err = validateCIResult(checks, journal.Publication)
-	}
-	if err == nil {
-		checks, err = runner.ensureCIWorkflow(ctx, directory, journal, checks)
-	}
 	if err == nil {
 		journal.CI = checks
 	}

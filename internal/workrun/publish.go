@@ -680,13 +680,23 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, err
 		}
 		var empty struct {
-			Base   string `json:"baseRefOid"`
-			Head   string `json:"headRefOid"`
-			State  string
-			Checks []json.RawMessage `json:"statusCheckRollup"`
+			Base   string          `json:"baseRefOid"`
+			Head   string          `json:"headRefOid"`
+			State  string          `json:"state"`
+			Checks json.RawMessage `json:"statusCheckRollup"`
 		}
-		if json.Unmarshal(snapshot, &empty) != nil || empty.Base != pr.BaseSHA || empty.Head != pr.HeadSHA || empty.State != "OPEN" || empty.Checks == nil || len(empty.Checks) != 0 {
+		if len(snapshot) > maxCIAPIBytes || json.Unmarshal(snapshot, &empty) != nil || empty.Base != pr.BaseSHA || empty.Head != pr.HeadSHA || empty.State != "OPEN" || len(empty.Checks) == 0 {
 			return CIResult{}, fmt.Errorf("empty CI response could not be confirmed against the published PR")
+		}
+		var rollup []json.RawMessage
+		if json.Unmarshal(empty.Checks, &rollup) != nil || len(rollup) > 200 {
+			return CIResult{}, fmt.Errorf("CI check rollup is malformed or oversized")
+		}
+		// GitHub may return null before scheduling, or publish checks between these
+		// reads. Neither establishes failure; populated rollups require another poll
+		// through the ordinary check collector before they can certify readiness.
+		if len(rollup) > 0 {
+			return CIResult{Status: "pending"}, nil
 		}
 		return CIResult{Status: "missing"}, nil
 	}

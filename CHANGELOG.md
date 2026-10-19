@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.117 - 2026-10-19
+
+- Handle CI startup races when GitHub returns a null check rollup or checks appear between reads, while retaining exact PR revision validation.
+- Reconcile configured manual workflow evidence before and after independent review. Save completed reviews before final CI reads, retain specific failure causes, and resume CI verification without repeating an unchanged full review.
+
 ## 0.1.0-beta.116 - 2026-10-19
 
 - Detect changed PR upstreams on standalone resume and add `resume --rebase` to replay existing child commits onto the current parent branch or the default branch after a verified parent merge. Retain the original session and policy, checkpoint rebase recovery, invalidate old evidence and require fresh checks and review.
