@@ -21,6 +21,8 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	CheckUpstream                     bool
+	Rebase                            bool
 	NonDefaultCIWorkflow              *string
 	AutoAcceptRecommendationsOverride *bool
 	StartAt                           string
@@ -332,6 +334,15 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	if runner.CheckUpstream || runner.Rebase || journal.ResumeRebase {
+		changed, err := runner.checkResumeUpstream(ctx, directory, journal)
+		if err != nil {
+			return err
+		}
+		if changed {
+			savedFeedbackReplay = false
+		}
+	}
 	if runner.AutoAcceptRecommendationsOverride != nil && journal.Plan.Roles.AutoAcceptRecommendations != *runner.AutoAcceptRecommendationsOverride {
 		journal.Plan.Roles.AutoAcceptRecommendations = *runner.AutoAcceptRecommendationsOverride
 		if err := runner.save(directory, journal); err != nil {

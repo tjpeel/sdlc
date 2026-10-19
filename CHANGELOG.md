@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.116 - 2026-10-19
+
+- Detect changed PR upstreams on standalone resume and add `resume --rebase` to replay existing child commits onto the current parent branch or the default branch after a verified parent merge. Retain the original session and policy, checkpoint rebase recovery, invalidate old evidence and require fresh checks and review.
+
 ## 0.1.0-beta.115 - 2026-10-19
 
 - Format pending C# edits through a private isolated snapshot before the implementation commit. Preserve the real index and HEAD, reject stale or unsafe source, and keep formatter output outside verification gates and published history.

@@ -65,7 +65,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.115`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.116`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -430,3 +430,24 @@ Running inside SDLC narrows that exposure, while retaining the risks listed abov
 - [Proposed host-harness SDLC skill](docs/skills/sdlc-drive/SKILL.md)
 - [Proposed unified onboarding command](docs/proposals/unified-onboarding.md)
 - [Research and earlier prototypes](research/README.md)
+
+### Rebasing a saved PR run
+
+A normal resume verifies the open PR's current head and target revision. If the
+upstream has changed, it stops before agent work and reports how to rebase:
+
+```sh
+sdlc resume --run RUN_ID --rebase
+```
+
+This performs `git rebase --onto` using the saved PR base boundary, replaying only
+the child PR's existing commits. It handles an updated parent branch and a PR
+retargeted to the default branch after its parent merged, including squash merges.
+The workspace must be clean at the recorded published source revision (or its verified
+local equivalent before publication signing). Commit messages and
+authorship are retained; rewritten commits receive new SHAs and publication
+signatures. Conflicts return to the original implementation session for resolution.
+Fresh checks and independent review are required before readiness. Publication uses
+the recorded remote head as an exact lease. Recommendation policy and PR feedback
+are unchanged; `--rebase` cannot be combined with feedback or acceptance options.
+Use `--dry-run` for an offline plan; it does not query GitHub or modify history.

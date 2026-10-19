@@ -288,6 +288,8 @@ type Publisher interface {
 }
 
 type Journal struct {
+	RebasedAdoptions          []PRAdoption            `json:"rebased_adoption_boundaries,omitempty"`
+	ResumeRebase              bool                    `json:"resume_rebase_pending,omitempty"`
 	CIWorkflowDispatches      []CIWorkflowDispatch    `json:"ci_workflow_dispatches,omitempty"`
 	AutoRecommendationHeads   []string                `json:"auto_recommendation_heads,omitempty"`
 	PRCheckpoints             []PRCheckpoint          `json:"pr_checkpoints,omitempty"`

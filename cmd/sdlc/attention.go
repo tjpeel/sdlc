@@ -251,11 +251,13 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var reviewRepairLimit int
 	var extension int
 	var feedback bool
+	var rebase bool
 	var acceptRecommendations bool
 	var autoAcceptRecommendations bool
 	var override bool
 	var timeout time.Duration
 	if !answer {
+		flags.BoolVar(&rebase, "rebase", false, "rebase saved PR commits onto its current target branch")
 		flags.StringVar(&startAt, "start-at", "", "PR entry point")
 		flags.BoolVar(&humanReviewed, "human-reviewed", false, "declare captured PR reviewed by a human")
 		flags.StringVar(&ciFeedbackPath, "ci-feedback-file", "", "bounded supplemental CI context")
@@ -276,7 +278,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--accept-recommendations | --auto-accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--rebase | --accept-recommendations | --auto-accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -378,7 +380,10 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			return fmt.Errorf("--start-at requires a valid PR entry point without another recovery action")
 		}
 	}
-	action, err := resolveRunAction(ctx, *id, answer, feedback, override || startAt != "")
+	if rebase && (answer || startAt != "" || feedback || acceptRecommendations || autoAcceptancePolicy != nil || override || extensionSupplied || reviewLimitSupplied || ciFeedbackSupplied) {
+		return fmt.Errorf("--rebase cannot combine with feedback, recommendation acceptance or recovery options")
+	}
+	action, err := resolveRunAction(ctx, *id, answer, feedback, !answer || override || startAt != "")
 	if err != nil {
 		return err
 	}
@@ -458,7 +463,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 			return err
 		}
 	}
-	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback, override || startAt != "")
+	current, err := resolveRunAction(ctx, action.View.ID, answer, feedback, !answer || override || startAt != "")
 	if err != nil {
 		return err
 	}
@@ -466,6 +471,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if rebase {
+		runArgs = append(runArgs, "--rebase")
+	}
 	if startAt != "" {
 		runArgs = append(runArgs, "--start-at", startAt)
 		if humanReviewed {
