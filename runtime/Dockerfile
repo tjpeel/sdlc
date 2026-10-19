@@ -100,7 +100,7 @@ RUN set -eu; \
     fi
 
 ARG CODEX_VERSION=0.163.0
-ARG CLAUDE_VERSION=2.1.301
+ARG CLAUDE_VERSION=2.1.303
 RUN set -eu; \
     set --; \
     npm_release="$(npm --version)"; \
