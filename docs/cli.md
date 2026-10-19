@@ -1083,6 +1083,12 @@ bounded log excerpts. Native Sonar rule, severity and committed-location finding
 remain included. Pending checks keep waiting; collection failures retain an
 operational hold before any repair grant.
 
+A Sonar summary scoped to a branch is not PR duplication evidence. SDLC excludes
+those measures and records an explicit PR-evidence-unavailable note in CI details.
+This advisory gap does not fail otherwise successful required checks. Native
+check authority, exact publication boundaries and PR-scoped measures remain
+validated; malformed, stale and wrong-PR evidence is still rejected.
+
 Successful native SonarCloud analyses also supply advisory new-code duplication
 measures. For a positive measure, SDLC reads public SonarCloud duplicated-file
 and matching-block ranges, verifies the analysis commit before and after

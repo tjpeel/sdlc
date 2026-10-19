@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.113 - 2026-10-19
+
+- Exclude branch-scoped Sonar duplication summaries from advisory PR measures and explicitly report their unavailable status without blocking successful required CI checks. Preserve authority, revision and PR-scope validation; branch analysis cannot substitute for PR analysis.
+
 ## 0.1.0-beta.112 - 2026-10-19
 
 - Keep runner integration local: dispatch existing manual workflows with only their ref, stop on unsupported input contracts, and remove automatic workflow-source repairs and injected dispatch identifiers. Preserve legacy records for audit without resending their custom inputs.

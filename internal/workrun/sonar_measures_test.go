@@ -171,3 +171,55 @@ func TestSonarDetailFailurePreservesMeasureWithoutInventedLocations(t *testing.T
 		})
 	}
 }
+
+func TestBranchScopedSonarSummaryReportsOperationalEvidenceGap(t *testing.T) {
+	for _, percent := range []string{"0.0%", "0.5%"} {
+		t.Run(percent, func(t *testing.T) {
+			f := sonarMeasuresFixture()
+			run := f.responses["repos/example/project/check-runs/17"].(map[string]any)
+			output := run["output"].(map[string]any)
+			summary := strings.ReplaceAll(output["summary"].(string), "pullRequest=7", "branch=main")
+			output["summary"] = strings.ReplaceAll(summary, "1.0%", percent)
+			pr := annotationPublication()
+			pr.Number = 7
+			measures, err := (GitHubPublisher{Command: f.command}).collectSonarDuplication(context.Background(), Plan{Repository: "example/project"}, pr)
+			if err == nil || !strings.Contains(err.Error(), "branch-scoped") || !strings.Contains(err.Error(), "PR #7") || len(measures) != 0 {
+				t.Fatalf("branch analysis must remain an explicit evidence gap, got %v, %v", measures, err)
+			}
+		})
+	}
+}
+
+func TestBranchScopeRecognitionPreservesSonarURLBoundary(t *testing.T) {
+	for _, address := range []string{
+		"https://example.invalid/component_measures?id=example_project&branch=main&metric=new_duplicated_lines_density&view=list",
+		"https://sonarcloud.io/component_measures?id=example_project&branch=main&branch=other&metric=new_duplicated_lines_density&view=list",
+		"https://sonarcloud.io/component_measures?id=example_project&branch=main&pullRequest=7&metric=new_duplicated_lines_density&view=list",
+	} {
+		if branchScopedSonarMeasuresURL(address, 7) {
+			t.Fatalf("accepted ambiguous or untrusted scope URL: %s", address)
+		}
+	}
+}
+
+func TestBranchSonarMeasuresDoNotBlockPassedRequiredChecks(t *testing.T) {
+	f := sonarMeasuresFixture()
+	run := f.responses["repos/example/project/check-runs/17"].(map[string]any)
+	output := run["output"].(map[string]any)
+	output["summary"] = strings.ReplaceAll(output["summary"].(string), "pullRequest=7", "branch=main")
+	command := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if len(args) > 1 && args[0] == "pr" && args[1] == "checks" {
+			return []byte(`[{"name":"SonarCloud Code Analysis","bucket":"pass","state":"COMPLETED","link":"https://sonarcloud.io"}]`), nil
+		}
+		return f.command(ctx, name, args...)
+	}
+	pr := annotationPublication()
+	pr.Number = 7
+	result, err := (GitHubPublisher{Command: command}).Checks(context.Background(), Plan{Repository: "example/project"}, pr)
+	if err != nil || result.Status != "passed" || len(result.SonarDuplication) != 0 || !strings.Contains(result.Details, "PR-specific duplication evidence unavailable") {
+		t.Fatalf("advisory scope mismatch blocked CI or masqueraded as PR evidence: %+v, %v", result, err)
+	}
+	if err := validateCIResult(result, pr); err != nil {
+		t.Fatal(err)
+	}
+}

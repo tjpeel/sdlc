@@ -734,7 +734,11 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 	}
 	if !pending && sonarMeasures {
 		result.SonarDuplication, err = publisher.collectSonarDuplication(ctx, plan, pr)
-		if err != nil {
+		if errors.Is(err, errSonarBranchScope) {
+			// Advisory scope mismatch must neither certify PR measures nor
+			// turn otherwise successful required checks into a failure.
+			result.Details += "\n" + err.Error()
+		} else if err != nil {
 			return CIResult{}, err
 		}
 	}

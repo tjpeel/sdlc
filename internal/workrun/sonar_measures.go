@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -35,6 +36,8 @@ type SonarDuplication struct {
 	MeasuresURL   string                `json:"measures_url"`
 }
 
+var errSonarBranchScope = errors.New("PR-specific duplication evidence unavailable: the Sonar check summary reports branch-scoped measures; branch measures were excluded from PR review evidence")
+
 var sonarDuplicationMeasure = regexp.MustCompile(`\[([0-9]{1,3}(?:\.[0-9]{1,6})?)% Duplication on New Code\]\((https://sonarcloud\.io/component_measures\?[^\s)]+)\)`)
 
 func validSonarMeasuresURL(address string, number int) bool {
@@ -52,6 +55,26 @@ func validSonarMeasuresURL(address string, number int) bool {
 		}
 	}
 	return true
+}
+
+// Branch measures cannot establish duplication in the selected PR diff.
+// Recognise only the same trusted URL shape used for PR measures.
+func branchScopedSonarMeasuresURL(address string, number int) bool {
+	u, err := url.Parse(address)
+	if err != nil {
+		return false
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil || len(q["branch"]) != 1 || q.Get("branch") == "" {
+		return false
+	}
+	if _, exists := q["pullRequest"]; exists {
+		return false
+	}
+	q.Del("branch")
+	q.Set("pullRequest", strconv.Itoa(number))
+	u.RawQuery = q.Encode()
+	return validSonarMeasuresURL(u.String(), number)
 }
 
 func validateSonarDuplication(measures []SonarDuplication, pr Publication) error {
@@ -87,6 +110,7 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 		return nil, err
 	}
 	var measures []SonarDuplication
+	branchScope := false
 	for _, listed := range runs {
 		if !nativeSonarAnalysisName(listed.Name) || listed.Status != "completed" {
 			continue
@@ -112,6 +136,10 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 		if err != nil {
 			return nil, fmt.Errorf("invalid Sonar duplication percentage")
 		}
+		if branchScopedSonarMeasuresURL(matches[0][2], pr.Number) {
+			branchScope = true
+			continue
+		}
 		measures = append(measures, SonarDuplication{Head: pr.HeadSHA, CheckRunID: run.ID, Percent: percent, MeasuresURL: matches[0][2]})
 	}
 	if err := validateSonarDuplication(measures, pr); err != nil {
@@ -127,6 +155,9 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 			continue
 		}
 		measures[i].Groups, measures[i].DetailsStatus = groups, "collected"
+	}
+	if branchScope {
+		return measures, fmt.Errorf("%w (PR #%d)", errSonarBranchScope, pr.Number)
 	}
 	return measures, nil
 }
