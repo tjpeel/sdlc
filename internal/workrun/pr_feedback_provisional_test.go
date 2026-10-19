@@ -99,7 +99,7 @@ func TestPRFeedbackHumanAnswerRetainsSameProvisionalRevision(t *testing.T) {
 	if err := runner.Run(context.Background(), directory, j, "Use the documented response."); err != nil {
 		t.Fatal("same revision could not resume after answer", err)
 	}
-	if j.State != "ready" || len(j.PRFeedback.Entries) != 1 || publisher.replies != 1 || j.PRFeedback.Entries[0].Comment.Resolved || provider.sessions[1].ResumeID != testNative || provider.sessions[len(provider.sessions)-1].Role != "review" {
+	if j.State != "ready" || len(j.PRFeedback.Entries) != 1 || publisher.replies != 1 || j.PRFeedback.Entries[0].Comment.Resolved || provider.sessions[1].ResumeID != testNative || len(provider.sessions) != 2 || provider.sessions[1].Role != "implementation" {
 		t.Fatal("answer lost original revision/session or bypassed author-owned review")
 	}
 }

@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 )
 
 // PRCheckpoint records an entry point, never an assertion that skipped gates passed.
 type PRCheckpoint struct {
+	PendingCheckKey string     `json:"pending_check_key,omitempty"`
 	StartAt         string     `json:"start_at"`
 	Head            string     `json:"head"`
 	Tree            string     `json:"tree"`
@@ -43,6 +45,9 @@ func activePRCheckpoint(j *Journal, mode string) bool {
 }
 func validatePRCheckpoints(j *Journal) error {
 	for _, c := range j.PRCheckpoints {
+		if c.PendingCheckKey != "" && (len(c.PendingCheckKey) != 64 || c.StartAt != "checks" || c.Completed) {
+			return fmt.Errorf("invalid provisional checkpoint checks")
+		}
 		if !ValidPRStartAt(c.StartAt) || !objectID.MatchString(c.Head) || !objectID.MatchString(c.Tree) || c.RequestedAt.IsZero() || !safeRelative(c.Archive) || filepath.Dir(c.Archive) != "pr-checkpoints" || c.HumanReviewedAt != nil && (c.HumanReviewedAt.IsZero() || c.HumanReviewedBy == "") || c.HumanReviewedAt == nil && c.HumanReviewedBy != "" {
 			return fmt.Errorf("invalid PR checkpoint record")
 		}
@@ -193,6 +198,13 @@ func (r Runner) runPRCheckpointChecks(ctx context.Context, dir string, j *Journa
 	if c == nil || c.Head != revision.Head || c.Tree != revision.Tree {
 		return r.stop(dir, j, "blocked", "PR checkpoint candidate changed")
 	}
+	key := verificationKey(j, VerificationRequest{}, revision.Head, revision.Tree)
+	if c.PendingCheckKey == key && j.Evidence.Key == key && j.Evidence.Head == revision.Head && j.Evidence.Tree == revision.Tree && reflect.DeepEqual(j.Evidence.Commands, effectiveChecks(j)) {
+		j.Evidence.Passed = true
+		c.PendingCheckKey, c.Completed = "", true
+		return r.transition(dir, j, "awaiting_feedback")
+	}
+	c.PendingCheckKey = ""
 	j.CheckAttempt++
 	if err := r.save(dir, j); err != nil {
 		return err
@@ -211,12 +223,21 @@ func (r Runner) runPRCheckpointChecks(ctx context.Context, dir string, j *Journa
 	}
 	j.Timings.ChecksMS += time.Since(start).Milliseconds()
 	err = errors.Join(err, file.Close())
+	// Commands and teardown have completed. Retain successful execution as
+	// provisional until the frozen remote and checkout can be revalidated.
+	j.Evidence = CheckEvidence{Head: revision.Head, Tree: revision.Tree, Key: key, Commands: effectiveChecks(j), Log: filepath.Base(file.Name()), Output: capture.results()}
+	if err == nil {
+		c.PendingCheckKey = key
+		if saveErr := r.save(dir, j); saveErr != nil {
+			return saveErr
+		}
+	}
 	after, inspectErr := r.checkpointBoundary(ctx, j)
 	if inspectErr != nil || after.Head != revision.Head || after.Tree != revision.Tree {
-		j.Evidence = CheckEvidence{}
 		return r.stop(dir, j, "blocked", "PR or candidate changed during checkpoint checks")
 	}
-	j.Evidence = CheckEvidence{Head: revision.Head, Tree: revision.Tree, Passed: err == nil, Commands: effectiveChecks(j), Log: filepath.Base(file.Name()), Output: capture.results()}
+	j.Evidence.Passed = err == nil
+	c.PendingCheckKey = ""
 	if err != nil {
 		return r.stop(dir, j, "blocked", "checkpoint checks did not pass; inspect retained check evidence")
 	}
@@ -232,6 +253,10 @@ func (r Runner) runPRCheckpointReview(ctx context.Context, dir string, j *Journa
 	c := latestPRCheckpoint(j)
 	if c == nil || c.Head != revision.Head || c.Tree != revision.Tree {
 		return r.stop(dir, j, "blocked", "PR checkpoint candidate changed")
+	}
+	if completedCheckpointReview(j, c) {
+		c.Completed = true
+		return r.transition(dir, j, "awaiting_feedback")
 	}
 	status, err := r.Provider.Status(ctx, j.Plan.Roles.Review.Provider)
 	if err != nil {
@@ -293,4 +318,15 @@ func (r Runner) runPRCheckpointReview(ctx context.Context, dir string, j *Journa
 	}
 	c.Completed = true
 	return r.transition(dir, j, "awaiting_feedback")
+}
+
+// A completed standalone report survives a transient final boundary-read error.
+// The caller has already revalidated the frozen PR, checkout and input files.
+func completedCheckpointReview(j *Journal, c *PRCheckpoint) bool {
+	if c.ReviewOutcome == nil || c.ReviewOutcome.Status != "reviewed" || !reflect.DeepEqual(*c.ReviewOutcome, j.Outcome) || validateOutcome(j.Outcome, "review") != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || len(j.ReviewReports) == 0 {
+		return false
+	}
+	report := j.ReviewReports[len(j.ReviewReports)-1]
+	coverage := report.Coverage
+	return report.Attempt == j.Attempt && report.Publication == j.Publication && (len(report.Findings) == 0 && len(j.Outcome.Findings) == 0 || reflect.DeepEqual(report.Findings, j.Outcome.Findings)) && coverage != nil && coverage.Scope == "full" && len(coverage.Gaps) == 0 && coverage.BaseSHA == j.Publication.BaseSHA && coverage.HeadSHA == j.Publication.HeadSHA
 }

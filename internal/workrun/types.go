@@ -288,6 +288,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	RebaseMonitoring          *RebaseMonitoring       `json:"rebase_monitoring,omitempty"`
 	RebasedAdoptions          []PRAdoption            `json:"rebased_adoption_boundaries,omitempty"`
 	ResumeRebase              bool                    `json:"resume_rebase_pending,omitempty"`
 	CIWorkflowDispatches      []CIWorkflowDispatch    `json:"ci_workflow_dispatches,omitempty"`

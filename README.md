@@ -65,7 +65,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.119`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.120`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -449,10 +449,29 @@ The workspace must be clean at the recorded published source revision (or its ve
 local equivalent before publication signing). Commit messages and
 authorship are retained; rewritten commits receive new SHAs and publication
 signatures. Conflicts return to the original implementation session for resolution.
-Fresh checks and independent review are required before readiness. Publication uses
+For a clean rebase, the controller compares the original and rebased PR changes,
+retaining whitespace, modes and binary changes while ignoring changed blob IDs and
+hunk positions. If equivalent, it signs and publishes the replay and monitors CI
+for the new head without implementation, self-review or independent-review agents.
+It does not claim new local checks or a new review. Conflicts, changed patches and
+CI repairs retain the normal checks and review path. Publication uses
 the recorded remote head as an exact lease. Recommendation policy and PR feedback
 are unchanged; `--rebase` cannot be combined with feedback or acceptance options.
 Use `--dry-run` for an offline plan; it does not query GitHub or modify history.
+
+### Reusing completed work
+
+A resume retains successful work for its exact candidate, inputs and execution
+configuration. CI polling and publication retries do not start agents. A ready
+run whose CI becomes pending returns to polling; its completed review is retained.
+Feedback assessed as requiring no changes reuses its existing candidate boundary,
+including local feedback and accepted recommendations. Read-only diagnostic and
+human-question handoffs preserve that boundary until a source or required
+verification change invalidates it. Unanswered questions still block completion.
+Standalone checks and completed standalone reviews can retry a failed final PR
+boundary read without repeating their successful work. Check results stay
+provisional until the unchanged boundary is confirmed; failed teardown is never
+reusable. Changed candidates, inputs and check configuration retain fresh gates.
 
 ### CI startup and review completion
 

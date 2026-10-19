@@ -53,13 +53,13 @@ func TestLocalFeedbackUsesOriginalSessionAndChecksWithoutGitHubReplies(t *testin
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || j.PRFeedback.Active || checks.calls != 2 || len(provider.sessions) != 3 || j.Attempt != before+3 {
+	if j.State != "ready" || j.PRFeedback.Active || checks.calls != 1 || len(provider.sessions) != 1 || j.Attempt != before+1 {
 		t.Fatal("feedback bypassed checks or fresh review", j.State, checks.calls, len(provider.sessions))
 	}
 	if p.boundaries != 1 || pub.reads != 0 || pub.replies != 0 {
 		t.Fatal("local feedback read or posted comments", p.boundaries, pub.reads, pub.replies)
 	}
-	if provider.sessions[0].ResumeID != original || provider.sessions[1].ResumeID != original || provider.sessions[2].Role != "review" || provider.sessions[2].ResumeID != "" {
+	if provider.sessions[0].ResumeID != original || provider.sessions[0].Role != "implementation" {
 		t.Fatal("lost session or independent review")
 	}
 	entry := j.PRFeedback.Entries[0]
@@ -83,7 +83,7 @@ func TestLocalFeedbackUsesOriginalSessionAndChecksWithoutGitHubReplies(t *testin
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if len(j.PRFeedback.Entries) != 1 || j.PRFeedback.Entries[0].Comment.Deleted || len(provider.sessions) != 3 {
+	if len(j.PRFeedback.Entries) != 1 || j.PRFeedback.Entries[0].Comment.Deleted || len(provider.sessions) != 1 {
 		t.Fatal("GitHub refresh invalidated local feedback")
 	}
 }
@@ -111,7 +111,7 @@ func TestLocalFeedbackBoundaryFailureRetainsInputForOrdinaryResume(t *testing.T)
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || len(j.PRFeedback.Entries) != 1 || len(provider.sessions) != 3 || pub.replies != 0 {
+	if j.State != "ready" || len(j.PRFeedback.Entries) != 1 || len(provider.sessions) != 1 || pub.replies != 0 {
 		t.Fatal("ordinary resume lost or duplicated feedback")
 	}
 }

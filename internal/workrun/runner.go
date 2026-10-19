@@ -493,15 +493,27 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			continue
 		case "ready":
-			checks, err := runner.Publisher.Checks(ctx, journal.Plan, journal.Publication)
+			checks, err := runner.readPublishedCI(ctx, directory, journal)
 			if err == nil {
 				err = validateCIResult(checks, journal.Publication)
 			}
 			if err == nil {
 				journal.CI = checks
 			}
-			if err != nil || checks.Status != "passed" {
+			if err != nil {
+				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+			if checks.Status == "failed" {
 				return runner.stop(directory, journal, "blocked", "PR or CI changed after independent review")
+			}
+			if checks.Status != "passed" {
+				if err := runner.transition(directory, journal, "ci"); err != nil {
+					return err
+				}
+				continue
+			}
+			if journal.RebaseMonitoring != nil {
+				return runner.completeRebaseMonitoring(ctx, directory, journal)
 			}
 			if err := runner.transition(directory, journal, "ready"); err != nil {
 				return err
@@ -592,6 +604,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "checking":
+			if journal.Outcome.Status != "diagnostics_requested" {
+				journal.RebaseMonitoring = nil // New verification work leaves the CI-only operation boundary.
+			}
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
 			if err != nil {
 				invalidateCommandEvidence(journal)
@@ -623,7 +638,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return runner.stop(directory, journal, "blocked", err.Error())
 			}
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
-			if err != nil || !revision.Clean || !journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head || !verificationCurrent(journal, revision.Head, revision.Tree) {
+			if err != nil || !revision.Clean || (!rebaseCandidateCurrent(journal, revision) && (!journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head || !verificationCurrent(journal, revision.Head, revision.Tree))) {
 				return runner.stop(directory, journal, "blocked", "source changed after verification; rerun checks before publishing")
 			}
 			var pendingReceipt *PushProtectionRejection
@@ -682,6 +697,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				journal.PushRepair.Pending = nil
 			}
 			journal.Publication = publication
+			if journal.RebaseMonitoring != nil {
+				journal.RebaseMonitoring.Published = publication
+			}
 			if err := runner.replyPRFeedback(ctx, directory, journal); err != nil {
 				message := err.Error()
 				var changed *FeedbackRevisionChangedError
@@ -1221,7 +1239,7 @@ func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory 
 	if handled, err := runner.finishUnchangedFeedback(ctx, directory, journal); handled || err != nil {
 		return err
 	}
-	if h := journal.PRFeedback; h != nil && h.ReviewedCandidate != nil {
+	if h := journal.PRFeedback; h != nil && h.ReviewedCandidate != nil && (journal.Outcome.Status == "implemented" || journal.Outcome.Status == "checks_requested") {
 		h.ReviewedCandidate = nil
 		journal.Evidence = CheckEvidence{}
 		for i := range journal.Verification {

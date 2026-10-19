@@ -15,7 +15,7 @@ func (r Runner) finishUnchangedFeedback(ctx context.Context, dir string, j *Jour
 		return false, nil
 	}
 	b := h.ReviewedCandidate
-	if b.Publication != j.Publication || !j.Evidence.Passed || j.Evidence.Head != b.Head || j.Evidence.Tree != b.Tree || j.Evidence.Key != verificationKey(j, VerificationRequest{}, b.Head, b.Tree) || !verificationCurrent(j, b.Head, b.Tree) {
+	if b.Publication != j.Publication || (!rebaseFeedbackCandidateCurrent(j, b) && (!j.Evidence.Passed || j.Evidence.Head != b.Head || j.Evidence.Tree != b.Tree || j.Evidence.Key != verificationKey(j, VerificationRequest{}, b.Head, b.Tree) || !verificationCurrent(j, b.Head, b.Tree))) {
 		return false, nil
 	}
 	pending := pendingFeedbackEntries(j)
@@ -63,7 +63,7 @@ func (r Runner) finishUnchangedFeedback(ctx context.Context, dir string, j *Jour
 	if err := verifyInputs(filepath.Join(dir, "check-inputs"), j.Plan.CheckInputs); err != nil {
 		return true, r.stop(dir, j, "blocked", err.Error())
 	}
-	checks, err := r.Publisher.Checks(ctx, j.Plan, j.Publication)
+	checks, err := r.readPublishedCI(ctx, dir, j)
 	if err == nil {
 		err = validateCIResult(checks, j.Publication)
 	}
@@ -94,6 +94,9 @@ func (r Runner) finishUnchangedFeedback(ctx context.Context, dir string, j *Jour
 	h.ReviewedCandidate = nil
 	j.Feedback = ""
 	j.Outcome.Status = "reviewed" // Existing reviewed boundary remains current; no new report is created.
+	if j.RebaseMonitoring != nil {
+		j.Outcome.Status = "implemented" // A CI-only operation does not create a review.
+	}
 	if r.Output != nil {
 		fmt.Fprintln(r.Output, "Feedback required no changes; reusing checks and reviews for the unchanged candidate.")
 	}

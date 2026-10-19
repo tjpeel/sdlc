@@ -178,11 +178,11 @@ func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspa
 		return Publication{}, err
 	}
 	journal, err := Load(directory)
-	if err != nil || !journal.Evidence.Passed || !objectID.MatchString(journal.Evidence.Tree) || !objectID.MatchString(journal.Evidence.Head) {
+	if err != nil || (!journal.Evidence.Passed && journal.RebaseMonitoring == nil) {
 		return Publication{}, fmt.Errorf("publication requires retained passing check evidence")
 	}
 	revision, err := (DockerRepository{Runtime: publisher.Runtime, ImageID: publisher.ImageID}).Inspect(ctx, workspace)
-	if err != nil || !revision.Clean || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head {
+	if err != nil || !revision.Clean || (!rebaseCandidateCurrent(&journal, revision) && (!journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head)) {
 		return Publication{}, fmt.Errorf("source changed after verification")
 	}
 	if err := validateRejectedBundle(directory, journal.PushRepair); err != nil {

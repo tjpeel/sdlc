@@ -137,7 +137,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		if err != nil {
 			return false, err
 		}
-		publishedSource := revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
+		publishedSource := rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
 		if !revision.Clean || !publishedSource {
 			return false, fmt.Errorf("rebase requires a clean workspace at the published PR source revision")
 		}
@@ -213,6 +213,24 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, err
 	}
 	snapshot := record.Snapshot
+	var monitoring *RebaseMonitoring
+	if !result.Conflict {
+		if prover, ok := r.Repository.(rebaseEquivalenceReader); ok {
+			proof, err := prover.RebaseEquivalence(ctx, j.Workspace, record.OldSource, snapshot.SHA)
+			if err != nil {
+				return false, r.stop(directory, j, "blocked", err.Error())
+			}
+			if proof.SourceHead != j.Publication.HeadSHA && proof.SourceHead != j.Evidence.Head && (j.RebaseMonitoring == nil || j.RebaseMonitoring.Published != j.Publication || proof.SourceHead != j.RebaseMonitoring.Proof.Head) {
+				return false, fmt.Errorf("rebase proof does not match the recorded source candidate")
+			}
+			if proof.Equivalent {
+				if err := validateRebaseProof(proof); err != nil {
+					return false, err
+				}
+				monitoring = &RebaseMonitoring{Source: j.Publication, OldBase: record.OldSource, Base: snapshot.SHA, Proof: proof}
+			}
+		}
+	}
 	j.Plan.Base, j.Plan.BaseSHA = snapshot.Branch, snapshot.SHA
 	j.Plan.SourceSHA, j.Plan.StartingSHA = snapshot.SHA, snapshot.SHA
 	j.Evidence, j.CI, j.Outcome = CheckEvidence{}, CIResult{}, Outcome{}
@@ -227,6 +245,14 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		j.PRFeedback.Active = false
 	}
 	j.RestackNeedsChecks = true
+	j.RebaseMonitoring = monitoring
+	if monitoring != nil {
+		j.State = "publishing"
+		j.Outcome = Outcome{Status: "implemented", Summary: "Controller verified equivalent PR changes after a clean rebase; publish and monitor CI without agent review."}
+		if r.Output != nil {
+			fmt.Fprintln(r.Output, "Rebase preserved the PR changes; publishing and monitoring CI without implementation or review agents.")
+		}
+	}
 	j.Feedback = "The controller performed a Git rebase onto the PR target " + snapshot.Branch + " at " + snapshot.SHA + ". Preserve the rebased commits and the original ticket scope. Do not recreate or squash the implementation. Obtain fresh checks and local review before publication. Existing independent-review and recommendation settings remain in effect."
 	if result.Conflict {
 		j.Feedback += " Resolve the unfinished Git rebase, preserving the existing commits, then git rebase --continue. Conflicting paths: " + strings.Join(result.Paths, ", ") + ". Do not publish an unfinished rebase."

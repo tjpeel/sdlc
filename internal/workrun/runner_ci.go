@@ -59,6 +59,7 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.Timings.CIWaitMS += time.Since(waitStarted).Milliseconds()
 		return nil
 	case "failed":
+		journal.RebaseMonitoring = nil // A repair requires fresh checks and review.
 		budget := journal.CIRepairBudget
 		if budget == nil {
 			return runner.stop(directory, journal, "blocked", legacyCIRepairBound)
@@ -88,6 +89,9 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		}
 		return nil
 	case "passed":
+		if journal.RebaseMonitoring != nil {
+			return runner.completeRebaseMonitoring(ctx, directory, journal)
+		}
 		if err := runner.transition(directory, journal, "awaiting_reviewer"); err != nil {
 			return err
 		}

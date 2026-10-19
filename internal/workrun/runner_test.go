@@ -785,10 +785,10 @@ func TestRunnerMissingChecksCannotCertifyReview(t *testing.T) {
 			if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) || j.State != "blocked" {
 				t.Fatalf("missing CI certified review: state=%s error=%v", j.State, err)
 			}
-			if stage == "awaiting_reviewer" && (j.ResumeState != "ci" || j.MissingChecksSince.IsZero() || len(p.calls) != 0) {
+			if (stage == "awaiting_reviewer" || stage == "ready") && (j.ResumeState != "ci" || j.MissingChecksSince.IsZero() || len(p.calls) != 0) {
 				t.Fatal("awaiting reviewer did not return to CI startup wait")
 			}
-			if stage != "awaiting_reviewer" && !j.MissingChecksSince.IsZero() {
+			if stage != "awaiting_reviewer" && stage != "ready" && !j.MissingChecksSince.IsZero() {
 				t.Fatal("completed review received a startup grace")
 			}
 		})

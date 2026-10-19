@@ -30,7 +30,7 @@ func TestAutomaticRecommendationsUseExistingRepairAndVerification(t *testing.T) 
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || checks.calls != 2 || len(provider.sessions) != 3 || len(j.AutoRecommendationHeads) != 1 {
+	if j.State != "ready" || checks.calls != 1 || len(provider.sessions) != 1 || len(j.AutoRecommendationHeads) != 1 {
 		t.Fatal("automatic acceptance did not complete the normal cycle", j.State, checks.calls, len(provider.sessions))
 	}
 	if pub.reads != 0 || pub.replies != 0 {
@@ -46,13 +46,14 @@ func TestAutomaticRecommendationsStopWithoutSourceProgress(t *testing.T) {
 	dir, j, r, pub, checks := feedbackReadyRun(t)
 	withRecommendation(j)
 	j.Plan.Roles.AutoAcceptRecommendations = true
+	j.AutoRecommendationHeads = []string{j.Publication.HeadSHA}
 	p := &localFeedbackPublisher{feedbackPublisherFake: pub}
 	provider := &repeatedRecommendationProvider{localAssessmentProvider{j: j}}
 	r.Publisher, r.Provider = p, provider
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
 		t.Fatal(err)
 	}
-	if j.State != "blocked" || !strings.Contains(j.StopReason, "without source progress") || checks.calls != 2 || len(provider.sessions) != 3 {
+	if j.State != "blocked" || !strings.Contains(j.StopReason, "without source progress") || checks.calls != 1 || len(provider.sessions) != 0 {
 		t.Fatal("repeated no-progress acceptance continued", j.State, j.StopReason)
 	}
 }

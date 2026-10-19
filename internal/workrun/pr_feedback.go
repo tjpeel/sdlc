@@ -142,6 +142,9 @@ func ValidatePRFeedbackResume(j Journal) error {
 	if j.SessionID == "" || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) {
 		return fmt.Errorf("PR feedback requires an existing PR and its original implementation session")
 	}
+	if j.State == "ready" && rebaseFeedbackEligible(&j) {
+		return validatePRFeedbackJournal(&j)
+	}
 	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && (j.Outcome.Status == "reviewed" || ReviewSkipNotice(j) != "" && validateReviewSkip(&j) == nil && j.Outcome.Status == "implemented" && j.Outcome.LocalReview) && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && (len(j.Outcome.Limitations) == 0 || j.Outcome.Status == "reviewed") && j.CI.Status == "passed" && j.Evidence.Passed {
 		return validatePRFeedbackJournal(&j)
 	}
@@ -149,13 +152,13 @@ func ValidatePRFeedbackResume(j Journal) error {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.PRFeedback.FetchPending && (j.State == "pr_feedback" || j.State == "blocked" && j.ResumeState == "pr_feedback") {
-		if j.PRFeedback.FetchResumeState == "ready" && ((j.Outcome.Status != "reviewed" && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || (len(j.Outcome.Limitations) > 0 && j.Outcome.Status != "reviewed") || j.CI.Status != "passed") {
+		if j.PRFeedback.FetchResumeState == "ready" && !rebaseFeedbackEligible(&j) && ((j.Outcome.Status != "reviewed" && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || (len(j.Outcome.Limitations) > 0 && j.Outcome.Status != "reviewed") || j.CI.Status != "passed") {
 			return fmt.Errorf("feedback fetch lost its ready boundary")
 		}
 		if j.PRFeedback.FetchResumeState == "publishing" && (j.Outcome.Status != "implemented" || pendingFeedback(&j) != nil) {
 			return fmt.Errorf("feedback fetch lost its completed implementation boundary")
 		}
-		if !j.Evidence.Passed || j.PRFeedback.FetchResumeState == "" {
+		if (!j.Evidence.Passed && !rebaseFeedbackEligible(&j)) || j.PRFeedback.FetchResumeState == "" {
 			return fmt.Errorf("feedback fetch requires retained current check evidence")
 		}
 		return validatePRFeedbackJournal(&j)
@@ -367,6 +370,9 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	h := j.PRFeedback
 	parked := j.State == "awaiting_feedback" || h != nil && h.FetchPending && h.FetchResumeState == "awaiting_feedback"
 	expectedHead, expectedTree := j.Evidence.Head, j.Evidence.Tree
+	if m := j.RebaseMonitoring; m != nil && validateRebaseMonitoring(j) == nil {
+		expectedHead, expectedTree = m.Proof.Head, m.Proof.Tree
+	}
 	if parked {
 		c := latestPRCheckpoint(j)
 		expectedHead, expectedTree = c.Head, c.Tree
@@ -394,7 +400,7 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			h.LocalPending = &PRFeedbackComment{ID: localFeedbackID(r.LocalPRFeedback), Kind: "local", Author: "local", Body: r.LocalPRFeedback, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 		}
 		h.ReviewedCandidate = nil
-		if r.LocalPRFeedback == "" && j.State == "ready" && j.Outcome.Status == "reviewed" && j.Evidence.Passed && (j.ReviewAssessment == nil || !j.ReviewAssessment.Pending) {
+		if j.State == "ready" && (rebaseFeedbackEligible(j) || j.Outcome.Status == "reviewed" && j.Evidence.Passed) && (j.ReviewAssessment == nil || !j.ReviewAssessment.Pending) {
 			h.ReviewedCandidate = &ReviewedFeedbackCandidate{Publication: j.Publication, Head: revision.Head, Tree: revision.Tree}
 		}
 		h.FetchResumeState = resumeState

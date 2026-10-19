@@ -86,7 +86,7 @@ func TestAcceptedRecommendationsFollowExistingRepairGates(t *testing.T) {
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || checks.calls != 2 || len(provider.sessions) != 3 || provider.sessions[0].ResumeID != original || provider.sessions[2].Role != "review" || provider.sessions[2].ResumeID != "" {
+	if j.State != "ready" || checks.calls != 1 || len(provider.sessions) != 1 || provider.sessions[0].ResumeID != original || provider.sessions[0].Role != "implementation" {
 		t.Fatal("acceptance bypassed the repair/check/review cycle")
 	}
 	if pub.reads != 0 || pub.replies != 0 {

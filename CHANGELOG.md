@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.120 - 2026-10-19
+
+- Publish mechanically equivalent clean rebases and monitor current-head CI without implementation, self-review or independent-review agents. Retain explicit operational proof rather than inventing fresh test or review evidence; conflicts, changed patches and CI repairs keep normal gates.
+- Reuse unchanged candidate boundaries for local feedback and accepted recommendations, and preserve those boundaries through read-only diagnostic and human-question handoffs.
+- Resume pending CI from ready runs without another completed review. Reuse completed standalone reviews and successful provisional standalone checks after a transient final boundary-read failure, with frozen candidate, input and execution checks.
+
 ## 0.1.0-beta.119 - 2026-10-19
 
 - Detect upstream changes from the actual target branch tip instead of GitHub's potentially stale PR base revision. Keep the stored PR boundary as the publication lease and tolerate its refresh during interrupted-rebase recovery.
