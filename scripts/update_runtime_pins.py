@@ -13,10 +13,10 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN_NAMES = ('CODEX_VERSION', 'CLAUDE_VERSION', 'GH_VERSION', 'SKILLS_REVISION', 'AGENTS_REVISION')
+PIN_NAMES = ('CODEX_VERSION', 'CLAUDE_VERSION', 'OPENCODE_VERSION', 'GH_VERSION', 'SKILLS_REVISION', 'AGENTS_REVISION')
 VERSION_PATTERN = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
 SHA_PATTERN = r'[0-9a-f]{40}'
-NPM_PACKAGES = {'CODEX_VERSION': '@openai/codex', 'CLAUDE_VERSION': '@anthropic-ai/claude-code'}
+NPM_PACKAGES = {'CODEX_VERSION': '@openai/codex', 'CLAUDE_VERSION': '@anthropic-ai/claude-code', 'OPENCODE_VERSION': 'opencode-ai'}
 MAX_RESPONSE_BYTES = 1024 * 1024
 
 

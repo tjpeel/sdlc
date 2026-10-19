@@ -61,8 +61,18 @@ func (fixture *updateFixture) BuildWithOptions(ctx context.Context, source strin
 	candidate.DependencyPins = options.Pins
 	inventory := *fixture.state.Inventory
 	inventory.Dependencies = append([]runtimeimage.Dependency{}, inventory.Dependencies...)
+	inventory.Version = 2
+	hasOpenCode := false
+	for _, dependency := range inventory.Dependencies {
+		if dependency.Kind == "npm" && dependency.Source == "opencode-ai" && dependency.Track == "" {
+			hasOpenCode = true
+		}
+	}
+	if !hasOpenCode {
+		inventory.Dependencies = append(inventory.Dependencies, runtimeimage.Dependency{Name: "OpenCode CLI", Kind: "npm", Source: "opencode-ai", Version: options.Pins.Arguments["OPENCODE_VERSION"]})
+	}
 	inventory.Packages = []runtimeimage.Package{{Name: "git", Version: "1:2.39.5-2", Architecture: "arm64"}}
-	arguments := map[string]string{"@openai/codex": "CODEX_VERSION", "@anthropic-ai/claude-code": "CLAUDE_VERSION", "npm": "NPM_VERSION", "yarn": "YARN_VERSION", "cli/cli": "GH_VERSION", "docker/compose": "COMPOSE_VERSION", "docker/buildx": "BUILDX_VERSION", "tjpeel/skills": "SKILLS_REVISION", "tjpeel/agents": "AGENTS_REVISION", "dotnet": "DOTNET_VERSION"}
+	arguments := map[string]string{"@openai/codex": "CODEX_VERSION", "@anthropic-ai/claude-code": "CLAUDE_VERSION", "opencode-ai": "OPENCODE_VERSION", "npm": "NPM_VERSION", "yarn": "YARN_VERSION", "cli/cli": "GH_VERSION", "docker/compose": "COMPOSE_VERSION", "docker/buildx": "BUILDX_VERSION", "tjpeel/skills": "SKILLS_REVISION", "tjpeel/agents": "AGENTS_REVISION", "dotnet": "DOTNET_VERSION"}
 	for i, dependency := range inventory.Dependencies {
 		if argument := arguments[dependency.Source]; argument != "" {
 			inventory.Dependencies[i].Version = options.Pins.Arguments[argument]
@@ -130,7 +140,7 @@ func updateHTTP(blockClaude bool) statusHTTP {
 		switch request.URL.Host {
 		case "registry.npmjs.org":
 			name := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/"), "/latest")
-			versions := map[string]string{"@openai/codex": "0.159.4", "@anthropic-ai/claude-code": "2.1.288", "npm": "11.2.0", "yarn": "1.22.22"}
+			versions := map[string]string{"@openai/codex": "0.159.4", "@anthropic-ai/claude-code": "2.1.288", "opencode-ai": "1.19.3", "npm": "11.2.0", "yarn": "1.22.22"}
 			if blockClaude && name == "@anthropic-ai/claude-code" {
 				return nil, errors.New("synthetic metadata failure")
 			}

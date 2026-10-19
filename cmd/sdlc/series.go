@@ -764,7 +764,7 @@ type seriesDriver struct {
 }
 
 func (d *seriesDriver) validateSettings() error {
-	if len(d.settings.Roles) != len(d.plan.Tickets) || (d.settings.Provider != "codex" && d.settings.Provider != "claude") {
+	if len(d.settings.Roles) != len(d.plan.Tickets) || (d.settings.Provider != "codex" && d.settings.Provider != "claude" && d.settings.Provider != "synthetic") {
 		return fmt.Errorf("private feature models do not match its tickets")
 	}
 	if d.settings.TicketInputs != nil && len(d.settings.TicketInputs) != len(d.plan.Tickets) {

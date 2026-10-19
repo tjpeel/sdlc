@@ -21,7 +21,7 @@ type Pins struct {
 	DaemonImage  string            `json:"daemon_image"`
 }
 
-var argumentNames = []string{"CODEX_VERSION", "CLAUDE_VERSION", "GH_VERSION", "DOTNET_VERSION", "SKILLS_REVISION", "AGENTS_REVISION", "NPM_VERSION", "YARN_VERSION", "COMPOSE_VERSION", "BUILDX_VERSION"}
+var argumentNames = []string{"CODEX_VERSION", "CLAUDE_VERSION", "OPENCODE_VERSION", "GH_VERSION", "DOTNET_VERSION", "SKILLS_REVISION", "AGENTS_REVISION", "NPM_VERSION", "YARN_VERSION", "COMPOSE_VERSION", "BUILDX_VERSION"}
 var stable = `(?:0|[1-9][0-9]{0,19})\.(?:0|[1-9][0-9]{0,19})\.(?:0|[1-9][0-9]{0,19})`
 var stableVersion = regexp.MustCompile(`^` + stable + `$`)
 var revision = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -67,11 +67,19 @@ func ValidateDaemonImage(reference string) error {
 }
 
 func (pins Pins) Validate() error {
-	if len(pins.Arguments) != len(argumentNames) || len(pins.Images) != len(imagePatterns) {
+	_, hasOpenCode := pins.Arguments["OPENCODE_VERSION"]
+	expectedArguments := len(argumentNames)
+	if !hasOpenCode {
+		expectedArguments-- // Saved runtimes built before OpenCode remain readable.
+	}
+	if len(pins.Arguments) != expectedArguments || len(pins.Images) != len(imagePatterns) {
 		return fmt.Errorf("runtime pins must cover every managed argument and image")
 	}
 	for _, name := range argumentNames {
 		value, ok := pins.Arguments[name]
+		if name == "OPENCODE_VERSION" && !ok {
+			continue
+		}
 		valid := validVersion(value)
 		if name == "SKILLS_REVISION" || name == "AGENTS_REVISION" {
 			valid = revision.MatchString(value)
@@ -125,6 +133,9 @@ func ReadDockerfile(original []byte) (Pins, error) {
 func ApplyDockerfile(original []byte, pins Pins) ([]byte, error) {
 	if err := pins.Validate(); err != nil {
 		return nil, err
+	}
+	if !validVersion(pins.Arguments["OPENCODE_VERSION"]) {
+		return nil, fmt.Errorf("new runtime builds require an OpenCode version pin")
 	}
 	lines := strings.Split(string(original), "\n")
 	err := visitRecipe(original, false, func(index int, name, value, suffix string, image bool) error {
@@ -195,6 +206,9 @@ func visitRecipe(original []byte, legacy bool, visit func(int, string, string, s
 		}
 	}
 	for _, name := range argumentNames {
+		if legacy && name == "OPENCODE_VERSION" && arguments[name] == 0 {
+			continue
+		}
 		if legacy && optionalArgument(name) && arguments[name] == 0 {
 			if err := visit(-1, name, "", "", false); err != nil {
 				return err

@@ -14,8 +14,9 @@ import sys
 import tempfile
 
 
-FILES = {"codex": "auth.json", "claude": ".credentials.json"}
+FILES = {"codex": "auth.json", "claude": ".credentials.json", "synthetic": "auth.json"}
 INTERACTIVE_MODES = {
+    "synthetic": ("allow", "ask"),
     "codex": ("never", "on-request"),
     "claude": ("bypassPermissions", "default", "manual", "acceptEdits",
                "plan", "auto", "dontAsk"),
@@ -456,6 +457,10 @@ def run(provider, action, directory=Path("/provider-auth"), mode=None):
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) != 0o700):
         raise ValueError("unsafe storage directory")
+    if provider == "synthetic":
+        if action == "interactive":
+            return synthetic_interactive(directory, mode)
+        return synthetic_auth(action, directory)
     if action == "interactive":
         if provider == "claude":
             return claude_interactive(directory, mode)
@@ -501,7 +506,9 @@ def main():
         return 1
     provider, action = arguments[:2]
     mode = arguments[2] if len(arguments) == 3 else None
-    if provider not in FILES or action not in ("init", "login", "status", "interactive"):
+    if provider not in FILES or action not in ("init", "login", "status", "interactive", "logout"):
+        return 1
+    if action == "logout" and provider != "synthetic":
         return 1
     if action != "interactive" and mode is not None:
         return 1

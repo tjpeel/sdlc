@@ -57,6 +57,8 @@ func (docker *fakeDocker) Output(ctx context.Context, args ...string) ([]byte, e
 			provider := "codex"
 			if strings.HasSuffix(name, "-claude") {
 				provider = "claude"
+			} else if strings.HasSuffix(name, "-synthetic") {
+				provider = "synthetic"
 			}
 			id := strings.TrimSuffix(strings.TrimPrefix(name, "sdlc-auth-"), "-"+provider)
 			driver := docker.driver
@@ -142,7 +144,7 @@ func TestLoginUsesIsolatedImmutableContainersAndReusesVolume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(docker.volumes) != 2 {
+	if len(docker.volumes) != 3 {
 		t.Fatal("repeated login created new authentication volumes")
 	}
 	for _, args := range docker.calls {

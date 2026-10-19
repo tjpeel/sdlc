@@ -10,13 +10,14 @@ import (
 )
 
 var agentToolArguments = map[string]string{
+	"npm/opencode-ai":               "OPENCODE_VERSION",
 	"npm/@openai/codex":             "CODEX_VERSION",
 	"npm/@anthropic-ai/claude-code": "CLAUDE_VERSION",
 	"git/tjpeel/skills":             "SKILLS_REVISION",
 	"git/tjpeel/agents":             "AGENTS_REVISION",
 }
 
-// PlanAgentTools checks only the four selected tools. All other build pins retain
+// PlanAgentTools checks only the selected agent tools. All other build pins retain
 // their installed recipe values; legacy inherited defaults come from inventory.
 func (checker Checker) PlanAgentTools(ctx context.Context, state runtimeimage.State, recipe []byte) (Plan, error) {
 	var plan Plan
@@ -65,10 +66,11 @@ func (checker Checker) PlanAgentTools(ctx context.Context, state runtimeimage.St
 		}
 	}
 	// Select first, so missing or ambiguous inventory cannot produce partial plans.
-	selected := make([]runtimeimage.Dependency, 0, 4)
-	for _, identity := range []string{"npm/@openai/codex", "npm/@anthropic-ai/claude-code", "git/tjpeel/skills", "git/tjpeel/agents"} {
+	inventory := inventoryForUpdate(*state.Inventory)
+	selected := make([]runtimeimage.Dependency, 0, 5)
+	for _, identity := range []string{"npm/@openai/codex", "npm/@anthropic-ai/claude-code", "npm/opencode-ai", "git/tjpeel/skills", "git/tjpeel/agents"} {
 		parts := strings.SplitN(identity, "/", 2)
-		dependency, err := installedDependency(*state.Inventory, parts[0], parts[1])
+		dependency, err := installedDependency(inventory, parts[0], parts[1])
 		if err != nil {
 			return plan, err
 		}
@@ -94,6 +96,11 @@ func (checker Checker) PlanAgentTools(ctx context.Context, state runtimeimage.St
 	}
 	for _, dependency := range selected {
 		result := fetch.check(ctx, dependency)
+		installed := dependency.Version
+		if dependency.Source == "opencode-ai" && dependency.Version == "0.0.0" {
+			installed = ""
+			result.Installed = ""
+		}
 		plan.Report.Results = append(plan.Report.Results, result)
 		if result.Status == Unavailable || (dependency.Kind == "git" && result.Status != Current && result.Status != Update) {
 			return Plan{}, fmt.Errorf("agent-tool update refused: %s metadata unavailable or catalogue behind/diverged: %s", dependency.Source, result.Detail)
@@ -104,7 +111,7 @@ func (checker Checker) PlanAgentTools(ctx context.Context, state runtimeimage.St
 		}
 		pins.Arguments[agentToolArguments[dependency.Kind+"/"+dependency.Source]] = candidate
 		if candidate != dependency.Version {
-			plan.Changes = append(plan.Changes, Change{Dependency: dependency.Name, Installed: dependency.Version, Candidate: candidate, Action: "pin agent tool in private build recipe", Kind: dependency.Kind})
+			plan.Changes = append(plan.Changes, Change{Dependency: dependency.Name, Installed: installed, Candidate: candidate, Action: "pin agent tool in private build recipe", Kind: dependency.Kind})
 		}
 	}
 	if err := pins.Validate(); err != nil {

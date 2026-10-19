@@ -22,6 +22,15 @@ func bindInstructions(source, destination string) string {
 
 // InteractiveMode validates a native provider mode and supplies its full-access default.
 func InteractiveMode(provider, mode string) (string, error) {
+	if provider == "synthetic" {
+		if mode == "" {
+			mode = "allow"
+		}
+		if mode != "allow" && mode != "ask" {
+			return "", fmt.Errorf("Synthetic permission mode must be allow or ask")
+		}
+		return mode, nil
+	}
 	if provider == "codex" {
 		if mode == "" {
 			mode = "never"
@@ -42,7 +51,7 @@ func InteractiveMode(provider, mode string) (string, error) {
 			return "", fmt.Errorf("Claude permission mode must be default, manual, acceptEdits, plan, auto, dontAsk or bypassPermissions")
 		}
 	}
-	return "", fmt.Errorf("provider must be codex or claude")
+	return "", fmt.Errorf("provider must be codex, claude or synthetic")
 }
 
 func interactiveArgs(image, name, volume, provider, snapshot, settings, mode string) []string {

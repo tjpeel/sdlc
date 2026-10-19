@@ -129,6 +129,9 @@ func validatePinnedInventory(inventory Inventory, pins runtimepins.Pins) error {
 		{"SKILLS_REVISION", "git", "tjpeel/skills"},
 		{"AGENTS_REVISION", "git", "tjpeel/agents"},
 	}
+	if _, ok := pins.Arguments["OPENCODE_VERSION"]; ok {
+		checks = append(checks, struct{ argument, kind, source string }{"OPENCODE_VERSION", "npm", "opencode-ai"})
+	}
 	for _, check := range checks {
 		if err := inventoryVersionMatches(inventory, check.kind, check.source, pins.Arguments[check.argument]); err != nil {
 			return err

@@ -45,6 +45,9 @@ func TestHeadlessSelectedAuthenticationAndMountModes(t *testing.T) {
 				manager, docker := readyInteractive(t, provider)
 				request := headlessFixture(t)
 				request.Provider = provider
+				if provider == "synthetic" {
+					request.Effort = "default"
+				}
 				request.ReadOnly = readonly
 				if err := os.Mkdir(filepath.Join(request.Workspace, ".codex"), 0700); err != nil {
 					t.Fatal(err)

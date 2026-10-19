@@ -120,3 +120,26 @@ func TestRecipeRejectsMissingDuplicateOrAlternativeDeclarations(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyPinsRemainReadableButCannotBuildWithoutOpenCode(t *testing.T) {
+	pins := fixturePins()
+	delete(pins.Arguments, "OPENCODE_VERSION")
+	if err := pins.Validate(); err != nil {
+		t.Fatal("saved pins rejected", err)
+	}
+	if _, err := ApplyDockerfile(fixtureRecipe(), pins); err == nil {
+		t.Fatal("build accepted missing OpenCode pin")
+	}
+	recipe := strings.Replace(string(fixtureRecipe()), "ARG OPENCODE_VERSION=0.1.0\n", "", 1)
+	read, err := ReadDockerfile([]byte(recipe))
+	if err != nil {
+		t.Fatal("legacy recipe rejected", err)
+	}
+	if _, ok := read.Arguments["OPENCODE_VERSION"]; ok {
+		t.Fatal("legacy recipe invented OpenCode pin")
+	}
+	pins.Arguments["OPENCODE_VERSION"] = "1.19.3"
+	if _, err := ApplyDockerfile([]byte(recipe), pins); err == nil {
+		t.Fatal("legacy recipe accepted without install argument")
+	}
+}

@@ -7,6 +7,19 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.121 - 2026-10-19
+
+### Added
+
+- Synthetic ticket and feature implementation through pinned OpenCode 1.19.3, with configurable Kimi K3 defaults and independent Codex review.
+- Native terminal API-key login, offline status and local logout for Synthetic, with isolated credential and resumable session storage.
+- OpenCode runtime dependency inventory and updates, installed skills and agent profiles, and CLI-specific delegation bundles.
+
+### Changed
+
+- Native Synthetic usage reports retain per-invocation totals across resumed sessions and mark missing delegate coverage as partial.
+- Synthetic runs use direct inference; ordinary Codex and Claude runs retain their saved Headroom route.
+
 ## 0.1.0-beta.120 - 2026-10-19
 
 - Publish mechanically equivalent clean rebases and monitor current-head CI without implementation, self-review or independent-review agents. Retain explicit operational proof rather than inventing fresh test or review evidence; conflicts, changed patches and CI repairs keep normal gates.

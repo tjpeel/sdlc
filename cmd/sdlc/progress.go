@@ -386,10 +386,13 @@ func legacyProgress(v runstatus.View, cursor *progressCursor, appendEvent func(r
 			// Older journals describe the current stage, which can differ from
 			// the producer of the last log (for example after review finishes).
 			var native struct {
-				Type string `json:"type"`
+				Type     string `json:"type"`
+				Provider string `json:"provider"`
 			}
 			if json.Unmarshal([]byte(lines[0]), &native) == nil {
 				switch {
+				case native.Provider == "synthetic":
+					provider = "synthetic"
 				case strings.HasPrefix(native.Type, "item."), strings.HasPrefix(native.Type, "thread."), strings.HasPrefix(native.Type, "turn."):
 					provider = "codex"
 				case native.Type == "assistant", native.Type == "user", native.Type == "system", native.Type == "result":

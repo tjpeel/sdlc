@@ -58,6 +58,7 @@ func newMetadataFixture() *metadataFixture {
 	return &metadataFixture{calls: make(map[string]int), overrides: make(map[string]func(*http.Request) (*http.Response, error)), bodies: map[string]string{
 		"registry.npmjs.org/@openai/codex/latest":                                                                 `{"name":"@openai/codex","version":"0.159.4"}`,
 		"registry.npmjs.org/@anthropic-ai/claude-code/latest":                                                     `{"name":"@anthropic-ai/claude-code","version":"2.1.288"}`,
+		"registry.npmjs.org/opencode-ai/latest":                                                                   `{"name":"opencode-ai","version":"1.19.3"}`,
 		"registry.npmjs.org/npm/latest":                                                                           `{"name":"npm","version":"11.2.0"}`,
 		"api.github.com/repos/cli/cli/releases/latest":                                                            `{"tag_name":"v2.2.0","draft":false,"prerelease":false}`,
 		"api.github.com/repos/docker/cli/tags":                                                                    `[{"name":"v29.8.3"},{"name":"v30.0.0-rc1"},{"name":"v29.8.2"}]`,

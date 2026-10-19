@@ -18,6 +18,7 @@ spec.loader.exec_module(updater)
 PINS = {
     'CODEX_VERSION': '0.159.2',
     'CLAUDE_VERSION': '2.1.1',
+    'OPENCODE_VERSION': '1.19.3',
     'GH_VERSION': '2.81.0',
     'SKILLS_REVISION': 'a' * 40,
     'AGENTS_REVISION': 'b' * 40,
@@ -25,6 +26,7 @@ PINS = {
 CANDIDATES = {
     'CODEX_VERSION': '0.160.0',
     'CLAUDE_VERSION': '2.1.2',
+    'OPENCODE_VERSION': '1.19.3',
     'GH_VERSION': '2.82.0',
     'SKILLS_REVISION': 'c' * 40,
     'AGENTS_REVISION': 'd' * 40,
@@ -50,11 +52,16 @@ class DependencyUpdateChecks(unittest.TestCase):
     def update(self, candidates=None):
         return updater.update_pins(self.path, lambda: candidates if candidates is not None else CANDIDATES)
 
+    def test_opencode_release_is_pinned_with_numeric_update_order(self):
+        changes = self.update(dict(PINS, OPENCODE_VERSION='1.20.0'))
+        self.assertEqual(changes, [('OPENCODE_VERSION', '1.19.3', '1.20.0')])
+        self.assertEqual(updater.read_pins(self.path.read_text())['OPENCODE_VERSION'][0], '1.20.0')
+
     def test_managed_pins_update_and_other_contents_and_mode_survive(self):
         os.chmod(self.path, 0o640)
         changes = self.update()
         self.assertEqual(self.path.read_text(), dockerfile(CANDIDATES))
-        self.assertEqual(changes, [(name, PINS[name], CANDIDATES[name]) for name in updater.PIN_NAMES])
+        self.assertEqual(changes, [(name, PINS[name], CANDIDATES[name]) for name in updater.PIN_NAMES if PINS[name] != CANDIDATES[name]])
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
         self.assertEqual(sorted(path.name for path in self.path.parent.iterdir()), ['Dockerfile'])
 
@@ -160,7 +167,7 @@ class DependencyUpdateChecks(unittest.TestCase):
               contextlib.redirect_stdout(output)):
             self.assertEqual(updater.main(['--write', '--dockerfile', str(self.path)]), 0)
         self.assertEqual(output.getvalue().splitlines(),
-                         [f'{name}: {PINS[name]} -> {CANDIDATES[name]}' for name in updater.PIN_NAMES])
+                         [f'{name}: {PINS[name]} -> {CANDIDATES[name]}' for name in updater.PIN_NAMES if PINS[name] != CANDIDATES[name]])
         output = io.StringIO()
         with (mock.patch.object(updater, 'fetch_candidates', return_value=CANDIDATES),
               contextlib.redirect_stdout(output)):
@@ -186,11 +193,12 @@ class UpstreamMetadataChecks(unittest.TestCase):
 
     def test_upstream_values_and_github_endpoints(self):
         npm = [{'name': '@openai/codex', 'version': CANDIDATES['CODEX_VERSION']},
-               {'name': '@anthropic-ai/claude-code', 'version': CANDIDATES['CLAUDE_VERSION']}]
+               {'name': '@anthropic-ai/claude-code', 'version': CANDIDATES['CLAUDE_VERSION']},
+                        {'name': 'opencode-ai', 'version': CANDIDATES['OPENCODE_VERSION']}]
         with (mock.patch.object(updater, 'npm_json', side_effect=npm) as registry,
               mock.patch.object(updater, 'github_json', side_effect=self.github_responses()) as github):
             self.assertEqual(updater.fetch_candidates(), CANDIDATES)
-        self.assertEqual(registry.call_args_list, [mock.call('@openai/codex'), mock.call('@anthropic-ai/claude-code')])
+        self.assertEqual(registry.call_args_list, [mock.call('@openai/codex'), mock.call('@anthropic-ai/claude-code'), mock.call('opencode-ai')])
         self.assertEqual(github.call_args_list, [mock.call('repos/cli/cli/releases/latest'),
                                                mock.call('repos/tjpeel/skills/commits/main'),
                                                mock.call('repos/tjpeel/agents/commits/main')])
@@ -227,7 +235,8 @@ class UpstreamMetadataChecks(unittest.TestCase):
             with (self.subTest(payload=payload),
                   mock.patch.object(updater, 'npm_json', side_effect=[
                       {'name': '@openai/codex', 'version': '0.160.0'},
-                      {'name': '@anthropic-ai/claude-code', 'version': '2.1.2'}]),
+                      {'name': '@anthropic-ai/claude-code', 'version': '2.1.2'},
+                    {'name': 'opencode-ai', 'version': '1.19.3'}]),
                   mock.patch.object(updater, 'github_json', side_effect=responses),
                   self.assertRaises(updater.UpdateError)):
                 updater.fetch_candidates()

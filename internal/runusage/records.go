@@ -226,12 +226,19 @@ func validateAttempt(a Attempt) error {
 		return fmt.Errorf("running metrics attempt has end time")
 	}
 	switch a.Provider {
-	case "codex", "claude":
+	case "codex", "claude", "synthetic":
 	default:
 		return fmt.Errorf("invalid metrics provider")
 	}
+	if a.Provider == "synthetic" && a.Effort != "default" {
+		return fmt.Errorf("invalid Synthetic metrics effort")
+	}
 	switch a.Effort {
 	case "", "low", "medium", "high", "xhigh", "max":
+	case "default":
+		if a.Provider != "synthetic" {
+			return fmt.Errorf("invalid metrics effort")
+		}
 	case "none", "minimal", "ultra":
 		if a.Provider != "codex" {
 			return fmt.Errorf("invalid metrics effort")
@@ -634,7 +641,7 @@ func loadSummary(directory, runID string, expectedAttempts, afterAttempt int, in
 		}
 		baselineKey := a.Provider + "\x00" + a.Model + "\x00" + a.OptimizerMode + "\x00" + a.ImageID + "\x00" + a.SessionID
 		delta := totals
-		if a.Resumed {
+		if a.Resumed && !(a.Provider == "synthetic" && totals.Scope == "attempt_total") {
 			old, ok := baselines[baselineKey]
 			if !ok || a.SessionID == "" {
 				known = false
@@ -808,7 +815,7 @@ func validateUsage(u Usage) error {
 	}
 	validateTokens := func(v TokenUsage) error {
 		switch v.Source + "/" + v.Scope {
-		case "/", "codex.turn.completed/session_total", "claude.result/reported_total", "claude.result.modelUsage/session_total":
+		case "/", "codex.turn.completed/session_total", "claude.result/reported_total", "claude.result.modelUsage/session_total", "opencode.message.updated/attempt_total":
 		default:
 			return fmt.Errorf("invalid native token source")
 		}
@@ -817,7 +824,7 @@ func validateUsage(u Usage) error {
 				return fmt.Errorf("invalid metrics token count")
 			}
 		}
-		if v.ReasoningOutputTokens != nil && v.OutputTokens != nil && *v.ReasoningOutputTokens > *v.OutputTokens {
+		if v.Source != "opencode.message.updated" && v.ReasoningOutputTokens != nil && v.OutputTokens != nil && *v.ReasoningOutputTokens > *v.OutputTokens {
 			return fmt.Errorf("invalid reasoning token subset")
 		}
 		if v.Source == "codex.turn.completed" && v.CachedInputTokens != nil && v.InputTokens != nil && *v.CachedInputTokens > *v.InputTokens {

@@ -198,6 +198,7 @@ func counts(raw json.RawMessage, cachedKey string) (*TokenUsage, bool) {
 }
 
 func (o *Observer) consume(line []byte, provider, requested string, usage *Usage) {
+	o.observeSynthetic(line, provider, usage)
 	o.observeStream(line, provider, usage)
 	observeCatalogue(line, provider, usage)
 	if o.observeCodexContext(line, provider, usage) {
@@ -282,7 +283,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 			return
 		}
 	}
-	if (provider == "codex" && event.Type == "thread.started") || (provider == "claude" && event.Type == "system" && event.Subtype == "init") {
+	if (provider == "codex" && event.Type == "thread.started") || ((provider == "claude" || provider == "synthetic") && event.Type == "system" && event.Subtype == "init") {
 		id := event.SessionID
 		if provider == "codex" {
 			id = event.ThreadID

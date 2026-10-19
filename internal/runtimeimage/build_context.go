@@ -21,6 +21,7 @@ var publisherEmbeds = map[string]bool{
 	"internal/providerauth/subscription.py":      true,
 	"internal/githubauth/container.py":           true,
 	"internal/providerauth/container.py":         true,
+	"internal/providerauth/synthetic.py":         true,
 	"internal/providerauth/headless.py":          true,
 	"internal/instructions/default.md":           true,
 	"internal/workrun/cache/nuget.py":            true,

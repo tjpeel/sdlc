@@ -20,6 +20,7 @@
 - [Ticket-stream prompt](prompts/implement-ticket-stream.md): drive the existing skills for selected tickets.
 - [Development](development.md): repository layout, checks and commit process.
 - [Publication safety](publication-safety.md): protect this public repository.
+- [Synthetic](synthetic.md): pinned OpenCode, API-key setup, models and Codex review.
 - [Provider usage](provider-usage.md): supported authentication and service rules.
 - [Usage metrics](usage-metrics.md): durable native counters, observed quota signals and comparisons across runs.
 - [Headroom](headroom.md): required saved proxy address, Docker connectivity, native authentication routes and legacy managed proxies.

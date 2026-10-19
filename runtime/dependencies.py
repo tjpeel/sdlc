@@ -136,7 +136,7 @@ def npm_inventory(global_tree, npm_version):
             walk(children)
 
     walk(installed)
-    for required in ('@openai/codex', '@anthropic-ai/claude-code'):
+    for required in ('@openai/codex', '@anthropic-ai/claude-code', 'opencode-ai'):
         if required not in installed or not installed[required].get('version'):
             raise ValueError('provider CLI package is absent from inventory')
     return {(name, source, track, version) for (source, track, version), name in result.items()}
@@ -195,7 +195,7 @@ def capture(skills_revision, agents_revision, dockerfile):
     add('Skills catalogue', 'git', 'tjpeel/skills', skills_revision, 'main')
     add('Agents catalogue', 'git', 'tjpeel/agents', agents_revision, 'main')
     add('Node base image', 'image', 'library/node', digest, tag)
-    return {'version': 1, 'platform': 'linux/' + {'amd64': 'amd64', 'arm64': 'arm64'}[architecture],
+    return {'version': 2, 'platform': 'linux/' + {'amd64': 'amd64', 'arm64': 'arm64'}[architecture],
             'distribution': 'debian:bookworm', 'dependencies': dependencies,
             'packages': packages()}
 
@@ -232,7 +232,7 @@ def apt_options(directory):
 
 
 def package_updates(inventory, directory):
-    if not isinstance(inventory, dict) or inventory.get('version') != 1 or inventory.get('distribution') != 'debian:bookworm':
+    if not isinstance(inventory, dict) or inventory.get('version') not in (1, 2) or inventory.get('distribution') != 'debian:bookworm':
         raise ValueError('unsupported runtime package inventory')
     installed = inventory.get('packages')
     if not isinstance(installed, list) or not installed or len(installed) > 10000:

@@ -93,7 +93,7 @@ class HeadlessTests(unittest.TestCase):
             change = patch.object(module, name, value)
             change.start()
             self.addCleanup(change.stop)
-        for provider, filename in native.FILES.items():
+        for provider, filename in ((name, native.FILES[name]) for name in ("codex", "claude")):
             # Claude fixtures deliberately are not JSON: this path must never
             # inspect or parse native subscription credentials.
             contents = b'{"synthetic":true}' if provider == "codex" else b"fake-native-cache"
@@ -344,7 +344,7 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o700)
 
     def test_native_atomic_auth_refresh_does_not_leave_credentials_in_session(self):
-        for provider in native.FILES:
+        for provider in ("codex", "claude"):
             def replace(path):
                 path.unlink()
                 contents = b'{"synthetic_refresh":true}' if provider == "codex" else b"fake-refreshed-native-cache"
@@ -528,7 +528,7 @@ class HeadlessTests(unittest.TestCase):
                         linked.unlink()
 
     def test_missing_auth_does_not_start_client(self):
-        for provider, filename in native.FILES.items():
+        for provider, filename in ((name, native.FILES[name]) for name in ("codex", "claude")):
             (self.cache / filename).unlink()
             with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
                 headless.headless(provider, "example-model", "high", "", False, self.cache)

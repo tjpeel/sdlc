@@ -13,7 +13,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/runtimepins"
 )
 
-// DockerfileUpdate holds the reviewed original and exactly four replacements.
+// DockerfileUpdate holds the reviewed original and the selected agent-tool replacements.
 // It never writes until Apply is called after runtime validation.
 type DockerfileUpdate struct {
 	directory             string
@@ -22,7 +22,7 @@ type DockerfileUpdate struct {
 	original, replacement []byte
 }
 
-var selectedDockerfileArgument = regexp.MustCompile(`^ARG[ \t]+(CODEX_VERSION|CLAUDE_VERSION|SKILLS_REVISION|AGENTS_REVISION)=(.*)$`)
+var selectedDockerfileArgument = regexp.MustCompile(`^ARG[ \t]+(CODEX_VERSION|CLAUDE_VERSION|OPENCODE_VERSION|SKILLS_REVISION|AGENTS_REVISION)=(.*)$`)
 
 func PrepareAgentToolDockerfile(source string, original []byte, pins runtimepins.Pins) (*DockerfileUpdate, error) {
 	if err := pins.Validate(); err != nil {

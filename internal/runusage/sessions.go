@@ -62,12 +62,43 @@ func sessionSummaries(records []Attempt) []SessionSummary {
 			speed = "unknown"
 		}
 		s.Invocations = append(s.Invocations, SessionInvocation{ContextCheckpointErrors: a.Usage.ContextCheckpointErrors, Prompt: a.Prompt, Catalogue: a.Usage.Catalogue, Stream: a.Usage.Stream, Context: a.Usage.Context, CompactionCoverage: a.Usage.CompactionCoverage, ReviewEffortSelection: a.ReviewEffortSelection, FastModeState: a.Usage.FastModeState, Attempt: a.Attempt, Role: a.Role, Outcome: a.Outcome, RequestedModel: a.Model, ReportedModel: a.Usage.ReportedModel, RequestedEffort: a.Effort, ReportedEffort: "unknown", RequestedSpeed: a.RequestedSpeed, EffectiveSpeed: speed})
-		s.Tokens, s.Models = nil, nil
-		s.Completeness = "incomplete"
-		if totals, known := wholeTree(a.Usage, a.Provider); known && a.Usage.Completeness == "observed" && a.Outcome != "running" {
-			s.Tokens = &totals
-			s.Models = a.Usage.Models
-			s.Completeness = "reported"
+		if a.Provider == "synthetic" {
+			totals, known := wholeTree(a.Usage, a.Provider)
+			first := len(s.Invocations) == 1
+			if !known || a.Usage.Completeness != "observed" || a.Outcome == "running" || (!first && s.Completeness != "reported") {
+				s.Tokens, s.Models = nil, nil
+				s.Completeness = "incomplete"
+			} else {
+				if first {
+					s.Tokens = &TokenUsage{}
+				}
+				if err := addTokens(s.Tokens, totals, first); err != nil {
+					s.Tokens, s.Models = nil, nil
+					s.Completeness = "incomplete"
+				} else {
+					s.Completeness = "reported"
+					if s.Models == nil {
+						s.Models = map[string]TokenUsage{}
+					}
+					for model, usage := range a.Usage.Models {
+						total, exists := s.Models[model]
+						if err := addTokens(&total, usage, !exists); err != nil {
+							s.Tokens, s.Models = nil, nil
+							s.Completeness = "incomplete"
+							break
+						}
+						s.Models[model] = total
+					}
+				}
+			}
+		} else {
+			s.Tokens, s.Models = nil, nil
+			s.Completeness = "incomplete"
+			if totals, known := wholeTree(a.Usage, a.Provider); known && a.Usage.Completeness == "observed" && a.Outcome != "running" {
+				s.Tokens = &totals
+				s.Models = a.Usage.Models
+				s.Completeness = "reported"
+			}
 		}
 		s.AgentsTruncated = s.AgentsTruncated || a.Usage.AgentsTruncated
 		for key, value := range a.Usage.Agents {

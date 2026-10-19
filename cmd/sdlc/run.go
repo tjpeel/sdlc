@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider when logged in.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -262,11 +262,14 @@ func parseRunOptions(args []string) (runOptions, error) {
 	if invalidFeatureFlag {
 		return options, fmt.Errorf("--parallel, --watch and --alternate-providers require --all")
 	}
+	if options.alternate && options.provider == "synthetic" {
+		return options, fmt.Errorf("--alternate-providers supports Codex and Claude; select Synthetic without alternation")
+	}
 	if options.alternate && (options.model != "" || options.reviewModel != "") {
 		return options, fmt.Errorf("alternating providers use their configured model defaults; model overrides require one implementation provider")
 	}
-	if options.provider != "codex" && options.provider != "claude" {
-		return options, fmt.Errorf("provider must be codex or claude")
+	if options.provider != "codex" && options.provider != "claude" && options.provider != "synthetic" {
+		return options, fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	if _, err := headroom.Selection(options.headroomMode); err != nil {
 		return options, err

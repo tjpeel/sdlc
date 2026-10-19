@@ -21,9 +21,14 @@ import (
 )
 
 //go:embed container.py
-var helper string
+var authHelper string
 
-var Providers = []string{"codex", "claude"}
+//go:embed synthetic.py
+var syntheticHelper string
+
+var helper = syntheticHelper + "\n" + authHelper
+
+var Providers = []string{"codex", "claude", "synthetic"}
 
 type Docker interface {
 	Output(context.Context, ...string) ([]byte, error)
@@ -81,7 +86,9 @@ func terminal() bool {
 	return true
 }
 
-func validProvider(provider string) bool { return provider == "codex" || provider == "claude" }
+func validProvider(provider string) bool {
+	return provider == "codex" || provider == "claude" || provider == "synthetic"
+}
 
 func randomID() (string, error) {
 	var token [16]byte
@@ -283,6 +290,9 @@ func containerArgs(image, name, volume, provider, action string) []string {
 			args = append(args, "--network", "none")
 			mount += ",readonly"
 		}
+		if action == "logout" {
+			args = append(args, "--network", "none")
+		}
 		if action == "login" || action == "interactive" {
 			args = append(args, "--interactive", "--tty", "--network", "bridge")
 		}
@@ -366,7 +376,7 @@ func (manager Manager) begin(ctx context.Context, provider string) (runtimeimage
 
 func (manager Manager) Login(ctx context.Context, provider string) error {
 	if !validProvider(provider) {
-		return fmt.Errorf("provider must be codex or claude")
+		return fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	if !manager.Terminal() {
 		return fmt.Errorf("login needs an interactive terminal for stdin, stdout and stderr; do not redirect login output")
@@ -419,7 +429,7 @@ func (manager Manager) status(ctx context.Context, image, volume, provider strin
 
 func (manager Manager) Status(ctx context.Context, provider string) (string, error) {
 	if !validProvider(provider) {
-		return "", fmt.Errorf("provider must be codex or claude")
+		return "", fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	state, lock, err := manager.begin(ctx, provider)
 	if err != nil {
@@ -437,4 +447,26 @@ func (manager Manager) Status(ctx context.Context, provider string) (string, err
 		return "missing", err
 	}
 	return manager.status(ctx, state.ImageID, volume, provider)
+}
+
+// Logout removes only Synthetic's native API-key entry, without a provider call.
+func (manager Manager) Logout(ctx context.Context, provider string) error {
+	if provider != "synthetic" {
+		return fmt.Errorf("native logout is available for Synthetic")
+	}
+	state, lock, err := manager.begin(ctx, provider)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	id, err := manager.identityContext(ctx, false)
+	if err != nil || id == "" {
+		return err
+	}
+	volume, err := manager.volume(ctx, id, provider, false)
+	if err != nil || volume == "" {
+		return err
+	}
+	_, err = manager.container(ctx, state.ImageID, volume, provider, "logout")
+	return err
 }

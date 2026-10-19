@@ -58,6 +58,12 @@ func headroomCommand(ctx context.Context, args []string, output, diagnostics io.
 }
 
 func selectRunHeadroom(directory string, options runOptions) (headroom.Config, error) {
+	if options.provider == "synthetic" {
+		if options.supplied["headroom"] {
+			return headroom.Config{}, fmt.Errorf("Synthetic uses a direct inference route")
+		}
+		return headroom.Config{}, nil
+	}
 	if options.frozenHeadroom != nil {
 		return *options.frozenHeadroom, options.frozenHeadroom.Validate()
 	}

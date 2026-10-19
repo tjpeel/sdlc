@@ -17,7 +17,7 @@ func planRecipe() []byte {
 	return []byte("FROM golang:1.27.1-bookworm@sha256:" + strings.Repeat("a", 64) + " AS publisher-build\n" +
 		"FROM docker:29.8.2-cli@sha256:" + strings.Repeat("b", 64) + " AS docker-tools\n" +
 		"FROM node:24-bookworm@sha256:" + strings.Repeat("a", 64) + "\n" +
-		"ARG CODEX_VERSION=0.159.3\nARG CLAUDE_VERSION=2.1.287\nARG GH_VERSION=2.1.0\nARG DOTNET_VERSION=10.0.100\n" +
+		"ARG CODEX_VERSION=0.159.3\nARG CLAUDE_VERSION=2.1.287\nARG OPENCODE_VERSION=1.19.2\nARG GH_VERSION=2.1.0\nARG DOTNET_VERSION=10.0.100\n" +
 		"ARG SKILLS_REVISION=" + strings.Repeat("a", 40) + "\nARG AGENTS_REVISION=" + strings.Repeat("c", 40) + "\n" +
 		"ARG NPM_VERSION=\nARG YARN_VERSION=\nARG COMPOSE_VERSION=\nARG BUILDX_VERSION=\nRUN echo preserved\n")
 }
@@ -214,7 +214,7 @@ func TestTransitiveMetadataFailureRemainsReportedWithoutOverridingParents(t *tes
 	if err != nil || len(plan.Remaining) != 1 || plan.Remaining[0].Status != Unavailable || !plan.Report.Incomplete() {
 		t.Fatal(err, plan.Remaining)
 	}
-	if len(plan.Pins.Arguments) != 10 {
+	if len(plan.Pins.Arguments) != 11 {
 		t.Fatal("transitive version injected into pin map")
 	}
 }
@@ -356,5 +356,38 @@ func TestDockerPairMissingAndAuthorizationFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestLegacyDependencyUpdateAddsOpenCodeWithoutClaimingInstalledVersion(t *testing.T) {
+	state := planState()
+	plan, err := (Checker{planMetadata()}).Plan(context.Background(), state, planRecipe(), packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Pins.Arguments["OPENCODE_VERSION"] != "1.19.3" {
+		t.Fatal("missing OpenCode install pin")
+	}
+	found := false
+	for _, change := range plan.Changes {
+		if change.Dependency == "OpenCode CLI" {
+			found = true
+			if change.Installed != "" || change.Candidate != "1.19.3" {
+				t.Fatal(change)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing first-install change")
+	}
+	for _, result := range plan.Report.Results {
+		if result.Name == "OpenCode CLI" && result.Installed != "" {
+			t.Fatal("invented installed version", result)
+		}
+	}
+	for _, dependency := range state.Inventory.Dependencies {
+		if dependency.Source == "opencode-ai" {
+			t.Fatal("saved inventory mutated")
+		}
 	}
 }

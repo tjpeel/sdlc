@@ -707,6 +707,11 @@ CI execution is rejected. Review the [provider rules](provider-usage.md) first.
 
 ### Models and pinned agents
 
+Synthetic implementation uses pinned OpenCode with independent Codex review. See
+[the Synthetic guide](synthetic.md) for native API-key setup, model defaults,
+CLI-specific catalogues and session behaviour.
+
+
 These are requested lead settings, not a guarantee of account entitlement:
 
 | Selected implementer | Implementation | Independent review |
