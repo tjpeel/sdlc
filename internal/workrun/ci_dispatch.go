@@ -26,19 +26,13 @@ type CIWorkflowDispatch struct {
 	URL         string            `json:"url,omitempty"`
 }
 
-// WorkflowPreparation records an observed controller preflight finding, not a
-// claim that GitHub executed or failed a job.
+// Legacy workflow-preparation provenance is retained for saved journals only.
+// New integration limitations must never authorize a product-source repair.
 type CIWorkflowPreparation struct {
 	Head string `json:"head"`
 	Path string `json:"path"`
 	Code string `json:"code"`
 }
-type workflowContextError struct{}
-
-func (*workflowContextError) Error() string {
-	return "manual PR workflow references pull_request context without declaring pull_request_number, base_sha and head_sha inputs"
-}
-
 type CIWorkflowPublisher interface {
 	PrepareCIWorkflow(context.Context, Plan, Publication, string, string) (*CIWorkflowDispatch, error)
 	DispatchCIWorkflow(context.Context, Plan, CIWorkflowDispatch) error
@@ -56,27 +50,19 @@ func (p GitHubPublisher) ciDispatchJSON(ctx context.Context, endpoint string, ta
 	return nil
 }
 
-func workflowDispatchInputs(data []byte, values map[string]string) (map[string]string, error) {
+// Dispatch uses the repository's existing manual workflow contract as-is.
+// Required inputs are an operational limitation, never authority to edit source.
+func workflowDispatchInputs(data []byte) error {
 	spec, err := readWorkflowDispatchDeclaration(data)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if strings.Contains(string(data), "github.event.pull_request.base.sha || github.sha") || strings.Contains(string(data), "github.event.pull_request.head.sha || github.sha") {
-		for _, key := range []string{"pull_request_number", "base_sha", "head_sha"} {
-			if _, ok := spec[key]; !ok {
-				return nil, &workflowContextError{}
-			}
+	for _, input := range spec {
+		if input.Required && input.Default == "" {
+			return fmt.Errorf("existing manual workflow requires inputs; configure a supported local CI integration without changing repository source")
 		}
 	}
-	inputs := map[string]string{}
-	for name, input := range spec {
-		if value, ok := values[name]; ok {
-			inputs[name] = value
-		} else if input.Required && input.Default == "" {
-			return nil, fmt.Errorf("configured workflow has an unsupported required input")
-		}
-	}
-	return inputs, nil
+	return nil
 }
 
 func (p GitHubPublisher) PrepareCIWorkflow(ctx context.Context, plan Plan, pr Publication, workflow, runID string) (*CIWorkflowDispatch, error) {
@@ -120,11 +106,10 @@ func (p GitHubPublisher) PrepareCIWorkflow(ctx context.Context, plan Plan, pr Pu
 	if err != nil {
 		return nil, fmt.Errorf("invalid workflow contents")
 	}
-	inputs, err := workflowDispatchInputs(raw, map[string]string{"pull_request_number": strconv.Itoa(pr.Number), "base_ref": plan.Base, "base_sha": pr.BaseSHA, "head_sha": pr.HeadSHA, "sdlc_dispatch_id": "sdlc-" + runID + "-" + pr.HeadSHA[:12]})
-	if err != nil {
+	if err := workflowDispatchInputs(raw); err != nil {
 		return nil, err
 	}
-	return &CIWorkflowDispatch{Publication: pr, Workflow: workflow, WorkflowID: meta.ID, Ref: plan.Branch, RequestedAt: time.Now().UTC(), Inputs: inputs}, nil
+	return &CIWorkflowDispatch{Publication: pr, Workflow: workflow, WorkflowID: meta.ID, Ref: plan.Branch, RequestedAt: time.Now().UTC()}, nil
 }
 
 func (p GitHubPublisher) DispatchCIWorkflow(ctx context.Context, plan Plan, d CIWorkflowDispatch) error {
@@ -132,9 +117,10 @@ func (p GitHubPublisher) DispatchCIWorkflow(ctx context.Context, plan Plan, d CI
 		return err
 	}
 	args := []string{"api", "--hostname", "github.com", "--method", "POST", "repos/" + plan.Repository + "/actions/workflows/" + strconv.FormatInt(d.WorkflowID, 10) + "/dispatches", "--raw-field", "ref=" + d.Ref}
-	for name, value := range d.Inputs {
-		args = append(args, "--raw-field", "inputs["+name+"]="+value)
+	if len(d.Inputs) > 0 {
+		return fmt.Errorf("saved dispatch contains repository-specific runner inputs; reconcile locally before dispatch")
 	}
+
 	// A dispatch is a side effect. Never retry a POST with an uncertain outcome.
 	_, err := p.command(ctx, "gh", args...)
 	return err
@@ -239,9 +225,7 @@ func (r Runner) ensureCIWorkflow(ctx context.Context, dir string, j *Journal, ch
 	}
 	if current == nil {
 		d, err := p.PrepareCIWorkflow(ctx, j.Plan, j.Publication, workflow, j.ID)
-		if contextErr, isolated := err.(*workflowContextError); isolated {
-			return CIResult{Status: "failed", Details: "Controller preflight: " + contextErr.Error(), WorkflowPreparation: &CIWorkflowPreparation{Head: j.Publication.HeadSHA, Path: ".github/workflows/" + workflow, Code: "missing_dispatch_pr_context"}}, nil
-		}
+
 		if err != nil {
 			return checks, err
 		}

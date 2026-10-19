@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.112 - 2026-10-19
+
+- Keep runner integration local: dispatch existing manual workflows with only their ref, stop on unsupported input contracts, and remove automatic workflow-source repairs and injected dispatch identifiers. Preserve legacy records for audit without resending their custom inputs.
+- Enforce the product boundary in implementation/review instructions and reject added controller references before accepting or publishing product candidates.
+
 ## 0.1.0-beta.111 - 2026-10-19
 
 - Add per-repository `non_default_ci_workflow` policy. When a stacked PR has no checks, dispatch the configured PR workflow once, retain intent across interruptions and verify its run against the published head. Saved runs use the current repository policy without a runtime rebuild.

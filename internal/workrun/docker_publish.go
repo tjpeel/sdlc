@@ -188,6 +188,9 @@ func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspa
 	if err := validateRejectedBundle(directory, journal.PushRepair); err != nil {
 		return Publication{}, err
 	}
+	if err := validateLocalOnlySource(ctx, plan, workspace); err != nil {
+		return Publication{}, err
+	}
 	response, err := publisher.invoke(ctx, directory, PublisherRequest{PushRepair: journal.PushRepair, Action: "publish", Plan: plan, Previous: previous, ExpectedHead: revision.Head, ExpectedTree: revision.Tree})
 	if err == nil && output != nil {
 		fmt.Fprintln(output, "Draft PR:", response.Publication.URL)

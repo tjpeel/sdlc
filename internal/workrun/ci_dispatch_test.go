@@ -32,6 +32,9 @@ func (f *dispatchFixture) command(_ context.Context, name string, args ...string
 	}
 	if strings.Contains(call, "--method POST") {
 		f.posts++
+		if strings.Contains(call, "inputs[") {
+			return nil, fmt.Errorf("runner imposed custom workflow inputs")
+		}
 		return nil, f.postErr
 	}
 	if strings.HasSuffix(call, "repos/"+f.plan.Repository) {
@@ -124,12 +127,12 @@ func TestWorkflowDispatchPolicyAndUncertainOutcome(t *testing.T) {
 		}
 	})
 }
-func TestWorkflowDispatchValidatesDeclaredInputs(t *testing.T) {
-	_, err := workflowDispatchInputs([]byte("on:\n  pull_request:\n  workflow_dispatch:\n    inputs:\n      secret_choice:\n        required: true\n"), map[string]string{})
-	if err == nil {
-		t.Fatal("silently omitted required input")
+func TestWorkflowDispatchRefusesRequiredInputsWithoutSourceRepair(t *testing.T) {
+	err := workflowDispatchInputs([]byte("on:\n  pull_request:\n  workflow_dispatch:\n    inputs:\n      pull_request_number:\n        required: true\n"))
+	if err == nil || !strings.Contains(err.Error(), "without changing repository source") {
+		t.Fatal("required manual inputs were not treated as an operational limitation", err)
 	}
-	if _, err := workflowDispatchInputs([]byte("on:\n  pull_request:\n"), nil); err == nil {
+	if err := workflowDispatchInputs([]byte("on:\n  pull_request:\n")); err == nil {
 		t.Fatal("dispatched workflow without manual trigger")
 	}
 }
@@ -150,20 +153,10 @@ func TestNoChecksCommandResponseIsConfirmedAsMissing(t *testing.T) {
 	}
 }
 
-func TestManualWorkflowCannotCompareHeadWithItself(t *testing.T) {
-	raw := []byte("on:\n  pull_request:\n    branches:\n      - main\n    types:\n      - opened\n  workflow_dispatch:\njobs:\n  dependencies:\n    with:\n      base-ref: ${{ github.event.pull_request.base.sha || github.sha }}\n      head-ref: ${{ github.event.pull_request.head.sha || github.sha }}\n")
-	_, err := workflowDispatchInputs(raw, map[string]string{"pull_request_number": "40", "head_sha": testHead, "base_sha": testBase})
-	var observed *workflowContextError
-	if !errors.As(err, &observed) {
-		t.Fatal("accepted a manual dependency comparison against itself", err)
-	}
-	result := CIResult{Status: "failed", WorkflowPreparation: &CIWorkflowPreparation{Head: testHead, Path: ".github/workflows/check.yml", Code: "missing_dispatch_pr_context"}}
-	if err := validateCIResult(result, Publication{HeadSHA: testHead}); err != nil {
-		t.Fatal(err)
-	}
-	text := ciRepairFeedback(result, testHead)
-	if !strings.Contains(text, "no GitHub workflow has been dispatched yet") || !strings.Contains(text, "base_sha") {
-		t.Fatal("source preflight was misrepresented as a GitHub job failure", text)
+func TestExistingManualWorkflowContractDoesNotBecomeSourceRepair(t *testing.T) {
+	raw := []byte("on:\n  pull_request:\n    branches:\n      - main\n  workflow_dispatch:\njobs:\n  dependencies:\n    with:\n      base-ref: ${{ github.event.pull_request.base.sha || github.sha }}\n      head-ref: ${{ github.event.pull_request.head.sha || github.sha }}\n")
+	if err := workflowDispatchInputs(raw); err != nil {
+		t.Fatal("existing manual workflow contract became an invented repository prerequisite", err)
 	}
 }
 
@@ -171,7 +164,7 @@ func (f *dispatchFixture) workflow() string {
 	if f.rawWorkflow != "" {
 		return f.rawWorkflow
 	}
-	return "on:\n  pull_request:\n  workflow_dispatch:\n    inputs:\n      pull_request_number:\n        required: true\n"
+	return "on:\n  pull_request:\n  workflow_dispatch:\n"
 }
 
 type preflightChecksPublisher struct{ GitHubPublisher }
@@ -180,18 +173,14 @@ func (p preflightChecksPublisher) Checks(context.Context, Plan, Publication) (CI
 	return CIResult{Status: "missing"}, nil
 }
 
-func TestManualWorkflowPreflightUsesExistingVerifiedRepairPath(t *testing.T) {
+func TestUnsupportedManualInputsBlockWithoutGrantingSourceRepair(t *testing.T) {
 	dir, j, r, f := dispatchTestFixture(t)
-	f.rawWorkflow = "on:\n  pull_request:\n  workflow_dispatch:\njobs:\n  dependencies:\n    with:\n      base-ref: ${{ github.event.pull_request.base.sha || github.sha }}\n"
+	f.rawWorkflow = "on:\n  pull_request:\n  workflow_dispatch:\n    inputs:\n      pull_request_number:\n        required: true\n"
 	r.Publisher = preflightChecksPublisher{GitHubPublisher{Command: f.command}}
 	j.State = "ci"
-	if err := r.checkCI(context.Background(), dir, j); err != nil {
-		t.Fatal(err)
-	}
-	if j.State != "repairing" || j.CI.WorkflowPreparation == nil || f.posts != 0 || !strings.Contains(j.Feedback, "no GitHub workflow has been dispatched yet") {
-		t.Fatal("lost source preflight or dispatched unsafe workflow", j.State, f.posts, j.Feedback)
-	}
-	if _, err := Load(dir); err != nil {
-		t.Fatal("cannot resume source preflight repair", err)
+	rounds, attempt := j.Rounds, j.Attempt
+	err := r.checkCI(context.Background(), dir, j)
+	if !errors.Is(err, ErrStopped) || j.State != "blocked" || j.Rounds != rounds || j.Attempt != attempt || f.posts != 0 || j.CI.WorkflowPreparation != nil {
+		t.Fatal("operational limitation granted a repository repair", err, j.State)
 	}
 }

@@ -85,7 +85,7 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.Feedback = ciRepairFeedback(checks, journal.Publication.HeadSHA)
 		for _, dispatch := range journal.CIWorkflowDispatches {
 			if dispatch.Publication == journal.Publication {
-				journal.Feedback += fmt.Sprintf("\nController execution context: this CI run used workflow_dispatch for PR #%d, base %s at %s, head %s. A dispatch has no github.event.pull_request object. When repairing workflow failures, preserve real dependency base/head comparisons, required provider previews and PR-specific Sonar analysis by declaring and validating dispatch inputs. SDLC supplies declared pull_request_number, base_ref, base_sha, head_sha and sdlc_dispatch_id inputs; use the same validation workflow for PR and dispatch events.", journal.Publication.Number, journal.Plan.Base, journal.Publication.BaseSHA, journal.Publication.HeadSHA)
+				journal.Feedback += "\nThis validation used the repository's existing manual workflow. Runner integration is local-only. Do not change repository workflows, dispatch inputs, tests, docs or product behavior to accommodate the runner or compensate for missing PR-event context. Repair independently actionable product defects only. Missing event context or unsupported manual validation is an operational block, not a source-code repair task."
 			}
 		}
 

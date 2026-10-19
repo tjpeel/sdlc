@@ -515,6 +515,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			return nil
 		case "prepared", "implementing", "repairing":
+			if journal.CI.WorkflowPreparation != nil {
+				return runner.stop(directory, journal, "blocked", "legacy workflow compatibility finding is operational; repository repairs for runner integration are prohibited")
+			}
 			if handled, err := runner.finishUnchangedFeedback(ctx, directory, journal); handled || err != nil {
 				if err != nil {
 					return err
@@ -945,7 +948,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 			nativeDirectory = filepath.Join(directory, fmt.Sprintf("native-review-%d", c.StartAttempt))
 		}
 	}
-	prompt := runner.prompt(*journal, role)
+	prompt := runner.prompt(*journal, role) + "\n" + localOnlyBoundaryInstruction
 	if role == "implementation" {
 		prompt += supplementalCIFeedback(*journal)
 	}
@@ -1213,6 +1216,13 @@ func PrepareReview(ctx context.Context, journal Journal, directory string) (stri
 }
 
 func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory string, journal *Journal) error {
+	if journal.Outcome.Status == "implemented" || journal.Outcome.Status == "checks_requested" {
+		if guard, ok := runner.Repository.(LocalOnlySourceRepository); ok {
+			if err := guard.CheckLocalOnlySource(ctx, journal.Plan, journal.Workspace); err != nil {
+				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+		}
+	}
 	if handled, err := runner.finishUnchangedFeedback(ctx, directory, journal); handled || err != nil {
 		return err
 	}
