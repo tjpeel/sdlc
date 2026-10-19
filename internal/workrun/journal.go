@@ -192,6 +192,9 @@ func Load(directory string) (Journal, error) {
 	if err := validateReviewJournal(&journal); err != nil {
 		return Journal{}, err
 	}
+	if err := validateCIWorkflowJournal(&journal); err != nil {
+		return Journal{}, err
+	}
 	if err := validateCIJournal(&journal); err != nil {
 		return Journal{}, err
 	}

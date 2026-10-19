@@ -47,6 +47,11 @@ func ciSourcePath(path string) bool {
 }
 
 func validateCIResult(result CIResult, published Publication) error {
+	if prep := result.WorkflowPreparation; prep != nil {
+		if result.Status != "failed" || prep.Head != published.HeadSHA || !objectID.MatchString(prep.Head) || !strings.HasPrefix(prep.Path, ".github/workflows/") || !ciSourcePath(prep.Path) || prep.Code != "missing_dispatch_pr_context" {
+			return fmt.Errorf("invalid workflow preparation evidence")
+		}
+	}
 	if err := validateSonarDuplication(result.SonarDuplication, published); err != nil {
 		return err
 	}
@@ -90,6 +95,9 @@ func validateCIJournal(j *Journal) error {
 
 func ciRepairFeedback(result CIResult, head string) string {
 	text := "Required CI failed on published revision " + head + ". Inspect the failed CI checks and repair within ticket scope, then commit and request full local checks again."
+	if prep := result.WorkflowPreparation; prep != nil {
+		text = "The controller's manual-workflow preflight failed for published revision " + head + "; no GitHub workflow has been dispatched yet. Committed " + prep.Path + " references github.event.pull_request, which is absent on workflow_dispatch, but does not declare pull_request_number, base_sha and head_sha dispatch inputs. Repair this workflow within the ticket's CI verification scope, declare and validate those inputs and update any reusable Sonar workflow so dependency review compares the real base/head and Sonar analyzes this PR. Preserve ordinary pull_request behavior, all required tests, provider previews and security checks. SDLC supplies declared pull_request_number, base_ref, base_sha, head_sha and optional sdlc_dispatch_id (usable in run-name) automatically. Do not replace base/head with github.sha on both sides or drop a check. Commit and request full configured verification. This is controller source preflight evidence, not a report of a failed GitHub job."
+	}
 	for _, a := range result.Diagnostics {
 		text += fmt.Sprintf("\nCI %s in committed source %s:%d.", a.Level, a.Path, a.Line)
 		if a.Kind == "cognitive_complexity" {

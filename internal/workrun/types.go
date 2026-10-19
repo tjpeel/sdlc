@@ -48,39 +48,40 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
-	Adoption            *PRAdoption                  `json:"adoption,omitempty"`
-	DependencyContext   *DependencyContext           `json:"dependency_context,omitempty"`
-	Derived             *DerivedBoundary             `json:"derived,omitempty"`
-	RuntimeProvenance   *RuntimeProvenance           `json:"runtime_provenance,omitempty"`
-	NugetCache          *project.NugetCacheBudget    `json:"nuget_cache,omitempty"`
-	PRMetadataPolicy    *PRMetadataPolicy            `json:"pr_metadata_policy,omitempty"`
-	RuntimeName         string                       `json:"runtime_name,omitempty"`
-	Headroom            headroom.Config              `json:"headroom,omitzero"`
-	GitHubProfile       string                       `json:"github_profile,omitempty"`
-	SigningProfile      string                       `json:"signing_profile,omitempty"`
-	PublicationIdentity *PublicationIdentity         `json:"publication_identity,omitempty"`
-	Root                string                       `json:"root"`
-	Reference           string                       `json:"reference"`
-	Ticket              string                       `json:"ticket"`
-	StartingSHA         string                       `json:"starting_sha"`
-	SourceSHA           string                       `json:"source_sha"`
-	Branch              string                       `json:"branch"`
-	Base                string                       `json:"base"`
-	BaseSHA             string                       `json:"base_sha"`
-	Repository          string                       `json:"repository"`
-	Inputs              []Input                      `json:"inputs"`
-	InputContext        []project.RequirementContext `json:"input_context,omitempty"`
-	CheckInputs         []Input                      `json:"check_inputs"`
-	CheckSelection      string                       `json:"check_selection,omitempty"`
-	Checks              [][]string                   `json:"checks"`
-	DockerTests         bool                         `json:"docker_tests"`
-	SigningImage        string                       `json:"signing_image,omitempty"`
-	DaemonImage         string                       `json:"daemon_image,omitempty"`
-	DaemonMode          string                       `json:"daemon_mode,omitempty"`
-	Roles               Roles                        `json:"roles"`
-	PRTitle             string                       `json:"pr_title,omitempty"`
-	PRBody              string                       `json:"pr_body,omitempty"`
-	Restack             *RestackBoundary             `json:"restack,omitempty"`
+	NonDefaultCIWorkflow string                       `json:"non_default_ci_workflow,omitempty"`
+	Adoption             *PRAdoption                  `json:"adoption,omitempty"`
+	DependencyContext    *DependencyContext           `json:"dependency_context,omitempty"`
+	Derived              *DerivedBoundary             `json:"derived,omitempty"`
+	RuntimeProvenance    *RuntimeProvenance           `json:"runtime_provenance,omitempty"`
+	NugetCache           *project.NugetCacheBudget    `json:"nuget_cache,omitempty"`
+	PRMetadataPolicy     *PRMetadataPolicy            `json:"pr_metadata_policy,omitempty"`
+	RuntimeName          string                       `json:"runtime_name,omitempty"`
+	Headroom             headroom.Config              `json:"headroom,omitzero"`
+	GitHubProfile        string                       `json:"github_profile,omitempty"`
+	SigningProfile       string                       `json:"signing_profile,omitempty"`
+	PublicationIdentity  *PublicationIdentity         `json:"publication_identity,omitempty"`
+	Root                 string                       `json:"root"`
+	Reference            string                       `json:"reference"`
+	Ticket               string                       `json:"ticket"`
+	StartingSHA          string                       `json:"starting_sha"`
+	SourceSHA            string                       `json:"source_sha"`
+	Branch               string                       `json:"branch"`
+	Base                 string                       `json:"base"`
+	BaseSHA              string                       `json:"base_sha"`
+	Repository           string                       `json:"repository"`
+	Inputs               []Input                      `json:"inputs"`
+	InputContext         []project.RequirementContext `json:"input_context,omitempty"`
+	CheckInputs          []Input                      `json:"check_inputs"`
+	CheckSelection       string                       `json:"check_selection,omitempty"`
+	Checks               [][]string                   `json:"checks"`
+	DockerTests          bool                         `json:"docker_tests"`
+	SigningImage         string                       `json:"signing_image,omitempty"`
+	DaemonImage          string                       `json:"daemon_image,omitempty"`
+	DaemonMode           string                       `json:"daemon_mode,omitempty"`
+	Roles                Roles                        `json:"roles"`
+	PRTitle              string                       `json:"pr_title,omitempty"`
+	PRBody               string                       `json:"pr_body,omitempty"`
+	Restack              *RestackBoundary             `json:"restack,omitempty"`
 }
 
 // DerivedBoundary authorises a branch-only aggregate of exact parent snapshots.
@@ -273,11 +274,12 @@ type Publication struct {
 }
 
 type CIResult struct {
-	SonarDuplication []SonarDuplication `json:"sonar_duplication,omitempty"`
-	FailureContext   *CIFailureContext  `json:"failure_context,omitempty"`
-	Diagnostics      []CIAnnotation     `json:"diagnostics,omitempty"`
-	Status           string             `json:"status"`
-	Details          string             `json:"details"`
+	WorkflowPreparation *CIWorkflowPreparation `json:"workflow_preparation,omitempty"`
+	SonarDuplication    []SonarDuplication     `json:"sonar_duplication,omitempty"`
+	FailureContext      *CIFailureContext      `json:"failure_context,omitempty"`
+	Diagnostics         []CIAnnotation         `json:"diagnostics,omitempty"`
+	Status              string                 `json:"status"`
+	Details             string                 `json:"details"`
 }
 
 type Publisher interface {
@@ -286,6 +288,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	CIWorkflowDispatches      []CIWorkflowDispatch    `json:"ci_workflow_dispatches,omitempty"`
 	AutoRecommendationHeads   []string                `json:"auto_recommendation_heads,omitempty"`
 	PRCheckpoints             []PRCheckpoint          `json:"pr_checkpoints,omitempty"`
 	ReviewEffort              *ReviewEffortDecision   `json:"review_effort_selection,omitempty"`

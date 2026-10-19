@@ -674,6 +674,22 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, fmt.Errorf("CI checks command failed with an unsupported exit status")
 		}
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		snapshot, err := publisher.ciStatusCommand(ctx, "pr", "view", fmt.Sprint(pr.Number), "--repo", plan.Repository, "--json", "baseRefOid,headRefOid,state,statusCheckRollup")
+		if err != nil {
+			return CIResult{}, err
+		}
+		var empty struct {
+			Base   string `json:"baseRefOid"`
+			Head   string `json:"headRefOid"`
+			State  string
+			Checks []json.RawMessage `json:"statusCheckRollup"`
+		}
+		if json.Unmarshal(snapshot, &empty) != nil || empty.Base != pr.BaseSHA || empty.Head != pr.HeadSHA || empty.State != "OPEN" || empty.Checks == nil || len(empty.Checks) != 0 {
+			return CIResult{}, fmt.Errorf("empty CI response could not be confirmed against the published PR")
+		}
+		return CIResult{Status: "missing"}, nil
+	}
 	var checks []ciRequestedCheck
 	if len(data) > maxCIAPIBytes || !utf8.Valid(data) || json.Unmarshal(data, &checks) != nil || checks == nil || len(checks) > 200 {
 		return CIResult{}, fmt.Errorf("CI checks response is invalid, oversized or missing; expected a JSON check list")

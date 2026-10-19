@@ -2648,3 +2648,21 @@ CI status reads retry isolated network failures and HTTP 500/502/503/504 respons
 When GitHub comment feedback starts from a ready, reviewed PR and every pending assessment is `no_change` with no correction commits, SDLC can reuse the exact candidate’s previous verification and reviews. It confirms the clean local head and tree, frozen inputs, verification keys, published PR boundary and current passing CI before posting replies and returning to ready. It does not request another self-review or independent review. Changed candidates, missing evidence, unresolved comments and new diagnostic or verification requests use the normal workflow. Reply failures retain this boundary for ordinary resume; older saved cycles without a retained reviewed boundary use the normal gates.
 
 Local feedback and accepted independent-review recommendations retain their existing repair and verification workflow.
+
+### CI workflows for stacked PRs
+
+Configure each repository explicitly in `.sdlc/project.json`:
+
+```json
+"non_default_ci_workflow": "check-pull-request.yml"
+```
+
+When a PR targets a branch other than the repository’s default and GitHub confirms no checks exist, SDLC verifies this configured workflow and its `workflow_dispatch` support, then dispatches it automatically. No resume flag is needed. Omit the setting to retain ordinary CI waiting. `gh workflow list` can help identify the workflow; discovery alone never authorizes dispatch.
+
+The controller records the exact publication and intent before its single POST. Repeated polling and ordinary resume reconcile that intent without another dispatch, including when the original request’s outcome is uncertain. It verifies workflow ID, event, branch, head SHA and run URL. A changing publication, ambiguous run or failed credential cleanup stops the run. Check creation and run discovery use the existing missing-check grace period. A newer published head gets its own record.
+
+Declared inputs named `pull_request_number`, `base_ref`, `base_sha`, `head_sha` and `sdlc_dispatch_id` receive controller-derived values. Other required inputs without defaults prevent dispatch. A workflow can include `inputs.sdlc_dispatch_id` in `run-name` for stronger reconciliation. A manual event has no `github.event.pull_request` object: preserve real dependency comparisons, PR-specific Sonar analysis and all required tests/previews. SDLC detects the unsafe `github.event.pull_request.base.sha || github.sha`/head fallback when the required PR inputs are absent and sends a labelled controller preflight finding through normal repair and verification. It does not invent a failed GitHub job.
+
+This repository-level policy is read on resume, so it can enable dispatch for an existing CI-blocked run without modifying frozen ticket inputs or replacing its runtime. Policy is not forwarded to older signing binaries. Removing it prevents new intents; an existing intent remains tracked and is never silently discarded.
+
+Workflow event and input declarations must use expanded YAML mappings. The controller refuses aliases and unsupported shorthand in these declarations rather than guessing how to dispatch; full workflow validation remains with GitHub and actionlint.

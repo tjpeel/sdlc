@@ -341,6 +341,8 @@ func (output *boundedPublisherOutput) Write(data []byte) (int, error) {
 	return output.buffer.Write(data)
 }
 func (publisher DockerPublisher) invoke(ctx context.Context, directory string, request PublisherRequest) (result PublisherResponse, resultErr error) {
+	// CI dispatch policy belongs to the live controller, not the frozen signing binary.
+	request.Plan.NonDefaultCIWorkflow = ""
 	// This runs after credential/container/request/controller cleanup. A receipt
 	// is durable only when the typed rejection is the sole remaining error.
 	defer func() { result, resultErr = finishPushAuthority(ctx, directory, result, resultErr) }()

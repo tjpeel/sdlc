@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.111 - 2026-10-19
+
+- Add per-repository `non_default_ci_workflow` policy. When a stacked PR has no checks, dispatch the configured PR workflow once, retain intent across interruptions and verify its run against the published head. Saved runs use the current repository policy without a runtime rebuild.
+- Confirm empty check output against GitHub before entering the missing-check state. Detect manual workflows that would compare a commit with itself and pass a labelled source preflight finding through the existing repair gates.
+
 ## 0.1.0-beta.110 - 2026-10-19
 
 - Finish no-change PR feedback using the exact previously tested and reviewed candidate. Recheck publication and CI, retain comment replies, and avoid repeated implementation checks, self-review and independent review. Changed candidates or missing evidence retain the normal gates.

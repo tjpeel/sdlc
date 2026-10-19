@@ -21,6 +21,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	NonDefaultCIWorkflow              *string
 	AutoAcceptRecommendationsOverride *bool
 	StartAt                           string
 	HumanReviewed                     bool

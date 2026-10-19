@@ -26,13 +26,14 @@ const maximumSize = 64 * 1024
 const localIgnoreRule = "/.sdlc/"
 
 type Config struct {
-	CheckSelection string            `json:"check_selection,omitempty"`
-	NugetCache     *NugetCacheBudget `json:"nuget_cache,omitempty"`
-	Version        int               `json:"version"`
-	Checks         [][]string        `json:"checks"`
-	InputFiles     []string          `json:"input_files"`
-	DockerTests    bool              `json:"docker_tests,omitempty"`
-	BranchFormat   string            `json:"branch_format,omitempty"`
+	NonDefaultCIWorkflow string            `json:"non_default_ci_workflow,omitempty"`
+	CheckSelection       string            `json:"check_selection,omitempty"`
+	NugetCache           *NugetCacheBudget `json:"nuget_cache,omitempty"`
+	Version              int               `json:"version"`
+	Checks               [][]string        `json:"checks"`
+	InputFiles           []string          `json:"input_files"`
+	DockerTests          bool              `json:"docker_tests,omitempty"`
+	BranchFormat         string            `json:"branch_format,omitempty"`
 }
 type Remote struct{ Name, Identity string }
 type Result struct {
@@ -515,6 +516,9 @@ func decodeConfig(data []byte, c *Config) error {
 	if decoder.Decode(&extra) != io.EOF || c.Version != 1 || c.Checks == nil || c.InputFiles == nil || len(c.Checks) > 64 || len(c.InputFiles) > 256 {
 		return errors.New("project settings require version 1 and bounded checks and input files")
 	}
+	if err := ValidateCIWorkflow(c.NonDefaultCIWorkflow); err != nil {
+		return err
+	}
 	if c.CheckSelection != "" && c.CheckSelection != "explicit" && c.CheckSelection != "runtime" {
 		return errors.New("check_selection must be explicit or runtime")
 	}
@@ -742,4 +746,19 @@ func savedConfig(c Config) Config {
 		c.Checks = [][]string{}
 	}
 	return c
+}
+
+func ValidateCIWorkflow(name string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > 128 || strings.ContainsAny(name, "/\\:") || hasControl(name) || strings.HasPrefix(name, ".") || (!strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml")) {
+		return errors.New("non_default_ci_workflow must be a workflow filename ending in .yml or .yaml")
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+			return errors.New("invalid non_default_ci_workflow filename")
+		}
+	}
+	return nil
 }

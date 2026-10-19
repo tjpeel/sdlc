@@ -17,6 +17,9 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		err = validateCIResult(checks, journal.Publication)
 	}
 	if err == nil {
+		checks, err = runner.ensureCIWorkflow(ctx, directory, journal, checks)
+	}
+	if err == nil {
 		journal.CI = checks
 	}
 	if err != nil {
@@ -80,6 +83,11 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		budget.LastGrantedHead = journal.Publication.HeadSHA
 		journal.Rounds++
 		journal.Feedback = ciRepairFeedback(checks, journal.Publication.HeadSHA)
+		for _, dispatch := range journal.CIWorkflowDispatches {
+			if dispatch.Publication == journal.Publication {
+				journal.Feedback += fmt.Sprintf("\nController execution context: this CI run used workflow_dispatch for PR #%d, base %s at %s, head %s. A dispatch has no github.event.pull_request object. When repairing workflow failures, preserve real dependency base/head comparisons, required provider previews and PR-specific Sonar analysis by declaring and validating dispatch inputs. SDLC supplies declared pull_request_number, base_ref, base_sha, head_sha and sdlc_dispatch_id inputs; use the same validation workflow for PR and dispatch events.", journal.Publication.Number, journal.Plan.Base, journal.Publication.BaseSHA, journal.Publication.HeadSHA)
+			}
+		}
 
 		if err := runner.transition(directory, journal, "repairing"); err != nil {
 			return err
