@@ -28,6 +28,13 @@ func PRFeedbackStatus(j Journal) PRFeedbackSummary {
 		latest[e.Comment.ID] = i
 	}
 	lines := []string{}
+	replyConversations := map[string]bool{}
+	conversationKeys := map[string]string{}
+	for _, g := range feedbackConversations(j.PRFeedback) {
+		for _, c := range g.Comments {
+			conversationKeys[c.ID] = g.Comments[0].ID
+		}
+	}
 	for i, e := range j.PRFeedback.Entries {
 		if latest[e.Comment.ID] != i || e.Comment.Deleted || e.Comment.Resolved {
 			continue
@@ -45,13 +52,18 @@ func PRFeedbackStatus(j Journal) PRFeedbackSummary {
 			continue
 		}
 		if e.Reply == nil {
-			result.OutstandingReplies++
+			key := conversationKeys[e.Comment.ID]
+			if key == "" {
+				key = e.Comment.ID
+			}
+			replyConversations[key] = true
 		}
 		if e.Assessment.Disposition == "unaddressable" {
 			result.Unresolved++
 			lines = append(lines, e.Comment.ID+": "+e.Assessment.Reason)
 		}
 	}
+	result.OutstandingReplies = len(replyConversations)
 	if result.Pending > 0 || result.Unresolved > 0 || result.OutstandingReplies > 0 || result.Ignored > 0 || result.Addressed > 0 {
 		result.Summary = fmt.Sprintf("PR feedback cycle %d: %d pending, %d unresolved, %d replies outstanding.", result.Cycle, result.Pending, result.Unresolved, result.OutstandingReplies)
 		if result.Ignored > 0 {

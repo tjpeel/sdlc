@@ -132,7 +132,7 @@ func TestFeedbackPromptIncludesAssessedConversationContext(t *testing.T) {
 	}
 }
 
-func TestRocketMarksParentAddressedButKeepsReplyActionable(t *testing.T) {
+func TestRocketMarksWholeConversationAddressed(t *testing.T) {
 	p, f, plan, pr, item := thumbsDownFixture(t, "comment")
 	reply := githubItem(2, "> "+item.Body+"\n\nPlease also cover the new failure case.", "reviewer", "User")
 	f.items["repos/example/project/issues/1/comments"] = []githubFeedbackItem{item, reply}
@@ -151,23 +151,34 @@ func TestRocketMarksParentAddressedButKeepsReplyActionable(t *testing.T) {
 	if err != nil || len(comments) != 2 {
 		t.Fatal("collection failed", err)
 	}
-	if comments[0].Addressed == nil || comments[0].Ignored != nil || comments[1].Addressed != nil || comments[1].Ignored != nil {
-		t.Fatal("rocket suppressed a reply or became ignore")
-	}
-	history := &PRFeedbackHistory{Active: true}
 	for _, c := range comments {
-		history.Entries = append(history.Entries, PRFeedbackEntry{Comment: c})
+		if err := validateFeedbackComment(c); err != nil {
+			t.Fatalf("inherited closed state cannot be retained: %v", err)
+		}
+	}
+	if comments[0].Addressed == nil || comments[0].Ignored != nil || comments[1].Addressed == nil || comments[1].Ignored != nil {
+		t.Fatal("rocket did not close its descendants or became ignore")
+	}
+	history := &PRFeedbackHistory{Version: 1, Cycle: 1, CandidateStart: testHead, Active: true}
+	for _, c := range comments {
+		history.Entries = append(history.Entries, PRFeedbackEntry{Comment: c, Fingerprint: feedbackFingerprint(c)})
+	}
+	dir, j := testRun(t)
+	j.Plan.PublicationIdentity = p.Frozen
+	j.PRFeedback = history
+	if err := Save(dir, j); err != nil {
+		t.Fatalf("closed descendants could not be checkpointed: %v", err)
 	}
 	pending := pendingFeedbackEntries(&Journal{PRFeedback: history})
-	if len(pending) != 1 || pending[0].Comment.ID != "comment:2" {
-		t.Fatal("addressed parent became actionable or reply was lost")
+	if len(pending) != 0 {
+		t.Fatal("addressed conversation remains actionable")
 	}
 	conversations := feedbackConversations(history)
 	if len(conversations) != 1 || len(conversations[0].Comments) != 2 {
 		t.Fatal("addressed parent was lost as context")
 	}
 	status := PRFeedbackStatus(Journal{PRFeedback: history})
-	if status.Addressed != 1 || status.Ignored != 0 || status.Pending != 1 || status.OutstandingReplies != 0 {
+	if status.Addressed != 2 || status.Ignored != 0 || status.Pending != 0 || status.OutstandingReplies != 0 {
 		t.Fatal("incorrect reaction status", status)
 	}
 }

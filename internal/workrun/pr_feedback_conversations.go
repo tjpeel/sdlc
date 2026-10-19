@@ -95,6 +95,35 @@ func inheritFeedbackIgnores(comments []PRFeedbackComment) {
 	}
 }
 
+// An operator rocket closes the selected comment and all explicit descendants.
+func inheritFeedbackAddressed(comments []PRFeedbackComment) {
+	byID := map[string]int{}
+	for i, c := range comments {
+		byID[c.ID] = i
+	}
+	// A fixed point handles arbitrarily ordered and nested replies without recursion.
+	for changed := true; changed; {
+		changed = false
+		for i := range comments {
+			c := &comments[i]
+			if c.Addressed != nil {
+				continue
+			}
+			for _, parent := range c.ParentIDs {
+				if index, ok := byID[parent]; ok && comments[index].Addressed != nil {
+					inherited := *comments[index].Addressed
+					if inherited.SourceCommentID == "" {
+						inherited.SourceCommentID = parent
+					}
+					c.Addressed = &inherited
+					changed = true
+					break
+				}
+			}
+		}
+	}
+}
+
 type feedbackConversation struct {
 	Comments []PRFeedbackComment `json:"comments"`
 }

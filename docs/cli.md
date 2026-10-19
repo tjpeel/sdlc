@@ -2446,14 +2446,9 @@ merge a PR or modify unrelated scope.
 ### Mark PR feedback as already handled
 
 Use **👎 (thumbs down)** to ignore a comment and its linked descendants.
-Use **🚀 (rocket)** to mark only that comment as already addressed. SDLC does not
-repeat work or post an acknowledgement for a 🚀 comment, but new replies remain
-actionable and receive the earlier discussion as context. A 👎 marker takes
-precedence if both reactions are present.
-Add the 👎 reaction to the specific comment using the run's configured
-GitHub account. Adoption and later `--pr-feedback` passes skip that comment while
-it remains unchanged since your reaction. This covers general PR comments, review
-summaries and inline comments. Resolved inline threads are already skipped.
+Use **🚀 (rocket)** to mark that comment and its linked descendants as already
+addressed, including replies added later. SDLC does not repeat work or post an
+acknowledgement for the closed conversation.
 
 Only the frozen GitHub account selected for the run can mark feedback this way;
 other users' reactions do not exclude comments. SDLC verifies both the account's
@@ -2473,7 +2468,12 @@ when quoting only part of a comment or when identical text makes a quote ambiguo
 A marked reply excludes its own descendants; its parent and siblings remain actionable.
 For unmarked conversations, SDLC supplies the latest parent and replies together,
 including already assessed context when a new reply explains how to fix the issue.
-Each pending comment retains its own assessment and acknowledgement.
+Each pending comment retains its own assessment for tracking. SDLC waits until
+the pending inputs in a conversation are assessed, then posts one combined
+response and associates that single acknowledgement with all of them. Retries
+reconcile the saved markers rather than posting separate parent and child replies.
+A later reply in an unclosed conversation can require one follow-up response;
+it does not repeat an already acknowledged parent response.
 SDLC reads reactions; it does not add or remove them. Unverifiable reaction data
 keeps the run held rather than silently ignoring feedback.
 

@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.118 - 2026-10-19
+
+- Treat an operator rocket reaction as closing the selected PR comment and its linked descendants, including later replies. Keep thumbs-down exclusion distinct.
+- Acknowledge each active PR conversation once using the parent and replies as combined input, preserving individual assessments and shared acknowledgement receipts. Revalidate all conversation inputs before posting, retain stable retry markers, and count outstanding replies by conversation.
+
 ## 0.1.0-beta.117 - 2026-10-19
 
 - Handle CI startup races when GitHub returns a null check rollup or checks appear between reads, while retaining exact PR revision validation.

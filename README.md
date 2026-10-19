@@ -42,8 +42,8 @@ and a fresh independent review with `sdlc resume --run RUN_ID --pr-feedback`.
 Supply private pasted or file feedback with
 `sdlc feedback --run RUN_ID [--file FILE]`.
 A 👎 reaction from the run’s configured GitHub account excludes the comment and
-its linked replies, including replies added later. A 🚀 reaction marks only that
-comment as already addressed; new replies remain actionable. Unmarked conversations are
+its linked replies, including replies added later. A 🚀 reaction marks the comment and
+its linked replies as already addressed, including replies added later. Unmarked conversations are
 assessed together so that follow-up advice informs the fix. See the
 [feedback guide](docs/cli.md#mark-pr-feedback-as-already-handled) for reply linking
 and account-verification rules.
@@ -65,7 +65,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.117`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.118`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

@@ -220,6 +220,12 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 				if item.ReplyTo > 0 {
 					c.ParentIDs = []string{"inline:" + strconv.FormatInt(item.ReplyTo, 10)}
 				}
+				// The thread root remains a parent even if an intermediate automated reply
+				// was excluded from human input. GitHub thread membership is explicit.
+				if item.ID != t.Root && item.ReplyTo != t.Root {
+					c.ParentIDs = append(c.ParentIDs, "inline:"+strconv.FormatInt(t.Root, 10))
+					sort.Strings(c.ParentIDs)
+				}
 				c.ThreadID = t.ID
 				c.ReplyID = t.Root
 				c.Outdated = t.Outdated
@@ -251,6 +257,7 @@ func (p GitHubPublisher) Feedback(ctx context.Context, plan Plan, pr Publication
 		return nil, err
 	}
 	inheritFeedbackIgnores(result)
+	inheritFeedbackAddressed(result)
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	if err := p.feedbackBoundary(ctx, plan, pr); err != nil {
 		return nil, err
@@ -346,4 +353,24 @@ func (p GitHubPublisher) ReplyFeedback(ctx context.Context, plan Plan, pr Public
 
 func (p GitHubPublisher) ValidateFeedbackBoundary(ctx context.Context, plan Plan, pr Publication) error {
 	return p.feedbackBoundary(ctx, plan, pr)
+}
+
+// Revalidate all source comments, not just the primary one, so an edited reply
+// or a newly applied closing reaction cannot be acknowledged from stale input.
+func (p GitHubPublisher) ReplyFeedbackConversation(ctx context.Context, plan Plan, pr Publication, target PRFeedbackComment, comments []PRFeedbackComment, marker, body string) (PRFeedbackReply, error) {
+	current, err := p.Feedback(ctx, plan, pr)
+	if err != nil {
+		return PRFeedbackReply{}, err
+	}
+	byID := map[string]PRFeedbackComment{}
+	for _, c := range current {
+		byID[c.ID] = c
+	}
+	for _, captured := range comments {
+		c, ok := byID[captured.ID]
+		if !ok || !sameFeedbackRevision(captured, c) {
+			return PRFeedbackReply{}, &FeedbackRevisionChangedError{}
+		}
+	}
+	return p.ReplyFeedback(ctx, plan, pr, target, marker, body)
 }

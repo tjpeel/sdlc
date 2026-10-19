@@ -87,3 +87,15 @@ func (p DockerPublisher) ValidateFeedbackBoundary(ctx context.Context, plan Plan
 		return collector.feedbackBoundary(ctx, plan, pr)
 	})
 }
+
+func (p DockerPublisher) ReplyFeedbackConversation(ctx context.Context, plan Plan, pr Publication, target PRFeedbackComment, comments []PRFeedbackComment, marker, body string) (reply PRFeedbackReply, err error) {
+	err = p.withFeedbackPublisher(ctx, plan, func(collector GitHubPublisher) error {
+		var callErr error
+		reply, callErr = collector.ReplyFeedbackConversation(ctx, plan, pr, target, comments, marker, body)
+		return callErr
+	})
+	if err != nil {
+		reply = PRFeedbackReply{}
+	}
+	return
+}
