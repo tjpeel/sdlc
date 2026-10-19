@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.110 - 2026-10-19
+
+- Finish no-change PR feedback using the exact previously tested and reviewed candidate. Recheck publication and CI, retain comment replies, and avoid repeated implementation checks, self-review and independent review. Changed candidates or missing evidence retain the normal gates.
+
 ## 0.1.0-beta.109 - 2026-10-17
 
 - Retry transient GitHub CI status reads up to three attempts with cancellable backoff. Preserve safe request categories and distinguish invalid responses; authentication, rate limits, cleanup failures and changed revisions still stop the run.

@@ -231,7 +231,7 @@ func TestPRFeedbackReplyFailureResumesWithoutReassessing(t *testing.T) {
 	comment := generalFeedback("comment:1", "Please explain behavior")
 	pub.comments = []PRFeedbackComment{comment}
 	pub.replyErr = errors.New("unconfirmed reply")
-	provider := &feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "no_change"), testOutcome("implemented"), testOutcome("reviewed")}}
+	provider := &feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "unaddressable"), testOutcome("implemented"), testOutcome("reviewed")}}
 	r.Provider = provider
 	r.ProcessPRFeedback = true
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
@@ -319,7 +319,7 @@ func TestPRFeedbackUnavailableIndependentReviewKeepsGateOutstanding(t *testing.T
 	dir, j, r, pub, _ := feedbackReadyRun(t)
 	comment := generalFeedback("comment:1", "Explain unchanged behavior")
 	pub.comments = []PRFeedbackComment{comment}
-	provider := &feedbackUnavailableReview{feedbackScriptProvider: feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "no_change"), testOutcome("implemented")}}, reviewProvider: j.Plan.Roles.Review.Provider}
+	provider := &feedbackUnavailableReview{feedbackScriptProvider: feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "unaddressable"), testOutcome("implemented")}}, reviewProvider: j.Plan.Roles.Review.Provider}
 	r.Provider = provider
 	r.ProcessPRFeedback = true
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
@@ -385,7 +385,7 @@ func TestPRFeedbackChangedCommentReplyHoldRefetchKeepsFreshReviewCycle(t *testin
 	comment := generalFeedback("comment:1", "Comment deleted before reply")
 	pub.comments = []PRFeedbackComment{comment}
 	pub.replyErr = &FeedbackRevisionChangedError{}
-	provider := &feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "no_change"), testOutcome("implemented"), testOutcome("reviewed")}}
+	provider := &feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "unaddressable"), testOutcome("implemented"), testOutcome("reviewed")}}
 	r.Provider = provider
 	r.ProcessPRFeedback = true
 	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {

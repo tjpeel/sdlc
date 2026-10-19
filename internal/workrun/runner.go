@@ -514,6 +514,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			return nil
 		case "prepared", "implementing", "repairing":
+			if handled, err := runner.finishUnchangedFeedback(ctx, directory, journal); handled || err != nil {
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			if journal.RunLimitOverride != nil && journal.RunLimitOverride.PendingVerificationReplay {
 				if err := runner.validateSourcePatchResume(ctx, directory, journal); err != nil {
 					return err
@@ -1206,6 +1212,17 @@ func PrepareReview(ctx context.Context, journal Journal, directory string) (stri
 }
 
 func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory string, journal *Journal) error {
+	if handled, err := runner.finishUnchangedFeedback(ctx, directory, journal); handled || err != nil {
+		return err
+	}
+	if h := journal.PRFeedback; h != nil && h.ReviewedCandidate != nil {
+		h.ReviewedCandidate = nil
+		journal.Evidence = CheckEvidence{}
+		for i := range journal.Verification {
+			journal.Verification[i].Key = ""
+		}
+	}
+
 	if repeatReviewRepairAssessments(journal, journal.Outcome) {
 		if err := runner.verifyReviewRepairReceipts(ctx, journal, journal.Outcome); err != nil {
 			return runner.stop(directory, journal, "blocked", err.Error())

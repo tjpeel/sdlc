@@ -29,7 +29,7 @@ func promptedFeedback(t *testing.T, prompt string) []PRFeedbackEntry {
 	return entries
 }
 
-func TestPRFeedbackBatchChecksCoherentCandidateAndRepliesIndividually(t *testing.T) {
+func TestPRFeedbackNoChangeBatchReusesChecksAndRepliesIndividually(t *testing.T) {
 	dir, j, r, pub, checker := feedbackReadyRun(t)
 	first := generalFeedback("comment:1", "First contract question")
 	second := generalFeedback("comment:2", "Second contract question")
@@ -37,7 +37,6 @@ func TestPRFeedbackBatchChecksCoherentCandidateAndRepliesIndividually(t *testing
 	pub.comments = []PRFeedbackComment{first, second, third}
 	provider := &feedbackScriptProvider{outcomes: []Outcome{
 		batchFeedbackOutcome("implemented", third, first, second),
-		testOutcome("implemented"), testOutcome("reviewed"),
 	}}
 	r.Provider, r.ProcessPRFeedback = provider, true
 	checksBefore, originalSession := checker.calls, j.SessionID
@@ -48,15 +47,15 @@ func TestPRFeedbackBatchChecksCoherentCandidateAndRepliesIndividually(t *testing
 	if len(entries) != 3 || entries[0].Comment.Body != first.Body || entries[1].Comment.Body != second.Body || entries[2].Comment.Body != third.Body {
 		t.Fatalf("pending comments missing from original handoff: %+v", entries)
 	}
-	if j.State != "ready" || checker.calls != checksBefore+1 || pub.replies != 3 {
-		t.Fatalf("batch was not checked and acknowledged together: state=%s checks=%d replies=%d", j.State, checker.calls-checksBefore, pub.replies)
+	if j.State != "ready" || checker.calls != checksBefore || pub.replies != 3 {
+		t.Fatalf("unchanged batch repeated checks or lost acknowledgements: state=%s checks=%d replies=%d", j.State, checker.calls-checksBefore, pub.replies)
 	}
 	for i, e := range j.PRFeedback.Entries {
 		if e.Assessment == nil || e.Provisional || e.Reply == nil || e.Assessment.ID != pub.comments[i].ID || e.Marker == "" {
 			t.Fatalf("missing individual acknowledgement: %+v", e)
 		}
 	}
-	for _, session := range provider.sessions[:2] {
+	for _, session := range provider.sessions[:1] {
 		if session.ResumeID != originalSession {
 			t.Fatal("batch changed implementation session")
 		}
