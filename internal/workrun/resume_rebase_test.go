@@ -13,6 +13,7 @@ import (
 )
 
 type resumeTestPublisher struct {
+	branchSHA string
 	Publisher
 	remote                 RemotePR
 	snapshots, validations int
@@ -21,6 +22,13 @@ type resumeTestPublisher struct {
 
 func (p *resumeTestPublisher) Observe(context.Context, Plan, Publication) (RemotePR, error) {
 	return p.remote, nil
+}
+func (p *resumeTestPublisher) Branch(_ context.Context, _ Plan, branch string) (BranchSnapshot, error) {
+	sha := p.branchSHA
+	if sha == "" {
+		sha = p.remote.BaseSHA
+	}
+	return BranchSnapshot{Branch: branch, SHA: sha}, nil
 }
 func (p *resumeTestPublisher) ValidateResumeTarget(context.Context, Plan, RemotePR) error {
 	p.validations++
@@ -295,5 +303,95 @@ func TestResumeRebaseRetiresAdoptionBoundaryWithoutLosingProvenance(t *testing.T
 	}
 	if err := validateAdoptionPlan(j.Plan); err != nil {
 		t.Fatalf("obsolete adoption invariant blocks publication: %v", err)
+	}
+}
+
+func TestResumeRebaseUsesBranchTipWhenPRBaseIsStale(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			dir, j := testRun(t)
+			j.Plan.Base = "parent"
+			j.Publication = Publication{Number: 40, HeadSHA: testHead}
+			p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "parent", BaseSHA: testBase, HeadSHA: testHead}, branchSHA: testTree}
+			repo := &resumeTestRepository{}
+			runner := Runner{Publisher: p, Repository: repo, Rebase: explicit}
+			changed, err := runner.checkResumeUpstream(context.Background(), dir, j)
+			if !explicit {
+				if err == nil || !strings.Contains(err.Error(), "--rebase") || repo.calls != 0 {
+					t.Fatalf("stale PR base hid updated branch: %v", err)
+				}
+				return
+			}
+			if err != nil || !changed || repo.calls != 1 || j.Plan.BaseSHA != testTree {
+				t.Fatalf("did not rebase onto live tip: changed %v err %v calls %d base %s", changed, err, repo.calls, j.Plan.BaseSHA)
+			}
+			if j.Plan.Restack == nil || j.Plan.Restack.BaseSHA != testBase {
+				t.Fatal("stored PR base lease was replaced by branch tip")
+			}
+		})
+	}
+}
+func TestResumeRebaseAllowsSettledFeedbackCycleWithoutProcessingComments(t *testing.T) {
+	dir, j := testRun(t)
+	j.Plan.Base = "parent"
+	j.Publication = Publication{URL: "https://github.com/example/project/pull/40", Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+	c := generalFeedback("comment:1", "Already handled.")
+	a := assessedOutcome(c, "no_change").PRFeedbackAssessments[0]
+	e := PRFeedbackEntry{Comment: c, Fingerprint: feedbackFingerprint(c), Assessment: &a, ReplyBody: a.Reason, Reply: &PRFeedbackReply{ID: "existing-reply"}}
+	e.Marker = feedbackEntryMarker(j.ID, e)
+	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, Entries: []PRFeedbackEntry{e}}
+	roles := j.Plan.Roles
+	p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "parent", BaseSHA: testBase, HeadSHA: testHead}, branchSHA: testTree}
+	changed, err := (Runner{Publisher: p, Repository: &resumeTestRepository{}, Rebase: true}).checkResumeUpstream(context.Background(), dir, j)
+	if err != nil || !changed {
+		t.Fatalf("settled feedback unnecessarily blocked explicit rebase: %v", err)
+	}
+	if j.PRFeedback.Active || len(j.PRFeedback.Entries) != 1 || j.PRFeedback.Entries[0].Reply.ID != "existing-reply" || !reflect.DeepEqual(j.Plan.Roles, roles) {
+		t.Fatal("rebase changed feedback history or acceptance policy")
+	}
+}
+func TestResumeRebaseAcceptsStoredPRBaseRefreshingDuringRecovery(t *testing.T) {
+	dir, j := testRun(t)
+	j.Plan.Base = "parent"
+	j.Publication = Publication{Number: 40, HeadSHA: testHead}
+	p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "parent", BaseSHA: testBase, HeadSHA: testHead}, branchSHA: testTree}
+	repo := &resumeTestRepository{fail: true}
+	runner := Runner{Publisher: p, Repository: repo, Rebase: true}
+	if _, err := runner.checkResumeUpstream(context.Background(), dir, j); err == nil {
+		t.Fatal("expected interruption")
+	}
+	p.remote.BaseSHA = testTree
+	repo.fail = false
+	runner.Rebase = false
+	if changed, err := runner.checkResumeUpstream(context.Background(), dir, j); err != nil || !changed || p.snapshots != 1 {
+		t.Fatalf("PR metadata refresh broke durable recovery: %v", err)
+	}
+}
+
+func TestResumeRebaseKeepsUnfinishedFeedbackBlocked(t *testing.T) {
+	for _, kind := range []string{"pending", "reply-due", "unresolved"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, j := testRun(t)
+			j.Plan.Base = "parent"
+			j.Publication = Publication{URL: "https://github.com/example/project/pull/40", Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+			c := generalFeedback("comment:1", "Unfinished feedback.")
+			a := assessedOutcome(c, "no_change").PRFeedbackAssessments[0]
+			e := PRFeedbackEntry{Comment: c, Fingerprint: feedbackFingerprint(c), Assessment: &a, ReplyBody: a.Reason, Reply: &PRFeedbackReply{ID: "receipt"}}
+			e.Marker = feedbackEntryMarker(j.ID, e)
+			switch kind {
+			case "pending":
+				e.Assessment = nil
+			case "reply-due":
+				e.Reply = nil
+			case "unresolved":
+				a.Disposition = "unaddressable"
+			}
+			j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, Entries: []PRFeedbackEntry{e}}
+			p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "parent", BaseSHA: testBase, HeadSHA: testHead}, branchSHA: testTree}
+			repo := &resumeTestRepository{}
+			if _, err := (Runner{Publisher: p, Repository: repo, Rebase: true}).checkResumeUpstream(context.Background(), dir, j); err == nil || repo.calls != 0 || p.snapshots != 0 {
+				t.Fatalf("unfinished feedback was bypassed: %v", err)
+			}
+		})
 	}
 }

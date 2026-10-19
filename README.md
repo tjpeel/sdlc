@@ -65,7 +65,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.118`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.119`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -433,7 +433,9 @@ Running inside SDLC narrows that exposure, while retaining the risks listed abov
 
 ### Rebasing a saved PR run
 
-A normal resume verifies the open PR's current head and target revision. If the
+A normal resume verifies the open PR's current head and actual target branch tip.
+GitHub's stored PR base revision can lag behind an updated branch, so it is kept
+as a separate publication lease rather than used to detect upstream changes. If the
 upstream has changed, it stops before agent work and reports how to rebase:
 
 ```sh

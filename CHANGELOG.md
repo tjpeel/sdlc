@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.119 - 2026-10-19
+
+- Detect upstream changes from the actual target branch tip instead of GitHub's potentially stale PR base revision. Keep the stored PR boundary as the publication lease and tolerate its refresh during interrupted-rebase recovery.
+- Allow explicit rebasing after all feedback is handled, preserving assessments, receipts and recommendation policy without processing the settled feedback again.
+
 ## 0.1.0-beta.118 - 2026-10-19
 
 - Treat an operator rocket reaction as closing the selected PR comment and its linked descendants, including later replies. Keep thumbs-down exclusion distinct.

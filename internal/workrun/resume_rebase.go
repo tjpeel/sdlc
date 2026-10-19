@@ -13,6 +13,7 @@ import (
 // Resume upstream checks are independent of feedback and recommendation policy.
 type resumeUpstreamPublisher interface {
 	Observe(context.Context, Plan, Publication) (RemotePR, error)
+	Branch(context.Context, Plan, string) (BranchSnapshot, error)
 	Snapshot(context.Context, Plan, string, string, string) (BranchSnapshot, error)
 	ValidateResumeTarget(context.Context, Plan, RemotePR) error
 }
@@ -108,15 +109,24 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	if remote.State != "OPEN" || remote.HeadSHA != j.Publication.HeadSHA || !objectID.MatchString(remote.BaseSHA) {
 		return false, fmt.Errorf("PR closed or published head changed; refusing upstream reconciliation")
 	}
+	// GitHub can retain the PR's previous baseRefOid after its target branch
+	// advances. Observe pins the PR lease; Branch pins the actual rebase target.
+	target, err := p.Branch(ctx, j.Plan, remote.Base)
+	if err != nil {
+		return false, err
+	}
+	if target.Branch != remote.Base || !objectID.MatchString(target.SHA) || target.Bundle != "" {
+		return false, fmt.Errorf("invalid live PR target branch observation")
+	}
 	pending := j.ResumeRebase && j.Reconciliation != nil
-	if !pending && remote.Base == j.Plan.Base && remote.BaseSHA == j.Plan.BaseSHA {
+	if !pending && remote.Base == j.Plan.Base && target.SHA == j.Plan.BaseSHA {
 		return false, nil
 	}
 	if !r.Rebase && !pending {
-		return false, fmt.Errorf("PR upstream changed to %s at %s; resume with --rebase to replay this PR's commits onto its current target", remote.Base, remote.BaseSHA)
+		return false, fmt.Errorf("PR upstream changed to %s at %s; resume with --rebase to replay this PR's commits onto its current target", remote.Base, target.SHA)
 	}
 	if !pending {
-		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.PRFeedback != nil && (j.PRFeedback.Active || j.PRFeedback.FetchPending || pendingFeedback(j) != nil) || j.Plan.Restack != nil {
+		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || unfinishedRebaseFeedback(j) || j.Plan.Restack != nil {
 			return false, fmt.Errorf("finish pending recovery or feature reconciliation before rebasing")
 		}
 		_, ok := r.Repository.(rebaseExecutor)
@@ -149,14 +159,14 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		}
 		// An adoption describes the original child snapshot, not this upstream.
 		plan.Adoption = nil
-		snapshot, err := p.Snapshot(ctx, plan, remote.Base, remote.BaseSHA, request)
+		snapshot, err := p.Snapshot(ctx, plan, target.Branch, target.SHA, request)
 		if err != nil {
 			os.RemoveAll(request)
 			return false, err
 		}
-		if snapshot.Branch != remote.Base || snapshot.SHA != remote.BaseSHA {
+		if snapshot.Branch != target.Branch || snapshot.SHA != target.SHA {
 			os.RemoveAll(request)
-			return false, fmt.Errorf("snapshot differs from observed PR target")
+			return false, fmt.Errorf("snapshot differs from verified target branch tip")
 		}
 		if err := validateSnapshotBundle(snapshot.Bundle); err != nil {
 			return false, err
@@ -181,7 +191,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		}
 	}
 	record := j.Reconciliation
-	if j.Plan.Restack == nil || remote.HeadSHA != j.Plan.Restack.HeadSHA || remote.Base != j.Plan.Restack.Base || remote.BaseSHA != record.Snapshot.SHA {
+	if j.Plan.Restack == nil || remote.HeadSHA != j.Plan.Restack.HeadSHA || remote.Base != record.Snapshot.Branch || target.SHA != record.Snapshot.SHA || remote.BaseSHA != j.Plan.Restack.BaseSHA && remote.BaseSHA != record.Snapshot.SHA {
 		return false, fmt.Errorf("PR or upstream moved during saved rebase; inspect the recorded reconciliation before retrying")
 	}
 	parent := filepath.Join(directory, "resume-rebase-source") + string(os.PathSeparator)
@@ -211,6 +221,11 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	j.ReviewAssessment, j.ReviewContinuation, j.ReviewHumanInput, j.ReviewSkip = nil, nil, nil, nil
 	j.CandidatePhasePending = false
 	j.State, j.ResumeState, j.StopReason, j.PendingRole = "implementing", "", "", ""
+	// Settled feedback was not re-opened or re-assessed by this operation. Keep
+	// every assessment and receipt, but do not re-enter its old feedback cycle.
+	if j.PRFeedback != nil {
+		j.PRFeedback.Active = false
+	}
 	j.RestackNeedsChecks = true
 	j.Feedback = "The controller performed a Git rebase onto the PR target " + snapshot.Branch + " at " + snapshot.SHA + ". Preserve the rebased commits and the original ticket scope. Do not recreate or squash the implementation. Obtain fresh checks and local review before publication. Existing independent-review and recommendation settings remain in effect."
 	if result.Conflict {
@@ -222,4 +237,12 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	}
 	_ = os.Remove(snapshot.Bundle)
 	return true, nil
+}
+
+func unfinishedRebaseFeedback(j *Journal) bool {
+	if j.PRFeedback == nil {
+		return false
+	}
+	status := PRFeedbackStatus(*j)
+	return j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || status.Pending > 0 || status.OutstandingReplies > 0 || status.Unresolved > 0
 }
