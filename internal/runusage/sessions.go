@@ -20,7 +20,13 @@ type SessionSummary struct {
 	AgentsTruncated  bool                  `json:"subagents_truncated,omitempty"`
 }
 type SessionInvocation struct {
-	ReviewEffortSelection *ReviewEffortSelection `json:"review_effort_selection,omitempty"`
+	ContextCheckpointErrors int64                  `json:"context_checkpoint_errors,omitempty"`
+	Prompt                  *PromptMetrics         `json:"controller_prompt,omitempty"`
+	Catalogue               *CatalogueMetrics      `json:"instruction_footprint,omitempty"`
+	Stream                  *StreamMetrics         `json:"native_stream,omitempty"`
+	Context                 *ContextUsage          `json:"last_request_context,omitempty"`
+	CompactionCoverage      string                 `json:"compaction_coverage,omitempty"`
+	ReviewEffortSelection   *ReviewEffortSelection `json:"review_effort_selection,omitempty"`
 
 	FastModeState   string `json:"native_fast_mode_state,omitempty"`
 	Attempt         int    `json:"attempt"`
@@ -55,7 +61,7 @@ func sessionSummaries(records []Attempt) []SessionSummary {
 		if speed == "" {
 			speed = "unknown"
 		}
-		s.Invocations = append(s.Invocations, SessionInvocation{ReviewEffortSelection: a.ReviewEffortSelection, FastModeState: a.Usage.FastModeState, Attempt: a.Attempt, Role: a.Role, Outcome: a.Outcome, RequestedModel: a.Model, ReportedModel: a.Usage.ReportedModel, RequestedEffort: a.Effort, ReportedEffort: "unknown", RequestedSpeed: a.RequestedSpeed, EffectiveSpeed: speed})
+		s.Invocations = append(s.Invocations, SessionInvocation{ContextCheckpointErrors: a.Usage.ContextCheckpointErrors, Prompt: a.Prompt, Catalogue: a.Usage.Catalogue, Stream: a.Usage.Stream, Context: a.Usage.Context, CompactionCoverage: a.Usage.CompactionCoverage, ReviewEffortSelection: a.ReviewEffortSelection, FastModeState: a.Usage.FastModeState, Attempt: a.Attempt, Role: a.Role, Outcome: a.Outcome, RequestedModel: a.Model, ReportedModel: a.Usage.ReportedModel, RequestedEffort: a.Effort, ReportedEffort: "unknown", RequestedSpeed: a.RequestedSpeed, EffectiveSpeed: speed})
 		s.Tokens, s.Models = nil, nil
 		s.Completeness = "incomplete"
 		if totals, known := wholeTree(a.Usage, a.Provider); known && a.Usage.Completeness == "observed" && a.Outcome != "running" {

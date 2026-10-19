@@ -391,3 +391,26 @@ the same selected provider, model, effort and speed. It adds no authentication
 route, account switch, replacement session or custom provider client. Native
 failures and usage restrictions stop work; unfinished review evidence cannot be
 converted into a skipped review. Tests use offline native-event fixtures only.
+
+## Numeric instruction and native-context observations
+
+The observation-only extension was reviewed on 19 October 2026 against the
+[official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode),
+[App Server documentation](https://learn.chatgpt.com/docs/app-server),
+[pinned Codex 0.163.0 protocol source](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/protocol/src/protocol.rs),
+and Claude's [headless](https://code.claude.com/docs/en/headless) and
+[context usage](https://code.claude.com/docs/en/statusline) documentation.
+The account type, execution route, official commands, authentication persistence
+and native recovery remain unchanged. No connected provider test was performed.
+
+The worker projects only numeric context and compaction fields from newly appended
+root Codex rollout records; this supplementary local schema is version-pinned and
+best-effort, not a documented stable exec API. It never edits a rollout, forwards
+transcript text, reads authentication fields or initiates model work. Unsupported
+or missing evidence remains unknown. Model requests and cumulative accounting
+continue through the unmodified official client. The scanner does not implement
+a native headroom percentage, force compaction or reset sessions or usage.
+
+Catalogue fingerprints and file sizes describe available pinned image material,
+not model loading. Root tool-output measurements discard text and identifiers.
+These optional observations are private run metrics without external export.

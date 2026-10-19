@@ -145,7 +145,7 @@ def apply_headroom_route(provider, command, env):
         raise ValueError("unsupported Headroom provider")
 
 
-def process(command, env):
+def process(command, env, monitor=None):
     child = None
     terminating = False
 
@@ -168,7 +168,14 @@ def process(command, env):
                                      stdin=prompt)
             if terminating:
                 child.send_signal(signal.SIGTERM)
-            code = child.wait()
+            while True:
+                try:
+                    code = child.wait(timeout=1) if monitor else child.wait()
+                    break
+                except subprocess.TimeoutExpired:
+                    monitor.poll()
+            if monitor:
+                monitor.poll(final=True)
             return code if code >= 0 else 128 - code
     finally:
         for number, handler in handlers.items():
@@ -339,6 +346,11 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
                         # output can end the parent turn with work still pending.
                         "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
                         "ENABLE_CLAUDEAI_MCP_SERVERS": "false"})
+        telemetry.instruction_footprint(provider,
+            skills if provider == "codex" else config / "skills",
+            CODEX_AGENTS if provider == "codex" else config / "agents",
+            instructions, SCHEMA, PROMPT)
+        monitor = telemetry.CodexContext(config, resume) if provider == "codex" else None
         command = native_command(provider, model, effort, resume, readonly)
         apply_headroom_route(provider, command, env)
         auth_link(config, provider, directory)
@@ -348,7 +360,7 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
             try:
                 if provider == 'codex':
                     compact_interrupted_codex(config, resume, model, effort, env)
-                code = process(command, env)
+                code = process(command, env, monitor)
             finally:
                 subscription.boundary(provider, 'end')
                 subscription.capture(provider, 'after', env)

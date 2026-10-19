@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.114 - 2026-10-19
+
+- Record controller and worker prompt sizes, available instruction catalogue fingerprints and sizes, bounded root tool-output measurements and explicit measurement coverage for token tuning.
+- Observe last-request input, reported windows and compactions from the pinned Codex root rollout without changing native execution or cumulative accounting. Label remaining headroom unknown and retain partial coverage when observations are unavailable.
+
 ## 0.1.0-beta.113 - 2026-10-19
 
 - Exclude branch-scoped Sonar duplication summaries from advisory PR measures and explicitly report their unavailable status without blocking successful required CI checks. Preserve authority, revision and PR-scope validation; branch analysis cannot substitute for PR analysis.

@@ -51,6 +51,7 @@ func TestUsageReportsDurableMetricsReadOnly(t *testing.T) {
 	started := time.Now().UTC().Add(-time.Minute)
 	if err := runusage.SaveAttempt(filepath.Dir(j.Workspace), runusage.Attempt{
 		Version: runusage.Version, RunID: j.ID, Attempt: 1, Role: "implementation",
+		Prompt:   runusage.MeasurePrompt("private-provider-prompt-é", ""),
 		Provider: "codex", Model: j.Plan.Roles.Implementation.Name, OptimizerMode: "off",
 		StartedAt: started, EndedAt: started.Add(time.Second), Outcome: "completed",
 		SessionID: observer.SessionID(), Usage: observer.Snapshot(),
@@ -71,7 +72,7 @@ func TestUsageReportsDurableMetricsReadOnly(t *testing.T) {
 	if len(document.Runs) != 1 || document.Runs[0].Metrics == nil || document.Runs[0].Metrics.Groups[0].Tokens.InputTokens == nil || *document.Runs[0].Metrics.Groups[0].Tokens.InputTokens != 100 {
 		t.Fatalf("durable totals missing: %s", output.String())
 	}
-	for _, private := range []string{observer.SessionID(), j.Instructions, "private-recent-event", "session_id", "prompt", "workspace"} {
+	for _, private := range []string{observer.SessionID(), j.Instructions, "private-recent-event", "session_id", `"prompt":`, "private-provider-prompt-é", "workspace"} {
 		if strings.Contains(output.String(), private) {
 			t.Fatalf("private material %q exposed", private)
 		}

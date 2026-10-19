@@ -410,7 +410,9 @@ func usageSummary(usage runstatus.Usage) string {
 	context := "Context: not reported"
 	if usage.Context != nil && usage.Context.Tokens != nil {
 		context = "Context: " + tokenCount(usage.Context.Tokens) + " tokens"
-		if usage.ModelMatches && usage.Context.Window != nil && *usage.Context.Window > 0 {
+		if usage.Context.Source == "codex.rollout.last_token_usage" {
+			context = "Last observed request input: " + tokenCount(usage.Context.Tokens) + " tokens; reported window " + tokenCount(usage.Context.Window) + " (remaining headroom unknown)"
+		} else if usage.ModelMatches && usage.Context.Window != nil && *usage.Context.Window > 0 {
 			context += fmt.Sprintf(" / %d (%.1f%%)", *usage.Context.Window, 100*float64(*usage.Context.Tokens)/float64(*usage.Context.Window))
 		}
 	}

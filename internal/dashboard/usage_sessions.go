@@ -20,6 +20,10 @@ func usageSetting(value string) string {
 
 // WriteUsageSettings keeps requested configuration separate from observed evidence.
 func WriteUsageSettings(output io.Writer, group runusage.Group) {
+	if e := group.Efficiency; e != nil {
+		fmt.Fprintf(output, "    Controller prompt bytes %d (%d measured, %d unknown attempts); root tool result bytes %d (provider-specific encoding).\n", e.PromptBytes, e.PromptAttempts, e.MissingPrompts, e.Stream.ToolResultBytes)
+		fmt.Fprintf(output, "    Request-input observations %d/%d attempts; compaction coverage complete %d, partial %d, unknown %d.\n", e.ContextAttempts, group.Attempts, e.CompleteCompactions, e.PartialCompactions, e.UnknownCompactions)
+	}
 	fmt.Fprintf(output, "    Native fast-mode state at initialization: %s (does not establish delivered service speed).\n", usageSetting(strings.Join(group.FastModeStates, ", ")))
 	fmt.Fprintf(output, "    Observed peak input context %s; compactions %d; retries %d; reasoning output %s (subset of output).\n", tokenCount(group.PeakContextTokens), group.Compactions, group.Retries, tokenCount(group.Tokens.ReasoningOutputTokens))
 	fmt.Fprintf(output, "    Requested reasoning %s; speed %s; effective reasoning unknown; speed %s.\n", usageSetting(group.Effort), usageSetting(group.RequestedSpeed), usageSetting(group.EffectiveSpeed))

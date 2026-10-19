@@ -17,6 +17,7 @@ var runtimeAssets = []string{
 }
 
 var publisherEmbeds = map[string]bool{
+	"internal/providerauth/telemetry.py":         true,
 	"internal/providerauth/subscription.py":      true,
 	"internal/githubauth/container.py":           true,
 	"internal/providerauth/container.py":         true,

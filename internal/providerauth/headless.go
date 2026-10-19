@@ -24,6 +24,9 @@ var headlessHelper string
 //go:embed subscription.py
 var subscriptionHelper string
 
+//go:embed telemetry.py
+var telemetryHelper string
+
 // HeadlessRequest selects one official client and its private native session.
 // Directory and file paths must be absolute. SessionDirectory is writable by
 // container UID 1000; Workspace needs that access only for implementation work.
@@ -194,7 +197,8 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 	}
 	encoded, _ := json.Marshal(helper)
 	quota, _ := json.Marshal(subscriptionHelper)
-	script := "import types\n_auth={'__name__':'sdlc_auth'}\nexec(" + string(encoded) + ", _auth)\nnative=types.SimpleNamespace(**_auth)\n_subscription={'__name__':'sdlc_subscription'}\nexec(" + string(quota) + ", _subscription)\nsubscription=types.SimpleNamespace(**_subscription)\n" + headlessHelper
+	telemetry, _ := json.Marshal(telemetryHelper)
+	script := "import types\n_auth={'__name__':'sdlc_auth'}\nexec(" + string(encoded) + ", _auth)\nnative=types.SimpleNamespace(**_auth)\n_subscription={'__name__':'sdlc_subscription'}\nexec(" + string(quota) + ", _subscription)\nsubscription=types.SimpleNamespace(**_subscription)\n" + "\n_telemetry={'__name__':'sdlc_telemetry'}\nexec(" + string(telemetry) + ", _telemetry)\ntelemetry=types.SimpleNamespace(**_telemetry)\n" + headlessHelper
 	readonly := "false"
 	if request.ReadOnly {
 		readonly = "true"

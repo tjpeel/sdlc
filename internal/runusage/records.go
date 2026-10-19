@@ -36,6 +36,7 @@ var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 // Attempt is private native-client telemetry. SessionID never appears in Summary.
 // Elapsed time covers the entire attempt, including setup and queueing.
 type Attempt struct {
+	Prompt                *PromptMetrics         `json:"controller_prompt,omitempty"`
 	ReviewEffortSelection *ReviewEffortSelection `json:"review_effort_selection,omitempty"`
 
 	RequestedSpeed string          `json:"requested_speed,omitempty"`
@@ -72,6 +73,7 @@ type ReviewBoundary struct {
 }
 
 type Group struct {
+	Efficiency        *EfficiencySummary    `json:"efficiency,omitempty"`
 	FastModeStates    []string              `json:"native_fast_mode_states,omitempty"`
 	ReportedEffort    string                `json:"reported_effort"`
 	Effort            string                `json:"requested_effort,omitempty"`
@@ -170,6 +172,9 @@ func openMetricsRoot(dir string, create bool) (*os.Root, error) {
 }
 
 func validateAttempt(a Attempt) error {
+	if a.Prompt != nil && (a.Prompt.Bytes < 0 || a.Prompt.Bytes > maxTokenCount || a.Prompt.FeedbackBytes < 0 || a.Prompt.FeedbackBytes > a.Prompt.Bytes) {
+		return fmt.Errorf("invalid prompt measurement")
+	}
 	if s := a.ReviewEffortSelection; s != nil {
 		if a.Role != "review" || a.Provider != "claude" || a.ReviewBoundary == nil || a.Effort != s.Effort {
 			return fmt.Errorf("invalid review effort metrics boundary")
@@ -543,6 +548,10 @@ func loadSummary(directory, runID string, expectedAttempts, afterAttempt int, in
 			groups[key] = g
 		}
 		g.Attempts++
+		if g.Efficiency == nil {
+			g.Efficiency = &EfficiencySummary{}
+		}
+		g.Efficiency.add(a)
 		if state := a.Usage.FastModeState; state != "" {
 			seen := false
 			for _, old := range g.FastModeStates {
@@ -780,6 +789,9 @@ func addTokens(dst *TokenUsage, src TokenUsage, first bool) error {
 }
 
 func validateUsage(u Usage) error {
+	if err := u.validateEfficiency(); err != nil {
+		return err
+	}
 	switch u.FastModeState {
 	case "", "on", "off", "cooldown":
 	default:
@@ -828,7 +840,7 @@ func validateUsage(u Usage) error {
 	}
 	if u.Context != nil {
 		c := u.Context
-		if c.Scope != "request_context" || (c.Source != "claude.assistant.message" && c.Source != "claude.result.modelUsage") {
+		if c.Scope != "request_context" || (c.Source != "claude.assistant.message" && c.Source != "claude.result.modelUsage" && c.Source != "codex.rollout.last_token_usage") {
 			return fmt.Errorf("invalid context source")
 		}
 		for _, f := range []*int64{c.InputTokens, c.CachedInputTokens, c.CacheCreationInputTokens, c.Tokens, c.Window} {

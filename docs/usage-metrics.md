@@ -207,3 +207,63 @@ text, authentication headers or account identifiers. The native session ID is
 retained privately for cumulative reconciliation and omitted from usage summaries,
 dashboard JSON and run reports. Records and existing native logs stay outside
 tracked source. No metric exporter or external analytics service is enabled.
+
+## Instruction and context tuning evidence
+
+New attempts retain exact UTF-8 byte counts for the controller's dispatched
+prompt and the complete feedback substring when present. Feedback bytes are a
+subset, not another input to add. The worker additionally records the final
+mounted prompt, response schema and shared instruction sizes after transport
+fallbacks. These are byte counts, not token estimates or complete native request
+sizes. Native system prompts and client catalogue metadata can add more input.
+
+The worker records available skill/resource and agent-definition file counts and
+bytes, plus a content fingerprint of the pinned catalogues. Availability does not
+prove a file was loaded. Fingerprints identify catalogue content without retaining
+source text, names or paths. Catalogue failures are optional measurement failures.
+The skills and agents source repositories' optional `scripts/context-inventory`
+commands provide per-file offline baselines without changing definitions.
+
+Invocation-local stream measurements include wire bytes, parsed events, malformed
+and oversized lines, and completed root tool calls/results. Codex result bytes
+count the decoded `aggregated_output` UTF-8 text from command completions; Claude
+counts the JSON-encoded tool-result content, including quotes and structured
+content. These units differ and must not rank providers. Child traffic is excluded
+when the native envelope identifies it. IDs are hashed only for bounded in-memory
+deduplication; neither IDs nor tool content enter records. Unidentified events or
+a full deduplication table leave explicit attribution gaps. Codex commands naming
+SKILL.md, AGENTS.md or CLAUDE.md have a separate output counter: a filename
+reference does not prove a successful instruction read or attribute its output
+exclusively to skills. Native tokens remain the accounting authority.
+
+Codex 0.163.0 workers supplement the exec stream with an optional bounded,
+incremental read of the selected root native rollout. Only appended records from
+this invocation contribute. Child rollouts, ambiguous roots and unsupported
+versions do not supply context. The last observed request input, matching window,
+reception timestamp, invocation peak input and native compactions are numeric-only
+observations of a version-pinned local format. The format is not a stable exec API.
+No cumulative totals are replaced and no requests or compactions are triggered.
+
+Last request input is not exact current occupancy or the native remaining-context
+gauge: further output/tool work can make the observation stale, and the client
+uses different accounting and reserved capacity for its gauge. No percentage is
+inferred. Missing windows remain unknown. Complete compaction coverage means the
+selected root rollout's appended records were observed through native exit; it
+does not establish whole-provider visibility. Size limits, malformed lines,
+partial writes, truncation and replacement leave partial or unavailable coverage.
+Explicit recovery and its native compacted record are counted once when both are
+observed. Context checkpoints are retained at most every five seconds during work;
+subscription boundaries remain immediate and final usage is saved on return.
+Optional checkpoint write failures do not interrupt native output; a numeric error
+count is retained in the final record when storage is available.
+
+`usage --json` exposes these fields per invocation and coverage per role group.
+Old records retain unknown measurement coverage; zero observed compactions alone
+does not prove none occurred. Native event silence timing excludes SDLC telemetry.
+
+To evaluate a later reduction, retain catalogue fingerprints, source/runtime,
+input boundary, model/effort and the new measurements. Compare several equivalent
+runs, including completion, required checks, repair rounds and independently
+adjudicated review findings. Lower bytes or tokens alone do not establish success.
+This observability iteration changes no skill instructions, model/effort selection,
+delegation policy, native session management, workflow gates or usage budgets.

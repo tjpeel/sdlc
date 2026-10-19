@@ -963,7 +963,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 			speed = c.Speed
 		}
 	}
-	attempt := runusage.Attempt{RequestedSpeed: speed, Version: 1, RunID: journal.ID, Attempt: journal.Attempt,
+	attempt := runusage.Attempt{Prompt: runusage.MeasurePrompt(prompt, journal.Feedback), RequestedSpeed: speed, Version: 1, RunID: journal.ID, Attempt: journal.Attempt,
 		Role: metricRole, Provider: model.Provider, Model: model.Name, Effort: model.Effort,
 		ImageID: journal.ImageID, StartedAt: time.Now().UTC(), Outcome: "running",
 		Resumed: resume != "", OptimizerMode: journal.Plan.Headroom.Mode}

@@ -18,28 +18,33 @@ const maxTokenCount int64 = 1_000_000_000_000
 // guarantee. Nil fields mean unknown. Aggregate counters are replaced, never
 // added across resumes, and cannot establish a current request's context size.
 type Usage struct {
-	FastModeState      string                    `json:"native_fast_mode_state,omitempty"`
-	Agents             map[string]*AgentEvidence `json:"agents,omitempty"`
-	AgentsTruncated    bool                      `json:"agents_truncated,omitempty"`
-	NativeFinalization *NativeFinalization       `json:"native_finalization,omitempty"`
-	NativeStop         *NativeStop               `json:"native_stop,omitempty"`
-	Subscription       *SubscriptionUsage        `json:"subscription,omitempty"`
-	Aggregate          *TokenUsage               `json:"aggregate,omitempty"`
-	Context            *ContextUsage             `json:"context,omitempty"`
-	ClientVersion      string                    `json:"client_version,omitempty"`
-	ReportedModel      string                    `json:"reported_model,omitempty"`
-	ModelMatches       bool                      `json:"model_matches"`
-	Models             map[string]TokenUsage     `json:"models,omitempty"`
-	EstimatedCostUSD   *float64                  `json:"estimated_cost_usd,omitempty"`
-	DurationMS         *int64                    `json:"duration_ms,omitempty"`
-	APIDurationMS      *int64                    `json:"api_duration_ms,omitempty"`
-	Turns              *int64                    `json:"turns,omitempty"`
-	RateLimits         map[string]RateLimit      `json:"rate_limits,omitempty"`
-	PeakContextTokens  *int64                    `json:"peak_context_tokens,omitempty"`
-	Compactions        int64                     `json:"compactions,omitempty"`
-	Retries            int64                     `json:"retries,omitempty"`
-	CompletedTurns     int64                     `json:"completed_turns,omitempty"`
-	Completeness       string                    `json:"completeness,omitempty"`
+	ContextCheckpointErrors int64                     `json:"context_checkpoint_errors,omitempty"`
+	Catalogue               *CatalogueMetrics         `json:"instruction_footprint,omitempty"`
+	Stream                  *StreamMetrics            `json:"native_stream,omitempty"`
+	CompactionCoverage      string                    `json:"compaction_coverage,omitempty"`
+	ContextObservations     int64                     `json:"context_observations,omitempty"`
+	FastModeState           string                    `json:"native_fast_mode_state,omitempty"`
+	Agents                  map[string]*AgentEvidence `json:"agents,omitempty"`
+	AgentsTruncated         bool                      `json:"agents_truncated,omitempty"`
+	NativeFinalization      *NativeFinalization       `json:"native_finalization,omitempty"`
+	NativeStop              *NativeStop               `json:"native_stop,omitempty"`
+	Subscription            *SubscriptionUsage        `json:"subscription,omitempty"`
+	Aggregate               *TokenUsage               `json:"aggregate,omitempty"`
+	Context                 *ContextUsage             `json:"context,omitempty"`
+	ClientVersion           string                    `json:"client_version,omitempty"`
+	ReportedModel           string                    `json:"reported_model,omitempty"`
+	ModelMatches            bool                      `json:"model_matches"`
+	Models                  map[string]TokenUsage     `json:"models,omitempty"`
+	EstimatedCostUSD        *float64                  `json:"estimated_cost_usd,omitempty"`
+	DurationMS              *int64                    `json:"duration_ms,omitempty"`
+	APIDurationMS           *int64                    `json:"api_duration_ms,omitempty"`
+	Turns                   *int64                    `json:"turns,omitempty"`
+	RateLimits              map[string]RateLimit      `json:"rate_limits,omitempty"`
+	PeakContextTokens       *int64                    `json:"peak_context_tokens,omitempty"`
+	Compactions             int64                     `json:"compactions,omitempty"`
+	Retries                 int64                     `json:"retries,omitempty"`
+	CompletedTurns          int64                     `json:"completed_turns,omitempty"`
+	Completeness            string                    `json:"completeness,omitempty"`
 }
 
 // NativeStop retains the category of a fatal native protocol event, without
@@ -68,13 +73,14 @@ type TokenUsage struct {
 }
 
 type ContextUsage struct {
-	Source                   string `json:"source"`
-	Scope                    string `json:"scope"`
-	InputTokens              *int64 `json:"input_tokens,omitempty"`
-	CachedInputTokens        *int64 `json:"cached_input_tokens,omitempty"`
-	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens,omitempty"`
-	Tokens                   *int64 `json:"tokens,omitempty"`
-	Window                   *int64 `json:"window,omitempty"`
+	ObservedAt               time.Time `json:"observed_at,omitempty"`
+	Source                   string    `json:"source"`
+	Scope                    string    `json:"scope"`
+	InputTokens              *int64    `json:"input_tokens,omitempty"`
+	CachedInputTokens        *int64    `json:"cached_input_tokens,omitempty"`
+	CacheCreationInputTokens *int64    `json:"cache_creation_input_tokens,omitempty"`
+	Tokens                   *int64    `json:"tokens,omitempty"`
+	Window                   *int64    `json:"window,omitempty"`
 }
 
 // The pinned Codex 0.160.0 emitter uses ThreadTokenUsage.total here:
@@ -86,6 +92,8 @@ type ContextUsage struct {
 // The Claude 2.1.287 CLI may omit contextWindow: no window or percentage is
 // inferred from model names, aggregate usage, or a provider's advertised limit.
 type Observer struct {
+	observedTools                                  map[[32]byte]struct{}
+	contextRevision                                uint64
 	nativeSessionRecovery                          bool
 	initializedModel                               string
 	nativeStarted                                  bool
@@ -124,6 +132,9 @@ func (o *Observer) feed(data []byte, provider, model string, usage *Usage) {
 				clear(o.line)
 				o.line = nil
 				o.dropping = true
+				if usage.Stream != nil {
+					usage.Stream.OversizedLines++
+				}
 			} else {
 				o.line = append(o.line, part...)
 			}
@@ -187,6 +198,12 @@ func counts(raw json.RawMessage, cachedKey string) (*TokenUsage, bool) {
 }
 
 func (o *Observer) consume(line []byte, provider, requested string, usage *Usage) {
+	o.observeStream(line, provider, usage)
+	observeCatalogue(line, provider, usage)
+	if o.observeCodexContext(line, provider, usage) {
+		o.contextRevision++
+		return
+	}
 	observeNativeUsageStop(line, provider, o.receivedAt, usage)
 	var completion struct {
 		Type     string `json:"type"`
@@ -253,7 +270,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 		}
 		return
 	}
-	if event.Type != "" {
+	if event.Type != "" && !strings.HasPrefix(event.Type, "sdlc.") {
 		o.observeEvent()
 	}
 	if len(event.Parent) != 0 && !bytes.Equal(bytes.TrimSpace(event.Parent), []byte("null")) {
@@ -274,7 +291,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 			hash := sha256.Sum256([]byte(id))
 			if o.sessionID != ([32]byte{}) && o.sessionID != hash {
 				subscription := usage.Subscription
-				*usage = Usage{Subscription: subscription}
+				*usage = Usage{Subscription: subscription, Stream: usage.Stream, Catalogue: usage.Catalogue}
 				o.messageID = [32]byte{}
 			}
 			o.sessionID = hash
@@ -345,6 +362,9 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 			return
 		}
 		c := usage.Context
+		c.ObservedAt = o.receivedAt
+		usage.ContextObservations++
+		o.contextRevision++
 		if u.InputTokens != nil {
 			c.InputTokens = u.InputTokens
 		}
@@ -367,6 +387,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 	}
 	if event.Type == "system" && event.Subtype == "compact_boundary" {
 		usage.Compactions++
+		usage.CompactionCoverage = "partial"
 	}
 	if event.Type == "rate_limit_event" {
 		observeRate(event.Rate, usage)
@@ -484,12 +505,15 @@ func observeNativeUsageStop(line []byte, provider string, observed time.Time, us
 
 // NewObserver reads native JSONL only; it never changes the provider lifecycle.
 func NewObserver(provider, requested string) *Observer {
-	return &Observer{provider: provider, requested: requested, now: time.Now, startedAt: time.Now()}
+	return &Observer{provider: provider, requested: requested, now: time.Now, startedAt: time.Now(), usage: Usage{Stream: &StreamMetrics{}}}
 }
 func (o *Observer) Write(data []byte) (int, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.receivedAt = o.now()
+	if o.usage.Stream != nil {
+		o.usage.Stream.Bytes += int64(len(data))
+	}
 	o.feed(data, o.provider, o.requested, &o.usage)
 	return len(data), nil
 }
@@ -497,6 +521,9 @@ func (o *Observer) Consume(line []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.receivedAt = o.now()
+	if o.usage.Stream != nil {
+		o.usage.Stream.Bytes += int64(len(line))
+	}
 	o.consume(line, o.provider, o.requested, &o.usage)
 }
 func (o *Observer) Finish() {
@@ -594,4 +621,16 @@ func observeRate(raw json.RawMessage, u *Usage) {
 		u.RateLimits = make(map[string]RateLimit)
 	}
 	u.RateLimits[r.Window] = RateLimit{ObservedAt: time.Now().UTC(), Source: "claude.rate_limit_event", Status: r.Status, ResetsAt: reset, Utilization: fraction}
+}
+
+func (o *Observer) ContextRevision() uint64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.contextRevision
+}
+
+func (o *Observer) ContextCheckpointFailed() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.usage.ContextCheckpointErrors++
 }

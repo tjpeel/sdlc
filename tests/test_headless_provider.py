@@ -28,6 +28,7 @@ headless = load("headless_test", "headless.py")
 headless.native = native
 subscription = load("headless_subscription", "subscription.py")
 headless.subscription = subscription
+headless.telemetry = load("headless_telemetry", "telemetry.py")
 ID = "00000000-0000-4000-8000-000000000001"
 CODEX_WORKSPACE_TRUST = '[projects."/workspace"]\ntrust_level = "trusted"\n'
 
@@ -124,7 +125,7 @@ class HeadlessTests(unittest.TestCase):
             if effect:
                 effect(path)
             class Child:
-                def wait(self):
+                def wait(self, timeout=None):
                     return 0
             return Child()
 
@@ -197,7 +198,7 @@ class HeadlessTests(unittest.TestCase):
                         self.assertFalse(path.is_symlink())
                         self.assertEqual(path.read_bytes(), refreshed[-1])
                     class Child:
-                        def wait(self):
+                        def wait(self, timeout=None):
                             return 0
                     return Child()
                 with patch.object(subprocess, 'Popen', side_effect=launch):
@@ -545,7 +546,7 @@ class HeadlessTests(unittest.TestCase):
         handlers = {}
         sent = []
         class Child:
-            def wait(self):
+            def wait(self, timeout=None):
                 handlers[signal.SIGTERM](signal.SIGTERM, None)
                 return -signal.SIGTERM
             def send_signal(self, number):
