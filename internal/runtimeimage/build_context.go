@@ -25,6 +25,7 @@ var publisherEmbeds = map[string]bool{
 	"internal/instructions/default.md":           true,
 	"internal/workrun/cache/nuget.py":            true,
 	"internal/workrun/live_diagnostic_helper.py": true,
+	"internal/workrun/formatter_snapshot.py":     true,
 }
 
 const maximumBuildFile = 2 * 1024 * 1024

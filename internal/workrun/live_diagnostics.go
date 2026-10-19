@@ -24,21 +24,23 @@ const liveResponseLimit = 512 * 1024
 var liveDiagnosticID = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$`)
 
 type LiveDiagnosticRequest struct {
-	Version  int                   `json:"version"`
-	ID       string                `json:"id"`
-	Head     string                `json:"head"`
-	Tree     string                `json:"tree"`
-	Requests []VerificationRequest `json:"requests"`
+	FormatOnly bool                  `json:"format_only,omitempty"`
+	Version    int                   `json:"version"`
+	ID         string                `json:"id"`
+	Head       string                `json:"head"`
+	Tree       string                `json:"tree"`
+	Requests   []VerificationRequest `json:"requests"`
 }
 type LiveDiagnosticResponse struct {
-	Version int                  `json:"version"`
-	ID      string               `json:"id"`
-	Results []VerificationResult `json:"results,omitempty"`
-	Error   string               `json:"error,omitempty"`
+	FormatBaseHead string               `json:"format_base_head,omitempty"`
+	Version        int                  `json:"version"`
+	ID             string               `json:"id"`
+	Results        []VerificationResult `json:"results,omitempty"`
+	Error          string               `json:"error,omitempty"`
 }
 
 func validateLiveRequest(request LiveDiagnosticRequest, plan *Plan) error {
-	if request.Version != 1 || !liveDiagnosticID.MatchString(request.ID) || !objectID.MatchString(request.Head) || !objectID.MatchString(request.Tree) || len(request.Requests) == 0 {
+	if request.Version != 1 || !liveDiagnosticID.MatchString(request.ID) || !objectID.MatchString(request.Head) || !objectID.MatchString(request.Tree) || (len(request.Requests) == 0 && !request.FormatOnly) || (request.FormatOnly && len(request.Requests) != 0) {
 		return errors.New("invalid live diagnostic envelope")
 	}
 	return validateVerificationRequests(request.Requests, plan)
@@ -221,6 +223,13 @@ func (runner Runner) liveDiagnostics(ctx context.Context, directory string, j *J
 	if err != nil {
 		return response, errors.New("live diagnostic candidate inspection unavailable")
 	}
+	if request.FormatOnly {
+		if revision.Head != request.Head || revision.Tree != request.Tree {
+			response.Error = "Candidate changed before formatting; retry."
+			return response, nil
+		}
+		return runner.formatPendingCandidate(ctx, directory, j, request, revision)
+	}
 	if !revision.Clean {
 		response.Error = "Commit the candidate checkpoint before live diagnostics, then retry in this session."
 		return response, nil
@@ -228,6 +237,24 @@ func (runner Runner) liveDiagnostics(ctx context.Context, directory string, j *J
 	if revision.Head != request.Head || revision.Tree != request.Tree {
 		response.Error = "Candidate checkpoint changed before diagnostics; retry with the current committed checkpoint."
 		return response, nil
+	}
+	// Formatting precedes ordinary live diagnostics, not just the full suite.
+	needsPreparation := false
+	for _, r := range request.Requests {
+		if r.SourcePatch == nil {
+			needsPreparation = true
+		}
+	}
+	if needsPreparation {
+		results, corrections, formatErr := runner.formatterResults(ctx, directory, j, j.Workspace, revision, true)
+		if formatErr != nil {
+			return response, formatErr
+		}
+		if corrections {
+			response.Results = results
+			response.Error = "Apply the automatic formatter corrections before retrying diagnostics; requested diagnostic commands did not run."
+			return response, nil
+		}
 	}
 	checker := runner.Checker
 	if timed, ok := checker.(TimingChecker); ok {

@@ -357,6 +357,8 @@ type Journal struct {
 // Timings are observed controller intervals. They exclude time between
 // controller invocations; they are not active model-compute durations.
 type Timings struct {
+	FormatterWallMS        int64         `json:"formatter_wall_ms,omitempty"`
+	FormatterCorrections   int           `json:"formatter_corrections,omitempty"`
 	Partial                bool          `json:"partial,omitempty"`
 	CIWallMS               int64         `json:"ci_wall_ms,omitempty"`
 	CIQueryMS              int64         `json:"ci_query_ms,omitempty"`

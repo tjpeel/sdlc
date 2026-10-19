@@ -200,7 +200,11 @@ func (repository DockerRepository) run(ctx context.Context, workspace, action, e
 	if export != "" {
 		args = append(args, "--mount", mount(export, "/export", false))
 	}
-	args = append(args, "--entrypoint", "python3", state.ImageID, "-c", repositoryHelper, action)
+	script := repositoryHelper
+	if action == "format_snapshot" {
+		script = formatterSnapshotHelper
+	}
+	args = append(args, "--entrypoint", "python3", state.ImageID, "-c", script, action)
 	output, err := repository.Runtime.Docker.Output(ctx, args...)
 	if err != nil {
 		return nil, fmt.Errorf("credential-free source inspection failed")

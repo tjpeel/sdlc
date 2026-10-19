@@ -52,16 +52,15 @@ func configuredRepairPassed(j *Journal) {
 }
 
 func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, journal *Journal, revision Revision) error {
-	if journal.Outcome.Status == "diagnostics_requested" {
-		return runner.diagnosticCandidatePhase(ctx, directory, journal, revision)
-	}
-	if err := resolveCandidateChecks(ctx, journal, revision); err != nil {
-		clearFormatterPreparation(journal)
-		journal.Evidence.Passed = false
-		journal.Evidence.CompletedFailureKey = ""
-		journal.Evidence.Output = nil
-		journal.Feedback = ""
-		return runner.stop(directory, journal, "blocked", err.Error())
+	if journal.Outcome.Status != "diagnostics_requested" {
+		if err := resolveCandidateChecks(ctx, journal, revision); err != nil {
+			clearFormatterPreparation(journal)
+			journal.Evidence.Passed = false
+			journal.Evidence.CompletedFailureKey = ""
+			journal.Evidence.Output = nil
+			journal.Feedback = ""
+			return runner.stop(directory, journal, "blocked", err.Error())
+		}
 	}
 	firstAttempt := journal.CheckAttempt + 1
 	if timed, ok := runner.Checker.(TimingChecker); ok {
@@ -93,6 +92,9 @@ func (runner Runner) checkCandidatePhase(ctx context.Context, directory string, 
 	ready, prepareErr := runner.prepareCandidate(ctx, directory, journal, revision)
 	if prepareErr != nil || !ready {
 		return prepareErr
+	}
+	if journal.Outcome.Status == "diagnostics_requested" {
+		return runner.diagnosticCandidatePhase(ctx, directory, journal, revision)
 	}
 	phase, supported := runner.Checker.(CandidatePhaseChecker)
 	pending := journal.Evidence.Key != verificationKey(journal, VerificationRequest{}, revision.Head, revision.Tree) || journal.Evidence.Tree != revision.Tree || journal.Evidence.Head != revision.Head || !journal.Evidence.Passed
@@ -234,12 +236,15 @@ func (runner Runner) checkCandidate(ctx context.Context, directory string, journ
 	return runner.checkAdditionalCandidate(ctx, directory, journal, revision, configuredFeedback)
 }
 
-func (runner Runner) checkAdditionalCandidate(ctx context.Context, directory string, journal *Journal, revision Revision, configuredFeedback string) error {
+func (runner Runner) checkAdditionalCandidate(ctx context.Context, directory string, journal *Journal, revision Revision, configuredFeedback string, sourceCorrectionsOnly ...bool) error {
 	failureKey := verificationKey(journal, VerificationRequest{}, revision.Head, revision.Tree)
 	firstSemanticFailure := ""
 	executedAny := false
 	for i := range journal.Verification {
 		evidence := &journal.Verification[i]
+		if len(sourceCorrectionsOnly) > 0 && sourceCorrectionsOnly[0] && evidence.Request.SourcePatch == nil {
+			continue
+		}
 		key := verificationKey(journal, evidence.Request, revision.Head, revision.Tree)
 		if evidence.Key == key && evidence.Passed {
 			continue

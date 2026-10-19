@@ -139,14 +139,16 @@ func TestBuildContextIncludesReviewedLiveDiagnosticHelper(t *testing.T) {
 		t.Fatal("actual publisher source closure cannot be built", err)
 	}
 	defer cleanup()
-	relative := filepath.Join("internal", "workrun", "live_diagnostic_helper.py")
-	expected, err := os.ReadFile(filepath.Join(source, relative))
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, err := os.ReadFile(filepath.Join(directory, "source", relative))
-	if err != nil || string(actual) != string(expected) {
-		t.Fatal("reviewed fixed helper missing or altered in runtime build context", err)
+	for _, helper := range []string{"live_diagnostic_helper.py", "formatter_snapshot.py"} {
+		relative := filepath.Join("internal", "workrun", helper)
+		expected, err := os.ReadFile(filepath.Join(source, relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		actual, err := os.ReadFile(filepath.Join(directory, "source", relative))
+		if err != nil || string(actual) != string(expected) {
+			t.Fatal("reviewed fixed helper missing or altered in runtime build context", err)
+		}
 	}
 }
 

@@ -194,6 +194,26 @@ or malformed and ambiguous manifests require explicit checks; a forced refresh
 keeps usable saved settings when it cannot infer the formatter safely. See the
 [CSharpier CLI documentation](https://csharpier.com/docs/CLI).
 
+After a coherent batch of C# edits, the implementation agent uses
+`python3 -I /sdlc-diagnostics.py --format` before committing. The controller
+captures pending C# files (including new files) and recognised formatter settings
+in a private snapshot, then runs the supported formatter without provider
+credentials or private check inputs. The real HEAD and index stay unchanged.
+Unrelated untracked files are excluded. Corrections carry source hashes and a
+`format_base_head`; the agent reviews and applies them only while those still
+match. It repeats formatting until no corrections remain, then commits implementation
+and formatting together. Large batches split into smaller requests when the existing
+artifact limit is reached. Snapshot identities
+are never publication candidates or evidence of successful checks.
+
+Live diagnostics also run formatter preparation before ordinary diagnostic
+commands; structured diagnostic requests use the same preparation gate as full
+checks. A correction returns to the agent before compilation starts. Unchanged,
+passing preparation is reused. Explicit source-correction requests stay separate
+from this automatic preflight. The local run journal records
+`timings.formatter_wall_ms` and `timings.formatter_corrections` for measurement.
+These are observed costs/counts, not estimates of time saved.
+
 Before the full suite, the controller also discovers supported formatters from
 the committed candidate. For pinned CSharpier 1.x, it restores the local tool and
 formats new or changed C# source in batches of at most 16 files, with the working

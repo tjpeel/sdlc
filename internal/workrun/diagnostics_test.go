@@ -309,7 +309,7 @@ func TestDiagnosticOutcomeContract(t *testing.T) {
 	}
 }
 
-func TestDiagnosticsSkipFormatterPreparationAndRuntimeCheckDiscovery(t *testing.T) {
+func TestDiagnosticsPrepareFormattingWithoutRuntimeSuiteDiscovery(t *testing.T) {
 	directory, journal := testRun(t)
 	journal.State = "checking"
 	journal.SessionID = testNative
@@ -317,14 +317,14 @@ func TestDiagnosticsSkipFormatterPreparationAndRuntimeCheckDiscovery(t *testing.
 	journal.Outcome = diagnosticOutcome("probe")
 	mergeDiagnostics(journal, journal.Outcome.DiagnosticRequests)
 	checker := &diagnosticPhaseChecker{}
-	repository := &preparationRepositoryFake{requests: []VerificationRequest{sourcePatchRequest()}}
+	repository := &preparationRepositoryFake{}
 	runner := fakeRunner(&fakeProvider{}, &checker.fakeChecker, &fakePublisher{}, &repository.fakeRepository)
 	runner.Checker = checker
 	runner.Repository = repository
 	if err := runner.checkCandidatePhase(context.Background(), directory, journal, Revision{Head: testHead, Tree: testTree, Clean: true}); err != nil {
 		t.Fatal(err)
 	}
-	if checker.calls != 0 || len(checker.requests) != 1 || len(journal.FormatterPreparation) != 0 || len(journal.EffectiveChecks) != 0 || journal.Evidence.Passed {
+	if repository.discoveries != 1 || checker.calls != 0 || len(checker.requests) != 1 || len(journal.FormatterPreparation) != 0 || len(journal.EffectiveChecks) != 0 || journal.Evidence.Passed {
 		t.Fatal("diagnostic phase attempted full readiness preparation")
 	}
 }

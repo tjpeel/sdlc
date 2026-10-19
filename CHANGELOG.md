@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.115 - 2026-10-19
+
+- Format pending C# edits through a private isolated snapshot before the implementation commit. Preserve the real index and HEAD, reject stale or unsafe source, and keep formatter output outside verification gates and published history.
+- Prepare formatting before live and structured diagnostics as well as full checks, returning corrections before build commands run. Record formatter time and correction counts for before/after comparisons.
+
 ## 0.1.0-beta.114 - 2026-10-19
 
 - Record controller and worker prompt sizes, available instruction catalogue fingerprints and sizes, bounded root tool-output measurements and explicit measurement coverage for token tuning.

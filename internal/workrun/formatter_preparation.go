@@ -123,7 +123,9 @@ func (runner Runner) prepareCandidate(ctx context.Context, directory string, jou
 	var started time.Time
 	defer func() {
 		if !started.IsZero() {
-			journal.Timings.ChecksMS += time.Since(started).Milliseconds()
+			elapsed := time.Since(started).Milliseconds()
+			journal.Timings.ChecksMS += elapsed
+			journal.Timings.FormatterWallMS += elapsed
 		}
 	}()
 	journal.FormatterPreparation = nil
@@ -184,6 +186,9 @@ func (runner Runner) prepareCandidate(ctx context.Context, directory string, jou
 			} else {
 				evidence.Passed = patch.Diff == ""
 				evidence.SourcePatch = patch
+				if patch.Diff != "" {
+					journal.Timings.FormatterCorrections++
+				}
 			}
 		}
 		journal.FormatterPreparation = append(journal.FormatterPreparation, evidence)
@@ -212,7 +217,7 @@ func (runner Runner) prepareCandidate(ctx context.Context, directory string, jou
 		journal.Feedback = preparationFeedback + "\n" + verificationFeedback(journal)
 		pending := false
 		for _, evidence := range journal.Verification {
-			pending = pending || evidence.Key != verificationKey(journal, evidence.Request, revision.Head, revision.Tree)
+			pending = pending || evidence.Request.SourcePatch != nil && evidence.Key != verificationKey(journal, evidence.Request, revision.Head, revision.Tree)
 		}
 		if pending {
 			if started.IsZero() {
@@ -232,12 +237,12 @@ func clearFormatterPreparation(journal *Journal) {
 	journal.FormatterPreparation = nil
 }
 
-// Failed preparation does not prevent newly requested machine diagnostics. Its
-// failure remains outstanding and the configured suite is still skipped.
+// Failed preparation permits narrower source corrections, but defers generic
+// build/test verification until formatting is repaired.
 func (runner Runner) preparationDiagnostics(ctx context.Context, directory string, journal *Journal, revision Revision, feedback string) error {
 	phase, supported := runner.Checker.(CandidatePhaseChecker)
 	if !supported {
-		return runner.checkAdditionalCandidate(ctx, directory, journal, revision, feedback)
+		return runner.checkAdditionalCandidate(ctx, directory, journal, revision, feedback, true)
 	}
 	journal.CandidatePhasePending = true
 	if err := runner.save(directory, journal); err != nil {
@@ -252,7 +257,7 @@ func (runner Runner) preparationDiagnostics(ctx context.Context, directory strin
 	err = phase.WithCandidate(ctx, journal.Workspace, io.MultiWriter(log, runner.rawOutput, stream), func(checker Checker) error {
 		scoped := runner
 		scoped.Checker = checker
-		callbackErr = scoped.checkAdditionalCandidate(ctx, directory, journal, revision, feedback)
+		callbackErr = scoped.checkAdditionalCandidate(ctx, directory, journal, revision, feedback, true)
 		return callbackErr
 	})
 	closeErr := errors.Join(stream.Finish(), log.Close())

@@ -107,10 +107,12 @@ func TestFormatterPreparationNoPolicyAndInvalidMetadata(t *testing.T) {
 
 type preparationRepositoryFake struct {
 	fakeRepository
-	requests []VerificationRequest
+	requests    []VerificationRequest
+	discoveries int
 }
 
 func (r *preparationRepositoryFake) FormatterPreparation(context.Context, *Journal, Revision) ([]VerificationRequest, error) {
+	r.discoveries++
 	return r.requests, nil
 }
 func preparationFixture(t *testing.T, diff string) (string, *Journal, Runner, *patchFixtureChecker, *preparationRepositoryFake) {

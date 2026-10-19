@@ -39,11 +39,14 @@ def safe_open(path, flags, mode=0o644):
     return fd
 
 def main():
-    raw = sys.stdin.buffer.read(REQUEST_LIMIT + 1)
+    format_only = len(sys.argv) == 2 and sys.argv[1] == "--format"
+    if len(sys.argv) > 1 and not format_only:
+        raise ValueError("invalid helper option")
+    raw = b"[]" if format_only else sys.stdin.buffer.read(REQUEST_LIMIT + 1)
     if len(raw) > REQUEST_LIMIT:
         raise ValueError("request exceeds bound")
     batch = json.loads(raw, object_pairs_hook=object_pairs)
-    if not isinstance(batch, list) or not 1 <= len(batch) <= 16:
+    if not isinstance(batch, list) or not (0 if format_only else 1) <= len(batch) <= 16:
         raise ValueError("submit an array of 1 to 16 diagnostic requests")
     ids = set()
     for request in batch:
@@ -119,6 +122,8 @@ def main():
             return value
         identifier = str(uuid.uuid4())
         envelope = {"version": 1, "id": identifier, "head": revision("HEAD"), "tree": revision("HEAD^{tree}"), "requests": batch}
+        if format_only:
+            envelope["format_only"] = True
         encoded = json.dumps(envelope, separators=(",", ":")).encode()
         if len(encoded) > REQUEST_LIMIT:
             raise ValueError("request exceeds bound")
@@ -148,8 +153,10 @@ def main():
             if response.get("id") != identifier:
                 time.sleep(0.05)
                 continue
-            if set(response) - {"version", "id", "results", "error"} or response.get("version") != 1:
+            if set(response) - {"version", "id", "results", "error", "format_base_head"} or response.get("version") != 1:
                 raise ValueError("invalid controller response")
+            if "format_base_head" in response and (not format_only or response["format_base_head"] != envelope["head"]):
+                raise ValueError("formatter base revision differs")
             sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
             return
     finally:
