@@ -455,7 +455,7 @@ func (manager Manager) BuildWithOptions(ctx context.Context, source string, opti
 	probeContext, cancelProbe := context.WithTimeout(ctx, time.Minute)
 	defer cancelProbe()
 	probeArgs := isolatedRun("none", "1000:1000", "/bin/sh", id)
-	tools, err := manager.Docker.Output(probeContext, append(probeArgs, "-ec", "codex --version; claude --version; opencode --version; gh --version; dotnet --version; docker --version; docker compose version")...)
+	tools, err := manager.Docker.Output(probeContext, append(probeArgs, "-ec", "export HOME=/tmp; codex --version; claude --version; opencode --version; gh --version; dotnet --version; docker --version; docker compose version")...)
 	if err != nil {
 		return State{}, fmt.Errorf("built runtime tool probe failed: %w", err)
 	}
