@@ -130,6 +130,13 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 			return nil, fmt.Errorf("ambiguous Sonar duplication measure")
 		}
 		if len(matches) == 0 {
+			if plan.Sonar.RepairsEnabled() {
+				measure, err := p.sonarMeasureFromCheck(ctx, pr, run)
+				if err != nil {
+					return nil, err
+				}
+				measures = append(measures, measure)
+			}
 			continue
 		}
 		percent, err := strconv.ParseFloat(matches[0][1], 64)
@@ -303,4 +310,46 @@ func (p GitHubPublisher) sonarDuplicateDetails(ctx context.Context, plan Plan, p
 		return nil, err
 	}
 	return groups, nil
+}
+
+// Failed quality gates may omit duplication from their summary. Read the metric
+// using the authoritative check's exact PR dashboard and verify its revision.
+func (p GitHubPublisher) sonarMeasureFromCheck(ctx context.Context, pr Publication, run ciCheckRun) (SonarDuplication, error) {
+	u, err := url.Parse(run.DetailsURL)
+	if err != nil || u.Scheme != "https" || u.Host != "sonarcloud.io" || u.Path != "/dashboard" || u.User != nil || u.Fragment != "" {
+		return SonarDuplication{}, fmt.Errorf("Sonar check has no exact PR dashboard identity")
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil || len(q) != 2 || len(q["id"]) != 1 || len(q["pullRequest"]) != 1 || q.Get("id") == "" || q.Get("pullRequest") != strconv.Itoa(pr.Number) {
+		return SonarDuplication{}, fmt.Errorf("Sonar check has no exact PR dashboard identity")
+	}
+	project := q.Get("id")
+	if err := p.verifySonarPR(ctx, project, pr); err != nil {
+		return SonarDuplication{}, err
+	}
+	var response struct {
+		Component struct {
+			Key, PullRequest string
+			Measures         []struct {
+				Metric  string
+				Periods []struct{ Value string }
+			}
+		}
+	}
+	endpoint := "measures/component?component=" + url.QueryEscape(project) + "&pullRequest=" + strconv.Itoa(pr.Number) + "&metricKeys=new_duplicated_lines_density"
+	if err := p.sonarJSON(ctx, endpoint, &response); err != nil {
+		return SonarDuplication{}, err
+	}
+	if response.Component.Key != project || response.Component.PullRequest != strconv.Itoa(pr.Number) || len(response.Component.Measures) != 1 || response.Component.Measures[0].Metric != "new_duplicated_lines_density" || len(response.Component.Measures[0].Periods) != 1 {
+		return SonarDuplication{}, fmt.Errorf("incomplete Sonar PR duplication metric")
+	}
+	percent, err := strconv.ParseFloat(response.Component.Measures[0].Periods[0].Value, 64)
+	if err != nil || math.IsNaN(percent) || math.IsInf(percent, 0) || percent < 0 || percent > 100 {
+		return SonarDuplication{}, fmt.Errorf("invalid Sonar PR duplication metric")
+	}
+	if err := p.verifySonarPR(ctx, project, pr); err != nil {
+		return SonarDuplication{}, err
+	}
+	values := url.Values{"id": {project}, "pullRequest": {strconv.Itoa(pr.Number)}, "metric": {"new_duplicated_lines_density"}, "view": {"list"}}
+	return SonarDuplication{Head: pr.HeadSHA, CheckRunID: run.ID, Percent: percent, MeasuresURL: "https://sonarcloud.io/component_measures?" + values.Encode()}, nil
 }

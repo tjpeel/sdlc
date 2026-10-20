@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.123 - 2026-10-20
+
+- Collect strict PR Sonar findings when a quality-gate summary omits the duplication row, using the native check’s validated PR dashboard and the exact-head metric API. Retain source and analysis checks; stale analysis waits without starting a repair agent.
+
 ## 0.1.0-beta.122 - 2026-10-20
 
 - Clear previous-head CI and Sonar evidence before saving publication feedback acknowledgements, including when posting a reply fails.

@@ -365,3 +365,119 @@ func TestSonarUnchangedFindingsAfterPublicationStopWithoutAnotherAgent(t *testin
 		t.Fatal("no-progress guard spent another repair turn")
 	}
 }
+
+func TestSonarPolicyCollectsFindingsWithoutSummaryDuplicationRow(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failed), func(t *testing.T) {
+			p, plan, pr, pages := newSonarPolicyFixture(t, 1)
+			command, api := p.Command, p.SonarJSON
+			p.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				data, err := command(ctx, name, args...)
+				if failed && len(args) > 1 && args[0] == "pr" && args[1] == "checks" {
+					return []byte(`[{"name":"SonarCloud Code Analysis","bucket":"fail","state":"COMPLETED","link":"https://private.invalid"}]`), ciStatusExit(1)
+				}
+				if failed && err == nil {
+					data = []byte(strings.ReplaceAll(string(data), `"success"`, `"failure"`))
+				}
+
+				if len(args) > 0 && strings.Contains(args[len(args)-1], "/check-runs?per_page=") && err == nil {
+					var listing map[string]any
+					if err := json.Unmarshal(data, &listing); err != nil {
+						return nil, err
+					}
+					for _, entry := range listing["check_runs"].([]any) {
+						run := entry.(map[string]any)
+						run["details_url"] = "https://sonarcloud.io/dashboard?id=example_project&pullRequest=7"
+						run["output"] = map[string]any{"summary": "Failed conditions: one new issue", "annotations_count": 0}
+					}
+					return json.Marshal(listing)
+				}
+				if len(args) > 0 && args[len(args)-1] == "repos/example/project/check-runs/17" && err == nil {
+					var run map[string]any
+					if err := json.Unmarshal(data, &run); err != nil {
+						return nil, err
+					}
+					run["details_url"] = "https://sonarcloud.io/dashboard?id=example_project&pullRequest=7"
+					run["output"] = map[string]any{"summary": "Failed conditions: one new issue", "annotations_count": 0}
+					return json.Marshal(run)
+				}
+				return data, err
+			}
+			p.SonarJSON = func(ctx context.Context, endpoint string, target any) error {
+				if strings.HasPrefix(endpoint, "measures/component?") {
+					return json.Unmarshal([]byte(`{"component":{"key":"example_project","pullRequest":"7","measures":[{"metric":"new_duplicated_lines_density","periods":[{"value":"0.0"}]}]}}`), target)
+				}
+				return api(ctx, endpoint, target)
+			}
+			result, err := p.Checks(context.Background(), plan, pr)
+			if err != nil || result.SonarFindings == nil || len(result.SonarFindings.Issues) != 1 || *pages != 1 || len(result.SonarDuplication) != 1 {
+				t.Fatalf("missing summary metric lost findings: %+v %v", result, err)
+			}
+			if err := validateCIResult(result, pr); err != nil {
+				t.Fatal(err)
+			}
+			expected := "passed"
+			if failed {
+				expected = "failed"
+			}
+			if result.Status != expected {
+				t.Fatalf("quality-gate status changed: %s", result.Status)
+			}
+			currentAPI := p.SonarJSON
+			p.SonarJSON = func(ctx context.Context, endpoint string, target any) error {
+				if strings.HasPrefix(endpoint, "project_pull_requests/list?") {
+					return json.Unmarshal([]byte(`{"pullRequests":[]}`), target)
+				}
+				return currentAPI(ctx, endpoint, target)
+			}
+			waiting, err := p.Checks(context.Background(), plan, pr)
+			if err != nil || waiting.Status != "pending" || waiting.SonarFindings != nil {
+				t.Fatalf("stale analysis did not wait: %+v %v", waiting, err)
+			}
+
+		})
+	}
+}
+
+func TestSonarMetricDiscoveryRejectsUnscopedAndIncompleteEvidence(t *testing.T) {
+	for _, scenario := range []string{"branch", "foreign-host", "wrong-pr", "duplicate-project", "missing-metric", "wrong-project", "wrong-response-pr", "invalid-value", "stale-head"} {
+		t.Run(scenario, func(t *testing.T) {
+			p, _, pr, _ := newSonarPolicyFixture(t, 0)
+			run := ciCheckRun{ID: 17, DetailsURL: "https://sonarcloud.io/dashboard?id=example_project&pullRequest=7"}
+			switch scenario {
+			case "branch":
+				run.DetailsURL = "https://sonarcloud.io/dashboard?id=example_project&branch=main"
+			case "foreign-host":
+				run.DetailsURL = "https://example.invalid/dashboard?id=example_project&pullRequest=7"
+			case "wrong-pr":
+				run.DetailsURL = "https://sonarcloud.io/dashboard?id=example_project&pullRequest=8"
+			case "duplicate-project":
+				run.DetailsURL += "&id=other"
+			}
+			api := p.SonarJSON
+			p.SonarJSON = func(ctx context.Context, endpoint string, target any) error {
+				if strings.HasPrefix(endpoint, "measures/component?") {
+					data := `{"component":{"key":"example_project","pullRequest":"7","measures":[{"metric":"new_duplicated_lines_density","periods":[{"value":"0.0"}]}]}}`
+					switch scenario {
+					case "missing-metric":
+						data = `{"component":{"key":"example_project","pullRequest":"7","measures":[]}}`
+					case "wrong-project":
+						data = strings.ReplaceAll(data, "example_project", "other")
+					case "wrong-response-pr":
+						data = strings.ReplaceAll(data, `"7"`, `"8"`)
+					case "invalid-value":
+						data = strings.ReplaceAll(data, "0.0", "NaN")
+					}
+					return json.Unmarshal([]byte(data), target)
+				}
+				if scenario == "stale-head" && strings.HasPrefix(endpoint, "project_pull_requests/list?") {
+					return json.Unmarshal([]byte(`{"pullRequests":[]}`), target)
+				}
+				return api(ctx, endpoint, target)
+			}
+			if _, err := p.sonarMeasureFromCheck(context.Background(), pr, run); err == nil {
+				t.Fatal("incomplete or unscoped evidence accepted")
+			}
+		})
+	}
+}
