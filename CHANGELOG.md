@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.128 - 2026-10-20
+
+- Preserve the visible human-review checkpoint when a reviewer exhausts native usage. Ordinary resume must not automatically accept recommendations from an older publication; explicit acceptance still requires a completed current review.
+
 ## 0.1.0-beta.127 - 2026-10-20
 
 - Add optional Synthetic implementation through pinned OpenCode with isolated native credentials and sessions, offline accounting, and independent Codex review.

@@ -6,6 +6,14 @@ import (
 )
 
 func (r Runner) autoAcceptRecommendations(ctx context.Context, dir string, j *Journal) (bool, error) {
+	// A quota-skipped current review is a human checkpoint, not authority to
+	// accept recommendations retained from an older publication.
+	if ReviewSkipNotice(*j) != "" {
+		if err := validateReviewSkip(j); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
 	if reviewReuseCurrent(j) || !j.Plan.Roles.AutoAcceptRecommendations || len(j.ReviewReports) == 0 || len(j.ReviewReports[len(j.ReviewReports)-1].Recommendations) == 0 {
 		return false, nil
 	}

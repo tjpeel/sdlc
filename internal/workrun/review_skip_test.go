@@ -48,11 +48,16 @@ func TestReviewerNativeUsageExhaustionReachesVisibleHumanCheckpoint(t *testing.T
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			dir, j, r, _, _ := feedbackReadyRun(t)
+			withRecommendation(j)
+			j.ReviewReports[0].Publication.HeadSHA = strings.Repeat("e", 40)
+			j.ReviewReports[0].Coverage.HeadSHA = j.ReviewReports[0].Publication.HeadSHA
+			j.ReviewReports[0].Content = nil
 			j.State, j.Outcome = "reviewing", testOutcome("implemented")
 			if provider == "codex" {
 				j.Plan.Roles = DefaultModels().Claude
 				j.ReviewEffort = nil
 			}
+			j.Plan.Roles.AutoAcceptRecommendations = true
 			p := &exhaustedReviewProvider{event: rejectedClaudeReview, err: errNativeIncomplete}
 			if provider == "codex" {
 				p.event = rejectedCodexReview
@@ -75,8 +80,8 @@ func TestReviewerNativeUsageExhaustionReachesVisibleHumanCheckpoint(t *testing.T
 			if err := ValidatePRFeedbackResume(loaded); err != nil {
 				t.Fatal("human feedback cannot resume skipped checkpoint", err)
 			}
-			if err := r.Run(context.Background(), dir, j, ""); err != nil || len(p.calls) != 1 || j.Attempt != beforeAttempt+1 {
-				t.Fatal("ready resume spent another review attempt", err)
+			if err := r.Run(context.Background(), dir, j, ""); err != nil || len(p.calls) != 1 || j.Attempt != beforeAttempt+1 || len(j.AutoRecommendationHeads) != 0 || ReviewSkipNotice(*j) == "" {
+				t.Fatal("ready resume rejected the quota checkpoint or reopened review/recommendations", err)
 			}
 		})
 	}
