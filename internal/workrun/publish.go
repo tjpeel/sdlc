@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -610,26 +611,11 @@ func (publisher GitHubPublisher) Publish(ctx context.Context, plan Plan, workspa
 		selector = fmt.Sprint(plan.Adoption.Number)
 		fields += ",state,headRefName,baseRefName,isCrossRepository"
 	}
-	data, err := publisher.command(ctx, "gh", "pr", "view", selector, "--repo", plan.Repository, "--json", fields)
+	result, err := publisher.confirmPublishedPR(ctx, plan, selector, fields, parent, previous, waitPublicationConfirmation)
 	if err != nil {
 		return Publication{}, err
 	}
-	var result struct {
-		State    string `json:"state"`
-		HeadName string `json:"headRefName"`
-		BaseName string `json:"baseRefName"`
-		Cross    bool   `json:"isCrossRepository"`
-		Number   int    `json:"number"`
-		URL      string `json:"url"`
-		Base     string `json:"baseRefOid"`
-		Head     string `json:"headRefOid"`
-	}
-	if json.Unmarshal(data, &result) != nil || result.Number < 1 || result.Base != plan.BaseSHA || result.Head != parent || !strings.HasPrefix(result.URL, "https://github.com/"+plan.Repository+"/pull/") {
-		return Publication{}, fmt.Errorf("published PR revision could not be confirmed")
-	}
-	if plan.Adoption != nil && (result.Number != plan.Adoption.Number || result.URL != plan.Adoption.URL || result.State != "OPEN" || result.HeadName != plan.Branch || result.BaseName != plan.Base || result.Cross) {
-		return Publication{}, fmt.Errorf("adopted PR identity changed after publication")
-	}
+
 	if output != nil {
 		fmt.Fprintln(output, "Draft PR:", result.URL)
 	}
@@ -944,4 +930,66 @@ func (publisher GitHubPublisher) verifyDerivedBoundary(ctx context.Context, plan
 		}
 	}
 	return nil
+}
+
+type publishedPRObservation struct {
+	State    string `json:"state"`
+	HeadName string `json:"headRefName"`
+	BaseName string `json:"baseRefName"`
+	Cross    bool   `json:"isCrossRepository"`
+	Number   int    `json:"number"`
+	URL      string `json:"url"`
+	Base     string `json:"baseRefOid"`
+	Head     string `json:"headRefOid"`
+}
+
+func waitPublicationConfirmation(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// The Git branch is already confirmed at the signed candidate. GitHub's PR
+// projection can briefly retain the previous head; retry that known state and
+// transport failures, but never accept a different revision or PR identity.
+func (publisher GitHubPublisher) confirmPublishedPR(ctx context.Context, plan Plan, selector, fields, parent string, previous Publication, wait func(context.Context, time.Duration) error) (publishedPRObservation, error) {
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return publishedPRObservation{}, err
+		}
+		if attempt > 0 {
+			if err := wait(ctx, time.Second*time.Duration(1<<(attempt-1))); err != nil {
+				return publishedPRObservation{}, err
+			}
+		}
+		data, err := publisher.command(ctx, "gh", "pr", "view", selector, "--repo", plan.Repository, "--json", fields)
+		if err != nil {
+			lastErr = fmt.Errorf("published PR confirmation could not be read: %w", err)
+			continue
+		}
+		var result publishedPRObservation
+		if json.Unmarshal(data, &result) != nil || result.Number < 1 || result.Base != plan.BaseSHA || !strings.HasPrefix(result.URL, "https://github.com/"+plan.Repository+"/pull/") {
+			return publishedPRObservation{}, fmt.Errorf("published PR revision could not be confirmed")
+		}
+		if previous.Number != 0 && result.Number != previous.Number {
+			return publishedPRObservation{}, fmt.Errorf("published PR identity changed after publication")
+		}
+		if plan.Adoption != nil && (result.Number != plan.Adoption.Number || result.URL != plan.Adoption.URL || result.State != "OPEN" || result.HeadName != plan.Branch || result.BaseName != plan.Base || result.Cross) {
+			return publishedPRObservation{}, fmt.Errorf("adopted PR identity changed after publication")
+		}
+		if result.Head == parent {
+			return result, nil
+		}
+		if previous.HeadSHA == "" || result.Head != previous.HeadSHA {
+			return publishedPRObservation{}, fmt.Errorf("published PR head changed unexpectedly during confirmation")
+		}
+		lastErr = fmt.Errorf("published PR still reports its previous head after confirmation retries; publication retained, resume to confirm")
+	}
+	return publishedPRObservation{}, lastErr
 }

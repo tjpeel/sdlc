@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.124 - 2026-10-20
+
+- Retry post-push PR confirmation on the known previous head or transient read failures with bounded, cancellation-aware backoff. Reject unexpected heads, changed bases and PR identity changes immediately; exhausted confirmation remains recoverable through ordinary resume without another push or repair.
+
 ## 0.1.0-beta.123 - 2026-10-20
 
 - Collect strict PR Sonar findings when a quality-gate summary omits the duplication row, using the native check’s validated PR dashboard and the exact-head metric API. Retain source and analysis checks; stale analysis waits without starting a repair agent.
