@@ -94,7 +94,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.126`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.127`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -127,6 +127,8 @@ sdlc --version
 sdlc runtime status
 sdlc auth login
 sdlc auth login --provider claude
+# Synthetic uses the pinned OpenCode client and a native API-key prompt:
+sdlc auth login --provider synthetic
 sdlc auth status --all
 sdlc instructions show
 sdlc interactive
@@ -538,3 +540,6 @@ workflow evidence as ordinary CI polling. A completed full review is retained fo
 its exact PR revision; resuming a failed final CI read rechecks CI without another
 reviewer turn. Errors retain their underlying cause. Changed revisions and failed
 checks still require the usual review or repair.
+
+Synthetic can implement tickets through pinned OpenCode, with Codex review. See
+[the Synthetic guide](docs/synthetic.md) for authentication, models and runtime setup.

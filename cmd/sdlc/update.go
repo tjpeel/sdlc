@@ -27,7 +27,7 @@ func updateCommand(ctx context.Context, args []string, output, diagnostics io.Wr
 	binDir := flags.String("bin-dir", "", "existing PATH directory (defaults to the managed installed executable)")
 	cliOnly := flags.Bool("sdlc-only", false, "install only the host SDLC command and keep the selected runtime")
 	flags.BoolVar(cliOnly, "cli-only", false, "compatibility alias for --sdlc-only")
-	agentTools := flags.Bool("agent-tools", false, "update Codex, Claude Code, skills and agents while retaining other runtime pins")
+	agentTools := flags.Bool("agent-tools", false, "update Codex, Claude Code, OpenCode, skills and agents while retaining other runtime pins")
 	updateDockerfile := flags.Bool("update-dockerfile", false, "with --agent-tools, save the four selected pins to the source Dockerfile")
 	dependencies := flags.Bool("dependencies", false, "refresh public dependencies instead of using the checkout's pins")
 	dryRun := flags.Bool("dry-run", false, "show the local installation plan without building, fetching or writing")

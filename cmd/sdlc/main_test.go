@@ -220,7 +220,7 @@ func TestAuthProviderSelection(t *testing.T) {
 		{name: "Claude login", args: []string{"login", "--provider", "claude"}, providers: []string{"claude"}},
 		{name: "Claude status", args: []string{"status", "--provider", "claude"}, providers: []string{"claude"}},
 		{name: "Codex status", args: []string{"status", "--provider", "codex"}, providers: []string{"codex"}},
-		{name: "all status", args: []string{"status", "--all"}, providers: []string{"codex", "claude"}},
+		{name: "all status", args: []string{"status", "--all"}, providers: []string{"codex", "claude", "synthetic"}},
 		{name: "false all status", args: []string{"status", "--all=false"}, providers: []string{"codex"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -16,6 +16,7 @@ SPEC.loader.exec_module(DEPENDENCIES)
 class RuntimeInventoryTests(unittest.TestCase):
     def test_capture_records_actual_versions_full_npm_tree_and_public_pins(self):
         npm_tree = {'dependencies': {
+            'opencode-ai': {'version': '1.19.3'},
             '@openai/codex': {'version': '0.1.2', 'dependencies': {
                 'example-transitive': {'version': '1.2.3'},
                 'example-optional-platform': {'missing': True, 'optional': True},
@@ -52,7 +53,9 @@ class RuntimeInventoryTests(unittest.TestCase):
                 patch.object(DEPENDENCIES.shutil, 'which', return_value='/example/yarn'), \
                 patch.object(Path, 'read_text', return_value='ID=debian\nVERSION_CODENAME=bookworm\n'):
             inventory = DEPENDENCIES.capture('b' * 40, 'c' * 40, dockerfile)
+        self.assertEqual(inventory['version'], 2)
         self.assertEqual(inventory['platform'], 'linux/arm64')
+        self.assertIn(('npm', 'opencode-ai', '1.19.3'), {(item['kind'], item['source'], item['version']) for item in inventory['dependencies']})
         self.assertEqual(inventory['distribution'], 'debian:bookworm')
         entries = {(item['kind'], item['source'], item['version']) for item in inventory['dependencies']}
         self.assertIn(('npm', 'example-transitive', '1.2.3'), entries)
@@ -68,7 +71,7 @@ class RuntimeInventoryTests(unittest.TestCase):
         self.assertEqual([item['name'] for item in inventory['packages']], ['example-base', 'example-direct'])
 
     def test_npm_inventory_rejects_missing_nonoptional_dependencies_and_tool_roots(self):
-        roots = {'@openai/codex': {'version': '0.1.2'},
+        roots = {'opencode-ai': {'version': '1.19.3'}, '@openai/codex': {'version': '0.1.2'},
                  '@anthropic-ai/claude-code': {'version': '2.1.0'}}
         for metadata in ({'missing': True, 'required': '*'},
                          {'problems': ['missing: example-required@*, required by example@1.0.0']},
@@ -81,13 +84,13 @@ class RuntimeInventoryTests(unittest.TestCase):
                 'problems': ['missing: example-required@*, required by example@1.0.0']}
         with self.assertRaises(ValueError):
             DEPENDENCIES.npm_inventory(tree, '11.0.0')
-        for missing in ('@openai/codex', '@anthropic-ai/claude-code'):
+        for missing in ('@openai/codex', '@anthropic-ai/claude-code', 'opencode-ai'):
             tree = {'dependencies': {**roots, missing: {}}}
             with self.subTest(required=missing), self.assertRaises(ValueError):
                 DEPENDENCIES.npm_inventory(tree, '11.0.0')
 
     def test_npm_alias_sources_are_derived_without_endpoint_guessing(self):
-        roots = {'@openai/codex': {'name': '@openai/codex', 'version': '0.159.3'},
+        roots = {'opencode-ai': {'version': '1.19.3'}, '@openai/codex': {'name': '@openai/codex', 'version': '0.159.3'},
                  '@anthropic-ai/claude-code': {'name': '@anthropic-ai/claude-code', 'version': '2.1.0'}}
         for tag in sorted(DEPENDENCIES.CODEX_PLATFORM_TAGS):
             alias = '@openai/codex-' + tag

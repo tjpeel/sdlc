@@ -170,3 +170,24 @@ func F(){}
 		t.Fatal("asset whitelist accepted an unreviewed helper variant")
 	}
 }
+
+func TestBuildContextIncludesReviewedSyntheticHelper(t *testing.T) {
+	source, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, cleanup, err := buildContext(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	relative := filepath.Join("internal", "providerauth", "synthetic.py")
+	expected, err := os.ReadFile(filepath.Join(source, relative))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(filepath.Join(directory, "source", relative))
+	if err != nil || string(actual) != string(expected) {
+		t.Fatal("reviewed Synthetic helper missing or altered", err)
+	}
+}

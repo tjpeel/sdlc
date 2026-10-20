@@ -287,6 +287,10 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) != 0o700):
         raise ValueError("unsafe authentication directory")
+    if provider == "synthetic":
+        code = native.synthetic_headless(model, effort, resume, readonly, directory, SESSION, PROMPT, SCHEMA, Path("/instructions.md"), telemetry.instruction_footprint)
+        print(json.dumps({"type": "sdlc.native_finalization", "provider": provider, "exit_code": code}), flush=True)
+        return code
     if provider == "codex":
         if native.credential(directory / native.FILES[provider], os.getuid()) is None:
             raise ValueError("missing native authentication")

@@ -224,6 +224,7 @@ Use a private interactive terminal, with the Docker engine running:
 ```sh
 sdlc auth login
 sdlc auth login --provider claude
+sdlc auth login --provider synthetic
 sdlc auth status --all
 ```
 
@@ -922,3 +923,5 @@ Review handoffs have their own finite allowance, normally twelve, separate from
 configured-check and CI failures. Cumulative history remains; native dispatches have no default lifetime ceiling. Repeated findings on the same assessed published head stop rather
 than repeatedly sending the same finding to implementation. Legacy completed
 review holds can use the explicit recovery flag documented in the CLI guide.
+
+For Synthetic implementation through OpenCode, follow [the Synthetic guide](synthetic.md).

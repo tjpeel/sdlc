@@ -63,7 +63,7 @@ var (
 // ValidateInventory accepts only public package identities and supported sources.
 func ValidateInventory(inventory Inventory) error {
 	invalid := errors.New("runtime inventory is invalid; rebuild from the SDLC clone")
-	if inventory.Version != 1 || (inventory.Platform != "linux/amd64" && inventory.Platform != "linux/arm64") || inventory.Distribution != "debian:bookworm" || len(inventory.Dependencies) == 0 || len(inventory.Dependencies) > 4096 || len(inventory.Packages) == 0 || len(inventory.Packages) > 10000 {
+	if (inventory.Version != 1 && inventory.Version != 2) || (inventory.Platform != "linux/amd64" && inventory.Platform != "linux/arm64") || inventory.Distribution != "debian:bookworm" || len(inventory.Dependencies) == 0 || len(inventory.Dependencies) > 4096 || len(inventory.Packages) == 0 || len(inventory.Packages) > 10000 {
 		return invalid
 	}
 	dependencies := map[string]bool{}
@@ -125,6 +125,9 @@ func ValidateInventory(inventory Inventory) error {
 		if !present[required] {
 			return invalid
 		}
+	}
+	if inventory.Version >= 2 && !present["npm/opencode-ai"] {
+		return invalid
 	}
 	packages := map[string]bool{}
 	for _, entry := range inventory.Packages {

@@ -91,7 +91,7 @@ RUN set -eu; \
     rm -rf /tmp/gh_*
 ARG NPM_VERSION=11.19.0
 ARG YARN_VERSION=1.22.22
-# npm 12 blocks install scripts by default. Permit only the two pinned clients.
+# npm 12 blocks install scripts by default. Permit only the pinned clients.
 RUN set -eu; \
     if [ -n "$NPM_VERSION" ]; then npm install -g "npm@${NPM_VERSION}"; fi; \
     if [ -n "$YARN_VERSION" ]; then \
@@ -101,19 +101,20 @@ RUN set -eu; \
 
 ARG CODEX_VERSION=0.163.0
 ARG CLAUDE_VERSION=2.1.303
+ARG OPENCODE_VERSION=1.19.3
 RUN set -eu; \
     set --; \
     npm_release="$(npm --version)"; \
     if [ "${npm_release%%.*}" -ge 12 ]; then \
-        set -- "--allow-scripts=@openai/codex@${CODEX_VERSION},@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
+        set -- "--allow-scripts=@openai/codex@${CODEX_VERSION},@anthropic-ai/claude-code@${CLAUDE_VERSION},opencode-ai@${OPENCODE_VERSION}"; \
     fi; \
-    npm install -g "$@" "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
-    && codex --version && claude --version && gh --version
+    npm install -g "$@" "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_VERSION}" "opencode-ai@${OPENCODE_VERSION}" \
+    && codex --version && claude --version && opencode --version && gh --version
 
 ARG LOCAL_SKILLS=0
 ARG LOCAL_AGENTS=0
-ARG SKILLS_REVISION=f305c79fdfbdff20e2fe0999d27b7b6377a2e115
-ARG AGENTS_REVISION=aa462b3cb0da633815506588951168d92f93b98f
+ARG SKILLS_REVISION=93b052c54164573f3d63eec531a4c1f13d5eed5c
+ARG AGENTS_REVISION=1afb8d64b485844c2e222f9e7eecf0602e1b3fec
 COPY local-catalogues/ /tmp/sdlc-local-catalogues/
 
 # Keep pinned catalogue sources for provenance and generated packages outside
@@ -146,11 +147,15 @@ RUN set -eu; \
     bash /opt/sdlc/catalogues/skills/scripts/install-skills \
         --provider claude --prefix tjpeel -- /opt/sdlc/claude/skills; \
     bash /opt/sdlc/catalogues/agents/scripts/install-agents \
-        --runtime claude --prefix tjpeel /opt/sdlc/claude/agents
+        --runtime claude --prefix tjpeel /opt/sdlc/claude/agents; \
+    bash /opt/sdlc/catalogues/skills/scripts/install-skills \
+        --provider opencode --prefix tjpeel -- /opt/sdlc/opencode/skills; \
+    bash /opt/sdlc/catalogues/agents/scripts/install-agents \
+        --runtime opencode --prefix tjpeel /opt/sdlc/opencode/agents
 
 # The agent installer creates owner-only definitions. They contain public
 # catalogue instructions and must be owned by the non-root client user.
-RUN chown -R node:node /etc/codex/agents /opt/sdlc/claude/agents
+RUN chown -R node:node /etc/codex/agents /opt/sdlc/claude/agents /opt/sdlc/opencode/agents
 
 COPY --from=publisher-build /out/sdlc-publisher /usr/local/bin/sdlc-publisher
 COPY Dockerfile /opt/sdlc/runtime.Dockerfile

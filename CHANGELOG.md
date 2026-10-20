@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.127 - 2026-10-20
+
+- Add optional Synthetic implementation through pinned OpenCode with isolated native credentials and sessions, offline accounting, and independent Codex review.
+- Integrate provider-specific skill guidance and native agent profiles while retaining cumulative correction-review safeguards.
+
 ## 0.1.0-beta.126 - 2026-10-20
 
 - Retain verified whole-PR inspection across bounded correction cycles. Review exact repair paths, prior concerns and affected behaviour with explicit closure and dispositions; retain immutable provenance for unchanged inspection, and revoke inheritance for broader risks or full-review escalation. Revalidate manifests and source objects on continuation.

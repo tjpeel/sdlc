@@ -414,3 +414,38 @@ a native headroom percentage, force compaction or reset sessions or usage.
 Catalogue fingerprints and file sizes describe available pinned image material,
 not model loading. Root tool-output measurements discard text and identifiers.
 These optional observations are private run metrics without external export.
+
+
+## Synthetic through OpenCode
+
+Reviewed on 19 October 2026 against Synthetic's
+[OpenCode guide](https://dev.synthetic.new/docs/guides/opencode),
+[API overview](https://dev.synthetic.new/docs/api/overview),
+[model catalogue](https://dev.synthetic.new/docs/api/models), and the pinned
+[OpenCode 1.19.3 source](https://github.com/anomalyco/opencode/tree/v1.19.3).
+OpenCode is an unmodified primary runtime dependency. Its native `auth login`
+API-key prompt, `auth list` and `auth logout synthetic` own account storage.
+SDLC snapshots the opaque native cache and never extracts its key fields or
+uses a subscription cache for Synthetic. Native status/logout run offline.
+
+Headless work uses the native loopback server's session API with explicit
+Synthetic provider/model selection and JSON-schema output. Only the official
+client communicates with Synthetic; loopback requests carry an invocation-local
+server credential, never the provider key. The native private session database
+survives repairs. The controller checks session directory and root model
+identity, validates handoffs and stops on native failures without switching
+accounts, models or sessions. Native plugins, repository configuration and
+external credentials are excluded. Codex independently reviews through its
+existing native route. Synthetic runs use direct inference rather than Headroom.
+
+Numeric root assistant events are projected from native SSE updates, replacing
+repeated message checkpoints. They report invocation totals, distinct from
+Codex/Claude cumulative session checkpoints. Missing delegate events, interrupted
+streams and unobserved context remain partial or unknown; no session or usage
+reset is introduced. Native compaction remains the client's responsibility.
+
+Synthetic's [terms](https://synthetic.new/policies/terms-of-service), section
+4.1(iv), contain programmatic-output wording that conflicts with its documented
+API/agent use. The implementation and offline tests do not establish the terms
+applicable to a real account. Confirm that route before connecting an account;
+connected trials require separate authorisation. See [Synthetic setup](synthetic.md).

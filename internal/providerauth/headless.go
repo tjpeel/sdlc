@@ -64,6 +64,7 @@ func (LocalDocker) Stream(ctx context.Context, stdin io.Reader, stdout, stderr i
 }
 
 var headlessValue = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
+var syntheticSessionID = regexp.MustCompile(`^ses_[A-Za-z0-9]{1,128}$`)
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func validateHeadless(request HeadlessRequest) error {
@@ -79,7 +80,10 @@ func validateHeadless(request HeadlessRequest) error {
 	if !validProvider(request.Provider) || !headlessValue.MatchString(request.Model) || !headlessValue.MatchString(request.Effort) {
 		return fmt.Errorf("headless work requires a provider, model and effort")
 	}
-	if request.ResumeID != "" && !sessionID.MatchString(request.ResumeID) {
+	if request.Provider == "synthetic" && request.Effort != "default" {
+		return fmt.Errorf("Synthetic reasoning effort must be default")
+	}
+	if request.ResumeID != "" && !((request.Provider != "synthetic" && sessionID.MatchString(request.ResumeID)) || (request.Provider == "synthetic" && syntheticSessionID.MatchString(request.ResumeID))) {
 		return fmt.Errorf("headless resume requires a specific native session ID")
 	}
 	if request.InstructionsFile != "" {
@@ -100,7 +104,7 @@ func validateHeadless(request HeadlessRequest) error {
 			return fmt.Errorf("headless input paths must be existing directories or regular files")
 		}
 	}
-	for _, directory := range []string{".codex", ".claude", ".agents"} {
+	for _, directory := range providerConfigurationDirectories(request.Provider) {
 		if info, err := os.Lstat(filepath.Join(request.Workspace, directory)); err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
 			return fmt.Errorf("repository provider configuration must use regular directories")
 		}
@@ -121,6 +125,14 @@ func validateHeadless(request HeadlessRequest) error {
 		return fmt.Errorf("private native session state must be outside the workspace")
 	}
 	return nil
+}
+
+func providerConfigurationDirectories(provider string) []string {
+	directories := []string{".codex", ".claude", ".agents"}
+	if provider == "synthetic" {
+		directories = append(directories, ".opencode")
+	}
+	return directories
 }
 
 func headlessBind(source, destination string, readonly bool) string {
@@ -181,7 +193,7 @@ func headlessArgs(image, name, volume string, request HeadlessRequest) []string 
 	// Hide repository extensions/configuration while retaining pinned image skills
 	// and agents. Mount existing paths only: Docker cannot create new mountpoints
 	// in a read-only reviewer checkout.
-	for _, directory := range []string{".codex", ".claude", ".agents"} {
+	for _, directory := range providerConfigurationDirectories(request.Provider) {
 		if info, err := os.Lstat(filepath.Join(request.Workspace, directory)); err == nil && info.IsDir() {
 			args = append(args, "--tmpfs", "/workspace/"+directory+":rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=1000,gid=1000")
 		}
@@ -319,6 +331,9 @@ func (LocalDocker) Input(ctx context.Context, input io.Reader, args ...string) (
 // ValidateNativeSpeed rejects combinations that would switch models or require
 // an unsupported native mode. Empty denotes an older, unrecorded selection.
 func ValidateNativeSpeed(provider, model, speed string) error {
+	if provider == "synthetic" && speed == "fast" {
+		return fmt.Errorf("Synthetic does not support a native fast speed selection")
+	}
 	if speed == "" || speed == "normal" {
 		return nil
 	}

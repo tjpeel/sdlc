@@ -44,7 +44,7 @@ func TestAgentToolsPreservesOtherPinsWithoutUnrelatedMetadata(t *testing.T) {
 		t.Fatal("changed unrelated pins or mutated input")
 	}
 	for path := range fixture.calls {
-		if !strings.Contains(path, "@openai/codex/") && !strings.Contains(path, "@anthropic-ai/claude-code/") && !strings.Contains(path, "/tjpeel/skills/") && !strings.Contains(path, "/tjpeel/agents/") {
+		if !strings.Contains(path, "@openai/codex/") && !strings.Contains(path, "@anthropic-ai/claude-code/") && !strings.Contains(path, "opencode-ai/") && !strings.Contains(path, "/tjpeel/skills/") && !strings.Contains(path, "/tjpeel/agents/") {
 			t.Fatalf("unrelated metadata fetched: %s", path)
 		}
 	}
@@ -75,7 +75,7 @@ func TestAgentToolsCompletesRecordedSourceBaselineWithoutVersionUpdates(t *testi
 		t.Fatal(plan.Pins)
 	}
 	for path := range fixture.calls {
-		if !strings.Contains(path, "@openai/codex/") && !strings.Contains(path, "@anthropic-ai/claude-code/") && !strings.Contains(path, "/tjpeel/skills/") && !strings.Contains(path, "/tjpeel/agents/") && path != "auth.docker.io/token" && path != "registry-1.docker.io/v2/library/docker/manifests/29.8.2-dind" {
+		if !strings.Contains(path, "@openai/codex/") && !strings.Contains(path, "@anthropic-ai/claude-code/") && !strings.Contains(path, "opencode-ai/") && !strings.Contains(path, "/tjpeel/skills/") && !strings.Contains(path, "/tjpeel/agents/") && path != "auth.docker.io/token" && path != "registry-1.docker.io/v2/library/docker/manifests/29.8.2-dind" {
 			t.Fatalf("unrelated metadata fetched: %s", path)
 		}
 	}
@@ -129,5 +129,51 @@ func TestAgentToolsRefusesUnrecordedLegacyBaselineWhenSourceChanged(t *testing.T
 	}
 	if !strings.HasPrefix(plan.Pins.Images["node"], "node:24.1.0-bookworm@") || !strings.HasPrefix(plan.Pins.Images["docker"], "docker:29.8.2-cli@") {
 		t.Fatal("changed recorded base images", plan.Pins.Images)
+	}
+}
+
+func TestOpenCodeAgentToolUpdateAndLegacyInstallation(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "update", true: "first installation"}[legacy], func(t *testing.T) {
+			state := planState()
+			baseline := agentToolsState(t)
+			state.DependencyPins = &baseline.Pins
+			expectedInstalled := "1.19.2"
+			if legacy {
+				delete(state.DependencyPins.Arguments, "OPENCODE_VERSION")
+				expectedInstalled = ""
+			} else {
+				state.Inventory.Version = 2
+				state.Inventory.Dependencies = append(state.Inventory.Dependencies, runtimeimage.Dependency{Name: "OpenCode CLI", Kind: "npm", Source: "opencode-ai", Version: "1.19.2"})
+			}
+			before := len(state.Inventory.Dependencies)
+			plan, err := (Checker{newMetadataFixture()}).PlanAgentTools(context.Background(), state, planRecipe())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Pins.Arguments["OPENCODE_VERSION"] != "1.19.3" {
+				t.Fatal("OpenCode release not selected", plan.Pins)
+			}
+			found := false
+			for _, change := range plan.Changes {
+				if change.Dependency == "OpenCode CLI" {
+					found = true
+					if change.Installed != expectedInstalled || change.Candidate != "1.19.3" {
+						t.Fatal(change)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("OpenCode installation/update absent from preview")
+			}
+			if len(state.Inventory.Dependencies) != before {
+				t.Fatal("saved inventory mutated")
+			}
+			if legacy {
+				if _, ok := state.DependencyPins.Arguments["OPENCODE_VERSION"]; ok {
+					t.Fatal("saved pins mutated")
+				}
+			}
+		})
 	}
 }

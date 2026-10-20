@@ -102,7 +102,7 @@ func main() {
 		fmt.Println("       sdlc terminal setup|status [--json] (explicit iTerm2 background-tab setup)")
 		fmt.Println("       sdlc help [COMMAND] [--json] | version --details [--json] | onboard status [--json]")
 		fmt.Println("       sdlc project list|add PATH [--name NAME]|remove NAME [--json] | inspect @REFERENCE/NUMBERED_FILE")
-		fmt.Println("       sdlc auth login [--provider codex|claude] | auth status [--provider codex|claude | --all]")
+		fmt.Println("       sdlc auth login [--provider codex|claude|synthetic] | auth status [--provider codex|claude|synthetic | --all]")
 		fmt.Println("       sdlc auth login|status|logout --service github [--profile NAME] [status: --verify]")
 		fmt.Println("       sdlc github pair [--profile NAME] [--signing-profile NAME] | github list | github use [--profile NAME] | github status [--verify]")
 		fmt.Println("       sdlc signing setup|status|verify [--profile NAME] | signing configure --file PRIVATE_PROFILE [--profile NAME]")
@@ -113,7 +113,7 @@ func main() {
 		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
 		fmt.Println("  sdlc feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]")
 		fmt.Println("       sdlc adopt --pr PR_URL [--start-at awaiting-feedback|checks|review|feedback] [--human-reviewed] [--dry-run]")
-		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude] [--dry-run]")
+		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
 		fmt.Println("       sdlc dependencies --reference REFERENCE --ticket NUMBERED_FILE --depends-on PARENT_FILE [--dry-run] [--json]")
 		fmt.Println("         Required provider route: saved Headroom proxy; ticket runtime: --runtime NAME")
@@ -129,7 +129,7 @@ func main() {
 		fmt.Println("       sdlc storage purge (--run RUN_ID | --all) [--yes] (preview or delete saved runs)")
 		fmt.Println("       sdlc work archive --reference REFERENCE [--dry-run] (retain reference under .archive)")
 		fmt.Println("       sdlc dashboard export --run RUN_ID --to PRIVATE_DIRECTORY")
-		fmt.Println("       sdlc interactive [--provider codex|claude]")
+		fmt.Println("       sdlc interactive [--provider codex|claude|synthetic]")
 		fmt.Println("         Provider defaults to codex for interactive and auth commands.")
 		fmt.Println("         Codex: [--approval never|on-request] (default: never)")
 		fmt.Println("         Claude: [--permission-mode MODE] (default: bypassPermissions)")
@@ -332,7 +332,7 @@ type interactiveOptions struct {
 func parseInteractiveOptions(args []string) (interactiveOptions, error) {
 	var options interactiveOptions
 	flags := flag.NewFlagSet("interactive", flag.ContinueOnError)
-	provider := flags.String("provider", defaultProvider, "codex or claude (default: codex)")
+	provider := flags.String("provider", defaultProvider, "codex, claude or synthetic (default: codex)")
 	approval := flags.String("approval", "", "Codex: never or on-request (default: never)")
 	permissionMode := flags.String("permission-mode", "", "Claude: default, manual, acceptEdits, plan, auto, dontAsk or bypassPermissions (default: bypassPermissions)")
 	if err := flags.Parse(args); err != nil {
@@ -350,14 +350,14 @@ func parseInteractiveOptions(args []string) (interactiveOptions, error) {
 	if flags.NArg() != 0 {
 		return options, fmt.Errorf("interactive accepts --provider and its --approval or --permission-mode option")
 	}
-	if *provider != "codex" && *provider != "claude" {
-		return options, fmt.Errorf("provider must be codex or claude")
+	if *provider != "codex" && *provider != "claude" && *provider != "synthetic" {
+		return options, fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	selected := *approval
 	if *provider == "codex" && suppliedPermissionMode {
 		return options, fmt.Errorf("--permission-mode is only available for Claude; use --approval for Codex")
 	}
-	if *provider == "claude" {
+	if *provider == "claude" || *provider == "synthetic" {
 		if suppliedApproval {
 			return options, fmt.Errorf("--approval is only available for Codex; use --permission-mode for Claude")
 		}
@@ -386,6 +386,8 @@ func interactive(ctx context.Context, args []string, output io.Writer) error {
 	fmt.Fprintln(output, "Use trusted prompts only. Exit through the provider CLI; workspace files and session history are discarded.")
 	if options.provider == "codex" {
 		fmt.Fprintf(output, "Codex access: full inside Docker; approval policy: %s.\n", options.mode)
+	} else if options.provider == "synthetic" {
+		fmt.Fprintf(output, "Requested OpenCode permission mode: %s.\n", options.mode)
 	} else {
 		fmt.Fprintf(output, "Requested Claude permission mode: %s.\n", options.mode)
 	}
@@ -458,13 +460,13 @@ func parseAuthOptions(args []string) (authOptions, error) {
 		return options, fmt.Errorf("unknown authentication command; run sdlc --help")
 	}
 	flags := flag.NewFlagSet("auth "+args[0], flag.ContinueOnError)
-	provider := flags.String("provider", defaultProvider, "codex or claude (default: codex)")
+	provider := flags.String("provider", defaultProvider, "codex, claude or synthetic (default: codex)")
 	profile := flags.String("profile", "default", "GitHub account profile")
 	service := flags.String("service", "", "github: separate native GitHub CLI login")
 	verify := flags.Bool("verify", false, "status only: verify GitHub login through a connected request")
 	var all bool
 	if args[0] == "status" {
-		flags.BoolVar(&all, "all", false, "check both providers instead of the default Codex; cannot combine with --provider")
+		flags.BoolVar(&all, "all", false, "check all providers instead of the default Codex; cannot combine with --provider")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		return options, err
@@ -472,8 +474,8 @@ func parseAuthOptions(args []string) (authOptions, error) {
 	if flags.NArg() != 0 {
 		return options, fmt.Errorf("auth accepts --provider, --all for provider status, or --service github --profile NAME")
 	}
-	if *provider != "codex" && *provider != "claude" {
-		return options, fmt.Errorf("provider must be codex or claude")
+	if *provider != "codex" && *provider != "claude" && *provider != "synthetic" {
+		return options, fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	var suppliedProvider, suppliedAll, suppliedVerify, suppliedService, suppliedProfile bool
 	flags.Visit(func(option *flag.Flag) {
@@ -505,7 +507,7 @@ func parseAuthOptions(args []string) (authOptions, error) {
 		}
 		return authOptions{action: args[0], service: "github", profile: *profile, verify: *verify}, nil
 	}
-	if args[0] == "logout" || suppliedVerify || suppliedProfile {
+	if (args[0] == "logout" && *provider != "synthetic") || suppliedVerify || suppliedProfile {
 		return options, fmt.Errorf("logout, --verify and --profile require --service github")
 	}
 	if suppliedAll && suppliedProvider {
@@ -533,10 +535,21 @@ func auth(ctx context.Context, args []string) error {
 		return githubAuthCommand(ctx, manager, options, os.Stdout)
 	}
 	manager := providerauth.New(runtime)
+	if options.action == "logout" {
+		if err := manager.Logout(ctx, options.providers[0]); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "synthetic: native API-key login removed (offline).")
+		return nil
+	}
 	if options.action == "login" {
 		manager.OnWait = func(provider, reason string) { queueMessage(os.Stdout, provider, reason) }
 		provider := options.providers[0]
-		fmt.Printf("Log in to %s using the browser instructions below. Keep this terminal private.\n", provider)
+		if provider == "synthetic" {
+			fmt.Println("Paste your Synthetic API key into the native OpenCode prompt below. Keep this terminal private.")
+		} else {
+			fmt.Printf("Log in to %s using the browser instructions below. Keep this terminal private.\n", provider)
+		}
 		if err := manager.Login(ctx, provider); err != nil {
 			return err
 		}

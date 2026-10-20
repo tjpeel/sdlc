@@ -17,7 +17,7 @@ import (
 func testPins() runtimepins.Pins {
 	return runtimepins.Pins{
 		Arguments: map[string]string{
-			"CODEX_VERSION": "0.1.0", "CLAUDE_VERSION": "2.0.0", "GH_VERSION": "2.0.0",
+			"OPENCODE_VERSION": "1.19.3", "CODEX_VERSION": "0.1.0", "CLAUDE_VERSION": "2.0.0", "GH_VERSION": "2.0.0",
 			"NPM_VERSION": "11.0.0", "YARN_VERSION": "1.22.22", "DOTNET_VERSION": "10.0.100",
 			"COMPOSE_VERSION": "2.0.0", "BUILDX_VERSION": "0.1.0",
 			"SKILLS_REVISION": strings.Repeat("a", 40), "AGENTS_REVISION": strings.Repeat("b", 40),
@@ -54,6 +54,8 @@ func pinsFixture(t *testing.T) (Manager, *fakeDocker, string, runtimepins.Pins, 
 		t.Fatal(err)
 	}
 	inventory := testInventory()
+	inventory.Version = 2
+	inventory.Dependencies = append(inventory.Dependencies, Dependency{Name: "OpenCode", Kind: "npm", Source: "opencode-ai", Version: "1.19.3"})
 	inventory.Dependencies[10].Track = "24.0.0-bookworm"
 	inventory.Dependencies = append(inventory.Dependencies, Dependency{Name: "yarn", Kind: "npm", Source: "yarn", Version: "1.22.22"})
 	docker.inventoryOverride = &inventory
@@ -452,5 +454,46 @@ func TestRuntimeRecipeBoundsAndLegacyState(t *testing.T) {
 		if _, err := manager.read(); err == nil {
 			t.Fatal("invalid saved recipe accepted")
 		}
+	}
+}
+
+func TestOpenCodeInventoryRequiresPinAndPreservesLegacyInventory(t *testing.T) {
+	inventory := testInventory()
+	if err := ValidateInventory(inventory); err != nil {
+		t.Fatal("legacy inventory rejected", err)
+	}
+	inventory.Version = 2
+	if err := ValidateInventory(inventory); err == nil {
+		t.Fatal("new inventory accepted without OpenCode")
+	}
+	inventory.Dependencies = append(inventory.Dependencies, Dependency{Name: "OpenCode", Kind: "npm", Source: "opencode-ai", Version: "1.19.3"})
+	if err := ValidateInventory(inventory); err != nil {
+		t.Fatal(err)
+	}
+	manager, docker, root, pins, _ := pinsFixture(t)
+	if err := validatePinnedInventory(*docker.inventoryOverride, pins); err != nil {
+		t.Fatal(err)
+	}
+	pins.Arguments["OPENCODE_VERSION"] = "1.19.4"
+	if err := validatePinnedInventory(*docker.inventoryOverride, pins); err == nil {
+		t.Fatal("incorrect OpenCode version accepted")
+	}
+	delete(pins.Arguments, "OPENCODE_VERSION")
+	legacy := *docker.inventoryOverride
+	legacy.Version = 1
+	legacy.Dependencies = nil
+	for _, dependency := range docker.inventoryOverride.Dependencies {
+		if dependency.Source != "opencode-ai" {
+			legacy.Dependencies = append(legacy.Dependencies, dependency)
+		}
+	}
+	if err := validatePinnedInventory(legacy, pins); err != nil {
+		t.Fatal("legacy pin inventory rejected", err)
+	}
+	if err := manager.save(State{Version: 1, Source: root, Engine: docker.engine, ImageID: oldImage, DependencyPins: &pins, Inventory: &legacy}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.read(); err != nil {
+		t.Fatal("saved legacy runtime rejected", err)
 	}
 }

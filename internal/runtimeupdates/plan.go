@@ -23,7 +23,7 @@ type Plan struct {
 }
 
 var managedArguments = map[string]string{
-	"npm/@openai/codex": "CODEX_VERSION", "npm/@anthropic-ai/claude-code": "CLAUDE_VERSION",
+	"npm/opencode-ai": "OPENCODE_VERSION", "npm/@openai/codex": "CODEX_VERSION", "npm/@anthropic-ai/claude-code": "CLAUDE_VERSION",
 	"npm/npm": "NPM_VERSION", "npm/yarn": "YARN_VERSION", "github-release/cli/cli": "GH_VERSION",
 	"github-release/docker/compose": "COMPOSE_VERSION", "github-release/docker/buildx": "BUILDX_VERSION",
 	"dotnet-sdk/dotnet": "DOTNET_VERSION", "git/tjpeel/skills": "SKILLS_REVISION", "git/tjpeel/agents": "AGENTS_REVISION",
@@ -145,7 +145,8 @@ func (checker Checker) Plan(ctx context.Context, state runtimeimage.State, recip
 		return plan, err
 	}
 	fetch := checker.fetcher()
-	plan.Report, err = checker.check(ctx, *state.Inventory, false, packages, fetch)
+	inventory := inventoryForUpdate(*state.Inventory)
+	plan.Report, err = checker.check(ctx, inventory, false, packages, fetch)
 	if err != nil {
 		return plan, err
 	}
@@ -160,8 +161,13 @@ func (checker Checker) Plan(ctx context.Context, state runtimeimage.State, recip
 	pins := runtimepins.Pins{Arguments: map[string]string{}, Images: map[string]string{}}
 	plan.ExpectedRuntimes = map[string]string{}
 	direct := map[string]bool{}
-	for i, dependency := range state.Inventory.Dependencies {
+	for i, dependency := range inventory.Dependencies {
 		result := plan.Report.Results[i]
+		installed := dependency.Version
+		if dependency.Source == "opencode-ai" && dependency.Version == "0.0.0" {
+			installed = "" // Migration baseline is not an installed CLI version.
+			plan.Report.Results[i].Installed = ""
+		}
 		argument := managedArgument(dependency)
 		if argument != "" {
 			if direct[argument] {
@@ -180,7 +186,7 @@ func (checker Checker) Plan(ctx context.Context, state runtimeimage.State, recip
 			}
 			pins.Arguments[argument] = candidate
 			if candidate != dependency.Version {
-				plan.Changes = append(plan.Changes, Change{Dependency: dependency.Name, Installed: dependency.Version, Candidate: candidate, Action: "pin in private build recipe", Kind: dependency.Kind})
+				plan.Changes = append(plan.Changes, Change{Dependency: dependency.Name, Installed: installed, Candidate: candidate, Action: "pin in private build recipe", Kind: dependency.Kind})
 			}
 			continue
 		}
@@ -519,4 +525,19 @@ func (fetch *fetcher) onePassword(ctx context.Context) (string, error) {
 		address = endpoint + "?" + parsed.Query().Encode()
 	}
 	return "", fmt.Errorf("1Password tag pagination exceeded the check limit")
+}
+
+// Legacy inventories predate OpenCode. Resolve its first installation as a new
+// managed tool, using an internal lower bound rather than claiming it is installed.
+func inventoryForUpdate(inventory runtimeimage.Inventory) runtimeimage.Inventory {
+	if inventory.Version != 1 {
+		return inventory
+	}
+	for _, dependency := range inventory.Dependencies {
+		if dependency.Kind == "npm" && dependency.Source == "opencode-ai" && dependency.Track == "" {
+			return inventory
+		}
+	}
+	inventory.Dependencies = append(append([]runtimeimage.Dependency(nil), inventory.Dependencies...), runtimeimage.Dependency{Name: "OpenCode CLI", Kind: "npm", Source: "opencode-ai", Version: "0.0.0"})
+	return inventory
 }

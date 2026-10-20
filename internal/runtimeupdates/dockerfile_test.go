@@ -21,7 +21,7 @@ func dockerfileFixture(t *testing.T) (string, []byte) {
 	return source, original
 }
 
-func TestDockerfileUpdateChangesOnlyFourArgumentsAndRetainsMode(t *testing.T) {
+func TestDockerfileUpdateChangesOnlyAgentToolArgumentsAndRetainsMode(t *testing.T) {
 	source, original := dockerfileFixture(t)
 	pins := agentToolsState(t).Pins
 	pins.Arguments["AGENTS_REVISION"] = strings.Repeat("d", 40)
@@ -37,7 +37,7 @@ func TestDockerfileUpdateChangesOnlyFourArgumentsAndRetainsMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := string(original)
-	for key, old := range map[string]string{"CODEX_VERSION": "0.159.3", "CLAUDE_VERSION": "2.1.287", "SKILLS_REVISION": strings.Repeat("a", 40), "AGENTS_REVISION": strings.Repeat("c", 40)} {
+	for key, old := range map[string]string{"CODEX_VERSION": "0.159.3", "CLAUDE_VERSION": "2.1.287", "OPENCODE_VERSION": "1.19.2", "SKILLS_REVISION": strings.Repeat("a", 40), "AGENTS_REVISION": strings.Repeat("c", 40)} {
 		expected = strings.Replace(expected, "ARG "+key+"="+old, "ARG "+key+"="+pins.Arguments[key], 1)
 	}
 	after, err := os.ReadFile(filepath.Join(source, "runtime", "Dockerfile"))

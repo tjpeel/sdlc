@@ -51,7 +51,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 		}
 		if args[0] == "update" {
 			flags.BoolVar(&updateDockerfile, "update-dockerfile", false, "with --agent-tools, save selected pins in the explicit source checkout")
-			flags.BoolVar(&agentTools, "agent-tools", false, "update only Codex, Claude Code, skills and agents; retain other pins")
+			flags.BoolVar(&agentTools, "agent-tools", false, "update only Codex, Claude Code, OpenCode, skills and agents; retain other pins")
 			flags.BoolVar(&dryRun, "dry-run", false, "check public releases and preview the update without pulling images or rebuilding")
 		}
 	} else {

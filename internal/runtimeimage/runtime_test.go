@@ -202,6 +202,22 @@ func TestBuildAndStatusUseOneImageAndSavedSource(t *testing.T) {
 	}
 }
 
+func TestVersionProbeUsesDisposableHome(t *testing.T) {
+	manager, docker, root := fixture(t)
+	if _, err := manager.Build(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range docker.calls {
+		if len(call) > 0 && call[0] == "run" && strings.Contains(call[len(call)-1], "opencode --version") {
+			if !strings.HasPrefix(call[len(call)-1], "export HOME=/tmp;") {
+				t.Fatal("native clients cannot initialize private state on the read-only image")
+			}
+			return
+		}
+	}
+	t.Fatal("native version probe missing")
+}
+
 func TestFailedBuildOrProbePreservesPriorRuntime(t *testing.T) {
 	for _, stage := range []string{"build", "probe", "inventory", "inventory unavailable"} {
 		t.Run(stage, func(t *testing.T) {

@@ -13,15 +13,17 @@ import (
 )
 
 type ModelDefaults struct {
-	Version int   `json:"version"`
-	Codex   Roles `json:"codex"`
-	Claude  Roles `json:"claude"`
+	Synthetic Roles `json:"synthetic"`
+	Version   int   `json:"version"`
+	Codex     Roles `json:"codex"`
+	Claude    Roles `json:"claude"`
 }
 
 func DefaultModels() ModelDefaults {
 	return ModelDefaults{Version: 1,
-		Codex:  Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "high"}},
-		Claude: Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"claude", "claude-sonnet-5-5", "low"}, Review: Model{"codex", "gpt-6.1-sol", "high"}},
+		Synthetic: Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"synthetic", "hf:moonshotai/Kimi-K3", "default"}, Review: Model{"codex", "gpt-6.1-sol", "high"}},
+		Codex:     Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"codex", "gpt-6.1-sol", "low"}, Review: Model{"claude", "claude-sonnet-5-5", "high"}},
+		Claude:    Roles{ImplementationSpeed: "normal", ReviewSpeed: "normal", Implementation: Model{"claude", "claude-sonnet-5-5", "low"}, Review: Model{"codex", "gpt-6.1-sol", "high"}},
 	}
 }
 
@@ -72,11 +74,11 @@ func LoadModels(directory string) (ModelDefaults, error) {
 	if decoder.Decode(&defaults) != nil || decoder.Decode(new(any)) != io.EOF || defaults.Version != 1 {
 		return defaults, fmt.Errorf("model defaults require version 1 JSON with codex and claude role settings")
 	}
-	for provider, roles := range map[string]Roles{"codex": defaults.Codex, "claude": defaults.Claude} {
+	for provider, roles := range map[string]Roles{"codex": defaults.Codex, "claude": defaults.Claude, "synthetic": defaults.Synthetic} {
 		if roles.ReviewEffortPolicy != "" && (roles.ReviewEffortPolicy != "pr-v1" || roles.Review.Provider != "claude") {
 			return defaults, fmt.Errorf("unsupported review effort policy")
 		}
-		if roles.Implementation.Provider != provider || roles.Review.Provider == provider {
+		if roles.Implementation.Provider != provider || roles.Review.Provider != expectedReviewer(provider) {
 			return defaults, fmt.Errorf("model defaults must use the selected implementer and the opposite reviewer")
 		}
 		if err := ValidateModel(roles.Implementation); err != nil {
@@ -89,12 +91,25 @@ func LoadModels(directory string) (ModelDefaults, error) {
 	return defaults, nil
 }
 
+func expectedReviewer(provider string) string {
+	if provider == "codex" {
+		return "claude"
+	}
+	return "codex"
+}
+
 func ValidateModel(model Model) error {
-	if model.Provider != "codex" && model.Provider != "claude" {
-		return fmt.Errorf("provider must be codex or claude")
+	if model.Provider != "codex" && model.Provider != "claude" && model.Provider != "synthetic" {
+		return fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	if model.Name == "" || len(model.Name) > 256 || strings.HasPrefix(model.Name, "-") || strings.IndexFunc(model.Name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		return fmt.Errorf("model must be a nonempty identifier without whitespace or control characters")
+	}
+	if model.Provider == "synthetic" {
+		if model.Effort != "default" {
+			return fmt.Errorf("Synthetic reasoning effort must be default; the selected model owns its native reasoning settings")
+		}
+		return nil
 	}
 	valid := map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true, "max": true}
 	if model.Provider == "codex" {
@@ -115,8 +130,10 @@ func ResolveModels(defaults ModelDefaults, provider, model, effort, reviewModel,
 	roles := defaults.Codex
 	if provider == "claude" {
 		roles = defaults.Claude
+	} else if provider == "synthetic" {
+		roles = defaults.Synthetic
 	} else if provider != "codex" {
-		return Roles{}, fmt.Errorf("provider must be codex or claude")
+		return Roles{}, fmt.Errorf("provider must be codex, claude or synthetic")
 	}
 	if model != "" {
 		roles.Implementation.Name = model
@@ -131,7 +148,7 @@ func ResolveModels(defaults ModelDefaults, provider, model, effort, reviewModel,
 		roles.Review.Effort = reviewEffort
 		roles.ReviewEffortPolicy = ""
 	}
-	if roles.Implementation.Provider != provider || roles.Review.Provider == provider {
+	if roles.Implementation.Provider != provider || roles.Review.Provider != expectedReviewer(provider) {
 		return Roles{}, fmt.Errorf("implementation and review must use different providers")
 	}
 	if err := ValidateModel(roles.Implementation); err != nil {
