@@ -192,6 +192,12 @@ func Load(directory string) (Journal, error) {
 	if err := validateRebaseMonitoring(&journal); err != nil {
 		return Journal{}, err
 	}
+	if err := validateSelfReview(&journal); err != nil {
+		return Journal{}, err
+	}
+	if err := validateIncrementalReview(&journal); err != nil {
+		return Journal{}, err
+	}
 	if err := validateReviewReuse(&journal); err != nil {
 		return Journal{}, err
 	}

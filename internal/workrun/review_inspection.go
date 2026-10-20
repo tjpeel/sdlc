@@ -82,6 +82,10 @@ func mergeReviewInspection(history ...[]ReviewFileInspection) map[string]ReviewF
 // Old reports remain unchanged. Only exact paths in the verified changed-file
 // manifest contribute to the current cumulative accounting.
 func (r Runner) reconcileReviewInspection(ctx context.Context, workspace string, out *Outcome, history ...[]ReviewFileInspection) error {
+	return r.reconcileInspectionPaths(ctx, workspace, out, nil, history...)
+}
+
+func (r Runner) reconcileInspectionPaths(ctx context.Context, workspace string, out *Outcome, required []string, history ...[]ReviewFileInspection) error {
 	c := out.ReviewCoverage
 	if c == nil || (out.Status != "reviewed" && out.Status != "review_incomplete") {
 		return nil
@@ -103,7 +107,10 @@ func (r Runner) reconcileReviewInspection(ctx context.Context, workspace string,
 	merged := mergeReviewInspection(batches...)
 	var paths []string
 	manifestAvailable := false
-	if repo, ok := r.Repository.(reviewChangedPathRepository); ok {
+	if required != nil {
+		manifestAvailable = true
+		paths = append([]string(nil), required...)
+	} else if repo, ok := r.Repository.(reviewChangedPathRepository); ok {
 		manifestAvailable = true
 		var err error
 		paths, err = repo.ReviewChangedPaths(ctx, workspace, c.BaseSHA, c.HeadSHA)
@@ -119,6 +126,34 @@ func (r Runner) reconcileReviewInspection(ctx context.Context, workspace string,
 	allowed := map[string]bool{}
 	for _, path := range paths {
 		allowed[path] = true
+	}
+	// An explicitly reopened supporting caller must survive even when it is
+	// unchanged and outside both diff manifests. Verify exact tracked names;
+	// grouped or invented paths never receive inspection credit.
+	needsSupport := false
+	for p := range merged {
+		needsSupport = needsSupport || !allowed[p]
+	}
+	if needsSupport {
+		if reader, ok := r.Repository.(reviewTrackedPathRepository); ok {
+			tracked, err := reader.ReviewTrackedPaths(ctx, workspace, c.HeadSHA)
+			if err != nil {
+				return err
+			}
+			for _, p := range tracked {
+				if _, present := merged[p]; present && !allowed[p] {
+					paths = append(paths, p)
+					allowed[p] = true
+				}
+			}
+			sort.Strings(paths)
+		} else if required != nil {
+			for p, item := range merged {
+				if !allowed[p] && !item.Complete {
+					return fmt.Errorf("cannot verify reopened supporting inspection path")
+				}
+			}
+		}
 	}
 	invalid := 0
 	for _, item := range c.Inspection {
@@ -183,7 +218,7 @@ func (r Runner) restoreReviewInspection(ctx context.Context, workspace string, j
 		return nil
 	}
 	out := Outcome{Status: "reviewed", ReviewCoverage: &ReviewCoverage{BaseSHA: c.Publication.BaseSHA, HeadSHA: c.Publication.HeadSHA, Scope: "full", Gaps: []string{}, Inspection: []ReviewFileInspection{}}}
-	if err := r.reconcileReviewInspection(ctx, workspace, &out, history...); err != nil {
+	if err := r.reconcilePlannedInspection(ctx, workspace, j, &out, history...); err != nil {
 		return err
 	}
 	c.Inspection = out.ReviewCoverage.Inspection
@@ -201,9 +236,32 @@ func (r Runner) restoreReviewInspection(ctx context.Context, workspace string, j
 func reviewFilesAdvanced(j *Journal, coverage *ReviewCoverage) bool {
 	previous := mergeReviewInspection(reviewInspectionHistory(j)...)
 	for _, item := range coverage.Inspection {
-		if item.Complete && !previous[item.Path].Complete {
+		if item.Complete && (!previous[item.Path].Complete || previous[item.Path].InheritedFromAttempt != 0 && item.InheritedFromAttempt == 0) {
 			return true
 		}
 	}
 	return false
+}
+
+type reviewTrackedPathRepository interface {
+	ReviewTrackedPaths(context.Context, string, string) ([]string, error)
+}
+
+func (r DockerRepository) ReviewTrackedPaths(ctx context.Context, workspace, head string) ([]string, error) {
+	if !objectID.MatchString(head) {
+		return nil, fmt.Errorf("invalid supporting-path revision")
+	}
+	raw, err := r.run(ctx, workspace, "review_tracked:"+head, "")
+	var paths []string
+	if err != nil || json.Unmarshal(raw, &paths) != nil || paths == nil {
+		return nil, fmt.Errorf("supporting file inventory unavailable")
+	}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if !safeRelative(p) || seen[p] {
+			return nil, fmt.Errorf("invalid supporting path inventory")
+		}
+		seen[p] = true
+	}
+	return paths, nil
 }

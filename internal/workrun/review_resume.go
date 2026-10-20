@@ -103,6 +103,10 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 				return SessionResult{}, err
 			}
 		}
+
+		if err := r.prepareIncrementalReview(ctx, dir, j, workspace); err != nil {
+			return SessionResult{}, err
+		}
 		if resume != "" {
 			if err := r.restoreReviewInspection(ctx, workspace, j); err != nil {
 				return SessionResult{}, err
@@ -121,7 +125,7 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 			return result, fmt.Errorf("independent reviewer changed its native session")
 		}
 		out := result.Outcome
-		if err := r.reconcileReviewInspection(ctx, workspace, &out, reviewInspectionHistory(j)...); err != nil {
+		if err := r.reconcilePlannedInspection(ctx, workspace, j, &out, reviewInspectionHistory(j)...); err != nil {
 			return result, err
 		}
 		result.Outcome = out

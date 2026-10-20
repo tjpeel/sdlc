@@ -180,29 +180,35 @@ type Finding struct {
 
 // ReviewCoverage records inspection scope separately from test evidence.
 type ReviewFileInspection struct {
-	Path     string `json:"path"`
-	Complete bool   `json:"complete"`
-	Evidence string `json:"evidence"`
+	InheritedFromAttempt int    `json:"inherited_from_attempt,omitempty"`
+	Path                 string `json:"path"`
+	Complete             bool   `json:"complete"`
+	Evidence             string `json:"evidence"`
 }
 
 type ReviewCoverage struct {
-	Inspection    []ReviewFileInspection `json:"inspection,omitempty"`
-	BaseSHA       string                 `json:"base_sha"`
-	HeadSHA       string                 `json:"head_sha"`
-	Scope         string                 `json:"scope"`
-	Gaps          []string               `json:"gaps"`
-	CompletedGaps []string               `json:"completed_gaps,omitempty"`
+	PriorConcernDispositions []ReviewConcernDisposition `json:"prior_concern_dispositions,omitempty"`
+	AffectedClosureComplete  bool                       `json:"affected_closure_complete,omitempty"`
+	FullReviewRequired       bool                       `json:"full_review_required,omitempty"`
+	Inspection               []ReviewFileInspection     `json:"inspection,omitempty"`
+	BaseSHA                  string                     `json:"base_sha"`
+	HeadSHA                  string                     `json:"head_sha"`
+	Scope                    string                     `json:"scope"`
+	Gaps                     []string                   `json:"gaps"`
+	CompletedGaps            []string                   `json:"completed_gaps,omitempty"`
 }
 
 // ReviewReport retains bounded review evidence across repair rounds.
 type ReviewReport struct {
-	Content         *ReviewedContent `json:"content_boundary,omitempty"`
-	Findings        []Finding        `json:"findings,omitempty"`
-	Publication     Publication      `json:"publication"`
-	Attempt         int              `json:"attempt"`
-	Coverage        *ReviewCoverage  `json:"coverage,omitempty"`
-	Limitations     []string         `json:"limitations,omitempty"`
-	Recommendations []Finding        `json:"recommendations,omitempty"`
+	InspectionBoundary *ReviewedContent       `json:"inspection_boundary,omitempty"`
+	Cumulative         *CumulativeReviewProof `json:"cumulative,omitempty"`
+	Content            *ReviewedContent       `json:"content_boundary,omitempty"`
+	Findings           []Finding              `json:"findings,omitempty"`
+	Publication        Publication            `json:"publication"`
+	Attempt            int                    `json:"attempt"`
+	Coverage           *ReviewCoverage        `json:"coverage,omitempty"`
+	Limitations        []string               `json:"limitations,omitempty"`
+	Recommendations    []Finding              `json:"recommendations,omitempty"`
 }
 
 type Outcome struct {
@@ -291,6 +297,8 @@ type Publisher interface {
 }
 
 type Journal struct {
+	ReviewPlan                *IncrementalReviewPlan  `json:"incremental_review_plan,omitempty"`
+	SelfReview                *SelfReviewBoundary     `json:"implementation_self_review,omitempty"`
 	ReviewReuse               *ReviewReuse            `json:"independent_review_reuse,omitempty"`
 	SonarRepairs              []SonarRepair           `json:"sonar_repairs,omitempty"`
 	RebaseMonitoring          *RebaseMonitoring       `json:"rebase_monitoring,omitempty"`

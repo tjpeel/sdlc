@@ -50,6 +50,11 @@ var reviewOutcomeSchema = func() string {
 			continue
 		}
 		fields := object["properties"].(map[string]any)
+		fields["prior_concern_dispositions"] = map[string]any{"type": "array", "maxItems": 128, "description": "For each controller prior_concern id, explicitly state resolved, still_valid or superseded with evidence. A still-valid concern must identify its current_path in returned findings/recommendations.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "disposition", "reason", "current_path", "current_index"}, "properties": map[string]any{"id": map[string]any{"type": "string"}, "disposition": map[string]any{"type": "string", "enum": []string{"resolved", "still_valid", "superseded"}}, "reason": map[string]any{"type": "string"}, "current_path": map[string]any{"type": "string"}, "current_index": map[string]any{"type": "integer", "minimum": -1, "description": "Zero-based returned finding/recommendation index for still_valid, otherwise -1. Do not map distinct still-valid concerns to the same item."}}}}
+		object["required"] = append(object["required"].([]any), "prior_concern_dispositions")
+		fields["affected_closure_complete"] = map[string]any{"type": "boolean", "description": "For a controller cumulative plan, confirm the repair diff, all earlier concerns and affected callers/tests/docs/supporting paths have been assessed. False keeps inspection unfinished."}
+		fields["full_review_required"] = map[string]any{"type": "boolean", "description": "Revoke inherited coverage if the impact cannot be bounded. Continue full material inspection in this same session; never approve while this remains unfinished."}
+		object["required"] = append(object["required"].([]any), "affected_closure_complete", "full_review_required")
 		fields["inspection"] = map[string]any{
 			"type": "array", "description": "One entry per changed file, plus material unchanged supporting paths. Complete means inspected substantive bodies, assertions and fixtures; inventories or selected snippets are incomplete. Evidence states what was inspected or exactly what remains. Keep prose, gaps and these entries consistent.",
 			"items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "complete", "evidence"}, "properties": map[string]any{"path": map[string]any{"type": "string"}, "complete": map[string]any{"type": "boolean"}, "evidence": map[string]any{"type": "string"}}},
@@ -158,4 +163,20 @@ func implementationSchemaForJournal(j *Journal) string {
 		panic(err)
 	}
 	return string(data)
+}
+
+// A correction reviewer sees new or unsettled comment revisions. Comments
+// already assessed before the verified source review remain in the journal.
+func correctionReviewFeedback(history *PRFeedbackHistory, sourceAttempt int) *PRFeedbackHistory {
+	if history == nil {
+		return nil
+	}
+	copy := *history
+	copy.Entries = nil
+	for _, entry := range history.Entries {
+		if entry.StartedAttempt > sourceAttempt || entry.Assessment == nil || entry.Provisional || entry.Reply == nil {
+			copy.Entries = append(copy.Entries, entry)
+		}
+	}
+	return currentReviewFeedback(&copy)
 }

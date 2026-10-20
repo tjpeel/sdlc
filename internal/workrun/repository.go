@@ -75,6 +75,15 @@ if sys.argv[1].startswith('review_diff:'):
     risk=re.compile(rb'(?i)\b(authenticat\w*|authoriz\w*|password|credential\w*|permission\w*|secret\w*|encrypt\w*|decrypt\w*|mutex|semaphore|lock\s*\(|synchronized|interlocked|drop\s+table|alter\s+table|begin\s+transaction)')
     sensitive=any(risk.search(line[1:]) for line in patch[:2097152].splitlines() if line[:1] in (b'+',b'-') and not line.startswith((b'+++',b'---')))
     print(json.dumps({'files':files,'sensitive':sensitive,'truncated':truncated}))
+elif sys.argv[1].startswith('review_tracked:'):
+ env['GIT_NO_REPLACE_OBJECTS']='1'
+ ref=sys.argv[1].split(':')[1]
+ paths=git('ls-tree','-r','--name-only','-z',ref).decode().rstrip('\0')
+ print(json.dumps(paths.split('\0') if paths else []))
+elif sys.argv[1].startswith('review_tree:'):
+ env['GIT_NO_REPLACE_OBJECTS']='1'
+ ref=sys.argv[1].split(':')[1]
+ print(json.dumps(git('rev-parse','--verify',ref+'^{tree}').decode().strip()))
 elif sys.argv[1]=='inspect':
  head=git('rev-parse','--verify','HEAD').decode().strip(); tree=git('rev-parse','HEAD^{tree}').decode().strip()
  status=git('status','--porcelain','--untracked-files=normal','--ignore-submodules=all')

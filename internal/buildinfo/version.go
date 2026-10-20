@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 )
 
-var Version = "0.1.0-beta.125"
+var Version = "0.1.0-beta.126"
 
 // Revision can be set by the package builder when source has no Git metadata.
 var Revision = "unknown"

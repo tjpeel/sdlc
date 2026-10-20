@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.126 - 2026-10-20
+
+- Retain verified whole-PR inspection across bounded correction cycles. Review exact repair paths, prior concerns and affected behaviour with explicit closure and dispositions; retain immutable provenance for unchanged inspection, and revoke inheritance for broader risks or full-review escalation. Revalidate manifests and source objects on continuation.
+- Bind implementation self-review to its original session and verified source boundary; assess bounded corrections or new evidence instead of repeating a completed whole-diff inspection. Keep required checks and independent review separate.
+- Omit successful command stdout from repeated prompts while retaining command identities, evidence boundaries and all actionable failure detail in context, with full durable logs unchanged. Supply current PR claims and only new or unsettled feedback to correction reviewers.
+- Align source review/implementation skills with verified cumulative inspection and same-session self-review. Keep the runtime skill pin at its published revision until the accompanying skill commit can be published; CLI-only installation preserves existing runtime and run identities.
+
 ## 0.1.0-beta.125 - 2026-10-20
 
 - Reuse a completed independent review when the exact published Git tree, base and review scope are unchanged despite different commit IDs. Retain the original report and a separate reuse proof; verify the published snapshot, current-head CI, Sonar and pending feedback without another reviewer turn. Changed content, requirements, claims, unresolved work or missing legacy proof retain normal review.

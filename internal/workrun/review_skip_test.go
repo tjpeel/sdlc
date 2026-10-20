@@ -233,12 +233,12 @@ func TestReviewPacketKeepsUsefulContextAndOmitsImplementationSettings(t *testing
 	j.PRFeedback = &PRFeedbackHistory{Version: 1, Entries: []PRFeedbackEntry{{Comment: old}, {Comment: current, Assessment: &PRFeedbackAssessment{Reason: "current-rationale-marker"}}}}
 	j.ReviewHumanInput = &ReviewHumanInput{Questions: []string{"recorded-question-marker"}, Answer: "human-answer-marker"}
 	prompt := (Runner{}).prompt(*j, "review")
-	for _, want := range []string{j.Plan.Reference, j.Plan.Ticket, "tickets/selected.md", strings.Repeat("b", 64), testHead, testTree, "current-comment-marker", "current-rationale-marker", "human-answer-marker", "full Git history", "complete diff", `"ci"`, `"status": "passed"`} {
+	for _, want := range []string{j.Plan.Reference, j.Plan.Ticket, "tickets/selected.md", strings.Repeat("b", 64), testHead, testTree, "current-comment-marker", "current-rationale-marker", "implementation-body-marker", "human-answer-marker", "full Git history", "complete diff", `"ci"`, `"status": "passed"`} {
 		if !strings.Contains(prompt, want) {
 			t.Fatal("useful review context omitted", want)
 		}
 	}
-	for _, excluded := range []string{"implementation-body-marker", "account-setting-marker", "signing-setting-marker", "host-path-marker", "superseded-comment-marker"} {
+	for _, excluded := range []string{"account-setting-marker", "signing-setting-marker", "host-path-marker", "superseded-comment-marker"} {
 		if strings.Contains(prompt, excluded) {
 			t.Fatal("review repeated irrelevant launch/history metadata", excluded)
 		}

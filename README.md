@@ -41,6 +41,25 @@ Sonar policy and outstanding feedback still apply. Changed requirements, PR clai
 source content, base or inspection gaps require review. Older reports without a
 retained content boundary conservatively require a review. Operational settings
 such as model effort and recommendation acceptance do not alone change scope.
+
+When source changes, a later review can retain verified inspection from a complete
+prior review, including one that found defects. The correction owner reviews the
+exact old-to-new diff, prior finding/recommendation paths, and affected callers,
+contracts, tests and documentation. Deleted, renamed and reverted repair paths
+remain mandatory. Completion requires explicit affected-closure confirmation and
+an evidence-backed disposition for every prior concern. Inherited entries keep
+their source attempt; this is cumulative coverage, not another claimed full read.
+Broad, sensitive, contract or execution-context changes, missing proof and
+unbounded impact require full inspection. A reviewer can revoke inheritance and
+finish full inspection in the same session. Current-head CI, Sonar and outstanding
+feedback still gate readiness. No arbitrary repair-cycle cap is added.
+
+Implementation self-review remains separate: the first assessment covers the
+whole change. A verified receipt in the same implementation session lets later
+feedback focus on new evidence or a bounded correction and its affected behaviour.
+Successful command output stays in private durable evidence instead of being
+repeated in prompts; command identities, exits, boundaries and failure details
+remain available to the agent.
 Adopt an existing open same-repository PR with `sdlc adopt --pr PR_URL` to assess
 review comments and publish verified corrections; a local ticket is optional.
 Use `--start-at awaiting-feedback --human-reviewed` to capture and park a PR
@@ -75,7 +94,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.125`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.126`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

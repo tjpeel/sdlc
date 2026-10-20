@@ -77,6 +77,12 @@ func recordReviewReport(j *Journal) error {
 	if j.Outcome.Status == "reviewed" && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && c != nil && c.Scope == "full" && len(c.Gaps) == 0 && j.Evidence.Passed && objectID.MatchString(j.Evidence.Tree) {
 		report.Content = &ReviewedContent{Tree: j.Evidence.Tree, ScopeKey: reviewScopeKey(j)}
 	}
+	if j.Outcome.Status == "reviewed" && c != nil && c.Scope == "full" && len(c.Gaps) == 0 && j.Evidence.Passed && objectID.MatchString(j.Evidence.Tree) {
+		report.InspectionBoundary = &ReviewedContent{Tree: j.Evidence.Tree, ScopeKey: incrementalContextKey(j)}
+		if p := j.ReviewPlan; p != nil && p.Publication == j.Publication && !p.Escalated {
+			report.Cumulative = &CumulativeReviewProof{SourceAttempt: p.SourceAttempt, Source: p.Source, RequiredPaths: append([]string(nil), p.RequiredPaths...)}
+		}
+	}
 	data, err := json.Marshal(report)
 	if err != nil || len(data) > 32*1024 {
 		return fmt.Errorf("review report exceeds its retention bound")

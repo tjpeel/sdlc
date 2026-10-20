@@ -119,3 +119,11 @@ func (r Runner) acceptRecommendationsUnlessReused(ctx context.Context, dir strin
 	}
 	return r.autoAcceptRecommendations(ctx, dir, j)
 }
+
+// PR claims are always reassessed by the correction reviewer; they are not a
+// reason to discard source inspection when the selected requirements are fixed.
+func incrementalContextKey(j *Journal) string {
+	copy := *j
+	copy.Plan.PRTitle, copy.Plan.PRBody = "", ""
+	return reviewScopeKey(&copy)
+}

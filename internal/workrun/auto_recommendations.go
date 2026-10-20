@@ -6,7 +6,7 @@ import (
 )
 
 func (r Runner) autoAcceptRecommendations(ctx context.Context, dir string, j *Journal) (bool, error) {
-	if !j.Plan.Roles.AutoAcceptRecommendations || len(j.ReviewReports) == 0 || len(j.ReviewReports[len(j.ReviewReports)-1].Recommendations) == 0 {
+	if reviewReuseCurrent(j) || !j.Plan.Roles.AutoAcceptRecommendations || len(j.ReviewReports) == 0 || len(j.ReviewReports[len(j.ReviewReports)-1].Recommendations) == 0 {
 		return false, nil
 	}
 	text, err := RecommendationFeedback(*j)

@@ -219,14 +219,14 @@ func (m *failureMatcher) complete() bool {
 
 func verificationFeedback(j *Journal) string {
 	copyJournal := *j
-	copyJournal.Evidence.Output = append([]CommandOutput(nil), j.Evidence.Output...)
+	copyJournal.Evidence.Output = compactSuccessfulOutputs(j.Evidence.Output)
 	copyJournal.Verification = append([]VerificationResult(nil), j.Verification...)
 	for i := range copyJournal.Verification {
-		copyJournal.Verification[i].Output = append([]CommandOutput(nil), j.Verification[i].Output...)
+		copyJournal.Verification[i].Output = compactSuccessfulOutputs(j.Verification[i].Output)
 	}
 	copyJournal.FormatterPreparation = append([]VerificationResult(nil), j.FormatterPreparation...)
 	for i := range copyJournal.FormatterPreparation {
-		copyJournal.FormatterPreparation[i].Output = append([]CommandOutput(nil), j.FormatterPreparation[i].Output...)
+		copyJournal.FormatterPreparation[i].Output = compactSuccessfulOutputs(j.FormatterPreparation[i].Output)
 	}
 	boundOutputs(&copyJournal, 16*1024)
 	j = &copyJournal
