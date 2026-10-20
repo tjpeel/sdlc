@@ -86,7 +86,7 @@ func validateSonarDuplication(measures []SonarDuplication, pr Publication) error
 		if !objectID.MatchString(m.Head) || m.Head != pr.HeadSHA || m.CheckRunID < 1 || seen[m.CheckRunID] || math.IsNaN(m.Percent) || math.IsInf(m.Percent, 0) || m.Percent < 0 || m.Percent > 100 || len(m.MeasuresURL) > 2048 || !validSonarMeasuresURL(m.MeasuresURL, pr.Number) {
 			return fmt.Errorf("invalid Sonar duplication evidence")
 		}
-		if (m.DetailsStatus == "collected" && len(m.Groups) == 0) || (m.DetailsStatus != "collected" && len(m.Groups) != 0) || len(m.Groups) > 200 || (m.DetailsStatus != "" && m.DetailsStatus != "collected" && m.DetailsStatus != "unavailable") {
+		if (m.DetailsStatus == "collected" && len(m.Groups) == 0) || (m.DetailsStatus != "collected" && len(m.Groups) != 0) || len(m.Groups) > 200 || (m.DetailsStatus != "" && m.DetailsStatus != "collected" && m.DetailsStatus != "unavailable" && m.DetailsStatus != "none") || m.DetailsStatus == "none" && m.Percent != 0 {
 			return fmt.Errorf("invalid Sonar duplication details")
 		}
 		for _, group := range m.Groups {
@@ -146,7 +146,7 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 		return nil, err
 	}
 	for i := range measures {
-		if measures[i].Percent <= 0 {
+		if measures[i].Percent <= 0 && !plan.Sonar.RepairsEnabled() {
 			continue
 		}
 		groups, err := p.sonarDuplicateDetails(ctx, plan, pr, measures[i].MeasuresURL)
@@ -154,7 +154,15 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 			measures[i].DetailsStatus = "unavailable"
 			continue
 		}
-		measures[i].Groups, measures[i].DetailsStatus = groups, "collected"
+		if len(groups) == 0 {
+			if measures[i].Percent > 0 {
+				measures[i].DetailsStatus = "unavailable"
+			} else {
+				measures[i].DetailsStatus = "none"
+			}
+		} else {
+			measures[i].Groups, measures[i].DetailsStatus = groups, "collected"
+		}
 	}
 	if branchScope {
 		return measures, fmt.Errorf("%w (PR #%d)", errSonarBranchScope, pr.Number)
@@ -195,59 +203,21 @@ func (p GitHubPublisher) sonarDuplicateDetails(ctx context.Context, plan Plan, p
 	u, _ := url.Parse(address)
 	project := u.Query().Get("id")
 	number := strconv.Itoa(pr.Number)
-	identity := func() error {
-		var listing struct {
-			PullRequests []struct {
-				Key    string
-				Commit struct{ SHA string }
-			} `json:"pullRequests"`
-		}
-		if err := p.sonarJSON(ctx, "project_pull_requests/list?project="+url.QueryEscape(project), &listing); err != nil {
-			return err
-		}
-		for _, candidate := range listing.PullRequests {
-			if candidate.Key == number && candidate.Commit.SHA == pr.HeadSHA {
-				return nil
-			}
-		}
-		return fmt.Errorf("Sonar analysis revision differs")
-	}
+	identity := func() error { return p.verifySonarPR(ctx, project, pr) }
 	if err := identity(); err != nil {
 		return nil, err
 	}
-	// Validate every forwarded path against regular blobs in the exact GitHub tree.
-	var commit struct {
-		SHA  string
-		Tree struct{ SHA string }
-	}
-	if err := p.ciAPI(ctx, "repos/"+plan.Repository+"/git/commits/"+pr.HeadSHA, &commit); err != nil {
+	paths, err := p.sonarSourcePaths(ctx, plan, pr)
+	if err != nil {
 		return nil, err
 	}
-	if commit.SHA != pr.HeadSHA || !objectID.MatchString(commit.Tree.SHA) {
-		return nil, fmt.Errorf("invalid Sonar source tree")
-	}
-	var tree struct {
-		SHA       string
-		Truncated bool
-		Tree      []struct{ Path, Type, Mode string }
-	}
-	if err := p.ciAPI(ctx, "repos/"+plan.Repository+"/git/trees/"+commit.Tree.SHA+"?recursive=1", &tree); err != nil {
-		return nil, err
-	}
-	if tree.Truncated || tree.SHA != commit.Tree.SHA {
-		return nil, fmt.Errorf("incomplete Sonar source tree")
-	}
-	paths := map[string]bool{}
-	for _, entry := range tree.Tree {
-		if entry.Type == "blob" && (entry.Mode == "100644" || entry.Mode == "100755") && ciSourcePath(entry.Path) {
-			paths[entry.Path] = true
-		}
-	}
+	positiveFiles := false
 	groups := []SonarDuplicateGroup{}
 	seen := map[string]bool{}
+	observed, total := 0, -1
 	for page := 1; ; page++ {
 		var files struct {
-			Paging     struct{ Total int }
+			Paging     struct{ Total *int }
 			Components []struct {
 				Key, Path, PullRequest string
 				Measures               []struct {
@@ -260,17 +230,19 @@ func (p GitHubPublisher) sonarDuplicateDetails(ctx context.Context, plan Plan, p
 		if err := p.sonarJSON(ctx, endpoint, &files); err != nil {
 			return nil, err
 		}
-		if files.Paging.Total < 0 || len(files.Components) > 100 {
+		if files.Paging.Total == nil || *files.Paging.Total < 0 || len(files.Components) > 100 || total >= 0 && *files.Paging.Total != total {
 			return nil, fmt.Errorf("invalid Sonar file listing")
 		}
+		total = *files.Paging.Total
+		observed += len(files.Components)
 		for _, file := range files.Components {
 			positive := false
 			for _, metric := range file.Measures {
 				if metric.Metric == "new_duplicated_lines" {
 					for _, period := range metric.Periods {
 						value, err := strconv.ParseFloat(period.Value, 64)
-						if err != nil {
-							return nil, err
+						if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+							return nil, fmt.Errorf("invalid Sonar duplicated-line count")
 						}
 						positive = positive || value > 0
 					}
@@ -279,6 +251,7 @@ func (p GitHubPublisher) sonarDuplicateDetails(ctx context.Context, plan Plan, p
 			if !positive {
 				continue
 			}
+			positiveFiles = true
 			if !paths[file.Path] || file.PullRequest != number || file.Key != project+":"+file.Path {
 				return nil, fmt.Errorf("invalid Sonar file identity")
 			}
@@ -316,14 +289,14 @@ func (p GitHubPublisher) sonarDuplicateDetails(ctx context.Context, plan Plan, p
 				}
 			}
 		}
-		if page*100 >= files.Paging.Total {
+		if observed == total {
 			break
 		}
-		if len(files.Components) != 100 {
+		if observed > total || len(files.Components) != 100 {
 			return nil, fmt.Errorf("incomplete Sonar file listing")
 		}
 	}
-	if len(groups) == 0 {
+	if len(groups) == 0 && (positiveFiles || !plan.Sonar.RepairsEnabled()) {
 		return nil, fmt.Errorf("Sonar duplicated ranges unavailable")
 	}
 	if err := identity(); err != nil {

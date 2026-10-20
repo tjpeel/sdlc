@@ -551,7 +551,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if err != nil {
 			return err
 		}
-		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{NonDefaultCIWorkflow: launch.Config.NonDefaultCIWorkflow, RuntimeName: options.runtimeName, GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
+		journal = workrun.Journal{Version: 1, State: "prepared", Plan: workrun.Plan{Sonar: launch.Config.Sonar, NonDefaultCIWorkflow: launch.Config.NonDefaultCIWorkflow, RuntimeName: options.runtimeName, GitHubProfile: options.githubProfile, SigningProfile: pair.SigningProfile, Root: work.Root, Reference: options.reference, Ticket: launch.Ticket, SourceSHA: launch.Head, Branch: branch, Base: options.base, Repository: repository, Roles: roles, Checks: launch.Config.Checks, DockerTests: options.dockerTests}}
 		budget, err := project.ResolveNugetCacheBudget(launch.Config.NugetCache)
 		if err != nil {
 			return err
@@ -934,7 +934,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return configErr
 		}
 	}
-	runner := workrun.Runner{CheckUpstream: options.resume != "" && !options.featureOwned, Rebase: options.rebase, NonDefaultCIWorkflow: &currentConfig.NonDefaultCIWorkflow, AutoAcceptRecommendationsOverride: recommendationPolicy, ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
+	runner := workrun.Runner{SonarPolicy: &currentConfig.Sonar, CheckUpstream: options.resume != "" && !options.featureOwned, Rebase: options.rebase, NonDefaultCIWorkflow: &currentConfig.NonDefaultCIWorkflow, AutoAcceptRecommendationsOverride: recommendationPolicy, ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
 		return workrun.ValidateDependencyContext(ctx, directory, plan, publisher)
 	}, StartAt: options.startAt, HumanReviewed: options.humanReviewed, CIFeedback: ciFeedback, OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, LocalPRFeedback: localPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, ReviewRepairLimit: options.reviewRepairLimit, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {

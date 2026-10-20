@@ -48,6 +48,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	Sonar                project.SonarPolicy          `json:"sonar,omitzero"`
 	NonDefaultCIWorkflow string                       `json:"non_default_ci_workflow,omitempty"`
 	Adoption             *PRAdoption                  `json:"adoption,omitempty"`
 	DependencyContext    *DependencyContext           `json:"dependency_context,omitempty"`
@@ -274,6 +275,7 @@ type Publication struct {
 }
 
 type CIResult struct {
+	SonarFindings       *SonarFindings         `json:"sonar_findings,omitempty"`
 	WorkflowPreparation *CIWorkflowPreparation `json:"workflow_preparation,omitempty"`
 	SonarDuplication    []SonarDuplication     `json:"sonar_duplication,omitempty"`
 	FailureContext      *CIFailureContext      `json:"failure_context,omitempty"`
@@ -288,6 +290,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	SonarRepairs              []SonarRepair           `json:"sonar_repairs,omitempty"`
 	RebaseMonitoring          *RebaseMonitoring       `json:"rebase_monitoring,omitempty"`
 	RebasedAdoptions          []PRAdoption            `json:"rebased_adoption_boundaries,omitempty"`
 	ResumeRebase              bool                    `json:"resume_rebase_pending,omitempty"`

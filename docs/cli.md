@@ -1109,6 +1109,24 @@ This advisory gap does not fail otherwise successful required checks. Native
 check authority, exact publication boundaries and PR-scoped measures remain
 validated; malformed, stale and wrong-PR evidence is still rejected.
 
+An optional local `sonar.repair_policy` of
+`all-new-issues-and-duplication` repairs every unresolved new PR issue and reported
+duplication even when required checks pass. It is separate from
+`--auto-accept-recommendations`. Configure it under `sonar` in `.sdlc/project.json`;
+ordinary resume and `--pr-feedback` refresh apply it to existing saved runs.
+The default/explicit `advisory` mode preserves inspection-only treatment.
+
+Strict policy validates the Sonar analysis against the published head before and
+after complete issue pagination, validates locations against regular committed
+blobs, and reads file-level duplication counts even when density rounds to zero.
+Pending analysis waits without agent work; unavailable or incomplete evidence
+cannot certify a clean PR. Findings are batched with pending human feedback when
+possible, corrections receive normal checks and review, and the next exact-head
+analysis must be clean before readiness. Unchanged repair attempts do not trigger
+repeated checks or reviews. Public SonarCloud access is required; no Sonar secrets
+are introduced or GitHub credentials forwarded. No application workflow changes
+are made. Standalone review-only checkpoints remain read-only.
+
 Successful native SonarCloud analyses also supply advisory new-code duplication
 measures. For a positive measure, SDLC reads public SonarCloud duplicated-file
 and matching-block ranges, verifies the analysis commit before and after

@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.121 - 2026-10-20
+
+- Add local `sonar.repair_policy` to repair all unresolved new PR issues and duplication even when the quality gate passes, independently of review recommendation acceptance. Apply current policy to saved-run resumes, feedback refreshes and clean rebases.
+- Collect complete paginated issue evidence and authoritative duplication counts against the exact published analysis. Batch Sonar and pending human feedback, recheck after publication, and retain durable receipts to prevent duplicate or unchanged repair cycles. Clean analysis uses no repair agent; stale analysis waits and incomplete evidence cannot certify readiness.
+
 ## 0.1.0-beta.120 - 2026-10-19
 
 - Publish mechanically equivalent clean rebases and monitor current-head CI without implementation, self-review or independent-review agents. Retain explicit operational proof rather than inventing fresh test or review evidence; conflicts, changed patches and CI repairs keep normal gates.

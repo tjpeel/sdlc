@@ -486,6 +486,18 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			}
 		}
 	}
+	var sonarReceipt *SonarRepair
+	if j.Plan.Sonar.RepairsEnabled() && pendingFeedback(j) != nil {
+		checks, err := r.readPublishedCI(ctx, dir, j)
+		if err != nil {
+			return r.stop(dir, j, "blocked", err.Error())
+		}
+		j.CI = checks
+		sonarReceipt, err = r.prepareSonarRepair(ctx, j)
+		if err != nil {
+			return r.stop(dir, j, "blocked", err.Error())
+		}
+	}
 	h.LocalPending = nil
 	h.FetchPending = false
 	if pendingFeedback(j) == nil {
@@ -513,7 +525,12 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	h.FetchResumeState = ""
 	h.Active = true
 	h.CompletedHead = ""
-	j.CI = CIResult{}
+	if sonarReceipt != nil {
+		return r.startSonarRepair(dir, j, *sonarReceipt)
+	}
+	if !j.Plan.Sonar.RepairsEnabled() {
+		j.CI = CIResult{}
+	}
 	j.ConfiguredFeedbackKey = ""
 	if h.ReviewedCandidate == nil {
 		j.Evidence = CheckEvidence{}

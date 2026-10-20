@@ -186,6 +186,9 @@ func Load(directory string) (Journal, error) {
 	if err := validateReviewInterruption(&journal); err != nil {
 		return Journal{}, err
 	}
+	if err := validateSonarRepairs(&journal); err != nil {
+		return Journal{}, err
+	}
 	if err := validateRebaseMonitoring(&journal); err != nil {
 		return Journal{}, err
 	}

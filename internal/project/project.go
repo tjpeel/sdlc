@@ -26,6 +26,7 @@ const maximumSize = 64 * 1024
 const localIgnoreRule = "/.sdlc/"
 
 type Config struct {
+	Sonar                SonarPolicy       `json:"sonar,omitzero"`
 	NonDefaultCIWorkflow string            `json:"non_default_ci_workflow,omitempty"`
 	CheckSelection       string            `json:"check_selection,omitempty"`
 	NugetCache           *NugetCacheBudget `json:"nuget_cache,omitempty"`
@@ -515,6 +516,9 @@ func decodeConfig(data []byte, c *Config) error {
 	var extra any
 	if decoder.Decode(&extra) != io.EOF || c.Version != 1 || c.Checks == nil || c.InputFiles == nil || len(c.Checks) > 64 || len(c.InputFiles) > 256 {
 		return errors.New("project settings require version 1 and bounded checks and input files")
+	}
+	if err := c.Sonar.Validate(); err != nil {
+		return err
 	}
 	if err := ValidateCIWorkflow(c.NonDefaultCIWorkflow); err != nil {
 		return err

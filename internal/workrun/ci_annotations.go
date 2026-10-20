@@ -47,6 +47,9 @@ func ciSourcePath(path string) bool {
 }
 
 func validateCIResult(result CIResult, published Publication) error {
+	if err := validateSonarFindings(result.SonarFindings, published); err != nil {
+		return err
+	}
 	if prep := result.WorkflowPreparation; prep != nil {
 		if result.Status != "failed" || prep.Head != published.HeadSHA || !objectID.MatchString(prep.Head) || !strings.HasPrefix(prep.Path, ".github/workflows/") || !ciSourcePath(prep.Path) || prep.Code != "missing_dispatch_pr_context" {
 			return fmt.Errorf("invalid workflow preparation evidence")

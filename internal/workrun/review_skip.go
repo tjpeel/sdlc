@@ -239,6 +239,9 @@ func (r Runner) completeSkippedReview(ctx context.Context, dir string, j *Journa
 	if err := r.reviewHandoffPreflight(ctx, dir, j); err != nil {
 		return r.stop(dir, j, "blocked", err.Error())
 	}
+	if handled, err := r.repairSonar(ctx, dir, j); handled || err != nil {
+		return err
+	}
 	skip.RecordedAt = time.Now().UTC()
 	j.ReviewSkip = skip
 	if err := validateReviewSkip(j); err != nil {

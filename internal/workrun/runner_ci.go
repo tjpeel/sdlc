@@ -89,6 +89,9 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		}
 		return nil
 	case "passed":
+		if handled, err := runner.repairSonar(ctx, directory, journal); handled || err != nil {
+			return err
+		}
 		if journal.RebaseMonitoring != nil {
 			return runner.completeRebaseMonitoring(ctx, directory, journal)
 		}

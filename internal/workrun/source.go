@@ -85,7 +85,7 @@ func capture(ctx context.Context, launch project.LaunchResult, destination, bran
 			return plan, errors.New("configured check inputs must not use credential or account-state paths")
 		}
 	}
-	plan = Plan{NonDefaultCIWorkflow: launch.Config.NonDefaultCIWorkflow, Root: launch.Root, SourceSHA: launch.Head, Reference: launch.Reference, Ticket: launch.Ticket, Branch: branch, Base: base, Repository: repository, Checks: launch.Config.Checks, CheckSelection: launch.Config.CheckSelection, Roles: roles}
+	plan = Plan{Sonar: launch.Config.Sonar, NonDefaultCIWorkflow: launch.Config.NonDefaultCIWorkflow, Root: launch.Root, SourceSHA: launch.Head, Reference: launch.Reference, Ticket: launch.Ticket, Branch: branch, Base: base, Repository: repository, Checks: launch.Config.Checks, CheckSelection: launch.Config.CheckSelection, Roles: roles}
 	plan.Adoption = adoption
 	plan.NugetCache = &budget
 	if _, err = isolatedGit(ctx, launch.Root, "check-ref-format", "--branch", branch); err != nil {

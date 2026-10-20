@@ -65,7 +65,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.120`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.121`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -458,6 +458,33 @@ CI repairs retain the normal checks and review path. Publication uses
 the recorded remote head as an exact lease. Recommendation policy and PR feedback
 are unchanged; `--rebase` cannot be combined with feedback or acceptance options.
 Use `--dry-run` for an offline plan; it does not query GitHub or modify history.
+
+### Sonar repair policy
+
+A passing Sonar quality gate does not mean the PR has no new issues. To repair
+all unresolved new PR issues and duplication independently of gate thresholds,
+set this local preference in `.sdlc/project.json`:
+
+```json
+"sonar": {
+  "repair_policy": "all-new-issues-and-duplication"
+}
+```
+
+Normal CI monitoring and `resume --pr-feedback` refreshes apply the current local
+policy, including existing saved runs and clean rebases. The controller validates
+the exact PR analysis, collects all issue pages and file-level duplication counts,
+then batches findings with pending human feedback when available. Corrections use
+normal checks, signing, publication and review; readiness requires a clean analysis
+of the new published head. No findings means no repair agent. An unchanged attempt
+or unavailable/incomplete evidence is retained as a specific hold, not a clean pass.
+
+The default remains advisory; use `"repair_policy": "advisory"` to opt out. This
+policy covers new PR issues, not the repository backlog, and is independent of
+review recommendation acceptance. It requires public SonarCloud analysis access;
+GitHub credentials are never forwarded to Sonar. All configuration and receipts
+stay local. No target-repository workflow changes or runtime rebuild are needed.
+Standalone review-only checkpoints retain their inspection-only contract.
 
 ### Reusing completed work
 

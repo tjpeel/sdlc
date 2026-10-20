@@ -20,9 +20,19 @@ func completedReviewAwaitingCI(j *Journal) bool {
 // readPublishedCI is shared by ordinary polling and both review boundaries.
 // Manual workflow evidence must not disappear merely because review finished.
 func (r Runner) readPublishedCI(ctx context.Context, dir string, j *Journal) (CIResult, error) {
+	if r.SonarPolicy != nil {
+		j.Plan.Sonar = *r.SonarPolicy
+	}
+	if err := j.Plan.Sonar.Validate(); err != nil {
+		return CIResult{}, err
+	}
 	checks, err := r.Publisher.Checks(ctx, j.Plan, j.Publication)
 	if err == nil {
 		err = validateCIResult(checks, j.Publication)
+	}
+	if err == nil && j.Plan.Sonar.RepairsEnabled() && checks.Status == "passed" && checks.SonarFindings == nil {
+		checks.Status = "missing"
+		checks.Details += "\nSonar policy is waiting for complete current-head PR analysis."
 	}
 	if err == nil {
 		checks, err = r.ensureCIWorkflow(ctx, dir, j, checks)
@@ -39,7 +49,7 @@ func (runner Runner) finishCompletedReview(ctx context.Context, directory string
 		}
 		return false, err
 	}
-	if journal.CI.Status != "passed" {
+	if journal.CI.Status != "passed" || journal.State == "repairing" {
 		return false, nil
 	}
 	if feedbackStatus := PRFeedbackStatus(*journal); feedbackStatus.Pending > 0 || feedbackStatus.OutstandingReplies > 0 {

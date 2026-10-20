@@ -752,6 +752,15 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, err
 		}
 	}
+	if !pending && sonarMeasures && plan.Sonar.RepairsEnabled() {
+		result.SonarFindings, err = publisher.collectSonarFindings(ctx, plan, pr, result.SonarDuplication)
+		if errors.Is(err, errSonarAnalysisPending) {
+			result.Status = "pending"
+			result.Details += "\nWaiting for Sonar analysis of the published PR head."
+		} else if err != nil {
+			return CIResult{}, err
+		}
+	}
 	if result.Status == "failed" {
 		result.FailureContext, err = publisher.collectCIFailureContext(ctx, plan, pr, checks, result.Diagnostics)
 		if err != nil {
