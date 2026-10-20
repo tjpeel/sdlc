@@ -11,6 +11,7 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 - Add optional Synthetic implementation through pinned OpenCode with isolated native credentials and sessions, offline accounting, and independent Codex review.
 - Integrate provider-specific skill guidance and native agent profiles while retaining cumulative correction-review safeguards.
+- Pin the signed skills and agents catalogues, including retained correction-review guidance and complete source inventories, for subsequent runtime builds.
 
 ## 0.1.0-beta.126 - 2026-10-20
 

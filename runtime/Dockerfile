@@ -113,8 +113,8 @@ RUN set -eu; \
 
 ARG LOCAL_SKILLS=0
 ARG LOCAL_AGENTS=0
-ARG SKILLS_REVISION=93b052c54164573f3d63eec531a4c1f13d5eed5c
-ARG AGENTS_REVISION=1afb8d64b485844c2e222f9e7eecf0602e1b3fec
+ARG SKILLS_REVISION=3d19639f1dd1aae73cc561886308ab1c9185a3f8
+ARG AGENTS_REVISION=9ef35c0d0fb7ea1bab887599d3d43f748342766e
 COPY local-catalogues/ /tmp/sdlc-local-catalogues/
 
 # Keep pinned catalogue sources for provenance and generated packages outside
