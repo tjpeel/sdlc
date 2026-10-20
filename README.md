@@ -31,6 +31,16 @@ reads, while Claude input excludes cache reads/writes.
 A completed independent review may report coverage limitations: these are retained
 as warnings at the human-review checkpoint. Findings still enter repair, and
 required human decisions and operational failures still stop the run.
+
+Before starting another reviewer, SDLC checks whether the complete published Git
+tree, PR base and review scope match the last complete independent review without
+unresolved findings or questions. An empty commit, re-signing or changes followed
+by a complete revert can reuse that report. The original report keeps its original
+commit; a separate reuse record identifies the new publication. Current-head CI,
+Sonar policy and outstanding feedback still apply. Changed requirements, PR claims,
+source content, base or inspection gaps require review. Older reports without a
+retained content boundary conservatively require a review. Operational settings
+such as model effort and recommendation acceptance do not alone change scope.
 Adopt an existing open same-repository PR with `sdlc adopt --pr PR_URL` to assess
 review comments and publish verified corrections; a local ticket is optional.
 Use `--start-at awaiting-feedback --human-reviewed` to capture and park a PR
@@ -65,7 +75,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.124`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.125`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 

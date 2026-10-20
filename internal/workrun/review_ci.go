@@ -9,6 +9,9 @@ import (
 // The last completed report is reusable only for its exact publication and
 // native attempt. Partial reports and unfinished reviewer work never qualify.
 func completedReviewAwaitingCI(j *Journal) bool {
+	if reviewReuseCurrent(j) {
+		return true
+	}
 	if j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) != 0 || len(j.Outcome.Questions) != 0 || len(j.ReviewReports) == 0 || j.ReviewContinuation != nil || j.ReviewInterruption != nil {
 		return false
 	}
@@ -41,6 +44,13 @@ func (r Runner) readPublishedCI(ctx context.Context, dir string, j *Journal) (CI
 }
 
 func (runner Runner) finishCompletedReview(ctx context.Context, directory string, journal *Journal) (bool, error) {
+	if reviewReuseCurrent(journal) {
+		revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
+		if err != nil || !revision.Clean || revision.Head != journal.Evidence.Head || revision.Tree != journal.ReviewReuse.Tree {
+			return false, runner.stop(directory, journal, "blocked", "review reuse candidate changed; refusing to reuse prior review")
+		}
+	}
+
 	// checkCI retains the existing grace period, configured polling interval,
 	// cancellation, failure-repair policy and manual workflow reconciliation.
 	if err := runner.checkCI(ctx, directory, journal); err != nil {
@@ -62,7 +72,7 @@ func (runner Runner) finishCompletedReview(ctx context.Context, directory string
 	if err := runner.transition(directory, journal, "ready"); err != nil {
 		return false, err
 	}
-	if accepted, err := runner.autoAcceptRecommendations(ctx, directory, journal); err != nil {
+	if accepted, err := runner.acceptRecommendationsUnlessReused(ctx, directory, journal); err != nil {
 		return false, runner.stop(directory, journal, "blocked", err.Error())
 	} else if accepted {
 		return false, nil

@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.125 - 2026-10-20
+
+- Reuse a completed independent review when the exact published Git tree, base and review scope are unchanged despite different commit IDs. Retain the original report and a separate reuse proof; verify the published snapshot, current-head CI, Sonar and pending feedback without another reviewer turn. Changed content, requirements, claims, unresolved work or missing legacy proof retain normal review.
+
 ## 0.1.0-beta.124 - 2026-10-20
 
 - Retry post-push PR confirmation on the known previous head or transient read failures with bounded, cancellation-aware backoff. Reject unexpected heads, changed bases and PR identity changes immediately; exhausted confirmation remains recoverable through ordinary resume without another push or repair.

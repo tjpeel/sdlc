@@ -196,12 +196,13 @@ type ReviewCoverage struct {
 
 // ReviewReport retains bounded review evidence across repair rounds.
 type ReviewReport struct {
-	Findings        []Finding       `json:"findings,omitempty"`
-	Publication     Publication     `json:"publication"`
-	Attempt         int             `json:"attempt"`
-	Coverage        *ReviewCoverage `json:"coverage,omitempty"`
-	Limitations     []string        `json:"limitations,omitempty"`
-	Recommendations []Finding       `json:"recommendations,omitempty"`
+	Content         *ReviewedContent `json:"content_boundary,omitempty"`
+	Findings        []Finding        `json:"findings,omitempty"`
+	Publication     Publication      `json:"publication"`
+	Attempt         int              `json:"attempt"`
+	Coverage        *ReviewCoverage  `json:"coverage,omitempty"`
+	Limitations     []string         `json:"limitations,omitempty"`
+	Recommendations []Finding        `json:"recommendations,omitempty"`
 }
 
 type Outcome struct {
@@ -290,6 +291,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	ReviewReuse               *ReviewReuse            `json:"independent_review_reuse,omitempty"`
 	SonarRepairs              []SonarRepair           `json:"sonar_repairs,omitempty"`
 	RebaseMonitoring          *RebaseMonitoring       `json:"rebase_monitoring,omitempty"`
 	RebasedAdoptions          []PRAdoption            `json:"rebased_adoption_boundaries,omitempty"`

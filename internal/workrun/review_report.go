@@ -74,6 +74,9 @@ func recordReviewReport(j *Journal) error {
 		return fmt.Errorf("review coverage does not match the published PR boundary")
 	}
 	report := ReviewReport{Publication: j.Publication, Attempt: j.Attempt, Findings: append([]Finding(nil), j.Outcome.Findings...), Coverage: c, Limitations: j.Outcome.Limitations, Recommendations: j.Outcome.Recommendations}
+	if j.Outcome.Status == "reviewed" && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && c != nil && c.Scope == "full" && len(c.Gaps) == 0 && j.Evidence.Passed && objectID.MatchString(j.Evidence.Tree) {
+		report.Content = &ReviewedContent{Tree: j.Evidence.Tree, ScopeKey: reviewScopeKey(j)}
+	}
 	data, err := json.Marshal(report)
 	if err != nil || len(data) > 32*1024 {
 		return fmt.Errorf("review report exceeds its retention bound")
@@ -143,7 +146,7 @@ func uniqueReviewText(items []string) []string {
 }
 
 func ReviewRecommendationNotice(j Journal) string {
-	if j.Outcome.Status != "reviewed" {
+	if j.Outcome.Status != "reviewed" && !reviewReuseCurrent(&j) {
 		return ""
 	}
 	items := []string{}

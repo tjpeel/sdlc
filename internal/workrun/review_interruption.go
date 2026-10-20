@@ -71,7 +71,7 @@ func validateReviewInterruption(j *Journal) error {
 
 // ReviewWarningNotice preserves the reviewer's stated coverage at the human checkpoint.
 func ReviewWarningNotice(j Journal) string {
-	if j.Outcome.Status != "reviewed" {
+	if j.Outcome.Status != "reviewed" && !reviewReuseCurrent(&j) {
 		return ""
 	}
 	gaps := append([]string(nil), j.Outcome.Limitations...)

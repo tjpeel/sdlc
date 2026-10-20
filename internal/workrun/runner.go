@@ -782,6 +782,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					continue
 				}
 			}
+
+			if reused, err := runner.tryReuseReview(ctx, directory, journal); err != nil {
+				return err
+			} else if reused {
+				continue
+			}
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)
 			if err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
