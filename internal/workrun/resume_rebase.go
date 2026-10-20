@@ -92,6 +92,12 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	if j.ResumeRebase && j.Reconciliation == nil {
 		return false, fmt.Errorf("missing saved resume rebase checkpoint")
 	}
+	// Publication may have reached GitHub before its journal checkpoint. The
+	// publisher validates the retained signed candidate and remote lease when
+	// recovering this boundary; an upstream-head check would reject that recovery.
+	if !r.Rebase && !j.ResumeRebase && (j.State == "publishing" || (j.State == "blocked" || j.State == "failed") && j.ResumeState == "publishing") {
+		return false, nil
+	}
 	if j.Publication.Number == 0 {
 		if r.Rebase {
 			return false, fmt.Errorf("rebase requires a published PR")

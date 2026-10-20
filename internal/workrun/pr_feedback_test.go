@@ -446,3 +446,47 @@ func TestFeedbackFetchResumePreservesReviewedLimitations(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationClearsPreviousSonarBeforeFeedbackCheckpoint(t *testing.T) {
+	for _, failReply := range []bool{false, true} {
+		t.Run(fmt.Sprint(failReply), func(t *testing.T) {
+			dir, j, r, pub, _ := feedbackReadyRun(t)
+			old := testTree
+			j.Publication.HeadSHA = old
+			j.CI = CIResult{Status: "passed", SonarFindings: &SonarFindings{Head: old, Projects: []string{"example"}}}
+			j.State = "publishing"
+			comment := generalFeedback("comment:1", "Explain the existing behaviour")
+			assessment := assessedOutcome(comment, "no_change").PRFeedbackAssessments[0]
+			j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, Active: true, CandidateStart: testHead, Entries: []PRFeedbackEntry{{Comment: comment, Fingerprint: feedbackFingerprint(comment), Assessment: &assessment, ReplyBody: assessment.Reason}}}
+			j.PRFeedback.Entries[0].Marker = feedbackEntryMarker(j.ID, j.PRFeedback.Entries[0])
+			if failReply {
+				pub.replyErr = errors.New("temporary reply failure")
+			}
+			err := r.Run(context.Background(), dir, j, "")
+			if failReply && !errors.Is(err, ErrStopped) || !failReply && err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			saved, err := Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if saved.Publication.HeadSHA != testHead || saved.CI.SonarFindings != nil {
+				t.Fatal("new publication retained stale Sonar evidence")
+			}
+			if failReply && saved.CI.Status != "" {
+				t.Fatal("failed reply retained previous CI status")
+			}
+			if failReply {
+				pub.replyErr = nil
+				r.CheckUpstream = true
+				if err := r.Run(context.Background(), dir, &saved, ""); err != nil {
+					t.Fatalf("resume after reply failure: %v", err)
+				}
+				if saved.State != "ready" || pub.replies != 2 {
+					t.Fatal("reply failure did not recover")
+				}
+			}
+
+		})
+	}
+}

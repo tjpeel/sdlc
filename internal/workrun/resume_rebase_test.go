@@ -395,3 +395,27 @@ func TestResumeRebaseKeepsUnfinishedFeedbackBlocked(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationRecoveryDefersHeadValidationToPublisher(t *testing.T) {
+	for _, state := range []string{"publishing", "blocked", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			dir, j := testRun(t)
+			j.State, j.ResumeState = state, "publishing"
+			j.Publication = Publication{Number: 40, HeadSHA: testHead}
+			p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "main", BaseSHA: testBase, HeadSHA: testTree}}
+			r := Runner{Publisher: p}
+			if changed, err := r.checkResumeUpstream(context.Background(), dir, j); err != nil || changed {
+				t.Fatalf("publication recovery: %v %v", changed, err)
+			}
+			r.Rebase = true
+			if _, err := r.checkResumeUpstream(context.Background(), dir, j); err == nil {
+				t.Fatal("explicit rebase accepted changed remote head")
+			}
+			r.Rebase = false
+			j.State, j.ResumeState = "ready", ""
+			if _, err := r.checkResumeUpstream(context.Background(), dir, j); err == nil {
+				t.Fatal("ordinary monitoring accepted changed remote head")
+			}
+		})
+	}
+}

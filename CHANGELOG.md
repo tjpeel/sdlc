@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.122 - 2026-10-20
+
+- Clear previous-head CI and Sonar evidence before saving publication feedback acknowledgements, including when posting a reply fails.
+- Recover interrupted publication through the publisher’s signed-candidate and remote-lease checks before upstream reconciliation; explicit rebases retain their head checks.
+
 ## 0.1.0-beta.121 - 2026-10-20
 
 - Add local `sonar.repair_policy` to repair all unresolved new PR issues and duplication even when the quality gate passes, independently of review recommendation acceptance. Apply current policy to saved-run resumes, feedback refreshes and clean rebases.
