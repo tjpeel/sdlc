@@ -42,7 +42,7 @@ func validateReviewDetails(out Outcome, role string) error {
 		}
 	case "partial", "delta":
 		if len(c.Gaps) == 0 {
-			return fmt.Errorf("partial or delta review must identify uninspected areas")
+			return fmt.Errorf(unnamedReviewGapError)
 		}
 	default:
 		return fmt.Errorf("unknown review coverage scope")

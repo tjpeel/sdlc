@@ -425,6 +425,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 		}
 	}
+	if err := runner.recoverUnnamedReviewGap(ctx, directory, journal); err != nil {
+		return err
+	}
 	if journal.State == "blocked" || journal.State == "failed" {
 		if journal.ResumeState == "" {
 			return fmt.Errorf("stopped run has no resumable stage")

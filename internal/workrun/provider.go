@@ -334,6 +334,7 @@ func (writer *eventWriter) finish(role string) error {
 	if role == "review" && writer.result.Outcome.Status == "reviewed" && writer.result.Outcome.ReviewCoverage == nil {
 		return fmt.Errorf("completed independent review requires explicit review_coverage")
 	}
+	normalizeReviewInspectionHandoff(&writer.result.Outcome, role)
 	return validateOutcome(writer.result.Outcome, role)
 }
 

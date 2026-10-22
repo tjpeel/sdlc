@@ -418,7 +418,7 @@ func reconcilePriorConcerns(j *Journal, out *Outcome) bool {
 func incrementalReviewInstructions(j *Journal) string {
 	p := j.ReviewPlan
 	if p == nil || p.Publication != j.Publication {
-		return ""
+		return "\nNo controller-verified cross-revision cumulative plan is available. Reviews of earlier publications are evidence, not permission to inherit file inspection. Complete the current manifest; retain this session and its controller-recorded completed entries, and mark missing inspection explicitly. A delta must name remaining gaps, never claim unchanged files inherited from another publication on your own authority.\n"
 	}
 	packet, _ := json.Marshal(struct {
 		SourceAttempt int                  `json:"source_attempt"`

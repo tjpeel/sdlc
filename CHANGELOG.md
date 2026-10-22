@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.129 - 2026-10-22
+
+- Reconcile unnamed delta-review gaps against the controller file manifest and continue the original reviewer rather than rejecting its inspection handoff. Never infer approval or inherited coverage from a delta claim.
+- Recover this decoder hold on ordinary resume only from matching captured native events, completed attempt metadata, the original session and unchanged snapshot. Preserve existing CI checks, strict stored-report validation and no-progress stops.
+
 ## 0.1.0-beta.128 - 2026-10-20
 
 - Preserve the visible human-review checkpoint when a reviewer exhausts native usage. Ordinary resume must not automatically accept recommendations from an older publication; explicit acceptance still requires a completed current review.

@@ -125,6 +125,7 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 			return result, fmt.Errorf("independent reviewer changed its native session")
 		}
 		out := result.Outcome
+		normalizeReviewInspectionHandoff(&out, "review")
 		if err := r.reconcilePlannedInspection(ctx, workspace, j, &out, reviewInspectionHistory(j)...); err != nil {
 			return result, err
 		}
