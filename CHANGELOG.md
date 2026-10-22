@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.130 - 2026-10-22
+
+- In existing-PR repair sessions, preserve the established whole-PR title and unaffected description scope. Integrate feedback and revise superseded claims instead of replacing the description with a repair-only summary. Keep compact resumes intact: no earlier transcript reload, broader inspection, extra context packet or additional review stage. Pin the aligned drafting skill.
+
 ## 0.1.0-beta.129 - 2026-10-22
 
 - Reconcile unnamed delta-review gaps against the controller file manifest and continue the original reviewer rather than rejecting its inspection handoff. Never infer approval or inherited coverage from a delta claim.
