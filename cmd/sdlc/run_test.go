@@ -709,3 +709,21 @@ func TestRunNewModelControlsReachOfflinePlan(t *testing.T) {
 		}
 	}
 }
+
+func TestRunReviewContextSelection(t *testing.T) {
+	for _, mode := range []string{"packet", "pr-link"} {
+		options, err := parseRunOptions(runArgs("--review-context", mode))
+		if err != nil || options.reviewContext != mode {
+			t.Fatalf("mode %s: %+v %v", mode, options, err)
+		}
+		options, err = parseRunOptions([]string{"--pr", "https://github.com/example/project/pull/1", "--review-context", mode, "--start-at", "review"})
+		if err != nil || options.reviewContext != mode {
+			t.Fatalf("adoption %s: %+v %v", mode, options, err)
+		}
+	}
+	for _, args := range [][]string{runArgs("--review-context", "invalid"), runArgs("--review-context", ""), runArgs("--resume", "recorded", "--review-context", "pr-link"), {"--reference", "TASK-1", "--all", "--review-context", "pr-link"}} {
+		if _, err := parseRunOptions(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+}

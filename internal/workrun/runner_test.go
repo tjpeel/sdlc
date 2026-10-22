@@ -634,9 +634,18 @@ func TestPrepareReviewRetryUsesFreshSnapshotAtSameAttempt(t *testing.T) {
 	if err != nil || strings.TrimSpace(status) != "" {
 		t.Fatalf("selected untracked requirements polluted review snapshot status: %q %v", status, err)
 	}
+	j.Plan.Roles.ReviewContext = "pr-link"
 	second, err := PrepareReview(ctx, *j, dir)
 	if err != nil {
 		t.Fatalf("retry collided with interrupted review snapshot: %v", err)
+	}
+	rawContext, contextErr := os.ReadFile(filepath.Join(second, prLinkContextPath))
+	if contextErr != nil || !strings.Contains(string(rawContext), head) {
+		t.Fatalf("PR-link context not staged: %v", contextErr)
+	}
+	status, err = isolatedGit(ctx, second, "status", "--porcelain")
+	if err != nil || strings.TrimSpace(status) != "" {
+		t.Fatalf("PR-link context polluted snapshot: %q %v", status, err)
 	}
 	if first == second || j.Attempt != 3 {
 		t.Fatal("retry reused checkout or changed session attempt")

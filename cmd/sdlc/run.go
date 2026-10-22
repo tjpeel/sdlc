@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -48,6 +48,7 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	reviewContext                                                                                                                                                                     string
 	rebase                                                                                                                                                                            bool
 	autoAcceptRecommendations                                                                                                                                                         bool
 	startAt                                                                                                                                                                           string
@@ -112,6 +113,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.reviewSpeed, "review-speed", "", "review native speed: normal or fast")
 	flags.StringVar(&options.effort, "effort", "", "implementation lead reasoning effort")
 	flags.StringVar(&options.reviewModel, "review-model", "", "opposite-provider review lead model")
+	flags.StringVar(&options.reviewContext, "review-context", "", "independent review context: packet (default) or experimental pr-link")
 	flags.StringVar(&options.reviewEffort, "review-effort", "", "override PR-based Claude review effort")
 	flags.StringVar(&options.root, "run-root", "", "internal recorded root for resume")
 	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
@@ -167,8 +169,14 @@ func parseRunOptions(args []string) (runOptions, error) {
 			return options, fmt.Errorf("speed must be normal or fast")
 		}
 	}
+	if options.reviewContext != "" && options.reviewContext != "packet" && options.reviewContext != "pr-link" {
+		return options, fmt.Errorf("review context must be packet or pr-link")
+	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.supplied["review-context"] && (options.reviewContext == "" || options.resume != "" || options.all) {
+		return options, fmt.Errorf("--review-context requires a new single-ticket run or adoption; resumes preserve the recorded mode")
+	}
 	if options.supplied["start-at"] || options.supplied["human-reviewed"] {
 		if options.startAt == "" || !workrun.ValidPRStartAt(options.startAt) || options.all || options.adoptURL == "" && options.resume == "" {
 			return options, fmt.Errorf("--start-at requires an adoption or single resume and awaiting-feedback, checks, review or feedback")
@@ -484,6 +492,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			if err != nil {
 				return err
 			}
+		}
+		if options.supplied["review-context"] {
+			roles.ReviewContext = options.reviewContext
 		}
 		if options.supplied["auto-accept-recommendations"] {
 			roles.AutoAcceptRecommendations = options.autoAcceptRecommendations

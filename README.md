@@ -94,7 +94,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.130`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.131`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -543,3 +543,28 @@ checks still require the usual review or repair.
 
 Synthetic can implement tickets through pinned OpenCode, with Codex review. See
 [the Synthetic guide](docs/synthetic.md) for authentication, models and runtime setup.
+
+### Experimental reviewer-led context
+
+For a new single-ticket run or adoption, add `--review-context pr-link` to let
+an independent reviewer choose its own focused reads. For example:
+
+```sh
+sdlc adopt --pr https://github.com/OWNER/REPO/pull/NUMBER \
+  --start-at review --review-context pr-link
+```
+
+The launch prompt contains the PR URL, pinned base/head and a small review
+contract. The reviewer uses the exact local checkout; it receives no new GitHub
+credentials. Existing selected requirements, PR metadata, human feedback and
+controller check evidence are available on demand in a private snapshot file,
+not embedded in the launch prompt. This is reviewer-led inspection, not a web-only
+review. The review skill, structured results, coverage validation, cumulative
+repair reviews and unfinished-inspection continuation still apply.
+
+`packet` remains the default. The choice is recorded in the run plan and ordinary
+resume retains it; changing an existing run's mode is intentionally unsupported.
+Compare separate runs at the same PR revision with `sdlc usage --run RUN_ID`:
+include total input, cached input, output, context measurements where available,
+duration, findings and coverage. A smaller launch prompt does not by itself prove
+lower total usage or equal review effectiveness. No live savings are assumed.

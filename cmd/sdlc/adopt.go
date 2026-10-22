@@ -82,7 +82,7 @@ func adoptSelectedCommand(ctx context.Context, options runOptions, output io.Wri
 			}
 		}
 		if options.jsonOutput {
-			return json.NewEncoder(output).Encode(map[string]any{"headroom": selectedHeadroom, "action": "adopt", "dry_run": true, "pr": options.adoptURL, "reference": options.reference, "ticket": options.ticket, "runtime": options.runtimeName, "provider": options.provider, "remote_verified": false, "start_at": options.startAt, "human_reviewed": options.humanReviewed})
+			return json.NewEncoder(output).Encode(map[string]any{"headroom": selectedHeadroom, "action": "adopt", "dry_run": true, "pr": options.adoptURL, "reference": options.reference, "ticket": options.ticket, "runtime": options.runtimeName, "provider": options.provider, "remote_verified": false, "review_context": options.reviewContext, "start_at": options.startAt, "human_reviewed": options.humanReviewed})
 		}
 		if options.startAt != "" {
 			_, err = fmt.Fprintf(output, "Offline PR adoption plan: %s\nEntry point: %s; human-reviewed declaration: %t. No remote state or access has been checked; skipped stages remain unverified.\n", options.adoptURL, options.startAt, options.humanReviewed)

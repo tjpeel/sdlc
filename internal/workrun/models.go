@@ -174,6 +174,9 @@ func ResolveSpeeds(roles Roles, speed, reviewSpeed string) (Roles, error) {
 }
 
 func ValidateSpeeds(roles Roles) error {
+	if roles.ReviewContext != "" && roles.ReviewContext != "packet" && roles.ReviewContext != "pr-link" {
+		return fmt.Errorf("review context must be packet or pr-link")
+	}
 	if roles.ReviewEffortPolicy != "" && (roles.ReviewEffortPolicy != "pr-v1" || roles.Review.Provider != "claude") {
 		return fmt.Errorf("unsupported review effort policy")
 	}

@@ -1129,6 +1129,9 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	if role == "review" && journal.ReviewContinuation != nil {
 		return reviewContinuationPrompt(journal)
 	}
+	if role == "review" && journal.Plan.Roles.ReviewContext == "pr-link" {
+		return prLinkReviewPrompt(journal)
+	}
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
 	if role == "implementation" {
 		if journal.Publication.Number > 0 {
@@ -1297,6 +1300,11 @@ func PrepareReview(ctx context.Context, journal Journal, directory string) (stri
 	}
 	if err := os.WriteFile(filepath.Join(workspace, ".git", "info", "exclude"), []byte(inputExcludes(inputPaths)), 0600); err != nil {
 		return "", err
+	}
+	if journal.Plan.Roles.ReviewContext == "pr-link" {
+		if err := writePRLinkReviewContext(workspace, journal); err != nil {
+			return "", err
+		}
 	}
 	// Git respects host umask while cloning. The reviewer runs as UID 1000;
 	// make the complete snapshot readable behind its private host parent.

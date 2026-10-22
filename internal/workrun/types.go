@@ -20,6 +20,7 @@ type Model struct {
 }
 
 type Roles struct {
+	ReviewContext             string `json:"review_context,omitempty"`
 	AutoAcceptRecommendations bool   `json:"auto_accept_recommendations,omitempty"`
 	ReviewEffortPolicy        string `json:"review_effort_policy,omitempty"`
 	ImplementationSpeed       string `json:"implementation_speed,omitempty"`

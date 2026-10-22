@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.131 - 2026-10-22
+
+- Add experimental `--review-context pr-link` for new single-ticket runs and adoptions. Independent reviewers receive the PR URL, pinned revisions and a small review contract, choosing focused reads from the exact local checkout and existing controller evidence on disk. Preserve structured findings, coverage validation, cumulative reviews and same-session continuations. Default packet reviews and saved-run selections remain unchanged.
+
+
 ## 0.1.0-beta.130 - 2026-10-22
 
 - In existing-PR repair sessions, preserve the established whole-PR title and unaffected description scope. Integrate feedback and revise superseded claims instead of replacing the description with a repair-only summary. Keep compact resumes intact: no earlier transcript reload, broader inspection, extra context packet or additional review stage. Pin the aligned drafting skill.
