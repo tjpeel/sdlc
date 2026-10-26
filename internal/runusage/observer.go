@@ -495,11 +495,17 @@ func observeNativeUsageStop(line []byte, provider string, observed time.Time, us
 		return
 	}
 	category := "native_failure"
+	if message == "Selected model is at capacity. Please try a different model." {
+		category = "model_capacity"
+	}
 	if strings.HasPrefix(message, "You’ve hit your usage limit.") || strings.HasPrefix(message, "You’ve hit your usage limit for ") {
 		category = "usage_exhausted"
 	}
 	if usage.NativeStop != nil && usage.NativeStop.Category == "native_failure" {
 		return
+	}
+	if usage.NativeStop != nil && usage.NativeStop.Category != category {
+		category = "native_failure"
 	}
 	usage.NativeStop = &NativeStop{Source: "codex.exec.fatal_error", Category: category, ObservedAt: observed}
 }

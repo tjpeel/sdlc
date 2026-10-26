@@ -245,11 +245,12 @@ type Session struct {
 }
 
 type SessionResult struct {
-	ReviewInterruption *ReviewInterruption
-	Outcome            Outcome
-	SessionID          string
-	ReportedModel      string
-	HeadroomStats      *headroom.Stats
+	SessionStartAttempt int
+	ReviewInterruption  *ReviewInterruption
+	Outcome             Outcome
+	SessionID           string
+	ReportedModel       string
+	HeadroomStats       *headroom.Stats
 }
 
 type Provider interface {

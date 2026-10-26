@@ -51,6 +51,7 @@ type Runner struct {
 	ExtendSessionTurnBudget           int
 	PollInterval                      time.Duration
 	MissingCheckGrace                 time.Duration
+	capacityWait                      func(context.Context, time.Duration) error
 	// Reporting hooks run while the exclusive controller lock is held.
 	OnStart        func(Journal) error
 	OnState        func(Journal) error
@@ -937,7 +938,7 @@ func verifyInputs(root string, inputs []Input) error {
 	return nil
 }
 
-func (runner Runner) session(ctx context.Context, directory string, journal *Journal, role, workspace, resume string) (result SessionResult, resultErr error) {
+func (runner Runner) sessionAttempt(ctx context.Context, directory string, journal *Journal, role, workspace, resume, retryDirectory string, sessionStartAttempt int) (result SessionResult, resultErr error) {
 	if DependencyIsInvalid(directory, journal) {
 		return SessionResult{}, ErrDependencyInvalid
 	}
@@ -973,14 +974,6 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 		if runner.rawOutput == nil {
 			runner.rawOutput = io.Discard
 		}
-	}
-	if runner.progress == nil {
-		recorder, err := runprogress.Open(directory, runner.ProgressOutput)
-		if err != nil {
-			return result, err
-		}
-		runner.progress = recorder
-		defer func() { resultErr = errors.Join(resultErr, recorder.Close()) }()
 	}
 	journal.Attempt++
 	if a := journal.ReviewAssessment; role == "implementation" && a != nil && a.Pending && a.StartedAttempt == 0 {
@@ -1024,6 +1017,10 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	if role == "implementation" {
 		prompt += supplementalCIFeedback(*journal)
 	}
+	if retryDirectory != "" {
+		nativeDirectory = retryDirectory
+		prompt = "Continue the interrupted task in this same session after the temporary model-capacity failure. Preserve completed work and existing instructions, checks and review scope; do not repeat completed actions. Return the required structured handoff when ready.\n" + localOnlyBoundaryInstruction
+	}
 	metricRole := role
 	if role == "implementation" && resume != "" {
 		metricRole = "repair"
@@ -1047,6 +1044,10 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	}
 	if role == "review" {
 		attempt.ReviewBoundary = reviewAttemptBoundary(journal)
+		attempt.SessionStartAttempt = sessionStartAttempt
+		if c := journal.ReviewContinuation; c != nil {
+			attempt.SessionStartAttempt = c.StartAttempt
+		}
 		if attempt.ReviewBoundary != nil && journal.ReviewEffort != nil && journal.Plan.Roles.ReviewEffortPolicy != "" {
 			copy := journal.ReviewEffort.Selection
 			attempt.ReviewEffortSelection = &copy
@@ -1089,7 +1090,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	if role == "implementation" {
 		contextRecovery = pendingCIFeedback(journal)
 		if contextRecovery != nil {
-			if contextRecovery.DispatchAttempt != 0 || resume != contextRecovery.SessionID {
+			if (contextRecovery.DispatchAttempt != 0 && (retryDirectory == "" || contextRecovery.DispatchAttempt != journal.Attempt-1)) || resume != contextRecovery.SessionID {
 				return result, fmt.Errorf("CI feedback cannot be dispatched twice or to a different session")
 			}
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
@@ -1122,6 +1123,7 @@ func (runner Runner) session(ctx context.Context, directory string, journal *Jou
 	result, resultErr = runner.Provider.Execute(ctx, Session{Speed: speed, Model: model, Role: role, Workspace: workspace,
 		Directory: nativeDirectory, Prompt: prompt, Schema: schema, ResumeID: resume,
 		Instructions: runner.Instructions, Headroom: journal.Plan.Headroom, Diagnostics: liveCallback}, io.MultiWriter(metrics, nativeOutput, progressOutput), io.MultiWriter(diagnostic, diagnosticProgress))
+	result.SessionStartAttempt = attempt.SessionStartAttempt
 	return result, resultErr
 }
 

@@ -174,7 +174,11 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 			if err != nil || !revision.Clean || revision.Head != j.Publication.HeadSHA {
 				return result, fmt.Errorf("review continuation lacks its original snapshot")
 			}
-			c = &ReviewContinuation{Publication: j.Publication, Model: selectedReviewModel(j), Speed: j.Plan.Roles.ReviewSpeed, Tree: revision.Tree, SessionID: result.SessionID, Workspace: relative, StartAttempt: j.Attempt}
+			startAttempt := result.SessionStartAttempt
+			if startAttempt == 0 {
+				startAttempt = j.Attempt
+			}
+			c = &ReviewContinuation{Publication: j.Publication, Model: selectedReviewModel(j), Speed: j.Plan.Roles.ReviewSpeed, Tree: revision.Tree, SessionID: result.SessionID, Workspace: relative, StartAttempt: startAttempt}
 			j.ReviewContinuation = c
 		}
 		c.LastAttempt = j.Attempt

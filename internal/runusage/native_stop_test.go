@@ -6,6 +6,35 @@ import (
 	"testing"
 )
 
+func TestCodexCapacityRequiresUnmixedCanonicalFatalEvents(t *testing.T) {
+	capacity := `{"type":"error","message":"Selected model is at capacity. Please try a different model."}`
+	failed := `{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}`
+	usage := `{"type":"error","message":"You’ve hit your usage limit. Try later."}`
+	for _, test := range []struct{ name, events, category string }{
+		{"capacity", capacity + "\n" + failed, "model_capacity"},
+		{"failed only", failed, "model_capacity"},
+		{"usage then capacity", usage + "\n" + capacity, "native_failure"},
+		{"capacity then usage", capacity + "\n" + usage, "native_failure"},
+		{"unknown then capacity", `{"type":"error","message":"Login required"}` + "\n" + capacity, "native_failure"},
+		{"unknown format", `{"type":"error","message":"model at capacity"}`, "native_failure"},
+		{"quoted tool output", `{"type":"item.completed","item":{"type":"command_execution","output":"Selected model is at capacity. Please try a different model."}}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o := NewObserver("codex", "selected-model")
+			_, _ = o.Write([]byte(test.events + "\n"))
+			o.Finish()
+			stop := o.Snapshot().NativeStop
+			if test.category == "" {
+				if stop != nil {
+					t.Fatal(stop)
+				}
+			} else if stop == nil || stop.Category != test.category {
+				t.Fatalf("category=%+v want=%s", stop, test.category)
+			}
+		})
+	}
+}
+
 func TestCodexFatalUsageCategoryComesOnlyFromOfficialFatalEvents(t *testing.T) {
 	for _, test := range []struct {
 		name, event string

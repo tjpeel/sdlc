@@ -280,6 +280,18 @@ or savings on engineering work.
 
 ## Independent reviewer usage exhaustion
 
+Codex model-capacity failures are distinct from account usage exhaustion. After
+a cleanly finalized native failure containing only the canonical selected-model
+capacity error, the controller waits 30, 60 and 120 seconds before up to three
+same-thread continuations through the official `codex exec resume` command.
+This uses the [documented native resume route](https://learn.chatgpt.com/docs/non-interactive-mode#resume-a-non-interactive-session),
+reviewed on 26 October 2026. The account, model, workspace, proxy route and session
+remain unchanged; each attempt retains its own accounting and private output.
+Cancellation interrupts the wait. Exhausted retries retain the ordinary resume
+hold. Authentication, usage-limit, mixed or unknown errors, parser failures and
+incomplete wrapper finalization cannot trigger this retry. This is an SDLC
+backoff policy, not a provider guarantee of capacity or a new authentication route.
+
 An independent review can end at the human-review checkpoint when the selected
 native reviewer conclusively exhausts usage. This records a skipped review with
 its exact published revision and selected provider/model/attempt, rather than an

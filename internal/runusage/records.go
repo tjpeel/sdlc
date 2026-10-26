@@ -39,28 +39,29 @@ type Attempt struct {
 	Prompt                *PromptMetrics         `json:"controller_prompt,omitempty"`
 	ReviewEffortSelection *ReviewEffortSelection `json:"review_effort_selection,omitempty"`
 
-	RequestedSpeed string          `json:"requested_speed,omitempty"`
-	EffectiveSpeed string          `json:"effective_speed,omitempty"`
-	ReviewBoundary *ReviewBoundary `json:"review_boundary,omitempty"`
-	StopCategory   string          `json:"stop_category,omitempty"`
-	Version        int             `json:"version"`
-	RunID          string          `json:"run_id"`
-	Attempt        int             `json:"attempt"`
-	Role           string          `json:"role"`
-	Provider       string          `json:"provider"`
-	Model          string          `json:"model"`
-	Effort         string          `json:"effort,omitempty"`
-	ImageID        string          `json:"image_id,omitempty"`
-	StartedAt      time.Time       `json:"started_at"`
-	EndedAt        time.Time       `json:"ended_at,omitempty"`
-	Outcome        string          `json:"outcome"`
-	SessionID      string          `json:"session_id,omitempty"`
-	Resumed        bool            `json:"resumed,omitempty"`
-	OptimizerMode  string          `json:"optimizer_mode"`
-	HeadroomStats  *headroom.Stats `json:"headroom_stats,omitempty"`
-	ClientVersion  string          `json:"client_version,omitempty"`
-	Usage          Usage           `json:"usage"`
-	EventTiming    *EventTiming    `json:"native_event_timing,omitempty"`
+	RequestedSpeed      string          `json:"requested_speed,omitempty"`
+	EffectiveSpeed      string          `json:"effective_speed,omitempty"`
+	ReviewBoundary      *ReviewBoundary `json:"review_boundary,omitempty"`
+	StopCategory        string          `json:"stop_category,omitempty"`
+	Version             int             `json:"version"`
+	RunID               string          `json:"run_id"`
+	Attempt             int             `json:"attempt"`
+	Role                string          `json:"role"`
+	Provider            string          `json:"provider"`
+	Model               string          `json:"model"`
+	Effort              string          `json:"effort,omitempty"`
+	ImageID             string          `json:"image_id,omitempty"`
+	StartedAt           time.Time       `json:"started_at"`
+	EndedAt             time.Time       `json:"ended_at,omitempty"`
+	Outcome             string          `json:"outcome"`
+	SessionID           string          `json:"session_id,omitempty"`
+	SessionStartAttempt int             `json:"session_start_attempt,omitempty"`
+	Resumed             bool            `json:"resumed,omitempty"`
+	OptimizerMode       string          `json:"optimizer_mode"`
+	HeadroomStats       *headroom.Stats `json:"headroom_stats,omitempty"`
+	ClientVersion       string          `json:"client_version,omitempty"`
+	Usage               Usage           `json:"usage"`
+	EventTiming         *EventTiming    `json:"native_event_timing,omitempty"`
 }
 
 // ReviewBoundary binds native review telemetry to the exact published candidate.
@@ -172,6 +173,9 @@ func openMetricsRoot(dir string, create bool) (*os.Root, error) {
 }
 
 func validateAttempt(a Attempt) error {
+	if a.SessionStartAttempt < 0 || a.SessionStartAttempt > a.Attempt || a.SessionStartAttempt != 0 && a.Role != "review" {
+		return fmt.Errorf("invalid native session start attempt")
+	}
 	if a.Prompt != nil && (a.Prompt.Bytes < 0 || a.Prompt.Bytes > maxTokenCount || a.Prompt.FeedbackBytes < 0 || a.Prompt.FeedbackBytes > a.Prompt.Bytes) {
 		return fmt.Errorf("invalid prompt measurement")
 	}
@@ -192,7 +196,7 @@ func validateAttempt(a Attempt) error {
 		}
 	}
 	if stop := a.Usage.NativeStop; stop != nil {
-		if a.Provider != "codex" || stop.Source != "codex.exec.fatal_error" || (stop.Category != "usage_exhausted" && stop.Category != "native_failure") || stop.ObservedAt.IsZero() || stop.ObservedAt.Before(a.StartedAt) || !a.EndedAt.IsZero() && stop.ObservedAt.After(a.EndedAt) {
+		if a.Provider != "codex" || stop.Source != "codex.exec.fatal_error" || (stop.Category != "usage_exhausted" && stop.Category != "native_failure" && stop.Category != "model_capacity") || stop.ObservedAt.IsZero() || stop.ObservedAt.Before(a.StartedAt) || !a.EndedAt.IsZero() && stop.ObservedAt.After(a.EndedAt) {
 			return fmt.Errorf("invalid native usage stop")
 		}
 	}

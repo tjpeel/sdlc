@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.132 - 2026-10-26
+
+- Wait and retry confirmed Codex model-capacity failures up to three times, after 30, 60 and 120 seconds. Resume the same native session with a short continuation prompt, preserve each attempt's usage and diagnostics, and show cancellable waits in progress output. Usage exhaustion, authentication errors and ambiguous failures retain their existing holds.
+
 ## 0.1.0-beta.131 - 2026-10-22
 
 - Add experimental `--review-context pr-link` for new single-ticket runs and adoptions. Independent reviewers receive the PR URL, pinned revisions and a small review contract, choosing focused reads from the exact local checkout and existing controller evidence on disk. Preserve structured findings, coverage validation, cumulative reviews and same-session continuations. Default packet reviews and saved-run selections remain unchanged.

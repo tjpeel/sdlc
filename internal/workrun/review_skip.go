@@ -269,7 +269,7 @@ func legacyReviewFinalized(dir string, a runusage.Attempt) (bool, error) {
 	if after.ObservedAt.Before(a.StartedAt) || after.ObservedAt.After(a.EndedAt) {
 		return false, nil
 	}
-	config := filepath.Join(dir, fmt.Sprintf("native-review-%d", a.Attempt), a.Provider)
+	config := filepath.Join(nativeReviewDirectory(dir, a), a.Provider)
 	if err := realDirectory(config); err != nil {
 		return false, nil
 	}

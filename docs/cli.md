@@ -2694,6 +2694,15 @@ An invalid correction commit in a feedback receipt returns to the same implement
 
 CI status reads retry isolated network failures and HTTP 500/502/503/504 responses up to three attempts, waiting one then five seconds. Pending checks still poll at the normal interval. Authentication, permission, rate-limit, malformed-response and cleanup failures stop immediately; cancellation interrupts backoff.
 
+For a confirmed Codex selected-model capacity failure, native work waits 30, 60
+and 120 seconds before up to three retries in the same session. Progress shows
+each wait; cancellation stops it. Retries preserve the selected model, account,
+workspace, work already completed and all attempt usage records. They send a
+short continuation prompt rather than repeating the task packet. Exhaustion
+leaves the saved run available for ordinary resume. Account usage limits,
+authentication errors and ambiguous or incomplete native failures still stop
+immediately.
+
 When GitHub comment feedback starts from a ready, reviewed PR and every pending assessment is `no_change` with no correction commits, SDLC can reuse the exact candidate’s previous verification and reviews. It confirms the clean local head and tree, frozen inputs, verification keys, published PR boundary and current passing CI before posting replies and returning to ready. It does not request another self-review or independent review. Changed candidates, missing evidence, unresolved comments and new diagnostic or verification requests use the normal workflow. Reply failures retain this boundary for ordinary resume; older saved cycles without a retained reviewed boundary use the normal gates.
 
 Local feedback and accepted independent-review recommendations retain their existing repair and verification workflow.

@@ -92,7 +92,7 @@ func (r Runner) recoverUnnamedReviewGap(ctx context.Context, dir string, j *Jour
 	if err != nil {
 		return refuse()
 	}
-	if err := realDirectory(filepath.Join(dir, fmt.Sprintf("native-review-%d", a.Attempt))); err != nil {
+	if err := realDirectory(nativeReviewDirectory(dir, a)); err != nil {
 		return refuse()
 	}
 	revision, err := r.Repository.Inspect(ctx, snapshot)
@@ -112,7 +112,11 @@ func (r Runner) recoverUnnamedReviewGap(ctx context.Context, dir string, j *Jour
 	copy := *j
 	copy.ReviewReports = append([]ReviewReport(nil), j.ReviewReports...)
 	copy.Outcome = out
-	copy.ReviewContinuation = &ReviewContinuation{Publication: j.Publication, Model: m, Speed: j.Plan.Roles.ReviewSpeed, Tree: revision.Tree, SessionID: a.SessionID, Workspace: relative, StartAttempt: a.Attempt, LastAttempt: a.Attempt, Gaps: out.ReviewCoverage.Gaps, Inspection: out.ReviewCoverage.Inspection, Findings: out.Findings, Recommendations: out.Recommendations}
+	startAttempt := a.SessionStartAttempt
+	if startAttempt == 0 {
+		startAttempt = a.Attempt
+	}
+	copy.ReviewContinuation = &ReviewContinuation{Publication: j.Publication, Model: m, Speed: j.Plan.Roles.ReviewSpeed, Tree: revision.Tree, SessionID: a.SessionID, Workspace: relative, StartAttempt: startAttempt, LastAttempt: a.Attempt, Gaps: out.ReviewCoverage.Gaps, Inspection: out.ReviewCoverage.Inspection, Findings: out.Findings, Recommendations: out.Recommendations}
 	if err := validateReviewContinuation(&copy); err != nil {
 		return err
 	}
