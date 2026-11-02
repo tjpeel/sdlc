@@ -75,7 +75,7 @@ RUN mkdir -p /workspace /home/node/.codex /home/node/.claude /home/node/.t3 /run
     && chown node:node /workspace /home/node/.codex /home/node/.claude /home/node/.t3 \
     && passwd -d node
 
-ARG GH_VERSION=2.103.2
+ARG GH_VERSION=2.103.3
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in amd64) arch=amd64 ;; arm64) arch=arm64 ;; *) exit 1 ;; esac; \
     archive="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
@@ -99,9 +99,9 @@ RUN set -eu; \
         npm install -g "yarn@${YARN_VERSION}"; \
     fi
 
-ARG CODEX_VERSION=0.164.0
-ARG CLAUDE_VERSION=2.1.310
-ARG OPENCODE_VERSION=1.19.4
+ARG CODEX_VERSION=0.166.0
+ARG CLAUDE_VERSION=2.1.316
+ARG OPENCODE_VERSION=1.19.5
 RUN set -eu; \
     set --; \
     npm_release="$(npm --version)"; \
