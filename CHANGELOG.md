@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.138 - 2026-11-04
+
+### Fixed
+
+- Resume Claude sessions when the native client has retained its built-in usage queue, while rejecting other plugin state.
+
 ## 0.1.0-beta.137 - 2026-11-04
 
 ### Fixed

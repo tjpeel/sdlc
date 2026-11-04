@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import stat
@@ -67,6 +68,43 @@ def safe_directory(path, shared=False):
     if not shared:
         os.chmod(path, 0o700)
 
+
+def validate_claude_plugin_store(path):
+    """Allow only Claude's inert built-in usage queue, never plugin code."""
+    def private_dir(directory):
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError("unsafe native plugin store")
+
+    private_dir(path)
+    if {item.name for item in path.iterdir()} != {"store"}:
+        raise ValueError("unexpected native plugin state")
+    store = path / "store"
+    private_dir(store)
+    for item in store.iterdir():
+        if not re.fullmatch(r"cc-plugin-agents-md_builtin-[0-9a-f]{12}\.json", item.name):
+            raise ValueError("unexpected native plugin state")
+        info = item.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 4096):
+            raise ValueError("unsafe native plugin state")
+        fd = os.open(item, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            data = stream.read(4097)
+            after = os.fstat(stream.fileno())
+            current = item.lstat()
+            generation = lambda i: (i.st_dev, i.st_ino, i.st_size, i.st_mtime_ns, i.st_ctime_ns)
+            if len(data) > 4096 or generation(info) != generation(after) or generation(info) != generation(current):
+                raise ValueError("changed native plugin state")
+        try:
+            value = json.loads(data)
+        except (ValueError, UnicodeError):
+            raise ValueError("invalid native plugin state") from None
+        if (not isinstance(value, dict) or set(value) != {"usage-rows-queued"}
+                or not isinstance(value["usage-rows-queued"], str)
+                or not re.fullmatch(r"[0-9a-f-]{36} claude-md-or-agents-md ok", value["usage-rows-queued"])):
+            raise ValueError("unexpected native plugin state")
 
 def auth_link(config, provider, directory):
     if (config / CLAUDE_REFRESH_BASE).exists():
@@ -316,6 +354,9 @@ def headless(provider, model, effort, resume, readonly, directory=Path("/provide
                  "CLAUDE.local.md"):
         path = config / name
         if path.exists() or path.is_symlink():
+            if provider == "claude" and name == "plugins":
+                validate_claude_plugin_store(path)
+                continue
             if provider == "codex" and name == "config.toml":
                 validate_codex_workspace_trust(path)
                 continue

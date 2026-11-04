@@ -481,6 +481,20 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual((self.cache / native.FILES["claude"]).read_bytes(),
                          b"fake-native-first-generation")
 
+    def test_claude_resume_accepts_only_builtin_usage_store(self):
+        config = self.session / "claude"
+        store = config / "plugins" / "store"
+        store.mkdir(parents=True, mode=0o700)
+        (config / "plugins").chmod(0o700)
+        entry = store / "cc-plugin-agents-md_builtin-b049b47b3618.json"
+        entry.write_text(json.dumps({"usage-rows-queued": "00000000-0000-4000-8000-000000000001 claude-md-or-agents-md ok"}))
+        entry.chmod(0o600)
+        self.run_client("claude", ID)
+        (store / "untrusted.json").write_text("{}")
+        with patch.object(subprocess, "Popen") as client, self.assertRaises(ValueError):
+            headless.headless("claude", "example-model", "high", ID, False, self.cache)
+        client.assert_not_called()
+
     def test_cached_customizations_stop_before_native_client(self):
         for name in ("config.toml", "settings.json", "hooks.json", "plugins",
                      "rules", "commands", "output-styles", "workflows", "mcp.json",
