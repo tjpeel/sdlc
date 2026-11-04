@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.137 - 2026-11-04
+
+### Fixed
+
+- Inspect open new Sonar issues independently of the quality gate, provide their details to reviewers, and hold readiness until they are resolved.
+
 ## 0.1.0-beta.136 - 2026-11-04
 
 - Pin the skills catalogue with explicit SDLC lead model selection before ticket launch.

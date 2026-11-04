@@ -25,6 +25,7 @@ var implementationOutcomeSchema = func() string {
 }()
 
 type reviewCIEvidence struct {
+	SonarFindings    *SonarFindings     `json:"sonar_findings,omitempty"`
 	SonarDuplication []SonarDuplication `json:"sonar_duplication,omitempty"`
 	Status           string             `json:"status"`
 }

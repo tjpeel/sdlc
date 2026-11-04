@@ -94,7 +94,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.136`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.137`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -510,7 +510,7 @@ normal checks, signing, publication and review; readiness requires a clean analy
 of the new published head. No findings means no repair agent. An unchanged attempt
 or unavailable/incomplete evidence is retained as a specific hold, not a clean pass.
 
-The default remains advisory; use `"repair_policy": "advisory"` to opt out. This
+The default advisory policy passes open issue details to the reviewer and holds readiness until the issues are resolved; it does not start automatic repairs. Use `"repair_policy": "advisory"` to select it explicitly. This
 policy covers new PR issues, not the repository backlog, and is independent of
 review recommendation acceptance. It requires public SonarCloud analysis access;
 GitHub credentials are never forwarded to Sonar. All configuration and receipts

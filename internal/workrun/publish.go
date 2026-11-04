@@ -729,7 +729,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 		}
 	}
 	if !pending && sonarMeasures {
-		result.SonarDuplication, err = publisher.collectSonarDuplication(ctx, plan, pr)
+		result.SonarDuplication, err = publisher.collectSonarDuplicationForFindings(ctx, plan, pr, result.Status == "passed")
 		if errors.Is(err, errSonarAnalysisPending) {
 			pending = true
 			result.Status = "pending"
@@ -742,7 +742,7 @@ func (publisher GitHubPublisher) Checks(ctx context.Context, plan Plan, pr Publi
 			return CIResult{}, err
 		}
 	}
-	if !pending && sonarMeasures && plan.Sonar.RepairsEnabled() {
+	if !pending && sonarMeasures && (result.Status == "passed" || plan.Sonar.RepairsEnabled()) {
 		result.SonarFindings, err = publisher.collectSonarFindings(ctx, plan, pr, result.SonarDuplication)
 		if errors.Is(err, errSonarAnalysisPending) {
 			result.Status = "pending"

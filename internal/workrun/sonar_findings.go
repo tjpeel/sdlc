@@ -14,12 +14,13 @@ import (
 )
 
 type SonarIssue struct {
-	Key     string `json:"key"`
-	Project string `json:"project"`
-	Rule    string `json:"rule"`
-	Message string `json:"message"`
-	Path    string `json:"path,omitempty"`
-	Line    int    `json:"line,omitempty"`
+	Key      string `json:"key"`
+	Project  string `json:"project"`
+	Rule     string `json:"rule"`
+	Severity string `json:"severity,omitempty"`
+	Message  string `json:"message"`
+	Path     string `json:"path,omitempty"`
+	Line     int    `json:"line,omitempty"`
 }
 
 // Findings are separate from CI status: a passed quality gate may leave issues.
@@ -51,7 +52,7 @@ func validateSonarFindings(f *SonarFindings, pr Publication) error {
 	seen := map[string]bool{}
 	for _, i := range f.Issues {
 		key := i.Project + ":" + i.Key
-		if !projects[i.Project] || !sonarText(i.Key, 240) || seen[key] || !sonarText(i.Rule, 240) || !sonarText(i.Message, 4000) || i.Line < 0 || i.Line > 9999999 || i.Path != "" && !ciSourcePath(i.Path) || i.Path == "" && i.Line != 0 {
+		if !projects[i.Project] || !sonarText(i.Key, 240) || seen[key] || !sonarText(i.Rule, 240) || i.Severity != "" && !sonarText(i.Severity, 240) || !sonarText(i.Message, 4000) || i.Line < 0 || i.Line > 9999999 || i.Path != "" && !ciSourcePath(i.Path) || i.Path == "" && i.Line != 0 {
 			return fmt.Errorf("invalid Sonar issue evidence")
 		}
 		seen[key] = true
@@ -161,7 +162,7 @@ func (p GitHubPublisher) collectSonarFindings(ctx context.Context, plan Plan, pr
 		}
 		for _, m := range measures {
 			u, _ := url.Parse(m.MeasuresURL)
-			if u.Query().Get("id") == project && m.DetailsStatus != "collected" && m.DetailsStatus != "none" {
+			if plan.Sonar.RepairsEnabled() && u.Query().Get("id") == project && m.DetailsStatus != "collected" && m.DetailsStatus != "none" {
 				return nil, fmt.Errorf("Sonar duplication details unavailable; repair cannot omit reported duplication")
 			}
 		}
@@ -172,9 +173,9 @@ func (p GitHubPublisher) collectSonarFindings(ctx context.Context, plan Plan, pr
 				Paging struct{ Total *int }
 				Total  *int
 				Issues []struct {
-					Key, Project, Component, Rule, Message, Status, IssueStatus, Resolution, PullRequest string
-					Line                                                                                 int
-					TextRange                                                                            struct{ StartLine int }
+					Key, Project, Component, Rule, Message, Severity, Status, IssueStatus, Resolution, PullRequest string
+					Line                                                                                           int
+					TextRange                                                                                      struct{ StartLine int }
 				}
 			}
 			q := url.Values{"componentKeys": {project}, "pullRequest": {strconv.Itoa(pr.Number)}, "resolved": {"false"}, "ps": {"100"}, "p": {strconv.Itoa(page)}}
@@ -200,7 +201,7 @@ func (p GitHubPublisher) collectSonarFindings(ctx context.Context, plan Plan, pr
 				if i.Status != "OPEN" && i.Status != "CONFIRMED" && i.Status != "REOPENED" && i.IssueStatus != "OPEN" && i.IssueStatus != "CONFIRMED" {
 					return nil, fmt.Errorf("unknown Sonar issue state")
 				}
-				issue := SonarIssue{Key: i.Key, Project: project, Rule: i.Rule, Message: i.Message, Line: i.Line}
+				issue := SonarIssue{Key: i.Key, Project: project, Rule: i.Rule, Message: i.Message, Severity: i.Severity, Line: i.Line}
 				if issue.Line == 0 {
 					issue.Line = i.TextRange.StartLine
 				}

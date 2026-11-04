@@ -32,7 +32,7 @@ func newSonarPolicyFixture(t *testing.T, count int) (GitHubPublisher, Plan, Publ
 		}
 		issues := []any{}
 		for n := start; n < count && n < start+100; n++ {
-			issues = append(issues, map[string]any{"key": fmt.Sprintf("issue-%03d", n), "project": "example_project", "component": "example_project:src/Example.cs", "rule": "csharpsquid:S1111", "message": "Remove unnecessary repeated work.", "status": "OPEN", "line": n + 1})
+			issues = append(issues, map[string]any{"key": fmt.Sprintf("issue-%03d", n), "project": "example_project", "component": "example_project:src/Example.cs", "rule": "external_roslyn:xUnit1045", "severity": "INFO", "message": "Remove unnecessary repeated work.", "status": "OPEN", "line": n + 1})
 		}
 		data, _ := json.Marshal(map[string]any{"paging": map[string]any{"total": count}, "issues": issues})
 		return json.Unmarshal(data, target)
@@ -65,14 +65,23 @@ func TestSonarIssuePaginationDoesNotDropFindings(t *testing.T) {
 		t.Fatal("issue pagination incomplete", err, *pages)
 	}
 }
-func TestAdvisoryPolicyDoesNotCollectOrGrantSonarIssueRepairs(t *testing.T) {
-	p, plan, pr, pages := newSonarPolicyFixture(t, 5)
+func TestAdvisoryPolicyCollectsOpenSonarIssues(t *testing.T) {
+	p, plan, pr, pages := newSonarPolicyFixture(t, 1)
 	plan.Sonar = project.SonarPolicy{}
+	command := p.Command
+	p.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		data, err := command(ctx, name, args...)
+		return []byte(strings.ReplaceAll(string(data), "1.0%", "0.0%")), err
+	}
 	result, err := p.Checks(context.Background(), plan, pr)
-	if err != nil || result.Status != "passed" || result.SonarFindings != nil || *pages != 0 {
-		t.Fatal("legacy advisory policy changed", result, err)
+	if err != nil || result.Status != "passed" || result.SonarFindings == nil || len(result.SonarFindings.Issues) != 1 || *pages != 1 {
+		t.Fatalf("green gate lost issue: %+v %v", result, err)
+	}
+	if result.SonarFindings.Issues[0].Rule != "external_roslyn:xUnit1045" || result.SonarFindings.Issues[0].Severity != "INFO" || len(result.SonarDuplication) != 1 || result.SonarDuplication[0].Percent != 0 {
+		t.Fatal("issue details lost", result.SonarFindings.Issues)
 	}
 }
+
 func TestSonarPolicyRejectsStalePartialAndOutOfTreeEvidence(t *testing.T) {
 	for _, scenario := range []string{"stale", "partial", "outside", "unavailable", "unknown-state"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -479,5 +488,36 @@ func TestSonarMetricDiscoveryRejectsUnscopedAndIncompleteEvidence(t *testing.T) 
 				t.Fatal("incomplete or unscoped evidence accepted")
 			}
 		})
+	}
+}
+
+func TestAdvisoryOpenIssueBlocksReadyAndReachesReviewer(t *testing.T) {
+	dir, j, r, _ := sonarRepairFixture(t)
+	j.Plan.Sonar = project.SonarPolicy{}
+	j.CI.SonarFindings.Issues[0].Rule = "external_roslyn:xUnit1045"
+	prompt := r.prompt(*j, "review")
+	if !strings.Contains(prompt, "external_roslyn:xUnit1045") || !strings.Contains(prompt, "Fix repeated work.") {
+		t.Fatal("reviewer did not receive issue details")
+	}
+	if err := r.transition(dir, j, "ready"); !errors.Is(err, ErrStopped) || j.State != "blocked" {
+		t.Fatalf("open issue allowed readiness: %s %v", j.State, err)
+	}
+}
+
+func TestAdvisoryCleanSonarAllowsReady(t *testing.T) {
+	dir, j, r, _ := sonarRepairFixture(t)
+	j.Plan.Sonar = project.SonarPolicy{}
+	j.CI.SonarFindings.Issues = nil
+	if err := r.transition(dir, j, "ready"); err != nil || j.State != "ready" {
+		t.Fatalf("clean issue list blocked readiness: %s %v", j.State, err)
+	}
+}
+
+func TestAdvisoryGreenGateCollectsEmptyIssueList(t *testing.T) {
+	p, plan, pr, pages := newSonarPolicyFixture(t, 0)
+	plan.Sonar = project.SonarPolicy{}
+	result, err := p.Checks(context.Background(), plan, pr)
+	if err != nil || result.Status != "passed" || result.SonarFindings == nil || len(result.SonarFindings.Issues) != 0 || *pages != 1 {
+		t.Fatalf("clean issue list not verified: %+v %v", result, err)
 	}
 }

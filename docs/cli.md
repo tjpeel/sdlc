@@ -1119,7 +1119,7 @@ An optional local `sonar.repair_policy` of
 duplication even when required checks pass. It is separate from
 `--auto-accept-recommendations`. Configure it under `sonar` in `.sdlc/project.json`;
 ordinary resume and `--pr-feedback` refresh apply it to existing saved runs.
-The default/explicit `advisory` mode preserves inspection-only treatment.
+The default/explicit `advisory` mode supplies open new issue details to the reviewer and holds readiness until the findings are resolved. It does not authorise automatic repairs.
 
 Strict policy validates the Sonar analysis against the published head before and
 after complete issue pagination, validates locations against regular committed
@@ -1139,8 +1139,9 @@ collection, and restricts paths to regular files in the published GitHub tree.
 Independent review receives both sides of each duplication group; a percentage
 alone does not fail CI or authorise refactoring. Groups can include existing
 duplication, so the reviewer must establish what the PR introduced. Private,
-stale or unavailable Sonar details retain the percentage with an explicit
-unavailable status; no Sonar credentials or raw response prose are forwarded.
+stale or unavailable duplication details retain the percentage with an explicit
+unavailable status. Open issue messages are forwarded as untrusted data; Sonar
+credentials are not forwarded.
 
 Analyzer annotations retain their descriptions even when no rule ID is supplied.
 For verified current-job uploads, supported Trivy JSON reports add vulnerability

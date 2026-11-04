@@ -26,7 +26,17 @@ func TestPassedSonarDuplicationReachesReviewWithoutFailingCI(t *testing.T) {
 	}
 	pr := annotationPublication()
 	pr.Number = 7
-	result, err := (GitHubPublisher{Command: command, SonarJSON: func(context.Context, string, any) error { return fmt.Errorf("offline") }}).Checks(context.Background(), Plan{Repository: "example/project"}, pr)
+	api := func(_ context.Context, endpoint string, target any) error {
+		switch {
+		case strings.HasPrefix(endpoint, "project_pull_requests/list?"):
+			return json.Unmarshal([]byte(`{"pullRequests":[{"key":"7","commit":{"sha":"`+testHead+`"}}]}`), target)
+		case strings.HasPrefix(endpoint, "issues/search?"):
+			return json.Unmarshal([]byte(`{"paging":{"total":0},"issues":[]}`), target)
+		default:
+			return fmt.Errorf("offline")
+		}
+	}
+	result, err := (GitHubPublisher{Command: command, SonarJSON: api}).Checks(context.Background(), Plan{Repository: "example/project"}, pr)
 	if err != nil || result.Status != "passed" || len(result.SonarDuplication) != 1 || result.SonarDuplication[0].Percent != 1 || len(result.Diagnostics) != 0 {
 		t.Fatal(result, err)
 	}
@@ -202,7 +212,7 @@ func TestBranchScopeRecognitionPreservesSonarURLBoundary(t *testing.T) {
 	}
 }
 
-func TestBranchSonarMeasuresDoNotBlockPassedRequiredChecks(t *testing.T) {
+func TestBranchSonarMeasuresCannotCertifyPassedPR(t *testing.T) {
 	f := sonarMeasuresFixture()
 	run := f.responses["repos/example/project/check-runs/17"].(map[string]any)
 	output := run["output"].(map[string]any)
@@ -216,10 +226,7 @@ func TestBranchSonarMeasuresDoNotBlockPassedRequiredChecks(t *testing.T) {
 	pr := annotationPublication()
 	pr.Number = 7
 	result, err := (GitHubPublisher{Command: command}).Checks(context.Background(), Plan{Repository: "example/project"}, pr)
-	if err != nil || result.Status != "passed" || len(result.SonarDuplication) != 0 || !strings.Contains(result.Details, "PR-specific duplication evidence unavailable") {
-		t.Fatalf("advisory scope mismatch blocked CI or masqueraded as PR evidence: %+v, %v", result, err)
-	}
-	if err := validateCIResult(result, pr); err != nil {
-		t.Fatal(err)
+	if err == nil || result.SonarFindings != nil {
+		t.Fatalf("branch analysis certified PR findings: %+v, %v", result, err)
 	}
 }

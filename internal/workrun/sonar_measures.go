@@ -105,6 +105,10 @@ func validateSonarDuplication(measures []SonarDuplication, pr Publication) error
 }
 
 func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan, pr Publication) ([]SonarDuplication, error) {
+	return p.collectSonarDuplicationForFindings(ctx, plan, pr, false)
+}
+
+func (p GitHubPublisher) collectSonarDuplicationForFindings(ctx context.Context, plan Plan, pr Publication, requireFindings bool) ([]SonarDuplication, error) {
 	runs, err := p.ciCheckRuns(ctx, plan.Repository, pr.HeadSHA)
 	if err != nil {
 		return nil, err
@@ -130,7 +134,7 @@ func (p GitHubPublisher) collectSonarDuplication(ctx context.Context, plan Plan,
 			return nil, fmt.Errorf("ambiguous Sonar duplication measure")
 		}
 		if len(matches) == 0 {
-			if plan.Sonar.RepairsEnabled() {
+			if requireFindings || plan.Sonar.RepairsEnabled() {
 				measure, err := p.sonarMeasureFromCheck(ctx, pr, run)
 				if err != nil {
 					return nil, err
