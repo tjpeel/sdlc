@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.134 - 2026-11-04
+
+- Update the pinned Claude Code version for subsequent runtime builds.
+
 ## 0.1.0-beta.133 - 2026-11-04
 
 - Pin the skills catalogue with the host SDLC ticket orchestration skill for subsequent runtime builds.
