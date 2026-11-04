@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.133 - 2026-11-04
+
+- Pin the skills catalogue with the host SDLC ticket orchestration skill for subsequent runtime builds.
+
 ## 0.1.0-beta.132 - 2026-10-26
 
 - Wait and retry confirmed Codex model-capacity failures up to three times, after 30, 60 and 120 seconds. Resume the same native session with a short continuation prompt, preserve each attempt's usage and diagnostics, and show cancellable waits in progress output. Usage exhaustion, authentication errors and ambiguous failures retain their existing holds.
