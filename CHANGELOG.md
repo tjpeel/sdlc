@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.136 - 2026-11-04
+
+- Pin the skills catalogue with explicit SDLC lead model selection before ticket launch.
+
 ## 0.1.0-beta.135 - 2026-11-04
 
 - When the anonymous GitHub API quota is exhausted, use the authenticated GitHub CLI for public runtime dependency metadata. Other access failures still stop the update.
