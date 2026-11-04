@@ -7,6 +7,10 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.135 - 2026-11-04
+
+- When the anonymous GitHub API quota is exhausted, use the authenticated GitHub CLI for public runtime dependency metadata. Other access failures still stop the update.
+
 ## 0.1.0-beta.134 - 2026-11-04
 
 - Update the pinned Claude Code version for subsequent runtime builds.

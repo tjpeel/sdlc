@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -362,5 +364,60 @@ func TestInvalidInventoryMakesNoRequests(t *testing.T) {
 	})
 	if _, err := (Checker{client}).Check(context.Background(), inventory, false, packages); err == nil {
 		t.Fatal("invalid inventory accepted")
+	}
+}
+
+func TestGitHubRateLimitUsesAuthenticatedCLIOnlyForConfirmedExhaustion(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "called")
+	program := "#!/bin/sh\nprintf called > \"$SDLC_TEST_MARKER\"\nprintf 'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nLink: <https://api.github.com/repos/docker/cli/tags?per_page=100&page=2>; rel=\"next\"\\r\\n\\r\\n{\"tag_name\":\"v2.2.0\"}'\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(program), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("SDLC_TEST_MARKER", marker)
+	for _, scenario := range []struct {
+		name        string
+		remaining   string
+		wantSuccess bool
+	}{
+		{"rate limited", "0", true}, {"other forbidden", "", false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			_ = os.Remove(marker)
+			client := statusClientFunc(func(*http.Request) (*http.Response, error) {
+				header := make(http.Header)
+				if scenario.remaining != "" {
+					header.Set("X-RateLimit-Remaining", scenario.remaining)
+				}
+				return &http.Response{StatusCode: 403, Header: header, Body: io.NopCloser(strings.NewReader("forbidden"))}, nil
+			})
+			f := (&Checker{Client: client}).fetcher()
+			body, headers, err := f.get(context.Background(), "https://api.github.com/repos/cli/cli/releases/latest", "application/json", "")
+			_, statErr := os.Stat(marker)
+			if scenario.wantSuccess {
+				if err != nil || string(body) != `{"tag_name":"v2.2.0"}` || headers.Get("Link") == "" || statErr != nil {
+					t.Fatalf("body %q headers %v error %v marker %v", body, headers, err, statErr)
+				}
+			} else if err == nil || !os.IsNotExist(statErr) {
+				t.Fatalf("unexpected fallback: error %v marker %v", err, statErr)
+			}
+		})
+	}
+}
+
+type statusClientFunc func(*http.Request) (*http.Response, error)
+
+func (f statusClientFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestGitHubRateLimitWithoutCLIStopsMetadataLookup(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	client := statusClientFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 403, Header: http.Header{"X-Ratelimit-Remaining": []string{"0"}}, Body: io.NopCloser(strings.NewReader("forbidden"))}, nil
+	})
+	f := (&Checker{Client: client}).fetcher()
+	body, _, err := f.get(context.Background(), "https://api.github.com/repos/cli/cli/releases/latest", "application/json", "")
+	if err == nil || !strings.Contains(err.Error(), "authenticated gh metadata request failed") || body != nil {
+		t.Fatalf("body %q error %v", body, err)
 	}
 }

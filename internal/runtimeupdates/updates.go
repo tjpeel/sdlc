@@ -2,6 +2,8 @@
 package runtimeupdates
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,7 +61,8 @@ func New() Checker {
 	}}
 }
 
-// Check never writes pins, installs packages or loads account credentials.
+// Check never writes pins or installs packages. On confirmed GitHub anonymous rate
+// exhaustion, the GitHub CLI may use its existing login for public metadata.
 // Callers bound the whole check with their context; each HTTP request is also bounded.
 func (checker Checker) Check(ctx context.Context, inventory runtimeimage.Inventory, offline bool,
 	packages func(context.Context) ([]runtimeimage.PackageUpdate, error)) (Report, error) {
@@ -213,6 +217,15 @@ func (fetch *fetcher) get(ctx context.Context, address, accept, token string) ([
 		return nil, nil, cached.err
 	}
 	defer result.Body.Close()
+	if result.StatusCode == http.StatusForbidden && request.URL.Scheme == "https" && request.URL.Host == "api.github.com" && request.URL.User == nil && result.Header.Get("X-RateLimit-Remaining") == "0" {
+		data, headers, fallbackErr := githubMetadataWithCLI(ctx, address, accept)
+		if fallbackErr == nil {
+			cached.data, cached.headers = data, headers
+			return cached.data, cached.headers, nil
+		}
+		cached.err = fmt.Errorf("GitHub anonymous rate limit exhausted; authenticated gh metadata request failed")
+		return nil, nil, cached.err
+	}
 	if result.StatusCode != http.StatusOK {
 		cached.err = &metadataHTTPError{status: result.StatusCode}
 		return nil, nil, cached.err
@@ -224,6 +237,40 @@ func (fetch *fetcher) get(ctx context.Context, address, accept, token string) ([
 	}
 	cached.data, cached.headers = data, result.Header.Clone()
 	return cached.data, cached.headers, nil
+}
+
+// githubMetadataWithCLI uses the official client without reading or exposing its credentials.
+func githubMetadataWithCLI(ctx context.Context, address, accept string) ([]byte, http.Header, error) {
+	command := exec.CommandContext(ctx, "gh", "api", "--include", "--method", "GET", "--header", "Accept: "+accept, "--header", "X-GitHub-Api-Version: 2022-11-28", address)
+	pipe, err := command.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = command.Start(); err != nil {
+		return nil, nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(pipe, maximumResponse+65537))
+	if readErr != nil || len(data) > maximumResponse+65536 {
+		_ = command.Process.Kill()
+	}
+	waitErr := command.Wait()
+	if readErr != nil || len(data) > maximumResponse+65536 || waitErr != nil {
+		return nil, nil, errors.New("GitHub CLI request failed")
+	}
+	reader := bufio.NewReader(bytes.NewReader(data))
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		return nil, nil, errors.New("invalid GitHub CLI response")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, nil, errors.New("GitHub CLI returned non-success status")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponse+1))
+	if err != nil || len(body) > maximumResponse {
+		return nil, nil, errors.New("invalid GitHub CLI response body")
+	}
+	return body, response.Header.Clone(), nil
 }
 
 func (fetch *fetcher) json(ctx context.Context, address string, target any) error {

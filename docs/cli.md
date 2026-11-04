@@ -1753,6 +1753,12 @@ pulling new images, saving pins or rebuilding. It makes no provider model reques
 or vault connection. The executing command repeats planning before rebuilding;
 it does not apply an earlier preview whose metadata may have changed.
 
+GitHub metadata is normally fetched anonymously. When GitHub reports the anonymous
+rate limit exhausted, SDLC uses the installed `gh` client and its active GitHub
+login to retrieve the same public metadata. If `gh` is unavailable or not logged
+in, the update stops; authenticate through `gh auth login` or retry after the
+rate limit resets. Other access failures do not trigger this fallback.
+
 The update covers Codex, Claude Code, GitHub CLI, npm, Yarn, Compose, Buildx, the
 skills and agents catalogues, Node, .NET SDK/runtime packs and installed Debian
 packages. It also refreshes the Go publisher builder, Docker CLI image, isolated
