@@ -18,6 +18,7 @@ import (
 func runtimeRemoveCommand(ctx context.Context, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("runtime remove", flag.ContinueOnError)
 	flags.SetOutput(out)
+	flags.Usage = func() { fmt.Fprintln(out, "Usage: sdlc runtime remove [--force] NAME"); flags.PrintDefaults() }
 	force := flags.Bool("force", false, "allow removal when stopped saved work references this runtime")
 	// Accept the conventional flag position after the runtime name as well.
 	if len(args) == 2 && args[1] == "--force" && !strings.HasPrefix(args[0], "-") {

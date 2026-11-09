@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"github.com/tjpeel/sdlc/internal/workrun"
+	"testing"
+)
 
 func TestParseResumeRebase(t *testing.T) {
 	base := []string{"--reference", "TASK-1", "--ticket", "01-work.md", "--resume", "abc123", "--rebase"}
@@ -16,5 +19,18 @@ func TestParseResumeRebase(t *testing.T) {
 	}
 	if _, err := parseRunOptions([]string{"--reference", "TASK-1", "--ticket", "01-work.md", "--rebase"}); err == nil {
 		t.Fatal("accepted rebase without resume")
+	}
+}
+
+func TestRebasePreviewShowsUnpublishedCandidate(t *testing.T) {
+	j := &workrun.Journal{Evidence: workrun.CheckEvidence{Head: "checked"}}
+	plan := rebaseDryRunPlan(j)
+	if plan["recorded_head"] != "checked" || plan["target"] != "current live base branch (verified during execution)" {
+		t.Fatal(plan)
+	}
+	j.Publication = workrun.Publication{Number: 1, HeadSHA: "published"}
+	plan = rebaseDryRunPlan(j)
+	if plan["recorded_head"] != "published" || plan["target"] != "current live PR target (verified during execution)" {
+		t.Fatal(plan)
 	}
 }

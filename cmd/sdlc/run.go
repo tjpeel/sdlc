@@ -859,7 +859,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		return nil
 	}
 	if options.dryRun && options.rebase {
-		return json.NewEncoder(output).Encode(map[string]any{"action": "rebase", "run_id": journal.ID, "recorded_base": journal.Plan.Base, "recorded_base_sha": journal.Plan.BaseSHA, "recorded_head": journal.Publication.HeadSHA, "target": "current live PR target (verified during execution)", "offline": true})
+		return json.NewEncoder(output).Encode(rebaseDryRunPlan(&journal))
 	}
 	if options.dryRun && options.startAt != "" {
 		return json.NewEncoder(output).Encode(map[string]any{"action": "pr_checkpoint", "start_at": options.startAt, "human_reviewed": options.humanReviewed, "run": journal.ID, "head": journal.Publication.HeadSHA, "offline": true, "remote_verified": false})
@@ -1227,4 +1227,14 @@ func printReviewRepairIncreasePlan(output io.Writer, j workrun.Journal, limit in
 		Attempt        int       `json:"attempt"`
 		Rounds         int       `json:"rounds"`
 	}{"resume", true, j.ID, j.UpdatedAt, j.ReviewRepairBudget.Limit, limit, j.ReviewRepairBudget.Used, j.Attempt, j.Rounds})
+}
+
+func rebaseDryRunPlan(journal *workrun.Journal) map[string]any {
+	head := journal.Publication.HeadSHA
+	target := "current live PR target (verified during execution)"
+	if journal.Publication.Number == 0 {
+		head = journal.Evidence.Head
+		target = "current live base branch (verified during execution)"
+	}
+	return map[string]any{"action": "rebase", "run_id": journal.ID, "recorded_base": journal.Plan.Base, "recorded_base_sha": journal.Plan.BaseSHA, "recorded_head": head, "target": target, "offline": true}
 }

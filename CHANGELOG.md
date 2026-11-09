@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.141 - 2026-11-09
+
+### Changed
+- Show the checked candidate and base branch in unpublished rebase previews.
+
 ## 0.1.0-beta.140 - 2026-11-09
 
 ### Added
