@@ -22,6 +22,9 @@ func runtimeSelectionCommand(ctx context.Context, args []string, out io.Writer) 
 	if err != nil {
 		return err
 	}
+	if args[0] == "remove" {
+		return runtimeRemoveCommand(ctx, args[1:], out)
+	}
 	if len(args) == 2 && args[1] == "--help" && args[0] != "migrate" {
 		if args[0] == "use" {
 			fmt.Fprintln(out, "Usage: sdlc runtime use NAME (use local for the original runtime)")

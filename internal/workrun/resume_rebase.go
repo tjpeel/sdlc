@@ -99,10 +99,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, nil
 	}
 	if j.Publication.Number == 0 {
-		if r.Rebase {
-			return false, fmt.Errorf("rebase requires a published PR")
-		}
-		return false, nil
+		return r.rebaseUnpublished(ctx, directory, j)
 	}
 	p, ok := r.Publisher.(resumeUpstreamPublisher)
 	if !ok {

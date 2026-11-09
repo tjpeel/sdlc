@@ -94,7 +94,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	var options runOptions
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	flags.BoolVar(&options.rebase, "rebase", false, "rebase saved PR commits onto its current target branch")
+	flags.BoolVar(&options.rebase, "rebase", false, "rebase a saved candidate onto its current target branch")
 	flags.StringVar(&options.startAt, "start-at", "", "PR entry point: awaiting-feedback, checks, review or feedback")
 	flags.BoolVar(&options.humanReviewed, "human-reviewed", false, "declare the captured PR head reviewed by a human")
 	flags.StringVar(&options.adoptURL, "pr", "", "adopt an existing same-repository PR by URL")

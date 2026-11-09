@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.140 - 2026-11-09
+
+### Added
+- Rebase a checked, unpublished candidate blocked by a changed base, retaining the run and requiring new checks and review.
+- Remove a non-default runtime, with a force option for stopped saved work.
+
+
 ## 0.1.0-beta.139 - 2026-11-09
 
 ### Added

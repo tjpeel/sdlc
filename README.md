@@ -94,7 +94,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.139`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.140`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -489,6 +489,8 @@ CI repairs retain the normal checks and review path. Publication uses
 the recorded remote head as an exact lease. Recommendation policy and PR feedback
 are unchanged; `--rebase` cannot be combined with feedback or acceptance options.
 Use `--dry-run` for an offline plan; it does not query GitHub or modify history.
+
+For a standalone run blocked at its first publication because the base advanced, the same command rebases its checked, clean candidate after verifying that its destination branch and PR do not exist. The controller retains the run and session, invalidates prior checks and requires fresh checks and review before publication. An interrupted rebase resumes from its saved checkpoint; a moving base or existing destination stops recovery for inspection.
 
 ### Sonar repair policy
 
