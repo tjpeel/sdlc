@@ -28,6 +28,14 @@ func copyPins(pins *runtimepins.Pins) *runtimepins.Pins {
 	return &result
 }
 
+// EnsureNoDependentContainers conservatively excludes any old-image worker before migration.
+func (manager Manager) EnsureNoDependentContainers(ctx context.Context, id string) error {
+	if !imageID.MatchString(id) {
+		return fmt.Errorf("invalid recorded runtime image")
+	}
+	return manager.noDependentContainers(ctx, id)
+}
+
 func (manager Manager) noDependentContainers(ctx context.Context, id string) error {
 	if id == "" {
 		return nil

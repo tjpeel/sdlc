@@ -36,6 +36,7 @@ import (
 // Settings are private controller state. They contain metadata and hashes, never
 // credential contents, and are frozen once for all of a feature's ticket runs.
 type seriesSettings struct {
+	RuntimeName               string `json:"runtime_name,omitempty"`
 	Headroom                  headroom.Config
 	Version                   int
 	Provider                  string
@@ -250,6 +251,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			}
 			selections, err = selectSeriesSettings(ctx, manager.Directory, plan, options)
 			selections.Roles = previous.Roles
+			selections.RuntimeName = previous.RuntimeName
 		}
 	} else {
 		// Constructing the manager only selects a local settings directory.
@@ -259,6 +261,9 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			return managerErr
 		}
 		selections, err = selectSeriesSettings(ctx, manager.Directory, plan, options)
+		if err == nil {
+			selections.RuntimeName, err = runtimeimage.ReadDefaultName(manager.Directory)
+		}
 	}
 	if err != nil {
 		return err
@@ -278,6 +283,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 			return json.NewEncoder(output).Encode(struct {
 				Version            int                                     `json:"version"`
 				Mode               string                                  `json:"mode"`
+				RuntimeName        string                                  `json:"runtime_name"`
 				Offline            bool                                    `json:"offline"`
 				Plan               workseries.Plan                         `json:"plan"`
 				Parallel           int                                     `json:"parallel"`
@@ -295,8 +301,13 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 				InputHashes        map[string]string                       `json:"input_hashes,omitempty"`
 				Saved              map[string]workseries.Result            `json:"saved,omitempty"`
 				Notice             string                                  `json:"notice"`
-			}{1, "feature", true, plan, options.parallel, options.watch, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.TicketInputContext, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
+			}{1, "feature", selections.RuntimeName, true, plan, options.parallel, options.watch, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.TicketInputContext, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
 		}
+		label := selections.RuntimeName
+		if label == "" {
+			label = "local"
+		}
+		fmt.Fprintf(output, "Selected runtime: %s.\n", label)
 		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
 		for _, ticket := range plan.Tickets {
 			if previous, ok := state.Results[ticket.File]; ok {
@@ -332,7 +343,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	defer cancel()
 	writer := &seriesWriter{w: output}
 	options.terminal = dashboardTerminal(output)
-	runtime, err := runtimeimage.New(writer, io.Discard)
+	runtime, err := runtimeimage.NewNamed(writer, io.Discard, selections.RuntimeName)
 	if err != nil {
 		return err
 	}
@@ -966,6 +977,7 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	roles := d.settings.Roles[ticket.File]
 	options.provider = roles.Implementation.Provider
 	options.frozenRoles, options.frozenConfig = &roles, &d.settings.Config
+	options.runtimeName = d.settings.RuntimeName
 	options.frozenImage, options.frozenIdentity = d.settings.ImageID, d.settings.Identity
 	options.headroomMode, options.frozenHeadroom = seriesHeadroomMode(d.settings.Headroom), &d.settings.Headroom
 	options.frozenInstructions = &d.settings.Instructions

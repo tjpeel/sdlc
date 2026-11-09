@@ -47,6 +47,16 @@ func adoptSelectedCommand(ctx context.Context, options runOptions, output io.Wri
 	if err != nil {
 		return err
 	}
+	if !options.supplied["runtime"] && options.runtimeName == "" {
+		base, err := runtimeimage.New(io.Discard, io.Discard)
+		if err != nil {
+			return err
+		}
+		options.runtimeName, err = runtimeimage.ReadDefaultName(base.Directory)
+		if err != nil {
+			return err
+		}
+	}
 	// Even the offline preview checks the selected checkout and repository binding.
 	runtime, err := runtimeimage.NewNamed(output, io.Discard, options.runtimeName)
 	if err != nil {

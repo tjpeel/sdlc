@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.139 - 2026-11-09
+
+### Added
+- List recorded runtimes and pinned runs, and select a default for new work.
+- Migrate a stopped, unpublished formatter SDK hold to a verified named runtime while retaining its workspace and prior session.
+
 ## 0.1.0-beta.138 - 2026-11-04
 
 ### Fixed

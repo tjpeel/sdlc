@@ -19,6 +19,9 @@ import (
 )
 
 func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.Writer) error {
+	if len(args) > 0 && (args[0] == "list" || args[0] == "use" || args[0] == "migrate") {
+		return runtimeSelectionCommand(ctx, args, output)
+	}
 	if len(args) > 0 && args[0] == "headroom" {
 		return headroomCommand(ctx, args[1:], output, diagnostics)
 	}
@@ -87,6 +90,26 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 			return fmt.Errorf("runtime build --dry-run requires --dependencies")
 		}
 	}
+	if args[0] == "status" {
+		explicitName := false
+		flags.Visit(func(f *flag.Flag) {
+			if f.Name == "name" {
+				explicitName = true
+			}
+		})
+		if name == "local" {
+			name = ""
+		} else if !explicitName {
+			base, err := runtimeimage.New(io.Discard, io.Discard)
+			if err != nil {
+				return err
+			}
+			name, err = runtimeimage.ReadDefaultName(base.Directory)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	manager, err := runtimeimage.NewNamed(output, diagnostics, name)
 	if err != nil {
 		return err
@@ -102,7 +125,7 @@ func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.W
 	}
 	if args[0] == "update" {
 		if name != "" {
-			return fmt.Errorf("named runtimes use runtime build --name NAME; runtime update manages the default runtime")
+			return fmt.Errorf("named runtimes use runtime build --name NAME; runtime update manages the original local runtime")
 		}
 		return runtimeUpdateWithSourcePolicy(ctx, manager, runtimeupdates.New(), source, dryRun, agentTools, updateDockerfile, output)
 	}

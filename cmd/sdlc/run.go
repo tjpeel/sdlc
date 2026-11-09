@@ -255,6 +255,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 	if options.supplied["runtime"] && options.runtimeName == "" {
 		return options, fmt.Errorf("--runtime cannot be empty")
 	}
+	if options.runtimeName == "local" {
+		options.runtimeName = ""
+	}
 	if err := runtimeimage.ValidateName(options.runtimeName); err != nil {
 		return options, err
 	}
@@ -452,6 +455,16 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			if _, inspectErr := os.Lstat(filepath.Join(candidate, "journal.json")); inspectErr == nil {
 				options.resume = options.runID
 			}
+		}
+	}
+	if options.resume == "" && !options.featureOwned && !options.supplied["runtime"] && options.runtimeName == "" {
+		options.runtimeName, err = runtimeimage.ReadDefaultName(runtime.Directory)
+		if err != nil {
+			return err
+		}
+		runtime, err = runtimeimage.NewNamed(output, io.Discard, options.runtimeName)
+		if err != nil {
+			return err
 		}
 	}
 	if options.resume != "" {

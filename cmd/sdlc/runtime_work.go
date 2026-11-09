@@ -72,7 +72,7 @@ func runtimeSavedWorkGuard(stateDirectory, source string) func(context.Context, 
 			if !view.Available && !view.Preparation {
 				return fmt.Errorf("cannot verify saved run %s; resolve its saved state before replacing the runtime; use sdlc update --sdlc-only", view.ID)
 			}
-			if view.Journal != nil && view.Journal.ImageID == previous.ImageID {
+			if view.Journal != nil && workrun.ReferencesRuntimeImage(*view.Journal, previous.ImageID) {
 				if view.Live {
 					return fmt.Errorf("cannot replace runtime while run %s has an active controller", view.ID)
 				}
@@ -246,7 +246,7 @@ func scanRuntimeWork(ctx context.Context, root, image string, blocked map[string
 				if err != nil || journalRoot != root || journal.Plan.Reference != filepath.Base(ref) {
 					return fmt.Errorf("saved run identity does not match its directory")
 				}
-				if journal.ImageID == image {
+				if workrun.ReferencesRuntimeImage(journal, image) {
 					lock, err := probeRunController(run)
 					if err != nil {
 						return fmt.Errorf("cannot verify stopped controller for run %s: %w", journal.ID, err)

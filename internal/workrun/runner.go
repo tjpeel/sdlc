@@ -607,6 +607,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err := runner.feedbackPrompt(directory, journal); err != nil {
 				return err
 			}
+			if len(journal.RuntimeMigrations) != 0 && journal.SessionID == "" && journal.Attempt > journal.RuntimeMigrations[len(journal.RuntimeMigrations)-1].PreviousAttempt {
+				return runner.stop(directory, journal, "blocked", "the migrated native session was interrupted before its identity was recorded; inspect the retained session rather than starting another")
+			}
 			result, err := runner.session(ctx, directory, journal, "implementation", journal.Workspace, journal.SessionID)
 			if result.SessionID != "" {
 				if journal.SessionID != "" && result.SessionID != journal.SessionID {
@@ -1002,6 +1005,9 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 	defer diagnostic.Close()
 	model := journal.Plan.Roles.Implementation
 	nativeDirectory := filepath.Join(directory, "native-implementation")
+	if role == "implementation" && len(journal.RuntimeMigrations) != 0 {
+		nativeDirectory = filepath.Join(directory, journal.RuntimeMigrations[len(journal.RuntimeMigrations)-1].SessionDirectory)
+	}
 	if role == "review" {
 		model = selectedReviewModel(journal)
 		nativeDirectory = filepath.Join(directory, fmt.Sprintf("native-review-%d", journal.Attempt))

@@ -110,3 +110,15 @@ and default runtime stay unchanged. Exact selections are saved privately for
 this named runtime; a later ordinary build retains them for the same source.
 Pass local catalogue paths again when rebuilding. Existing saved-work guards
 and `--force` retention rules still apply.
+
+## Selecting and inspecting runtimes
+
+`sdlc runtime list` shows recorded runtime images, their .NET inventory registered runs using each image, and discoverable unfinished work from known projects. It reports unavailable images or incomplete scans; archived work and unknown projects are excluded. `sdlc runtime use NAME` selects an available runtime for new standalone runs, adoptions and feature runs; use `local` to select the original local image. Existing runs and features retain their recorded selection. Use `--runtime local` to explicitly select the original image for a new standalone run. `sdlc runtime status` reports the selected default; `--name local` reports the original image. Runtime build and update commands still target their documented runtime names and do not replace another named image merely because it is the default for new work.
+
+## Migrating a stopped formatter SDK hold
+
+For a stopped, unpublished standalone implementation run blocked by a corroborated formatter SDK mismatch, build a separate named runtime whose inventory contains the exact SDK required by the saved workspace. Inspect `sdlc runtime migrate --run RUN_ID --to NAME --dry-run`, then run the same command without `--dry-run` when the transition is authorised. Resume the existing run normally.
+
+Migration retains its workspace, frozen inputs, original checkpoint, prior native session, identity and accounting, and records the previous runtime. It starts a fresh native implementation session and requires formatting, checks and review again. The old image remains protected while migrated work is unfinished. Migration refuses provider, access, usage and policy holds, active or feature-owned runs, published runs, pending recovery and existing session-limit grants; it is not a general runtime upgrade or a way to bypass a hold. A migration occurs at most once per run. If a retained formatter log or the target SDK does not establish the mismatch, resolve the issue through the existing recovery workflow instead. If the new native session is interrupted before its identity is recorded, SDLC stops instead of starting another session; inspect the retained attempt and session state before recovery.
+
+The migrated journal requires a CLI that understands runtime migrations. Older CLI versions cannot resume it; do not manually replace its checkpoint with the saved pre-migration copy after the new session has made progress. The prior checkpoint is retained as private evidence, not an automatic rollback mechanism.

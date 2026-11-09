@@ -299,6 +299,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	RuntimeMigrations         []RuntimeMigration      `json:"runtime_migrations,omitempty"`
 	ReviewPlan                *IncrementalReviewPlan  `json:"incremental_review_plan,omitempty"`
 	SelfReview                *SelfReviewBoundary     `json:"implementation_self_review,omitempty"`
 	ReviewReuse               *ReviewReuse            `json:"independent_review_reuse,omitempty"`

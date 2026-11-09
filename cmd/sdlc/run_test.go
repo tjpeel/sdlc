@@ -591,7 +591,7 @@ func TestRunNamedRuntimePlanAndResumeSelection(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Plan.RuntimeName != "reviewed-skills" {
 		t.Fatalf("runtime selection absent from plan: %+v %v", result, err)
 	}
-	for _, extra := range [][]string{{"--runtime", "../escape"}, {"--runtime", "local"}, {"--runtime", ""}, {"--runtime", "reviewed-skills", "--resume", "abc"}} {
+	for _, extra := range [][]string{{"--runtime", "../escape"}, {"--runtime", ""}, {"--runtime", "reviewed-skills", "--resume", "abc"}} {
 		if _, err := parseRunOptions(runArgs(extra...)); err == nil {
 			t.Fatalf("invalid runtime selection accepted: %v", extra)
 		}

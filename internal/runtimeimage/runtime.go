@@ -527,6 +527,9 @@ func (manager Manager) restoreSharedTag(oldID string) error {
 	return err
 }
 
+// RecordedState reads the selected runtime metadata without asserting Docker availability.
+func (manager Manager) RecordedState() (State, error) { return manager.read() }
+
 func (manager Manager) Status(ctx context.Context) (State, error) {
 	state, err := manager.read()
 	if err != nil {

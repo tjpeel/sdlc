@@ -119,6 +119,7 @@ func main() {
 		fmt.Println("         Required provider route: saved Headroom proxy; ticket runtime: --runtime NAME")
 		fmt.Println("       sdlc usage [--since 7d] [--scope project|installation] [--run RUN_ID] [--json]")
 		fmt.Println("       sdlc progress --run RUN_ID | --launch-id UUID [--once | --follow] [--json]")
+		fmt.Println("       sdlc runtime list | use NAME | migrate --run RUN_ID --to NAME [--dry-run]")
 		fmt.Println("       sdlc runtime headroom set --proxy-url URL | status (saved route for new runs)")
 		fmt.Println("         Offline plan: --dry-run --json; independent iTerm2 controller: --terminal background [--launch-id UUID] [--json]")
 		fmt.Println("       sdlc dashboard [--once | --json] [--scope project|installation] [--page N] [--run RUN_ID] [--logs]")
