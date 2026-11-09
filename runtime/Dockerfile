@@ -99,8 +99,8 @@ RUN set -eu; \
         npm install -g "yarn@${YARN_VERSION}"; \
     fi
 
-ARG CODEX_VERSION=0.166.0
-ARG CLAUDE_VERSION=2.1.318
+ARG CODEX_VERSION=0.167.0
+ARG CLAUDE_VERSION=2.1.319
 ARG OPENCODE_VERSION=1.19.5
 RUN set -eu; \
     set --; \
