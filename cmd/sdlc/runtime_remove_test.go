@@ -53,6 +53,45 @@ func TestRuntimeRemoveRejectsDefaultEvenWithForce(t *testing.T) {
 	}
 }
 
+func TestRuntimeRemoveMissingTagStillProtectsSavedWork(t *testing.T) {
+	j, _ := attentionFixture(t)
+	id := "sha256:" + strings.Repeat("a", 64)
+	j.ImageID = id
+	if err := workrun.Save(filepath.Dir(j.Workspace), &j); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(runtimeimage.State{Version: 1, Name: "missing", Engine: "test-engine", ImageID: id, Source: j.Plan.Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(os.Getenv("SDLC_STATE_DIR"), "runtime.missing.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$1 $2\" in 'info --format') echo '{\"id\":\"test-engine\",\"os\":\"linux\"}';; 'image inspect') exit 1;; 'image ls'|'ps --all') exit 0;; *) exit 1;; esac\n"
+	if err := os.WriteFile(filepath.Join(j.Plan.Root, "fake-bin", "docker"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_HOST", "unix:///test.sock")
+	t.Setenv("DOCKER_CONTEXT", "")
+	var out bytes.Buffer
+	if err := runtimeRemoveCommand(context.Background(), []string{"missing"}, &out); err == nil {
+		t.Fatal("removed a runtime referenced by saved work")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtimeRemoveCommand(context.Background(), []string{"--force", "missing"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("stale record retained")
+	}
+	if !strings.Contains(out.String(), "may no longer resume") {
+		t.Fatal("missing warning")
+	}
+}
+
 func TestRuntimeRemoveProtectsReadyRegisteredRuns(t *testing.T) {
 	j, _ := attentionFixture(t)
 	id := "sha256:" + strings.Repeat("b", 64)

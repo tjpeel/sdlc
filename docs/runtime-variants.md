@@ -125,4 +125,6 @@ The migrated journal requires a CLI that understands runtime migrations. Older C
 
 ## Removing a runtime
 
+Runtime records remain in the installation state even if Docker tags are removed outside SDLC. Removal also clears a record whose tag is confirmed missing on its recorded Docker engine, subject to the same saved-work and container checks. If Docker is unavailable or the engine differs, removal cannot verify the tag and retains the record.
+
 Select another default first, then run `sdlc runtime remove NAME`. Use `local` for the original local runtime. Removal refuses active controllers, dependent containers, unverifiable saved work and stopped work that references the image. `sdlc runtime remove --force NAME` permits removal despite stopped saved work, but retains its files and warns that it may no longer resume. Force does not bypass the other checks. The runtime tag and record are removed; other tags referencing the same image are left alone.

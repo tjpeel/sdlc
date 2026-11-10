@@ -56,7 +56,7 @@ func runtimeRemoveCommand(ctx context.Context, args []string, out io.Writer) err
 	if name == selected {
 		return fmt.Errorf("cannot remove the default runtime; select another runtime first")
 	}
-	state, err := manager.Status(ctx)
+	state, err := manager.RecordedState()
 	if err != nil {
 		return err
 	}

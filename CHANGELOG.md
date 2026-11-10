@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.142 - 2026-11-10
+
+### Fixed
+
+- Remove stale runtime records when their Docker tags are missing, while retaining saved-work and container protections.
+
 ## 0.1.0-beta.141 - 2026-11-09
 
 ### Changed
