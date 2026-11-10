@@ -63,17 +63,20 @@ func (r Runner) finishUnchangedFeedback(ctx context.Context, dir string, j *Jour
 	if err := verifyInputs(filepath.Join(dir, "check-inputs"), j.Plan.CheckInputs); err != nil {
 		return true, r.stop(dir, j, "blocked", err.Error())
 	}
-	checks, err := r.readPublishedCI(ctx, dir, j)
-	if err == nil {
-		err = validateCIResult(checks, j.Publication)
+	if !locallyCheckedRebase(j) {
+		checks, err := r.readPublishedCI(ctx, dir, j)
+		if err == nil {
+			err = validateCIResult(checks, j.Publication)
+		}
+		if err != nil {
+			return true, r.stop(dir, j, "blocked", err.Error())
+		}
+		if checks.Status != "passed" {
+			return true, r.stop(dir, j, "blocked", "CI changed during unchanged-feedback assessment; existing review cannot be reused")
+		}
+		j.CI = checks
 	}
-	if err != nil {
-		return true, r.stop(dir, j, "blocked", err.Error())
-	}
-	if checks.Status != "passed" {
-		return true, r.stop(dir, j, "blocked", "CI changed during unchanged-feedback assessment; existing review cannot be reused")
-	}
-	j.CI = checks
+
 	final := out
 	final.Status = "implemented" // Finalise the no-change receipts, without asserting a new review occurred.
 	if !accepted {
@@ -96,6 +99,12 @@ func (r Runner) finishUnchangedFeedback(ctx context.Context, dir string, j *Jour
 	j.Outcome.Status = "reviewed" // Existing reviewed boundary remains current; no new report is created.
 	if j.RebaseMonitoring != nil {
 		j.Outcome.Status = "implemented" // A CI-only operation does not create a review.
+	}
+	if locallyCheckedRebase(j) {
+		if r.Output != nil {
+			fmt.Fprintln(r.Output, "Feedback required no changes; local rebase checks remain valid. Remote CI and independent review were not verified for this head.")
+		}
+		return true, r.transition(dir, j, "awaiting_feedback")
 	}
 	if r.Output != nil {
 		fmt.Fprintln(r.Output, "Feedback required no changes; reusing checks and reviews for the unchanged candidate.")

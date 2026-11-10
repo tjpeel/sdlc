@@ -94,7 +94,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.142`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.143`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
@@ -482,10 +482,10 @@ authorship are retained; rewritten commits receive new SHAs and publication
 signatures. Conflicts return to the original implementation session for resolution.
 For a clean rebase, the controller compares the original and rebased PR changes,
 retaining whitespace, modes and binary changes while ignoring changed blob IDs and
-hunk positions. If equivalent, it signs and publishes the replay and monitors CI
-for the new head without implementation, self-review or independent-review agents.
-It does not claim new local checks or a new review. Conflicts, changed patches and
-CI repairs retain the normal checks and review path. Publication uses
+hunk positions. If equivalent, it runs the configured local checks, then signs and
+publishes the replay and parks it for PR feedback without waiting for GitHub CI.
+It does not claim a passing remote CI result or a new independent review. Conflicts,
+changed patches and CI repairs retain the normal checks and review path. Publication uses
 the recorded remote head as an exact lease. Recommendation policy and PR feedback
 are unchanged; `--rebase` cannot be combined with feedback or acceptance options.
 Use `--dry-run` for an offline plan; it does not query GitHub or modify history.

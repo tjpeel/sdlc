@@ -133,6 +133,9 @@ func sameFeedbackRevision(captured, current PRFeedbackComment) bool {
 
 func ValidatePRFeedbackResume(j Journal) error {
 	if j.State == "awaiting_feedback" || j.PRFeedback != nil && j.PRFeedback.FetchPending && j.PRFeedback.FetchResumeState == "awaiting_feedback" {
+		if j.RebaseMonitoring != nil && j.RebaseMonitoring.LocalChecks && !locallyCheckedRebase(&j) {
+			return fmt.Errorf("local rebase feedback requires unchanged passing check evidence")
+		}
 		if err := validateParkedPR(j); err != nil {
 			return err
 		}
@@ -376,6 +379,9 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	if parked {
 		c := latestPRCheckpoint(j)
 		expectedHead, expectedTree = c.Head, c.Tree
+		if locallyCheckedRebase(j) {
+			expectedHead = j.RebaseMonitoring.Proof.Head
+		}
 	}
 	revision, inspectErr := r.Repository.Inspect(ctx, j.Workspace)
 	if inspectErr != nil || !revision.Clean || revision.Head != expectedHead || revision.Tree != expectedTree {
@@ -400,7 +406,7 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 			h.LocalPending = &PRFeedbackComment{ID: localFeedbackID(r.LocalPRFeedback), Kind: "local", Author: "local", Body: r.LocalPRFeedback, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 		}
 		h.ReviewedCandidate = nil
-		if j.State == "ready" && (rebaseFeedbackEligible(j) || (j.Outcome.Status == "reviewed" || reviewReuseCurrent(j)) && j.Evidence.Passed) && (j.ReviewAssessment == nil || !j.ReviewAssessment.Pending) {
+		if (j.State == "ready" || parked && locallyCheckedRebase(j)) && (rebaseFeedbackEligible(j) || (j.Outcome.Status == "reviewed" || reviewReuseCurrent(j)) && j.Evidence.Passed) && (j.ReviewAssessment == nil || !j.ReviewAssessment.Pending) {
 			h.ReviewedCandidate = &ReviewedFeedbackCandidate{Publication: j.Publication, Head: revision.Head, Tree: revision.Tree}
 		}
 		h.FetchResumeState = resumeState

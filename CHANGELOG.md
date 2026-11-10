@@ -7,6 +7,11 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.143 - 2026-11-10
+
+### Changed
+- Run local checks for an equivalent PR rebase, then park it for feedback without waiting for remote CI; report remote CI and independent review as unverified.
+
 ## 0.1.0-beta.142 - 2026-11-10
 
 ### Fixed

@@ -4,16 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 )
 
 // RebaseMonitoring records an operational replay, not a new review or test pass.
 // Source retains the prior publication; Published pins the signed replay.
 type RebaseMonitoring struct {
-	Source    Publication `json:"source"`
-	Published Publication `json:"published"`
-	OldBase   string      `json:"old_base"`
-	Base      string      `json:"base"`
-	Proof     RebaseProof `json:"proof"`
+	LocalChecks bool        `json:"local_checks,omitempty"`
+	Source      Publication `json:"source"`
+	Published   Publication `json:"published"`
+	OldBase     string      `json:"old_base"`
+	Base        string      `json:"base"`
+	Proof       RebaseProof `json:"proof"`
 }
 
 type RebaseProof struct {
@@ -122,10 +126,52 @@ func (r Runner) completeRebaseMonitoring(ctx context.Context, dir string, j *Jou
 // review evidence. The exact candidate and publication must remain unchanged.
 func rebaseFeedbackEligible(j *Journal) bool {
 	m := j.RebaseMonitoring
-	return m != nil && validateRebaseMonitoring(j) == nil && m.Published == j.Publication && !j.CandidatePhasePending && j.PendingInputs == nil && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && len(j.Outcome.Limitations) == 0 && j.CI.Status == "passed"
+	return m != nil && validateRebaseMonitoring(j) == nil && m.Published == j.Publication && !j.CandidatePhasePending && j.PendingInputs == nil && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && len(j.Outcome.Limitations) == 0 && (j.CI.Status == "passed" || locallyCheckedRebase(j))
 }
 
 func rebaseFeedbackCandidateCurrent(j *Journal, b *ReviewedFeedbackCandidate) bool {
 	m := j.RebaseMonitoring
 	return m != nil && validateRebaseMonitoring(j) == nil && m.Published == j.Publication && b.Publication == j.Publication && b.Head == m.Proof.Head && b.Tree == m.Proof.Tree && verificationCurrent(j, b.Head, b.Tree)
+}
+
+// locallyCheckedRebase is distinct from a passing remote CI or independent review.
+func locallyCheckedRebase(j *Journal) bool {
+	m := j.RebaseMonitoring
+	return rebaseLocalChecksCurrent(j) && m.Published.Number > 0 && m.Published == j.Publication
+}
+
+func rebaseLocalChecksCurrent(j *Journal) bool {
+	m := j.RebaseMonitoring
+	return m != nil && m.LocalChecks && validateRebaseMonitoring(j) == nil && !j.CandidatePhasePending && j.Evidence.Passed && j.Evidence.Head == m.Proof.Head && j.Evidence.Tree == m.Proof.Tree && j.Evidence.Key == verificationKey(j, VerificationRequest{}, m.Proof.Head, m.Proof.Tree) && verificationCurrent(j, m.Proof.Head, m.Proof.Tree)
+}
+
+// parkLocallyCheckedRebase records a feedback checkpoint, not CI or review success.
+func (r Runner) parkLocallyCheckedRebase(dir string, j *Journal) error {
+	if !locallyCheckedRebase(j) {
+		return fmt.Errorf("local rebase evidence is unavailable")
+	}
+	parent := filepath.Join(dir, "pr-checkpoints")
+	if err := os.Mkdir(parent, 0700); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if err := realDirectory(parent); err != nil {
+		return err
+	}
+	info, err := os.Stat(parent)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() != 0700 {
+		return fmt.Errorf("checkpoint archive must be private")
+	}
+	id, err := NewID()
+	if err != nil {
+		return err
+	}
+	archive := filepath.Join("pr-checkpoints", id+".json")
+	if err := saveJSON(filepath.Join(dir, archive), j); err != nil {
+		return err
+	}
+	j.PRCheckpoints = append(j.PRCheckpoints, PRCheckpoint{StartAt: "awaiting-feedback", Head: j.Publication.HeadSHA, Tree: j.Evidence.Tree, RequestedAt: time.Now().UTC(), PreviousState: j.State, Archive: archive, Completed: true})
+	return r.transition(dir, j, "awaiting_feedback")
 }

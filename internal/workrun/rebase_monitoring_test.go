@@ -23,6 +23,9 @@ type monitoringRepository struct {
 func (r *monitoringRepository) RebaseEquivalence(context.Context, string, string, string) (RebaseProof, error) {
 	return RebaseProof{SourceHead: testHead, Head: testHead, Tree: testTree, Equivalent: r.equivalent}, nil
 }
+func (r *monitoringRepository) FormatterPreparation(context.Context, *Journal, Revision) ([]VerificationRequest, error) {
+	return nil, nil
+}
 func (r *monitoringRepository) Bundle(context.Context, string, string) error { r.bundles++; return nil }
 
 type monitoringPublisher struct {
@@ -75,13 +78,13 @@ func monitoringFixture(t *testing.T) (string, *Journal, *monitoringRepository, *
 	return dir, j, repo, pub, provider, runner
 }
 
-func TestEquivalentRebasePublishesAndMonitorsWithoutAnyAgent(t *testing.T) {
+func TestEquivalentRebaseRunsLocalChecksAndParksWithoutRemoteWait(t *testing.T) {
 	dir, j, repo, pub, provider, r := monitoringFixture(t)
 	pub.statuses = []string{"pending", "passed"}
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || len(provider.calls) != 0 || j.Attempt != 0 || pub.publishes != 1 || pub.checks < 2 || repo.bundles != 1 || j.RebaseMonitoring == nil || j.Evidence.Passed || j.Outcome.LocalReview || len(j.ReviewReports) != 0 {
+	if j.State != "awaiting_feedback" || len(provider.calls) != 0 || j.Attempt != 0 || pub.publishes != 1 || pub.checks != 0 || repo.bundles != 1 || j.RebaseMonitoring == nil || !j.Evidence.Passed || j.CI.Status != "" || j.SelfReview != nil || j.Outcome.LocalReview || len(j.ReviewReports) != 0 {
 		t.Fatalf("unexpected work or fabricated evidence: state=%s turns=%d attempts=%d publishes=%d CI=%d bundles=%d", j.State, len(provider.calls), j.Attempt, pub.publishes, pub.checks, repo.bundles)
 	}
 	if _, err := Load(dir); err != nil {
@@ -110,7 +113,7 @@ func TestEquivalentRebasePublicationRetryNeedsNoAgent(t *testing.T) {
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || len(provider.calls) != 0 {
+	if j.State != "awaiting_feedback" || len(provider.calls) != 0 {
 		t.Fatal("publication retry repeated agent work")
 	}
 }
@@ -225,7 +228,7 @@ func TestEquivalentRebaseAfterSigningCanRebaseAgainWithoutAgents(t *testing.T) {
 	if err := r.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if repo.calls != 2 || pub.publishes != 2 || len(provider.calls) != 0 || j.State != "ready" {
+	if repo.calls != 2 || pub.publishes != 2 || len(provider.calls) != 0 || j.State != "awaiting_feedback" {
 		t.Fatal("signed prior rebase repeated agents or rejected source")
 	}
 }
@@ -247,6 +250,8 @@ func TestConcretePublisherAcceptsEquivalentRebaseWithoutPassingTestEvidence(t *t
 	if _, err := r.checkResumeUpstream(context.Background(), dir, j); err != nil {
 		t.Fatal(err)
 	}
+	// Retain admission for a legacy saved CI-only rebase boundary. New rebases require local evidence.
+	j.RebaseMonitoring.LocalChecks = false
 	// The controller is itself a supported product; avoid a source Git fixture
 	// because this test exercises the concrete publication admission boundary.
 	j.Plan.Repository = "example/sdlc"
@@ -276,5 +281,118 @@ func TestConcretePublisherAcceptsEquivalentRebaseWithoutPassingTestEvidence(t *t
 	_, err = publisher.Publish(context.Background(), j.Plan, j.Workspace, dir, j.Publication, io.Discard)
 	if err == nil || errors.Is(err, reached) {
 		t.Fatal("changed source reached publication preflight", err)
+	}
+}
+
+type localRebaseFeedbackPublisher struct {
+	*monitoringPublisher
+	comments []PRFeedbackComment
+	replies  int
+}
+
+func (p *localRebaseFeedbackPublisher) Feedback(context.Context, Plan, Publication) ([]PRFeedbackComment, error) {
+	return p.comments, nil
+}
+func (p *localRebaseFeedbackPublisher) ReplyFeedback(_ context.Context, _ Plan, _ Publication, _ PRFeedbackComment, marker, body string) (PRFeedbackReply, error) {
+	p.replies++
+	return PRFeedbackReply{ID: marker, URL: body}, nil
+}
+
+func TestLocalRebaseFeedbackContinuesWithoutRemoteCI(t *testing.T) {
+	dir, j, _, pub, _, r := monitoringFixture(t)
+	j.SessionID = testNative
+	oldComment := generalFeedback("comment:old", "Already handled.")
+	oldAssessment := assessedOutcome(oldComment, "no_change").PRFeedbackAssessments[0]
+	oldEntry := PRFeedbackEntry{Comment: oldComment, Fingerprint: feedbackFingerprint(oldComment), Assessment: &oldAssessment, ReplyBody: oldAssessment.Reason, Reply: &PRFeedbackReply{ID: "existing-reply"}}
+	oldEntry.Marker = feedbackEntryMarker(j.ID, oldEntry)
+	j.PRFeedback = &PRFeedbackHistory{Version: 1, Cycle: 1, CandidateStart: testHead, Entries: []PRFeedbackEntry{oldEntry}}
+	pub.signedHead = strings.Repeat("4", 40)
+	fp := &localRebaseFeedbackPublisher{monitoringPublisher: pub}
+	r.Publisher = fp
+	if err := r.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	if j.State != "awaiting_feedback" || j.CI.Status != "" || !j.Evidence.Passed || pub.checks != 0 {
+		t.Fatalf("bad local checkpoint: %+v", j)
+	}
+	saved, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePRFeedbackResume(saved); err != nil {
+		t.Fatal(err)
+	}
+	comment := generalFeedback("comment:1", "Is this already covered?")
+	fp.comments = []PRFeedbackComment{oldComment, comment}
+	provider := &feedbackScriptProvider{outcomes: []Outcome{assessedOutcome(comment, "no_change")}}
+	r.Provider, r.Rebase, r.ProcessPRFeedback = provider, false, true
+	if err := r.Run(context.Background(), dir, &saved, ""); err != nil {
+		t.Fatal(err)
+	}
+	if saved.State != "awaiting_feedback" || saved.CI.Status != "" || pub.checks != 0 || fp.replies != 1 || len(provider.sessions) != 1 {
+		t.Fatalf("feedback boundary: state=%s ci=%q calls=%d replies=%d turns=%d", saved.State, saved.CI.Status, pub.checks, fp.replies, len(provider.sessions))
+	}
+}
+
+func TestLocalRebaseCheckFailureDoesNotPublish(t *testing.T) {
+	dir, j, _, pub, _, r := monitoringFixture(t)
+	checker := r.Checker.(*fakeChecker)
+	checker.err = errors.New("local check unavailable")
+	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatalf("expected stopped run: %v", err)
+	}
+	if pub.publishes != 0 || pub.checks != 0 || j.Evidence.Passed || j.State != "blocked" {
+		t.Fatalf("unsafe result: %+v", j)
+	}
+}
+
+func TestLocalRebaseRejectsMissingChecksBeforePublication(t *testing.T) {
+	dir, j, _, pub, _, r := monitoringFixture(t)
+	if _, err := r.checkResumeUpstream(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	j.State = "publishing"
+	r.Rebase = false
+	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatalf("expected refused publication: %v", err)
+	}
+	if pub.publishes != 0 {
+		t.Fatal("published without local checks")
+	}
+}
+
+func TestLocalRebaseFeedbackRejectsInvalidatedCheckEvidence(t *testing.T) {
+	dir, j, _, _, _, r := monitoringFixture(t)
+	if err := r.Run(context.Background(), dir, j, ""); err != nil {
+		t.Fatal(err)
+	}
+	j.Evidence.Passed = false
+	if err := ValidatePRFeedbackResume(*j); err == nil {
+		t.Fatal("feedback admitted without retained local checks")
+	}
+}
+
+type changedRebaseRepository struct {
+	*monitoringRepository
+	revision Revision
+}
+
+func (r *changedRebaseRepository) Inspect(context.Context, string) (Revision, error) {
+	return r.revision, nil
+}
+
+func TestLocalRebaseChangedCandidateLosesFastPath(t *testing.T) {
+	dir, j, repo, pub, _, r := monitoringFixture(t)
+	if _, err := r.checkResumeUpstream(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	r.Rebase = false
+	r.Repository = &changedRebaseRepository{monitoringRepository: repo, revision: Revision{Head: strings.Repeat("5", 40), Tree: strings.Repeat("6", 40), Clean: true}}
+	r.Checker.(*fakeChecker).err = errors.New("check unavailable")
+	if err := r.Run(context.Background(), dir, j, ""); !errors.Is(err, ErrStopped) {
+		t.Fatalf("expected check hold: %v", err)
+	}
+	if j.RebaseMonitoring != nil || pub.publishes != 0 {
+		t.Fatal("changed candidate retained equivalent-rebase shortcut")
 	}
 }

@@ -363,6 +363,9 @@ func (runner Runner) checkAdditionalCandidate(ctx context.Context, directory str
 		journal.Feedback = configuredFeedback + "\n" + verificationFeedback(journal)
 		return runner.transition(directory, journal, "repairing")
 	}
+	if journal.RebaseMonitoring != nil && journal.RebaseMonitoring.LocalChecks && journal.Evidence.Passed && verificationCurrent(journal, revision.Head, revision.Tree) {
+		return nil
+	}
 	if journal.ConfiguredFeedbackKey != failureKey || executedAny || journal.Outcome.Status == "checks_requested" {
 		journal.ConfiguredFeedbackKey = failureKey
 		key := verificationFeedbackKey(journal, revision.Head, revision.Tree)

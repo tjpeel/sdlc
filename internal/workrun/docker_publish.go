@@ -179,7 +179,7 @@ func (publisher DockerPublisher) Publish(ctx context.Context, plan Plan, workspa
 		return Publication{}, err
 	}
 	journal, err := Load(directory)
-	if err != nil || (!journal.Evidence.Passed && journal.RebaseMonitoring == nil) {
+	if err != nil || (!journal.Evidence.Passed && journal.RebaseMonitoring == nil) || (journal.RebaseMonitoring != nil && journal.RebaseMonitoring.LocalChecks && !rebaseLocalChecksCurrent(&journal)) {
 		return Publication{}, fmt.Errorf("publication requires retained passing check evidence")
 	}
 	revision, err := (DockerRepository{Runtime: publisher.Runtime, ImageID: publisher.ImageID}).Inspect(ctx, workspace)

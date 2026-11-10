@@ -230,7 +230,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 				if err := validateRebaseProof(proof); err != nil {
 					return false, err
 				}
-				monitoring = &RebaseMonitoring{Source: j.Publication, OldBase: record.OldSource, Base: snapshot.SHA, Proof: proof}
+				monitoring = &RebaseMonitoring{LocalChecks: true, Source: j.Publication, OldBase: record.OldSource, Base: snapshot.SHA, Proof: proof}
 			}
 		}
 	}
@@ -250,10 +250,11 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	j.RestackNeedsChecks = true
 	j.RebaseMonitoring = monitoring
 	if monitoring != nil {
-		j.State = "publishing"
-		j.Outcome = Outcome{Status: "implemented", Summary: "Controller verified equivalent PR changes after a clean rebase; publish and monitor CI without agent review."}
+		j.State = "checking"
+		j.Outcome = Outcome{Status: "implemented", Summary: "Controller verified equivalent PR changes after a clean rebase; run local checks before publication."}
+		j.SelfReview = nil
 		if r.Output != nil {
-			fmt.Fprintln(r.Output, "Rebase preserved the PR changes; publishing and monitoring CI without implementation or review agents.")
+			fmt.Fprintln(r.Output, "Rebase preserved the PR changes; running local checks before publication. Remote CI and independent review remain unverified for the new head.")
 		}
 	}
 	j.Feedback = "The controller performed a Git rebase onto the PR target " + snapshot.Branch + " at " + snapshot.SHA + ". Preserve the rebased commits and the original ticket scope. Do not recreate or squash the implementation. Obtain fresh checks and local review before publication. Existing independent-review and recommendation settings remain in effect."

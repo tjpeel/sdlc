@@ -484,6 +484,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			continue
 		case "awaiting_feedback":
+			if locallyCheckedRebase(journal) && runner.Output != nil {
+				fmt.Fprintln(runner.Output, "Equivalent rebase passed local checks; remote CI and independent review were not verified for this head.")
+			}
 			if notice := ReviewRecommendationNotice(*journal); notice != "" {
 				fmt.Fprintln(runner.Output, notice)
 			}
@@ -631,13 +634,16 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "checking":
-			if journal.Outcome.Status != "diagnostics_requested" {
+			if journal.Outcome.Status != "diagnostics_requested" && (journal.RebaseMonitoring == nil || !journal.RebaseMonitoring.LocalChecks || journal.RebaseMonitoring.Published.Number != 0) {
 				journal.RebaseMonitoring = nil // New verification work leaves the CI-only operation boundary.
 			}
 			revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
 			if err != nil {
 				invalidateCommandEvidence(journal)
 				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+			if journal.RebaseMonitoring != nil && journal.RebaseMonitoring.LocalChecks && !rebaseCandidateCurrent(journal, revision) {
+				journal.RebaseMonitoring = nil // A changed repair requires the normal checks and review path.
 			}
 			if !revision.Clean {
 				clearDiagnosticEvidence(journal)
@@ -658,6 +664,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				}
 				continue
 			}
+			if journal.RebaseMonitoring != nil && journal.RebaseMonitoring.LocalChecks && !rebaseLocalChecksCurrent(journal) {
+				return runner.stop(directory, journal, "blocked", "rebased candidate requires passing local checks before publication")
+			}
 			if err := ValidatePRMetadata(journal.Plan); err != nil {
 				return runner.stop(directory, journal, "blocked", "PR metadata violates the frozen publication contract: "+err.Error())
 			}
@@ -668,7 +677,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err != nil || !revision.Clean || (!rebaseCandidateCurrent(journal, revision) && (!journal.Evidence.Passed || revision.Tree != journal.Evidence.Tree || revision.Head != journal.Evidence.Head || !verificationCurrent(journal, revision.Head, revision.Tree))) {
 				return runner.stop(directory, journal, "blocked", "source changed after verification; rerun checks before publishing")
 			}
-			captureSelfReview(journal, revision)
+			if journal.RebaseMonitoring == nil || !journal.RebaseMonitoring.LocalChecks {
+				captureSelfReview(journal, revision)
+			}
 			var pendingReceipt *PushProtectionRejection
 			if journal.PushRepair != nil {
 				pendingReceipt = journal.PushRepair.Pending
@@ -744,7 +755,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				journal.RestackAudit = append(journal.RestackAudit, *journal.Plan.Restack)
 				journal.Plan.Restack = nil
 			}
-			if err := runner.transition(directory, journal, "ci"); err != nil {
+			if locallyCheckedRebase(journal) {
+				if err := runner.parkLocallyCheckedRebase(directory, journal); err != nil {
+					return err
+				}
+			} else if err := runner.transition(directory, journal, "ci"); err != nil {
 				return err
 			}
 		case "ci":
