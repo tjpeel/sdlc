@@ -929,3 +929,7 @@ For Synthetic implementation through OpenCode, follow [the Synthetic guide](synt
 ### Continuing independent tickets during a CI hold
 
 Use `sdlc run --reference REF --all --continue-independent-on-ci` to continue tickets that do not depend on a ticket blocked at CI. The stopped run remains blocked and is reported after eligible work finishes; resume it after resolving the CI cause. Other stop reasons still halt the series. This option does not allow dependent tickets to start, bypass CI or review, or mark human PR feedback as resolved. Pending CI still waits in its ticket controller.
+
+### Reviewing a CI-held pull request
+
+Use `sdlc resume --run RUN_ID --review-ci-hold --dry-run` to inspect the saved hold and exact publication. Remove `--dry-run` to run the independent review. SDLC verifies the PR boundary before and after review and returns the run to its CI hold; a normal resume rechecks CI. The review does not resolve human PR feedback, and neither the review nor the hold is a passing CI result. Changed PR revisions require fresh evidence. If a boundary check fails, inspect the retained review; when it contains no unfinished findings or questions, `sdlc resume --run RUN_ID --discard-ci-held-review --dry-run` previews invalidating that provisional review while preserving the CI hold. Run without `--dry-run`, reconcile the PR revision, then request a fresh review. Known unfinished review work cannot be discarded this way.

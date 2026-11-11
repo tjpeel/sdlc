@@ -69,3 +69,21 @@ func TestPartialReviewDiagnosticPreservesWarningWithoutPrivateText(t *testing.T)
 		t.Fatalf("warning diagnostic: %s", raw)
 	}
 }
+
+func TestCIHeldReviewDiagnosisOffersSafeBoundaryRecovery(t *testing.T) {
+	id := strings.Repeat("a", 24)
+	pub := workrun.Publication{Number: 1, URL: "https://github.com/example/project/pull/1", BaseSHA: strings.Repeat("b", 40), HeadSHA: strings.Repeat("c", 40)}
+	j := workrun.Journal{ID: id, State: "blocked", ResumeState: "reviewing", Plan: workrun.Plan{Repository: "example/project"}, Publication: pub, CI: workrun.CIResult{Status: "pending"}, CIHeldReview: &workrun.CIHeldReview{Publication: pub, HoldReason: "private hold", StartedAt: time.Now().UTC(), Pending: true, BoundaryFailed: true}}
+	snapshot, err := DiagnosticSnapshot(View{Available: true, ID: id, Directory: t.TempDir(), Journal: &j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.CIHeldReview == nil || snapshot.CIHeldReview.Status != "pending" || snapshot.CIHeldReview.Head != pub.HeadSHA || snapshot.NextAction.Category != "ci_review_boundary" || !strings.Contains(snapshot.NextAction.Command, "--discard-ci-held-review --dry-run") {
+		t.Fatalf("unsafe recovery projection: %+v", snapshot)
+	}
+	j.CIHeldReview.InterruptedOutcome = &workrun.Outcome{Status: "reviewed", Findings: []workrun.Finding{{Scenario: "private text"}}}
+	action := NextRunAction(j, false)
+	if action.Category != "ci_review_boundary" || strings.Contains(action.Command, "discard") {
+		t.Fatal("known findings offered discard")
+	}
+}

@@ -27,6 +27,15 @@ type DiagnosticEvidence struct {
 	PendingPreparation int    `json:"pending_preparation"`
 }
 
+type DiagnosticCIHeldReview struct {
+	Status           string `json:"status"`
+	Base             string `json:"base,omitempty"`
+	Head             string `json:"head,omitempty"`
+	KnownFindings    int    `json:"known_findings"`
+	KnownQuestions   int    `json:"known_questions"`
+	PreviousAttempts int    `json:"previous_attempts"`
+}
+
 type DiagnosticFeedback struct {
 	Active             bool `json:"active"`
 	Pending            int  `json:"pending"`
@@ -47,6 +56,7 @@ type Diagnostic struct {
 	Publication           DiagnosticPublication          `json:"saved_publication"`
 	CI                    string                         `json:"saved_ci"`
 	Review                string                         `json:"saved_review"`
+	CIHeldReview          *DiagnosticCIHeldReview        `json:"ci_held_review,omitempty"`
 	ReviewFindings        int                            `json:"review_findings"`
 	ReviewQuestions       int                            `json:"review_questions"`
 	ReviewLimitations     int                            `json:"review_limitations"`
@@ -114,6 +124,15 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	if live {
 		return NextAction{Category: "observe", Instruction: "The controller is active; inspect its saved state without starting another controller.", Command: dump}
 	}
+	if j.CIHeldReview != nil && j.CIHeldReview.Pending && j.CIHeldReview.BoundaryFailed {
+		if workrun.ValidateDiscardCIHeldReview(j) == nil {
+			return NextAction{Category: "ci_review_boundary", Instruction: "Inspect the retained review. If appropriate, preview invalidation before reconciling the PR; CI remains open.", Command: "sdlc resume --run " + id + " --discard-ci-held-review --dry-run"}
+		}
+		return NextAction{Category: "ci_review_boundary", Instruction: "Review the retained unfinished findings or questions before recovery; CI remains open.", Command: dump}
+	}
+	if j.State == "blocked" && workrun.ValidateCIHeldReviewStart(j) == nil {
+		return NextAction{Category: "ci_hold", Instruction: "Resolve CI and resume, or preview an independent review of the exact published revision.", Command: "sdlc resume --run " + id + " --review-ci-hold --dry-run"}
+	}
 	if j.State == "awaiting_feedback" {
 		return NextAction{Category: "feedback", Instruction: "PR captured; supply feedback without asserting skipped verification passed.", Command: "sdlc feedback --run " + id}
 	}
@@ -164,7 +183,22 @@ func DiagnosticSnapshot(v View) (Diagnostic, error) {
 		}
 	}
 	feedback := workrun.PRFeedbackStatus(j)
-	result := Diagnostic{Version: 1, RunID: j.ID, CheckpointUpdatedAt: j.UpdatedAt, State: diagnosticState(j.State), ResumeState: diagnosticState(j.ResumeState), Live: v.Live, Evidence: evidence, Publication: DiagnosticPublication{Number: j.Publication.Number, Head: diagnosticHash(j.Publication.HeadSHA), Base: diagnosticHash(j.Publication.BaseSHA)}, CI: diagnosticCI(j.CI.Status), Review: diagnosticReview(j), ReviewFindings: len(j.Outcome.Findings), ReviewQuestions: len(j.Outcome.Questions), ReviewLimitations: len(j.Outcome.Limitations), Attempts: j.Attempt, Rounds: j.Rounds, CheckAttempts: j.CheckAttempt, Override: RunLimitOverrideStatus(j.RunLimitOverride), PendingInputs: j.PendingInputs != nil, Feedback: DiagnosticFeedback{Active: j.PRFeedback != nil && j.PRFeedback.Active, Pending: feedback.Pending, Unresolved: feedback.Unresolved, OutstandingReplies: feedback.OutstandingReplies}, Companions: len(j.CompanionRepositories), NextAction: NextRunAction(j, v.Live)}
+	var heldReview *DiagnosticCIHeldReview
+	if c := j.CIHeldReview; c != nil {
+		status := "completed"
+		if c.Pending {
+			status = "pending"
+		}
+		if c.Invalidated {
+			status = "invalidated"
+		}
+		heldReview = &DiagnosticCIHeldReview{Status: status, Base: diagnosticHash(c.Publication.BaseSHA), Head: diagnosticHash(c.Publication.HeadSHA), PreviousAttempts: len(j.CIHeldReviewHistory)}
+		if c.InterruptedOutcome != nil {
+			heldReview.KnownFindings = len(c.InterruptedOutcome.Findings)
+			heldReview.KnownQuestions = len(c.InterruptedOutcome.Questions)
+		}
+	}
+	result := Diagnostic{Version: 1, RunID: j.ID, CheckpointUpdatedAt: j.UpdatedAt, State: diagnosticState(j.State), ResumeState: diagnosticState(j.ResumeState), Live: v.Live, Evidence: evidence, Publication: DiagnosticPublication{Number: j.Publication.Number, Head: diagnosticHash(j.Publication.HeadSHA), Base: diagnosticHash(j.Publication.BaseSHA)}, CI: diagnosticCI(j.CI.Status), Review: diagnosticReview(j), CIHeldReview: heldReview, ReviewFindings: len(j.Outcome.Findings), ReviewQuestions: len(j.Outcome.Questions), ReviewLimitations: len(j.Outcome.Limitations), Attempts: j.Attempt, Rounds: j.Rounds, CheckAttempts: j.CheckAttempt, Override: RunLimitOverrideStatus(j.RunLimitOverride), PendingInputs: j.PendingInputs != nil, Feedback: DiagnosticFeedback{Active: j.PRFeedback != nil && j.PRFeedback.Active, Pending: feedback.Pending, Unresolved: feedback.Unresolved, OutstandingReplies: feedback.OutstandingReplies}, Companions: len(j.CompanionRepositories), NextAction: NextRunAction(j, v.Live)}
 	for _, request := range j.Outcome.RepositoryRequests {
 		staged := false
 		for _, source := range j.CompanionRepositories {

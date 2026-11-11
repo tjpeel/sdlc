@@ -299,6 +299,8 @@ type Publisher interface {
 }
 
 type Journal struct {
+	CIHeldReviewHistory       []CIHeldReview          `json:"ci_held_review_history,omitempty"`
+	CIHeldReview              *CIHeldReview           `json:"ci_held_review,omitempty"`
 	RuntimeMigrations         []RuntimeMigration      `json:"runtime_migrations,omitempty"`
 	ReviewPlan                *IncrementalReviewPlan  `json:"incremental_review_plan,omitempty"`
 	SelfReview                *SelfReviewBoundary     `json:"implementation_self_review,omitempty"`

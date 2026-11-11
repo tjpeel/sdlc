@@ -154,6 +154,9 @@ func (runner Runner) acceptReviewSourceRequest(ctx context.Context, directory st
 }
 
 func (runner Runner) reviewSourceCI(ctx context.Context, j *Journal) error {
+	if ciHeldReviewPending(j) {
+		return runner.verifyCIHeldReviewBoundary(ctx, j)
+	}
 	checks, err := runner.Publisher.Checks(ctx, j.Plan, j.Publication)
 	if err == nil {
 		err = validateCIResult(checks, j.Publication)

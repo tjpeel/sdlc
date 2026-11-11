@@ -22,6 +22,8 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	DiscardCIHeldReview               bool
+	ReviewCIHold                      bool
 	SonarPolicy                       *project.SonarPolicy
 	CheckUpstream                     bool
 	Rebase                            bool
@@ -161,6 +163,22 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 	if runner.ValidateDependencies != nil {
 		if err := runner.ValidateDependencies(ctx, directory, journal.Plan); err != nil {
+			return err
+		}
+	}
+	if runner.DiscardCIHeldReview {
+		if answer != "" || runner.ReviewCIHold || runner.StartAt != "" || runner.ProcessPRFeedback || runner.CIFeedback != "" || runner.Rebase || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 {
+			return fmt.Errorf("discard CI-held review cannot be combined with other recovery actions")
+		}
+		if err := ValidateDiscardCIHeldReview(*journal); err != nil {
+			return err
+		}
+	}
+	if runner.ReviewCIHold {
+		if answer != "" || runner.StartAt != "" || runner.ProcessPRFeedback || runner.CIFeedback != "" || runner.Rebase || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 {
+			return fmt.Errorf("CI-held review cannot be combined with other recovery actions")
+		}
+		if err := ValidateCIHeldReviewStart(*journal); err != nil {
 			return err
 		}
 	}
@@ -350,6 +368,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	if runner.DiscardCIHeldReview {
+		return runner.discardCIHeldReview(directory, journal)
+	}
 	if runner.CheckUpstream || runner.Rebase || journal.ResumeRebase {
 		changed, err := runner.checkResumeUpstream(ctx, directory, journal)
 		if err != nil {
@@ -362,6 +383,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	if runner.AutoAcceptRecommendationsOverride != nil && journal.Plan.Roles.AutoAcceptRecommendations != *runner.AutoAcceptRecommendationsOverride {
 		journal.Plan.Roles.AutoAcceptRecommendations = *runner.AutoAcceptRecommendationsOverride
 		if err := runner.save(directory, journal); err != nil {
+			return err
+		}
+	}
+	if runner.ReviewCIHold {
+		if err := runner.beginCIHeldReview(ctx, directory, journal); err != nil {
 			return err
 		}
 	}
@@ -778,6 +804,15 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				continue
 			}
 
+			if ciHeldReviewFindingsAwaitingCI(journal) {
+				if err := runner.reviewHandoffPreflight(ctx, directory, journal); err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				if err := runner.grantReviewAssessment(directory, journal, journal.Outcome.Findings, true); err != nil {
+					return err
+				}
+				continue
+			}
 			if savedReviewCategory != "" {
 				proof, err := runner.reviewUsageProof(ctx, directory, journal, savedReviewCategory, true)
 				savedReviewCategory = ""
@@ -785,6 +820,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					return runner.stop(directory, journal, "blocked", err.Error())
 				}
 				if proof != nil {
+					if ciHeldReviewPending(journal) {
+						return runner.stop(directory, journal, "blocked", "independent reviewer unavailable; the CI-held review remains unfinished")
+					}
 					if err := runner.completeSkippedReview(ctx, directory, journal, proof); err != nil {
 						return err
 					}
@@ -794,7 +832,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					return nil
 				}
 			}
-			if journal.Plan.Sonar.RepairsEnabled() {
+			if journal.Plan.Sonar.RepairsEnabled() && !ciHeldReviewPending(journal) {
 				checks, err := runner.readPublishedCI(ctx, directory, journal)
 				if err != nil {
 					return runner.stop(directory, journal, "blocked", err.Error())
@@ -813,10 +851,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				}
 			}
 
-			if reused, err := runner.tryReuseReview(ctx, directory, journal); err != nil {
-				return err
-			} else if reused {
-				continue
+			if !ciHeldReviewPending(journal) {
+				if reused, err := runner.tryReuseReview(ctx, directory, journal); err != nil {
+					return err
+				} else if reused {
+					continue
+				}
 			}
 			status, err := runner.Provider.Status(ctx, journal.Plan.Roles.Review.Provider)
 			if err != nil {
@@ -825,21 +865,27 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if status != "stored" {
 				return runner.stop(directory, journal, "awaiting_reviewer", fmt.Sprintf("authenticate %s, then resume this run for independent review", journal.Plan.Roles.Review.Provider))
 			}
-			checks := journal.CI
-			if !journal.Plan.Sonar.RepairsEnabled() {
-				checks, err = runner.readPublishedCI(ctx, directory, journal)
-			}
-			if err == nil {
-				journal.CI = checks
-			}
-			if err != nil {
-				return runner.stop(directory, journal, "blocked", err.Error())
-			}
-			if checks.Status != "passed" {
-				if err := runner.transition(directory, journal, "ci"); err != nil {
-					return err
+			if ciHeldReviewPending(journal) {
+				if err := runner.verifyCIHeldReviewBoundary(ctx, journal); err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
 				}
-				continue
+			} else {
+				checks := journal.CI
+				if !journal.Plan.Sonar.RepairsEnabled() {
+					checks, err = runner.readPublishedCI(ctx, directory, journal)
+				}
+				if err == nil {
+					journal.CI = checks
+				}
+				if err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				if checks.Status != "passed" {
+					if err := runner.transition(directory, journal, "ci"); err != nil {
+						return err
+					}
+					continue
+				}
 			}
 			if runner.ReviewWorkspace == nil {
 				return runner.stop(directory, journal, "blocked", "published review snapshot is unavailable")
@@ -882,6 +928,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					return runner.stop(directory, journal, "blocked", proofErr.Error())
 				}
 				if proof != nil {
+					if ciHeldReviewPending(journal) {
+						return runner.stop(directory, journal, "blocked", "independent reviewer unavailable; the CI-held review remains unfinished")
+					}
 					if err := runner.completeSkippedReview(ctx, directory, journal, proof); err != nil {
 						return err
 					}
@@ -891,6 +940,13 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					return nil
 				}
 				return runner.stop(directory, journal, "failed", err.Error())
+			}
+			if ciHeldReviewPending(journal) {
+				journal.CIHeldReview.InterruptedOutcome = &result.Outcome
+				if err := runner.verifyCIHeldReviewBoundary(ctx, journal); err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				journal.CIHeldReview.InterruptedOutcome = nil
 			}
 			journal.ReviewInterruption = nil
 			journal.Outcome = result.Outcome
@@ -909,6 +965,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if err := recordReviewReport(journal); err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+			if ciHeldReviewPending(journal) {
+				journal.CIHeldReview.Pending = false
+				reason := journal.CIHeldReview.HoldReason
+				journal.State = "ci"
+				return runner.stop(directory, journal, "blocked", reason)
 			}
 			if len(result.Outcome.Findings) > 0 {
 				if err := runner.reviewHandoffPreflight(ctx, directory, journal); err != nil {

@@ -101,3 +101,48 @@ func TestParkedPRFeedbackPreviewAcceptsMissingImplementationSession(t *testing.T
 		t.Fatal("preview dispatched work")
 	}
 }
+
+func TestCIHeldReviewOptionsRequireUncombinedResume(t *testing.T) {
+	for _, args := range [][]string{runArgs("--review-ci-hold"), runArgs("--resume", "abc", "--review-ci-hold", "--pr-feedback"), runArgs("--resume", "abc", "--review-ci-hold", "--discard-ci-held-review"), runArgs("--resume", "abc", "--discard-ci-held-review", "--rebase")} {
+		if _, err := parseRunOptions(args); err == nil {
+			t.Fatalf("invalid review recovery accepted: %v", args)
+		}
+	}
+	for _, flag := range []string{"--review-ci-hold", "--discard-ci-held-review"} {
+		if _, err := parseRunOptions(runArgs("--resume", "abc", flag, "--dry-run")); err != nil {
+			t.Fatalf("valid %s rejected: %v", flag, err)
+		}
+	}
+}
+
+func TestCIHeldReviewResumePreviewPreservesCheckpoint(t *testing.T) {
+	j, marker := readyPRFeedbackFixture(t)
+	dir := filepath.Dir(j.Workspace)
+	j.State, j.ResumeState, j.StopReason = "blocked", "ci", "CI unavailable"
+	j.CI.Status = "pending"
+	j.Outcome = workrun.Outcome{Status: "implemented"}
+	if err := workrun.Save(dir, &j); err != nil {
+		t.Fatal(err)
+	}
+	if err := runstatus.New(os.Getenv("SDLC_STATE_DIR")).Register(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := resumeCommand(context.Background(), []string{"--run", j.ID, "--review-ci-hold", "--dry-run"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"action":"review_ci_hold"`) || !strings.Contains(out.String(), j.Publication.HeadSHA) {
+		t.Fatalf("missing review preview: %s", out.String())
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "journal.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("preview modified checkpoint")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("preview connected to runtime")
+	}
+}

@@ -9,6 +9,9 @@ import (
 // The last completed report is reusable only for its exact publication and
 // native attempt. Partial reports and unfinished reviewer work never qualify.
 func completedReviewAwaitingCI(j *Journal) bool {
+	if j.CIHeldReview != nil && j.CIHeldReview.Invalidated && j.CIHeldReview.Publication == j.Publication {
+		return false
+	}
 	if reviewReuseCurrent(j) {
 		return true
 	}

@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.147 - 2026-11-11
+
+### Added
+
+- Allow independent review of a CI-held published revision while retaining its CI hold for later verification.
+
 ## 0.1.0-beta.146 - 2026-11-11
 
 ### Added
