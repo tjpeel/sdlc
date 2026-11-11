@@ -67,7 +67,7 @@ func (r Runner) rebaseUnpublished(ctx context.Context, directory string, j *Jour
 	if !pending && !r.Rebase {
 		return false, nil
 	}
-	if j.Publication.URL != "" || j.Plan.DependencyContext != nil || j.Plan.Restack != nil || j.Plan.Adoption != nil || j.PendingInputs != nil || j.PushRepair != nil || j.PRFeedback != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending {
+	if j.Publication.URL != "" || j.Plan.DependencyContext != nil || j.Plan.ProvisionalParent != nil || j.Plan.Restack != nil || j.Plan.Adoption != nil || j.PendingInputs != nil || j.PushRepair != nil || j.PRFeedback != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending {
 		return false, fmt.Errorf("unpublished rebase requires a standalone run without pending recovery")
 	}
 	if !pending && (j.State != "blocked" || j.ResumeState != "publishing" || !j.Evidence.Passed || j.Reconciliation != nil) {

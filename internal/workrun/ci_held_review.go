@@ -57,11 +57,43 @@ func ciHeldReviewOutcomeHasWork(o Outcome) bool {
 	return len(o.Findings) > 0 || len(o.Questions) > 0 || len(o.Limitations) > 0 || len(o.RepositoryRequests) > 0 || len(o.VerificationRequests) > 0 || len(o.DiagnosticRequests) > 0 || len(o.PRFeedbackAssessments) > 0 || o.ReviewCoverage != nil && len(o.ReviewCoverage.Gaps) > 0
 }
 
+// ciHeldFeedbackSettled permits a fresh review after the existing feedback
+// cycle has been assessed and replied to, without claiming passing CI.
+func ciHeldFeedbackSettled(j Journal) bool {
+	h := j.PRFeedback
+	if h == nil || !h.Active || h.FetchPending || h.LocalPending != nil || pendingFeedback(&j) != nil {
+		return false
+	}
+	if err := validatePRFeedbackJournal(&j); err != nil {
+		return false
+	}
+	status := PRFeedbackStatus(j)
+	return status.Pending == 0 && status.Unresolved == 0 && status.OutstandingReplies == 0
+}
+
+func ciHeldReviewOutcomeHasUnfinishedWork(j Journal) bool {
+	out := j.Outcome
+	if ciHeldFeedbackSettled(j) {
+		latest := map[string]PRFeedbackEntry{}
+		for _, entry := range j.PRFeedback.Entries {
+			latest[entry.Comment.ID] = entry
+		}
+		for _, assessment := range out.PRFeedbackAssessments {
+			entry, ok := latest[assessment.ID]
+			if !ok || entry.Assessment == nil || entry.Provisional || !reflect.DeepEqual(*entry.Assessment, assessment) {
+				return true
+			}
+		}
+		out.PRFeedbackAssessments = nil
+	}
+	return ciHeldReviewOutcomeHasWork(out)
+}
+
 func ValidateCIHeldReviewStart(j Journal) error {
-	if ciHeldReviewOutcomeHasWork(j.Outcome) {
+	if ciHeldReviewOutcomeHasUnfinishedWork(j) {
 		return fmt.Errorf("CI-held review cannot overwrite unfinished saved outcome work")
 	}
-	if completedReviewAwaitingCI(&j) || j.State != "blocked" || j.ResumeState != "ci" || j.StopReason == "" || j.CIHeldReview != nil && j.CIHeldReview.Pending || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.ReviewInterruption != nil || j.ReviewContinuation != nil || j.PendingRole != "" || len(j.Outcome.Questions) != 0 || pendingCIFeedback(&j) != nil || j.PRFeedback != nil && j.PRFeedback.Active || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
+	if completedReviewAwaitingCI(&j) || j.State != "blocked" || j.ResumeState != "ci" || j.StopReason == "" || j.CIHeldReview != nil && j.CIHeldReview.Pending || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.ReviewInterruption != nil || j.ReviewContinuation != nil || j.PendingRole != "" || len(j.Outcome.Questions) != 0 || pendingCIFeedback(&j) != nil || j.PRFeedback != nil && j.PRFeedback.Active && !ciHeldFeedbackSettled(j) || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
 		return fmt.Errorf("CI-held review requires a stopped CI hold with no pending recovery or human feedback")
 	}
 	feedback := PRFeedbackStatus(j)
@@ -118,10 +150,10 @@ func (r Runner) beginCIHeldReview(ctx context.Context, dir string, j *Journal) e
 // error and never discards known unfinished review findings or questions.
 func ValidateDiscardCIHeldReview(j Journal) error {
 	feedback := PRFeedbackStatus(j)
-	if j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || pendingCIFeedback(&j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.PRFeedback != nil && j.PRFeedback.Active || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay || feedback.Pending > 0 || feedback.Unresolved > 0 || feedback.OutstandingReplies > 0 {
+	if j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || pendingCIFeedback(&j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.PRFeedback != nil && j.PRFeedback.Active && !ciHeldFeedbackSettled(j) || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay || feedback.Pending > 0 || feedback.Unresolved > 0 || feedback.OutstandingReplies > 0 {
 		return fmt.Errorf("CI-held review cannot discard pending recovery or feedback")
 	}
-	if ciHeldReviewOutcomeHasWork(j.Outcome) {
+	if ciHeldReviewOutcomeHasUnfinishedWork(j) {
 		return fmt.Errorf("CI-held review cannot discard unfinished saved outcome work")
 	}
 	c := j.CIHeldReview

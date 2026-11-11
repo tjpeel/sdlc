@@ -147,11 +147,23 @@ func validateReviewJournal(j *Journal) error {
 // ValidateReviewRepairInitialization admits only the exact old completed-review
 // hold. Live source and publication checks are repeated under controller ownership.
 func ValidateReviewRepairInitialization(j Journal, limit int) error {
-	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || j.SessionID == "" || j.CI.Status != "passed" || !j.Evidence.Passed || j.CandidatePhasePending {
-		return fmt.Errorf("review repair initialization requires an uninitialized completed-findings hold with its original session, passing evidence and remaining native capacity")
+	if limit < 1 || limit > 3 || j.ReviewRepairBudget != nil || j.State != "blocked" || j.ResumeState != "reviewing" || j.StopReason != reviewRepairBound || j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) == 0 || len(j.Outcome.Questions) != 0 || len(j.Outcome.Limitations) != 0 || j.Rounds < 1 || !j.Evidence.Passed || j.CandidatePhasePending {
+		return fmt.Errorf("review repair initialization requires an uninitialized completed-findings hold with passing evidence and remaining native capacity")
+	}
+	ciHeld := ciHeldReviewFindingsAwaitingCI(&j)
+	if ciHeld {
+		status := PRFeedbackStatus(j)
+		if j.PendingInputs != nil || j.Reconciliation != nil || j.DependencyInvalid || j.RestackNeedsChecks || j.DeferredAnswer != "" || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingRole != "" || pendingCIFeedback(&j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil || j.PRFeedback != nil && (j.PRFeedback.FetchPending || j.PRFeedback.Active && !ciHeldFeedbackSettled(j)) || status.Pending > 0 || status.Unresolved > 0 || status.OutstandingReplies > 0 || j.CIHeldReview.BoundaryFailed {
+			return fmt.Errorf("CI-held review repair initialization cannot bypass pending recovery or feedback")
+		}
+		if j.SessionID == "" && (len(j.RuntimeMigrations) != 1 || j.RuntimeRecheck == nil || j.RuntimeRecheck.Pending || j.RuntimeRecheck.AbandonedAt != nil || j.RuntimeRecheck.ImplementationAttempt != 0) {
+			return fmt.Errorf("CI-held review repair initialization requires the original session or an unstarted migrated session")
+		}
+	} else if j.SessionID == "" || j.CI.Status != "passed" {
+		return fmt.Errorf("review repair initialization requires the original session and passing CI")
 	}
 	copy := j
-	copy.ReviewAssessment = &ReviewAssessment{Publication: j.Publication, Findings: j.Outcome.Findings, Pending: true}
+	copy.ReviewAssessment = &ReviewAssessment{Publication: j.Publication, Findings: j.Outcome.Findings, Pending: true, CIHeld: ciHeld}
 	copy.ReviewRepairBudget = &ReviewRepairBudget{Limit: limit, Used: 1, StartRound: j.Rounds - 1, LastGrantedHead: j.Publication.HeadSHA}
 	return validateReviewJournal(&copy)
 }
@@ -163,9 +175,10 @@ func (runner Runner) initializeReviewRepair(ctx context.Context, directory strin
 	if err := runner.reviewHandoffPreflight(ctx, directory, j); err != nil {
 		return err
 	}
+	ciHeld := ciHeldReviewFindingsAwaitingCI(j)
 	j.ReviewRepairBudget = &ReviewRepairBudget{Limit: runner.InitializeReviewRepairBudget, StartRound: j.Rounds - 1}
 	// The legacy controller already counted this completed review in Rounds.
-	return runner.grantReviewAssessment(directory, j, j.Outcome.Findings, false)
+	return runner.grantReviewAssessmentAtCIHold(directory, j, j.Outcome.Findings, false, ciHeld)
 }
 
 func (runner Runner) grantReviewAssessment(directory string, j *Journal, findings []Finding, countRound bool) error {

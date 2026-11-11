@@ -89,6 +89,9 @@ func (p DockerPublisher) ValidateResumeTarget(ctx context.Context, plan Plan, re
 // checkResumeUpstream runs under the normal run lock before any provider turn.
 // It checkpoints the exact bundle before touching the worker's Git history.
 func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Journal) (bool, error) {
+	if j.Plan.ProvisionalParent != nil && (r.Rebase || j.ResumeRebase) {
+		return false, fmt.Errorf("provisional dependency must be reconciled by the owning feature; standalone rebase is unavailable")
+	}
 	if j.ResumeRebase && j.Reconciliation == nil {
 		return false, fmt.Errorf("missing saved resume rebase checkpoint")
 	}
