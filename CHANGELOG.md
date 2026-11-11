@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.149 - 2026-11-11
+
+### Fixed
+
+- Allow PR feedback processing after a completed CI-held review with recorded limitations, while keeping provisional admission blocked until those limitations are resolved.
+
 ## 0.1.0-beta.148 - 2026-11-11
 
 ### Added

@@ -35,6 +35,9 @@ func ProvisionalProofForCIHold(j Journal) (ProvisionalParentProof, error) {
 	if j.State != "blocked" || j.ResumeState != "ci" || j.CI.Status == "passed" || !ciHeldFeedbackEligible(&j) || j.PRFeedback == nil || j.PRFeedback.Active || j.PRFeedback.FetchPending || activeCIHeldFeedbackFailure(&j) != nil {
 		return ProvisionalParentProof{}, fmt.Errorf("provisional parent requires a stopped CI hold, current checks, independent review and a completed feedback scan")
 	}
+	if ciHeldReviewOutcomeHasWork(j.Outcome) {
+		return ProvisionalParentProof{}, fmt.Errorf("provisional parent requires a review without unresolved limitations")
+	}
 	feedbackStatus := PRFeedbackStatus(j)
 	if feedbackStatus.Pending > 0 || feedbackStatus.Unresolved > 0 || feedbackStatus.OutstandingReplies > 0 {
 		return ProvisionalParentProof{}, fmt.Errorf("provisional parent has unresolved feedback or replies")

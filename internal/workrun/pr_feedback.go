@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -152,9 +153,25 @@ func sameFeedbackRevision(captured, current PRFeedbackComment) bool {
 	return reflect.DeepEqual(captured, current)
 }
 
+// ciHeldFeedbackReviewComplete permits feedback after a completed review with
+// recorded limitations; the limitations remain in the report and do not grant
+// provisional readiness.
+func ciHeldFeedbackReviewComplete(j *Journal) bool {
+	if !completedReviewAwaitingCI(j) || len(j.ReviewReports) == 0 {
+		return false
+	}
+	report := j.ReviewReports[len(j.ReviewReports)-1]
+	if report.Publication != j.Publication || report.Attempt != j.Attempt || !slices.Equal(report.Limitations, j.Outcome.Limitations) {
+		return false
+	}
+	outcome := j.Outcome
+	outcome.Limitations = nil
+	return !ciHeldReviewOutcomeHasWork(outcome)
+}
+
 func ciHeldFeedbackEligible(j *Journal) bool {
 	c := j.CIHeldReview
-	if c == nil || c.Pending || c.Invalidated || c.Publication != j.Publication || !completedReviewAwaitingCI(j) || ciHeldReviewOutcomeHasWork(j.Outcome) || !j.Evidence.Passed || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingRole != "" || pendingCIFeedback(j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
+	if c == nil || c.Pending || c.Invalidated || c.Publication != j.Publication || !ciHeldFeedbackReviewComplete(j) || !j.Evidence.Passed || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingRole != "" || pendingCIFeedback(j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
 		return false
 	}
 	if !objectID.MatchString(j.Evidence.Head) || !objectID.MatchString(j.Evidence.Tree) || j.Evidence.Key != verificationKey(j, VerificationRequest{}, j.Evidence.Head, j.Evidence.Tree) || !verificationCurrent(j, j.Evidence.Head, j.Evidence.Tree) {

@@ -2753,7 +2753,7 @@ After posting any human comments on the PR, process them and repeat review if th
 sdlc resume --run RUN_ID --pr-feedback
 ```
 
-A completed scan records the run, checked candidate, review attempt and exact PR base and head. Outstanding assessments, unresolved comments or replies still block provisional admission. If a scan encounters a changed boundary, inspect `sdlc diagnose --run RUN_ID`; once no feedback remains unresolved, preview and use `sdlc resume --run RUN_ID --discard-ci-held-feedback-scan` to discard that failed scan while retaining review and comment history. A retry can continue if the original boundary is restored.
+A completed scan records the run, checked candidate, review attempt and exact PR base and head. A completed review with recorded limitations can be used to scan and assess feedback; its limitations remain saved and prevent a provisional parent grant. Outstanding assessments, unresolved comments or replies still block provisional admission. If a scan encounters a changed boundary, inspect `sdlc diagnose --run RUN_ID`; once no feedback remains unresolved, preview and use `sdlc resume --run RUN_ID --discard-ci-held-feedback-scan` to discard that failed scan while retaining review and comment history. A retry can continue if the original boundary is restored.
 
 To permit dependent work while the parent remains blocked at CI, preview and grant a provisional parent:
 
