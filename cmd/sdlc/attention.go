@@ -30,7 +30,7 @@ type runAction struct {
 
 func resumableStage(state string) bool {
 	switch state {
-	case "awaiting_feedback", "checkpoint_checks", "checkpoint_review", "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback":
+	case "awaiting_feedback", "checkpoint_checks", "checkpoint_review", "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "runtime_recheck":
 		return true
 	}
 	return false

@@ -15,6 +15,12 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
+func TestRuntimeRecheckIsResumableStage(t *testing.T) {
+	if !resumableStage("runtime_recheck") {
+		t.Fatal("runtime recheck should be accepted by the resume command")
+	}
+}
+
 func attentionFixture(t *testing.T) (workrun.Journal, string) {
 	t.Helper()
 	root := runGitFixture(t)
