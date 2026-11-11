@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.150 - 2026-11-11
+
+### Fixed
+
+- Return an unpublished dirty diagnostic handoff to its existing implementation session without granting verification.
+
 ## 0.1.0-beta.149 - 2026-11-11
 
 ### Fixed

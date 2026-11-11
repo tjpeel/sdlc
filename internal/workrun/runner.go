@@ -712,6 +712,18 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if !revision.Clean {
 				clearDiagnosticEvidence(journal)
 				journal.Feedback = ""
+				if feedback, ok := dirtyDiagnosticFeedback(journal); ok {
+					if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
+						return runner.stop(directory, journal, "blocked", err.Error())
+					}
+					journal.Evidence.Passed = false
+					journal.Evidence.Key = ""
+					journal.Feedback = feedback
+					if err := runner.transition(directory, journal, "implementing"); err != nil {
+						return err
+					}
+					continue
+				}
 				return runner.stop(directory, journal, "blocked", "commit the candidate changes before requesting isolated verification")
 			}
 			if err := verifyInputs(filepath.Join(directory, "check-inputs"), journal.Plan.CheckInputs); err != nil {
