@@ -173,7 +173,7 @@ func (manager Manager) read() (State, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return State{}, fmt.Errorf("no recorded runtime; run sdlc runtime build --source SDLC_DIRECTORY: %w", err)
+		return State{}, fmt.Errorf("no recorded runtime; inspect the runtime selection and saved state: %w", err)
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); !utf8.Valid(data) || err != nil || state.Version != 1 || !imageID.MatchString(state.ImageID) {
@@ -540,14 +540,14 @@ func (manager Manager) Status(ctx context.Context) (State, error) {
 		return State{}, err
 	}
 	if state.Engine != engine {
-		return State{}, fmt.Errorf("selected Docker engine differs from the recorded runtime; build on this engine explicitly")
+		return State{}, fmt.Errorf("selected Docker engine differs from the recorded runtime; inspect the Docker engine and runtime selection")
 	}
 	id, err := manager.inspect(ctx, manager.ImageName())
 	if err != nil {
-		return State{}, fmt.Errorf("shared runtime is missing or unavailable; run sdlc runtime build: %w", err)
+		return State{}, fmt.Errorf("selected runtime image is missing or unavailable; inspect its Docker state: %w", err)
 	}
 	if id != state.ImageID {
-		return State{}, fmt.Errorf("shared image was changed outside the CLI; rebuild to verify and register it")
+		return State{}, fmt.Errorf("selected runtime image differs from its recorded state; inspect its Docker state")
 	}
 	return state, nil
 }

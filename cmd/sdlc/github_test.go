@@ -780,7 +780,7 @@ func TestGitHubPairPreservesExpiredContextThroughSanitizedAcquireError(t *testin
 				ctx, cancel = context.WithCancel(context.Background())
 			}
 			defer cancel()
-			sanitized := errors.New("shared local runtime is unavailable or changed; run sdlc runtime status and rebuild if needed")
+			sanitized := errors.New("selected runtime is unavailable or changed; inspect its recorded state and Docker access")
 			_, err := pairGitHub(ctx, directory, githubOptions{profile: "personal", signingProfile: "personal-key"}, func(inner context.Context) (githubIdentitySession, error) {
 				if !scenario.timeout {
 					cancel()

@@ -107,6 +107,10 @@ func signingCommand(ctx context.Context, args []string, output io.Writer) error 
 		return signingSetup(ctx, runtime.Directory, options, output, openSigningTerminal)
 	case "status", "verify":
 		if options.verify || options.action == "verify" {
+			runtime, err = selectedRuntime(runtime)
+			if err != nil {
+				return err
+			}
 			return verifySigning(ctx, runtime, options.name, output, options.showConfig)
 		}
 		return signingStatus(runtime.Directory, options.name, options.showConfig, output)

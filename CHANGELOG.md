@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.144 - 2026-11-11
+
+### Fixed
+
+- Use the selected default runtime for standalone account and signing verification.
+- Report runtime access failures without assuming a rebuild is required.
+
 ## 0.1.0-beta.143 - 2026-11-10
 
 ### Changed

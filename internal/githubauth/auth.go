@@ -340,7 +340,7 @@ func (manager Manager) begin(ctx context.Context, provider string) (runtimeimage
 	state, err := manager.Runtime.Status(ctx)
 	if err != nil {
 		lease.Close()
-		return runtimeimage.State{}, nil, fmt.Errorf("shared local runtime is unavailable or changed; run sdlc runtime status and rebuild if needed")
+		return runtimeimage.State{}, nil, fmt.Errorf("selected runtime is unavailable or changed; inspect its recorded state and Docker access")
 	}
 	if manager.OnAcquired != nil {
 		manager.OnAcquired(provider)

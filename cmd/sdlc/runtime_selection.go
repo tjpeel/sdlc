@@ -17,6 +17,17 @@ import (
 	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
+// selectedRuntime preserves the installation directory and Docker implementation while
+// resolving the default selected for new operations. Saved runs select their own runtime.
+func selectedRuntime(runtime runtimeimage.Manager) (runtimeimage.Manager, error) {
+	name, err := runtimeimage.ReadDefaultName(runtime.Directory)
+	if err != nil {
+		return runtimeimage.Manager{}, fmt.Errorf("cannot read default runtime selection: %w", err)
+	}
+	runtime.Name = name
+	return runtime, nil
+}
+
 func runtimeSelectionCommand(ctx context.Context, args []string, out io.Writer) error {
 	manager, err := runtimeimage.New(io.Discard, io.Discard)
 	if err != nil {

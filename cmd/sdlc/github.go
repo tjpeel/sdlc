@@ -283,6 +283,12 @@ func githubCommand(ctx context.Context, args []string, output io.Writer) error {
 		fmt.Fprintln(output, "Login validity, repository access and current key registration are unverified.")
 		return nil
 	}
+	if options.action != "status" || options.verify {
+		runtime, err = selectedRuntime(runtime)
+		if err != nil {
+			return err
+		}
+	}
 	manager := githubauth.New(runtime)
 	manager.Profile = options.profile
 	if options.action == "pair" {

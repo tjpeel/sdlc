@@ -383,6 +383,10 @@ func interactive(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cannot locate SDLC installation state")
 	}
+	runtime, err = selectedRuntime(runtime)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(output, "Opening an empty disposable workspace with your stored provider login and shared instructions.")
 	fmt.Fprintln(output, "Use trusted prompts only. Exit through the provider CLI; workspace files and session history are discarded.")
 	if options.provider == "codex" {
@@ -529,6 +533,10 @@ func auth(ctx context.Context, args []string) error {
 	runtime, err := runtimeimage.New(os.Stdout, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("cannot locate SDLC installation state")
+	}
+	runtime, err = selectedRuntime(runtime)
+	if err != nil {
+		return err
 	}
 	if options.service == "github" {
 		manager := githubauth.New(runtime)
