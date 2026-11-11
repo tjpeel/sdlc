@@ -281,34 +281,35 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 	if options.dryRun {
 		if options.jsonOutput {
 			return json.NewEncoder(output).Encode(struct {
-				Version            int                                     `json:"version"`
-				Mode               string                                  `json:"mode"`
-				RuntimeName        string                                  `json:"runtime_name"`
-				Offline            bool                                    `json:"offline"`
-				Plan               workseries.Plan                         `json:"plan"`
-				Parallel           int                                     `json:"parallel"`
-				Watch              bool                                    `json:"watch"`
-				Roles              map[string]workrun.Roles                `json:"roles"`
-				Branches           map[string]string                       `json:"branches"`
-				Checks             [][]string                              `json:"checks"`
-				CheckInputs        []string                                `json:"check_inputs"`
-				Inputs             []string                                `json:"inputs"`
-				TicketInputs       map[string][]string                     `json:"ticket_inputs"`
-				TicketInputContext map[string][]project.RequirementContext `json:"ticket_input_context,omitempty"`
-				DockerTests        bool                                    `json:"docker_tests"`
-				Headroom           headroom.Config                         `json:"headroom"`
-				HeadroomImage      string                                  `json:"headroom_image,omitempty"`
-				InputHashes        map[string]string                       `json:"input_hashes,omitempty"`
-				Saved              map[string]workseries.Result            `json:"saved,omitempty"`
-				Notice             string                                  `json:"notice"`
-			}{1, "feature", selections.RuntimeName, true, plan, options.parallel, options.watch, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.TicketInputContext, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
+				Version                 int                                     `json:"version"`
+				Mode                    string                                  `json:"mode"`
+				RuntimeName             string                                  `json:"runtime_name"`
+				Offline                 bool                                    `json:"offline"`
+				Plan                    workseries.Plan                         `json:"plan"`
+				Parallel                int                                     `json:"parallel"`
+				Watch                   bool                                    `json:"watch"`
+				ContinueIndependentOnCI bool                                    `json:"continue_independent_on_ci"`
+				Roles                   map[string]workrun.Roles                `json:"roles"`
+				Branches                map[string]string                       `json:"branches"`
+				Checks                  [][]string                              `json:"checks"`
+				CheckInputs             []string                                `json:"check_inputs"`
+				Inputs                  []string                                `json:"inputs"`
+				TicketInputs            map[string][]string                     `json:"ticket_inputs"`
+				TicketInputContext      map[string][]project.RequirementContext `json:"ticket_input_context,omitempty"`
+				DockerTests             bool                                    `json:"docker_tests"`
+				Headroom                headroom.Config                         `json:"headroom"`
+				HeadroomImage           string                                  `json:"headroom_image,omitempty"`
+				InputHashes             map[string]string                       `json:"input_hashes,omitempty"`
+				Saved                   map[string]workseries.Result            `json:"saved,omitempty"`
+				Notice                  string                                  `json:"notice"`
+			}{1, "feature", selections.RuntimeName, true, plan, options.parallel, options.watch, options.continueIndependentOnCI, selections.Roles, branches, selections.Config.Checks, selections.Config.InputFiles, selections.Inputs, selections.TicketInputs, selections.TicketInputContext, selections.DockerTests, selections.Headroom, seriesHeadroomImage(selections.Headroom), selections.InputHashes, state.Results, "Offline feature plan; requirement links are validated. Account access and live PR state are checked during execution."})
 		}
 		label := selections.RuntimeName
 		if label == "" {
 			label = "local"
 		}
 		fmt.Fprintf(output, "Selected runtime: %s.\n", label)
-		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t.\n", options.parallel, options.watch)
+		fmt.Fprintf(output, "Maximum concurrent tickets: %d; watch human merges: %t; continue independent tickets on CI hold: %t.\n", options.parallel, options.watch, options.continueIndependentOnCI)
 		for _, ticket := range plan.Tickets {
 			if previous, ok := state.Results[ticket.File]; ok {
 				fmt.Fprintf(output, "Saved ticket %s: %s\n", ticket.File, previous.State)
@@ -360,7 +361,7 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		return err
 	}
 	driver := &seriesDriver{runtime: runtime, options: options, directory: directory, output: writer, plan: plan}
-	runner := workseries.Runner{Driver: driver, Output: writer, Parallel: options.parallel, Watch: options.watch, PollInterval: 15 * time.Second}
+	runner := workseries.Runner{Driver: driver, Output: writer, Parallel: options.parallel, Watch: options.watch, ContinueIndependentOnCI: options.continueIndependentOnCI, PollInterval: 15 * time.Second}
 	runner.Initialize = func(ctx context.Context, checkpoint *workseries.State) error {
 		currentPlan, err := workseries.Discover(ctx, plan.Root, plan.Reference, plan.Base)
 		if err != nil {
@@ -428,7 +429,11 @@ func runSeriesCommand(ctx context.Context, options runOptions, output io.Writer)
 		return driver.adoptRuns(checkpoint)
 	}
 	err = runner.Run(ctx, directory, &state)
-	fmt.Fprintf(output, "Private feature state: %q\nResume feature: sdlc run --reference %q --all --parallel %d\n", directory, options.reference, options.parallel)
+	continuation := ""
+	if options.continueIndependentOnCI {
+		continuation = " --continue-independent-on-ci"
+	}
+	fmt.Fprintf(output, "Private feature state: %q\nResume feature: sdlc run --reference %q --all --parallel %d%s\n", directory, options.reference, options.parallel, continuation)
 	printSeriesResults(output, plan, state)
 	return err
 }
@@ -951,7 +956,11 @@ func sameSeriesInputPaths(inputs []workrun.Input, paths []string) bool {
 }
 
 func resultForRun(directory string, journal workrun.Journal) workseries.Result {
-	return workseries.Result{RunID: journal.ID, Directory: directory, State: journal.State, Branch: journal.Plan.Branch, Base: journal.Plan.Base, BaseSHA: journal.Plan.BaseSHA, HeadSHA: journal.Publication.HeadSHA, URL: journal.Publication.URL, PRNumber: journal.Publication.Number, StopReason: journal.StopReason}
+	result := workseries.Result{RunID: journal.ID, Directory: directory, State: journal.State, Branch: journal.Plan.Branch, Base: journal.Plan.Base, BaseSHA: journal.Plan.BaseSHA, HeadSHA: journal.Publication.HeadSHA, URL: journal.Publication.URL, PRNumber: journal.Publication.Number, StopReason: journal.StopReason}
+	if journal.State == "blocked" && journal.ResumeState == "ci" {
+		result.HoldStage = "ci"
+	}
+	return result
 }
 
 func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, target workseries.Target, previous *workseries.Result) (workseries.Result, error) {

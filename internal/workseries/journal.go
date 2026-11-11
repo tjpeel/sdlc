@@ -172,6 +172,9 @@ func validateState(s *State) error {
 	return nil
 }
 func validResult(p Plan, ticket Ticket, r Result) bool {
+	if r.HoldStage != "" && (r.HoldStage != "ci" || r.State != "blocked") {
+		return false
+	}
 	if strings.ContainsAny(r.RunID+r.State+r.Branch+r.Base+r.BaseSHA+r.HeadSHA+r.MergeSHA+r.URL+r.StopReason, "\x00") {
 		return false
 	}

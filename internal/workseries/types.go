@@ -44,7 +44,8 @@ type CombinedDriver interface {
 }
 
 type Result struct {
-	DependencyInvalid                                                                  bool `json:"DependencyInvalid,omitempty"`
+	DependencyInvalid                                                                  bool   `json:"DependencyInvalid,omitempty"`
+	HoldStage                                                                          string `json:"hold_stage,omitempty"`
 	RunID, Directory, State, Branch, Base, BaseSHA, HeadSHA, MergeSHA, URL, StopReason string
 	PRNumber                                                                           int
 	Dependencies                                                                       []Dependency `json:"Dependencies,omitempty"`
@@ -70,11 +71,12 @@ type State struct {
 }
 
 type Runner struct {
-	Driver       Driver
-	Output       io.Writer
-	Parallel     int
-	Watch        bool
-	PollInterval time.Duration
-	OnChange     func(State) error
-	Initialize   func(context.Context, *State) error
+	Driver                  Driver
+	Output                  io.Writer
+	Parallel                int
+	Watch                   bool
+	ContinueIndependentOnCI bool
+	PollInterval            time.Duration
+	OnChange                func(State) error
+	Initialize              func(context.Context, *State) error
 }

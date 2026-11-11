@@ -207,7 +207,7 @@ func TestFeatureStreamsKeepConcurrentTicketLinesSeparate(t *testing.T) {
 func TestFeatureOptionBoundaries(t *testing.T) {
 	valid := [][]string{
 		{"--reference", "TASK-1", "--all"},
-		{"--reference", "TASK-1", "--all", "--parallel", "2", "--watch", "--alternate-providers"},
+		{"--reference", "TASK-1", "--all", "--parallel", "2", "--watch", "--alternate-providers", "--continue-independent-on-ci"},
 		{"--reference", "TASK-1", "--all", "--provider", "claude", "--docker-tests", "--dry-run"},
 	}
 	for _, args := range valid {
@@ -227,7 +227,7 @@ func TestFeatureOptionBoundaries(t *testing.T) {
 		{"--reference", "TASK-1", "--all", "--parallel", "0"},
 		{"--reference", "TASK-1", "--all", "--parallel", "9"},
 		{"--reference", "TASK-1", "--all", "--alternate-providers", "--model", "example"},
-		append(runArgs(), "--watch"), append(runArgs(), "--parallel", "1"),
+		append(runArgs(), "--watch"), append(runArgs(), "--parallel", "1"), append(runArgs(), "--continue-independent-on-ci"),
 	}
 	for _, args := range invalid {
 		if _, err := parseRunOptions(args); err == nil {
@@ -896,5 +896,14 @@ func TestFeatureLegacyRepeatedSelectionsRetainCapturedSet(t *testing.T) {
 	got := settings.ticketInputs("TASK-1", "01-selected.md")
 	if len(got) != 2 || got[0] != ticket || got[1] != "spec.md" {
 		t.Fatalf("legacy captured selection gained duplicates: %v", got)
+	}
+}
+
+func TestResultForRunRecordsCIHold(t *testing.T) {
+	for _, tc := range []struct{ state, resume, want string }{{"blocked", "ci", "ci"}, {"blocked", "reviewing", ""}, {"ready", "ci", ""}} {
+		result := resultForRun("", workrun.Journal{State: tc.state, ResumeState: tc.resume})
+		if result.HoldStage != tc.want {
+			t.Fatalf("%s/%s: got %q", tc.state, tc.resume, result.HoldStage)
+		}
 	}
 }

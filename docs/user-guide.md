@@ -925,3 +925,7 @@ than repeatedly sending the same finding to implementation. Legacy completed
 review holds can use the explicit recovery flag documented in the CLI guide.
 
 For Synthetic implementation through OpenCode, follow [the Synthetic guide](synthetic.md).
+
+### Continuing independent tickets during a CI hold
+
+Use `sdlc run --reference REF --all --continue-independent-on-ci` to continue tickets that do not depend on a ticket blocked at CI. The stopped run remains blocked and is reported after eligible work finishes; resume it after resolving the CI cause. Other stop reasons still halt the series. This option does not allow dependent tickets to start, bypass CI or review, or mark human PR feedback as resolved. Pending CI still waits in its ticket controller.

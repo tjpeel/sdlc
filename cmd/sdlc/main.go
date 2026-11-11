@@ -114,7 +114,7 @@ func main() {
 		fmt.Println("  sdlc feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]")
 		fmt.Println("       sdlc adopt --pr PR_URL [--start-at awaiting-feedback|checks|review|feedback] [--human-reviewed] [--dry-run]")
 		fmt.Println("       sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic] [--dry-run]")
-		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--dry-run]")
+		fmt.Println("       sdlc run --reference REFERENCE --all [--parallel 2] [--watch] [--continue-independent-on-ci] [--dry-run]")
 		fmt.Println("       sdlc dependencies --reference REFERENCE --ticket NUMBERED_FILE --depends-on PARENT_FILE [--dry-run] [--json]")
 		fmt.Println("         Required provider route: saved Headroom proxy; ticket runtime: --runtime NAME")
 		fmt.Println("       sdlc usage [--since 7d] [--scope project|installation] [--run RUN_ID] [--json]")

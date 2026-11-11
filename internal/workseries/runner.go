@@ -101,7 +101,7 @@ func (r Runner) Run(ctx context.Context, directory string, state *State) error {
 		if err := r.observe(ctx, state, checkpoint, write); err != nil {
 			return err
 		}
-		if err := attention(*state); err != nil {
+		if err := r.attention(*state); err != nil {
 			return err
 		}
 		launched, err := r.launch(ctx, state, checkpoint, write, attempted)
@@ -113,6 +113,9 @@ func (r Runner) Run(ctx context.Context, directory string, state *State) error {
 		}
 		if allMerged(*state) {
 			return nil
+		}
+		if err := attention(*state); err != nil {
+			return err
 		}
 		if !r.Watch {
 			return nil
@@ -469,7 +472,7 @@ func (r Runner) launch(ctx context.Context, s *State, save func() error, write f
 			cancel()
 			continue
 		}
-		if !deferred && attention(*s) == nil {
+		if !deferred && r.attention(*s) == nil {
 			if err := fill(); err != nil {
 				firstErr = err
 				cancel()
@@ -600,6 +603,19 @@ func knownState(state string) bool {
 	}
 	return false
 }
+func (r Runner) attention(s State) error {
+	if !r.ContinueIndependentOnCI {
+		return attention(s)
+	}
+	for _, t := range s.Plan.Tickets {
+		result := s.Results[filepath.Base(t.File)]
+		if attentionState(result.State) && !result.DependencyInvalid && !(result.State == "blocked" && result.HoldStage == "ci") {
+			return fmt.Errorf("series requires attention: %s: %s", filepath.Base(t.File), result.StopReason)
+		}
+	}
+	return nil
+}
+
 func attention(s State) error {
 	for _, t := range s.Plan.Tickets {
 		r := s.Results[filepath.Base(t.File)]

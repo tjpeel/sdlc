@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--continue-independent-on-ci] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -69,7 +69,7 @@ type runOptions struct {
 	dockerTests, dryRun                                                                                                                                                               bool
 	timeout                                                                                                                                                                           time.Duration
 	notifications                                                                                                                                                                     notify.Options
-	all, watch, alternate                                                                                                                                                             bool
+	all, watch, alternate, continueIndependentOnCI                                                                                                                                    bool
 	terminal                                                                                                                                                                          bool
 	parallel                                                                                                                                                                          int
 	jsonOutput                                                                                                                                                                        bool
@@ -137,6 +137,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.BoolVar(&options.all, "all", false, "schedule every pending ticket in the selected work folder")
 	flags.IntVar(&options.parallel, "parallel", 1, "feature only: maximum concurrent ticket controllers (1-8)")
 	flags.BoolVar(&options.watch, "watch", false, "feature only: watch human merges and reconcile remaining PRs")
+	flags.BoolVar(&options.continueIndependentOnCI, "continue-independent-on-ci", false, "feature only: continue independent tickets while a ticket is blocked at CI")
 	flags.BoolVar(&options.alternate, "alternate-providers", false, "feature only: alternate implementation providers in ticket order")
 	flags.DurationVar(&options.timeout, "timeout", 0, "optional controller deadline (1m-24h; default: none)")
 	flags.StringVar(&options.notifications.Mode, "notify", "off", "local notifications: off, desktop or bell")
@@ -266,12 +267,12 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	invalidFeatureFlag := false
 	flags.Visit(func(f *flag.Flag) {
-		if !options.all && (f.Name == "parallel" || f.Name == "watch" || f.Name == "alternate-providers") {
+		if !options.all && (f.Name == "parallel" || f.Name == "watch" || f.Name == "alternate-providers" || f.Name == "continue-independent-on-ci") {
 			invalidFeatureFlag = true
 		}
 	})
 	if invalidFeatureFlag {
-		return options, fmt.Errorf("--parallel, --watch and --alternate-providers require --all")
+		return options, fmt.Errorf("--parallel, --watch, --alternate-providers and --continue-independent-on-ci require --all")
 	}
 	if options.alternate && options.provider == "synthetic" {
 		return options, fmt.Errorf("--alternate-providers supports Codex and Claude; select Synthetic without alternation")

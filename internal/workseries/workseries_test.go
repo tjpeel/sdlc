@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -697,5 +698,60 @@ func TestRunnerIndependentTicketsRunConcurrentlyAndDoNotDuplicate(t *testing.T) 
 	case name := <-driver.started:
 		t.Fatalf("repeated feature duplicated ready job: %s", name)
 	default:
+	}
+}
+
+func TestContinueIndependentOnCIKeepsHoldAndDependencies(t *testing.T) {
+	dir, state := testState(t, Ticket{File: "01-parent.md"}, Ticket{File: "02-child.md", DependsOn: []string{"01-parent.md"}}, Ticket{File: "03-independent.md"})
+	state.Results["01-parent.md"] = Result{RunID: "111111111111111111111111", State: "blocked", HoldStage: "ci", StopReason: "CI unavailable"}
+	if err := Save(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	driver := &fakeDriver{}
+	err := (Runner{Driver: driver, ContinueIndependentOnCI: true}).Run(context.Background(), dir, state)
+	if err == nil || !strings.Contains(err.Error(), "CI unavailable") {
+		t.Fatalf("CI hold not reported: %v", err)
+	}
+	if fmt.Sprint(driver.executed) != "[03-independent.md]" {
+		t.Fatalf("unexpected execution: %v", driver.executed)
+	}
+	saved, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Results["01-parent.md"].State != "blocked" || saved.Results["01-parent.md"].HoldStage != "ci" {
+		t.Fatalf("hold changed: %+v", saved.Results["01-parent.md"])
+	}
+	if _, ok := saved.Results["02-child.md"]; ok {
+		t.Fatal("dependent ticket started")
+	}
+}
+
+func TestContinueIndependentOnCIRejectsUnknownLegacyAndOtherHolds(t *testing.T) {
+	for _, stage := range []string{""} {
+		t.Run(stage, func(t *testing.T) {
+			dir, state := testState(t, Ticket{File: "01-one.md"}, Ticket{File: "02-independent.md"})
+			state.Results["01-one.md"] = Result{RunID: "111111111111111111111111", State: "blocked", HoldStage: stage, StopReason: "hold"}
+			if err := Save(dir, state); err != nil {
+				t.Fatal(err)
+			}
+			driver := &fakeDriver{}
+			if err := (Runner{Driver: driver, ContinueIndependentOnCI: true}).Run(context.Background(), dir, state); err == nil {
+				t.Fatal("hold ignored")
+			}
+			if len(driver.executed) != 0 {
+				t.Fatalf("unexpected execution: %v", driver.executed)
+			}
+		})
+	}
+}
+
+func TestCIHoldMarkerRejectsInvalidStageOrState(t *testing.T) {
+	for _, result := range []Result{{State: "blocked", HoldStage: "review"}, {State: "ready", HoldStage: "ci"}} {
+		dir, state := testState(t, Ticket{File: "01-one.md"})
+		state.Results["01-one.md"] = result
+		if err := Save(dir, state); err == nil {
+			t.Fatalf("invalid hold accepted: %+v", result)
+		}
 	}
 }

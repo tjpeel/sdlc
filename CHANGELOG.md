@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.146 - 2026-11-11
+
+### Added
+
+- Allow an operator to continue independent feature tickets when a ticket is blocked at CI, retaining the hold for recovery.
+
 ## 0.1.0-beta.145 - 2026-11-11
 
 ### Fixed
