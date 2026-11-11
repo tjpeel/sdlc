@@ -75,6 +75,7 @@ var reviewOutcomeSchema = func() string {
 // reviewRequirements retains requirement identity and relationships, without
 // repeating implementation launch, authentication and publication settings.
 type reviewRequirements struct {
+	ProvisionalParent *ProvisionalParentProof      `json:"provisional_parent,omitempty"`
 	InputContext      []project.RequirementContext `json:"input_context,omitempty"`
 	Reference         string                       `json:"reference"`
 	Ticket            string                       `json:"ticket"`
@@ -88,7 +89,7 @@ type reviewRequirements struct {
 }
 
 func selectedReviewRequirements(p Plan) reviewRequirements {
-	return reviewRequirements{InputContext: p.InputContext, Reference: p.Reference, Ticket: p.Ticket, Repository: p.Repository, StartingSHA: p.StartingSHA, SourceSHA: p.SourceSHA, Inputs: p.Inputs, CheckInputs: p.CheckInputs, Derived: p.Derived, DependencyContext: p.DependencyContext}
+	return reviewRequirements{InputContext: p.InputContext, Reference: p.Reference, Ticket: p.Ticket, Repository: p.Repository, StartingSHA: p.StartingSHA, SourceSHA: p.SourceSHA, Inputs: p.Inputs, CheckInputs: p.CheckInputs, Derived: p.Derived, DependencyContext: p.DependencyContext, ProvisionalParent: p.ProvisionalParent}
 }
 
 // The reviewer receives current comment revisions and acknowledgements, rather

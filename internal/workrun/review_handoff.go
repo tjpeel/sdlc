@@ -56,6 +56,7 @@ type ReviewHumanInput struct {
 // ReviewAssessment retains the reviewed boundary while implementation replaces
 // Outcome. Only the bounded final assessment, never process output, is shared.
 type ReviewAssessment struct {
+	CIHeld         bool        `json:"ci_held,omitempty"`
 	Publication    Publication `json:"publication"`
 	Findings       []Finding   `json:"findings"`
 	Summary        string      `json:"summary,omitempty"`
@@ -120,6 +121,22 @@ func validateReviewJournal(j *Journal) error {
 				return fmt.Errorf("invalid retained review finding")
 			}
 		}
+		if a.CIHeld {
+			found := false
+			reviews := append([]CIHeldReview(nil), j.CIHeldReviewHistory...)
+			if j.CIHeldReview != nil {
+				reviews = append(reviews, *j.CIHeldReview)
+			}
+			for _, review := range reviews {
+				if review.Publication == a.Publication && !review.Pending && (!a.Pending || !review.Invalidated) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("CI-held review assessment lost its original review boundary")
+			}
+		}
 		if j.ReviewRepairBudget == nil || j.ReviewRepairBudget.Used < 1 || j.ReviewRepairBudget.LastGrantedHead != a.Publication.HeadSHA {
 			return fmt.Errorf("review assessment has no persisted handoff grant")
 		}
@@ -152,6 +169,10 @@ func (runner Runner) initializeReviewRepair(ctx context.Context, directory strin
 }
 
 func (runner Runner) grantReviewAssessment(directory string, j *Journal, findings []Finding, countRound bool) error {
+	return runner.grantReviewAssessmentAtCIHold(directory, j, findings, countRound, false)
+}
+
+func (runner Runner) grantReviewAssessmentAtCIHold(directory string, j *Journal, findings []Finding, countRound, ciHeld bool) error {
 	if countRound {
 		j.Rounds++
 	}
@@ -165,7 +186,7 @@ func (runner Runner) grantReviewAssessment(directory string, j *Journal, finding
 	if !runLimitsOverridden(j) && b.Used >= b.Limit {
 		return runner.stop(directory, j, "blocked", reviewRepairBound)
 	}
-	a := &ReviewAssessment{Publication: j.Publication, Findings: append([]Finding(nil), findings...), Pending: true}
+	a := &ReviewAssessment{Publication: j.Publication, Findings: append([]Finding(nil), findings...), Pending: true, CIHeld: ciHeld}
 	copy := *j
 	copy.ReviewAssessment = a
 	next := *b
@@ -197,6 +218,9 @@ func boundedReviewSummary(value string) string {
 }
 
 func (runner Runner) reviewHandoffPreflight(ctx context.Context, directory string, j *Journal) error {
+	if ciHeldReviewFindingsAwaitingCI(j) || j.ReviewAssessment != nil && j.ReviewAssessment.Pending && j.ReviewAssessment.CIHeld {
+		return runner.ciHeldReviewHandoffPreflight(ctx, directory, j)
+	}
 	if !j.Evidence.Passed || j.CandidatePhasePending {
 		return fmt.Errorf("review handoff requires completed passing candidate evidence")
 	}
@@ -240,6 +264,18 @@ func (runner Runner) reviewHandoffPreflight(ctx context.Context, directory strin
 // that original turn under the ordinary check gates, but retain the fixed PR/CI
 // boundary and never refund or grant another assessment for the same head.
 func (runner Runner) reviewContinuationCI(ctx context.Context, j *Journal) error {
+	if a := j.ReviewAssessment; a != nil && a.Pending && a.CIHeld {
+		if j.CIHeldReview == nil || j.CIHeldReview.Pending || j.CIHeldReview.Invalidated || j.CIHeldReview.Publication != a.Publication || j.Publication != a.Publication {
+			return fmt.Errorf("CI-held review assessment boundary changed")
+		}
+		p, ok := runner.Publisher.(interface {
+			ValidateFeedbackBoundary(context.Context, Plan, Publication) error
+		})
+		if !ok {
+			return fmt.Errorf("publisher cannot verify CI-held review assessment boundary")
+		}
+		return p.ValidateFeedbackBoundary(ctx, j.Plan, a.Publication)
+	}
 	checks, err := runner.Publisher.Checks(ctx, j.Plan, j.Publication)
 	if err != nil {
 		return err
@@ -251,5 +287,44 @@ func (runner Runner) reviewContinuationCI(ctx context.Context, j *Journal) error
 		return fmt.Errorf("review assessment continuation requires current passing CI on the recorded publication")
 	}
 	j.CI = checks
+	return nil
+}
+
+// ciHeldReviewHandoffPreflight verifies the completed review and candidate
+// without treating the retained CI hold as a passing result.
+func (runner Runner) ciHeldReviewHandoffPreflight(ctx context.Context, directory string, j *Journal) error {
+	if !ciHeldReviewFindingsAwaitingCI(j) || !j.Evidence.Passed || j.CandidatePhasePending {
+		return fmt.Errorf("CI-held review repair requires current reviewed findings and passing local checks")
+	}
+	revision, err := runner.Repository.Inspect(ctx, j.Workspace)
+	if err != nil || !revision.Clean || revision.Head != j.Evidence.Head || revision.Tree != j.Evidence.Tree || j.Evidence.Key != verificationKey(j, VerificationRequest{}, revision.Head, revision.Tree) || !verificationCurrent(j, revision.Head, revision.Tree) {
+		return fmt.Errorf("CI-held review repair candidate changed after checks")
+	}
+	p, ok := runner.Publisher.(interface {
+		ValidateFeedbackBoundary(context.Context, Plan, Publication) error
+	})
+	if !ok {
+		return fmt.Errorf("publisher cannot verify CI-held review repair boundary")
+	}
+	if err := p.ValidateFeedbackBoundary(ctx, j.Plan, j.Publication); err != nil {
+		return err
+	}
+	if err := verifyInputs(j.Workspace, j.Plan.Inputs); err != nil {
+		return err
+	}
+	if err := verifyInputs(directory+"/check-inputs", j.Plan.CheckInputs); err != nil {
+		return err
+	}
+	if runner.ReviewWorkspace == nil {
+		return fmt.Errorf("published review snapshot is unavailable")
+	}
+	workspace, err := runner.ReviewWorkspace(ctx, *j, directory)
+	if err != nil {
+		return err
+	}
+	published, err := runner.Repository.Inspect(ctx, workspace)
+	if err != nil || !published.Clean || published.Head != j.Publication.HeadSHA || published.Tree != j.Evidence.Tree {
+		return fmt.Errorf("published review boundary does not match verified candidate tree")
+	}
 	return nil
 }

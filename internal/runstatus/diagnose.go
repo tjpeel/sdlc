@@ -83,7 +83,7 @@ func diagnosticHash(value string) string {
 }
 func diagnosticState(value string) string {
 	switch value {
-	case "awaiting_feedback", "checkpoint_checks", "checkpoint_review", "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "ready", "blocked", "failed", "waiting_for_human":
+	case "runtime_recheck", "awaiting_feedback", "checkpoint_checks", "checkpoint_review", "adopting", "prepared", "implementing", "repairing", "checking", "publishing", "ci", "awaiting_reviewer", "reviewing", "pr_feedback", "ready", "blocked", "failed", "waiting_for_human":
 		return value
 	}
 	return "unknown"
@@ -123,6 +123,15 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	dump := "sdlc diagnose --run " + id + " --json"
 	if live {
 		return NextAction{Category: "observe", Instruction: "The controller is active; inspect its saved state without starting another controller.", Command: dump}
+	}
+	if j.RuntimeRecheck != nil && j.RuntimeRecheck.Pending && j.State == "blocked" && j.ResumeState == "runtime_recheck" {
+		return NextAction{Category: "runtime_recheck", Instruction: "Resume isolated checks on the unchanged candidate, or inspect the documented abandon action if correction is required.", Command: "sdlc resume --run " + id}
+	}
+	if j.PRFeedback != nil && len(j.PRFeedback.CIHeldBoundaryFailures) > 0 && j.PRFeedback.CIHeldBoundaryFailures[len(j.PRFeedback.CIHeldBoundaryFailures)-1].DiscardedAt == nil && j.PRFeedback.CIHeldBoundaryFailures[len(j.PRFeedback.CIHeldBoundaryFailures)-1].RecoveredAt == nil {
+		if workrun.ValidateDiscardCIHeldFeedbackScan(j) == nil {
+			return NextAction{Category: "ci_feedback_boundary", Instruction: "Inspect the failed scan and preview its invalidation before reconciling the PR; review and feedback history remain saved.", Command: "sdlc resume --run " + id + " --discard-ci-held-feedback-scan --dry-run"}
+		}
+		return NextAction{Category: "ci_feedback_boundary", Instruction: "Inspect retained unresolved feedback before scan recovery.", Command: dump}
 	}
 	if j.CIHeldReview != nil && j.CIHeldReview.Pending && j.CIHeldReview.BoundaryFailed {
 		if workrun.ValidateDiscardCIHeldReview(j) == nil {

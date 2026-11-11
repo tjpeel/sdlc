@@ -19,6 +19,9 @@ import (
 )
 
 func runtimeCommand(ctx context.Context, args []string, output, diagnostics io.Writer) error {
+	if len(args) > 0 && args[0] == "migrate-feature" {
+		return featureRuntimeMigrationCommand(ctx, args[1:], output)
+	}
 	if len(args) > 0 && (args[0] == "list" || args[0] == "use" || args[0] == "migrate" || args[0] == "remove") {
 		return runtimeSelectionCommand(ctx, args, output)
 	}

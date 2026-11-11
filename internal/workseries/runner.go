@@ -146,6 +146,27 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 	for _, t := range s.Plan.Tickets {
 		key := filepath.Base(t.File)
 		result, ok := s.Results[key]
+		if ok && result.Provisional != nil {
+			observation, err := r.Driver.Observe(ctx, result)
+			if err != nil {
+				return deferred, err
+			}
+			proof := result.Provisional.Proof
+			if strings.ToUpper(observation.State) != "OPEN" || observation.Base != proof.Base || observation.BaseSHA != proof.Publication.BaseSHA || observation.HeadSHA != proof.Publication.HeadSHA {
+				if err := r.invalidateDescendants(ctx, s, t, save); err != nil {
+					return deferred, err
+				}
+				s.ProvisionalAudit = append(s.ProvisionalAudit, ProvisionalAudit{Proof: proof, At: time.Now().UTC(), Action: "invalidate"})
+				result.Provisional = nil
+				result.StopReason = "provisional parent PR changed; dependent work is blocked for reconciliation"
+				s.Results[key] = result
+				write("%s blocked: %s\n", key, result.StopReason)
+				if err := save(); err != nil {
+					return deferred, err
+				}
+			}
+			continue
+		}
 		if !ok || (result.State != "ready" && result.State != "waiting_base" && !result.DependencyInvalid) {
 			continue
 		}
@@ -545,6 +566,19 @@ func (r Runner) target(ctx context.Context, s State, t Ticket) (Target, bool, er
 	}
 	if len(deps) == 1 {
 		parent := s.Results[deps[0]]
+		if parent.Provisional != nil {
+			target, err := r.Driver.Base(ctx, parent.Branch)
+			if err != nil {
+				return Target{}, false, err
+			}
+			if target.SHA != parent.Provisional.Proof.Publication.HeadSHA {
+				return Target{}, false, fmt.Errorf("provisional parent %s changed; child is blocked", deps[0])
+			}
+			proof := parent.Provisional.Proof
+			target.Provisional = &proof
+			target.Dependencies = []Dependency{{Ticket: deps[0], RunID: parent.RunID, Branch: parent.Branch, Base: parent.Base, BaseSHA: parent.BaseSHA, HeadSHA: parent.HeadSHA, State: "provisional", PRNumber: parent.PRNumber}}
+			return target, false, nil
+		}
 		switch parent.State {
 		case "ready":
 			target, e := r.Driver.Base(ctx, parent.Branch)
@@ -609,7 +643,7 @@ func (r Runner) attention(s State) error {
 	}
 	for _, t := range s.Plan.Tickets {
 		result := s.Results[filepath.Base(t.File)]
-		if attentionState(result.State) && !result.DependencyInvalid && !(result.State == "blocked" && result.HoldStage == "ci") {
+		if attentionState(result.State) && result.Provisional == nil && !result.DependencyInvalid && !(result.State == "blocked" && result.HoldStage == "ci") {
 			return fmt.Errorf("series requires attention: %s: %s", filepath.Base(t.File), result.StopReason)
 		}
 	}
@@ -619,7 +653,7 @@ func (r Runner) attention(s State) error {
 func attention(s State) error {
 	for _, t := range s.Plan.Tickets {
 		r := s.Results[filepath.Base(t.File)]
-		if attentionState(r.State) && !r.DependencyInvalid {
+		if attentionState(r.State) && r.Provisional == nil && !r.DependencyInvalid {
 			return fmt.Errorf("series requires attention: %s: %s", filepath.Base(t.File), r.StopReason)
 		}
 	}

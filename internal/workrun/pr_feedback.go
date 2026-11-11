@@ -96,17 +96,38 @@ type ReviewedFeedbackCandidate struct {
 	Tree        string      `json:"tree"`
 }
 
+// CIHeldFeedbackScan records a completed GitHub scan of an exact publication.
+// It is evidence of the scan, not evidence that CI passed or feedback was resolved.
+type CIHeldFeedbackScan struct {
+	RunID         string      `json:"run_id"`
+	CandidateHead string      `json:"candidate_head"`
+	CandidateTree string      `json:"candidate_tree"`
+	CheckKey      string      `json:"check_key"`
+	Publication   Publication `json:"publication"`
+	Attempt       int         `json:"attempt"`
+	ScannedAt     time.Time   `json:"scanned_at"`
+}
+
+type CIHeldFeedbackBoundaryFailure struct {
+	Publication Publication `json:"publication"`
+	At          time.Time   `json:"at"`
+	DiscardedAt *time.Time  `json:"discarded_at,omitempty"`
+	RecoveredAt *time.Time  `json:"recovered_at,omitempty"`
+}
+
 type PRFeedbackHistory struct {
-	ReviewedCandidate *ReviewedFeedbackCandidate `json:"reviewed_candidate,omitempty"`
-	LocalPending      *PRFeedbackComment         `json:"local_pending,omitempty"`
-	FetchResumeState  string                     `json:"fetch_resume_state,omitempty"`
-	Version           int                        `json:"version"`
-	Cycle             int                        `json:"cycle"`
-	Active            bool                       `json:"active"`
-	CandidateStart    string                     `json:"candidate_start"`
-	FetchPending      bool                       `json:"fetch_pending,omitempty"`
-	CompletedHead     string                     `json:"completed_head,omitempty"`
-	Entries           []PRFeedbackEntry          `json:"entries"`
+	CIHeldBoundaryFailures []CIHeldFeedbackBoundaryFailure `json:"ci_held_boundary_failures,omitempty"`
+	CIHeldScan             *CIHeldFeedbackScan             `json:"ci_held_scan,omitempty"`
+	ReviewedCandidate      *ReviewedFeedbackCandidate      `json:"reviewed_candidate,omitempty"`
+	LocalPending           *PRFeedbackComment              `json:"local_pending,omitempty"`
+	FetchResumeState       string                          `json:"fetch_resume_state,omitempty"`
+	Version                int                             `json:"version"`
+	Cycle                  int                             `json:"cycle"`
+	Active                 bool                            `json:"active"`
+	CandidateStart         string                          `json:"candidate_start"`
+	FetchPending           bool                            `json:"fetch_pending,omitempty"`
+	CompletedHead          string                          `json:"completed_head,omitempty"`
+	Entries                []PRFeedbackEntry               `json:"entries"`
 }
 
 func feedbackFingerprint(c PRFeedbackComment) string {
@@ -131,7 +152,26 @@ func sameFeedbackRevision(captured, current PRFeedbackComment) bool {
 	return reflect.DeepEqual(captured, current)
 }
 
+func ciHeldFeedbackEligible(j *Journal) bool {
+	c := j.CIHeldReview
+	if c == nil || c.Pending || c.Invalidated || c.Publication != j.Publication || !completedReviewAwaitingCI(j) || ciHeldReviewOutcomeHasWork(j.Outcome) || !j.Evidence.Passed || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingRole != "" || pendingCIFeedback(j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
+		return false
+	}
+	if !objectID.MatchString(j.Evidence.Head) || !objectID.MatchString(j.Evidence.Tree) || j.Evidence.Key != verificationKey(j, VerificationRequest{}, j.Evidence.Head, j.Evidence.Tree) || !verificationCurrent(j, j.Evidence.Head, j.Evidence.Tree) {
+		return false
+	}
+	if j.SessionID == "" {
+		if len(j.RuntimeMigrations) != 1 || j.RuntimeRecheck == nil || j.RuntimeRecheck.Pending || j.RuntimeRecheck.AbandonedAt != nil || j.RuntimeRecheck.ImplementationAttempt != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func ValidatePRFeedbackResume(j Journal) error {
+	if (j.State == "blocked" && j.ResumeState == "ci" || j.PRFeedback != nil && j.PRFeedback.FetchPending && j.PRFeedback.FetchResumeState == "ci" && (j.State == "pr_feedback" || j.State == "blocked" && j.ResumeState == "pr_feedback")) && ciHeldFeedbackEligible(&j) {
+		return validatePRFeedbackJournal(&j)
+	}
 	if j.State == "awaiting_feedback" || j.PRFeedback != nil && j.PRFeedback.FetchPending && j.PRFeedback.FetchResumeState == "awaiting_feedback" {
 		if j.RebaseMonitoring != nil && j.RebaseMonitoring.LocalChecks && !locallyCheckedRebase(&j) {
 			return fmt.Errorf("local rebase feedback requires unchanged passing check evidence")
@@ -181,8 +221,21 @@ func validatePRFeedbackJournal(j *Journal) error {
 	if err != nil || len(data) > 384*1024 || h.Version != 1 || h.Cycle < 1 || len(h.Entries) > 300 || !objectID.MatchString(h.CandidateStart) {
 		return fmt.Errorf("invalid bounded PR feedback history")
 	}
-	if h.FetchResumeState != "" && h.FetchResumeState != "ready" && h.FetchResumeState != "publishing" && h.FetchResumeState != "awaiting_feedback" {
+	if h.FetchResumeState != "" && h.FetchResumeState != "ready" && h.FetchResumeState != "publishing" && h.FetchResumeState != "awaiting_feedback" && h.FetchResumeState != "ci" {
 		return fmt.Errorf("invalid feedback fetch recovery stage")
+	}
+	if len(h.CIHeldBoundaryFailures) > 20 {
+		return fmt.Errorf("too many CI-held feedback boundary failures")
+	}
+	for i, failure := range h.CIHeldBoundaryFailures {
+		if failure.At.IsZero() || failure.Publication.Number < 1 || failure.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, failure.Publication.Number) || !objectID.MatchString(failure.Publication.HeadSHA) || !objectID.MatchString(failure.Publication.BaseSHA) || failure.DiscardedAt != nil && failure.DiscardedAt.Before(failure.At) || failure.RecoveredAt != nil && failure.RecoveredAt.Before(failure.At) || failure.DiscardedAt != nil && failure.RecoveredAt != nil || failure.DiscardedAt == nil && failure.RecoveredAt == nil && (i != len(h.CIHeldBoundaryFailures)-1 || !h.FetchPending || h.FetchResumeState != "ci" || failure.Publication != j.Publication) {
+			return fmt.Errorf("invalid CI-held feedback boundary failure")
+		}
+	}
+	if scan := h.CIHeldScan; scan != nil {
+		if scan.RunID != j.ID || !objectID.MatchString(scan.CandidateHead) || !objectID.MatchString(scan.CandidateTree) || scan.CheckKey == "" || scan.ScannedAt.IsZero() || scan.Attempt < 0 || scan.Attempt > j.Attempt || scan.Publication.Number < 1 || scan.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, scan.Publication.Number) || !objectID.MatchString(scan.Publication.BaseSHA) || !objectID.MatchString(scan.Publication.HeadSHA) {
+			return fmt.Errorf("invalid CI-held feedback scan receipt")
+		}
 	}
 	if b := h.ReviewedCandidate; b != nil {
 		if !objectID.MatchString(b.Head) || !objectID.MatchString(b.Tree) || !objectID.MatchString(b.Publication.HeadSHA) || !objectID.MatchString(b.Publication.BaseSHA) || b.Publication.Number < 1 || b.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, b.Publication.Number) {
@@ -372,6 +425,10 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	}
 	h := j.PRFeedback
 	parked := j.State == "awaiting_feedback" || h != nil && h.FetchPending && h.FetchResumeState == "awaiting_feedback"
+	ciHeld := j.State == "blocked" && j.ResumeState == "ci" || h != nil && h.FetchPending && h.FetchResumeState == "ci"
+	if ciHeld && r.LocalPRFeedback != "" {
+		return fmt.Errorf("CI-held feedback requires a GitHub scan; local feedback cannot replace it")
+	}
 	expectedHead, expectedTree := j.Evidence.Head, j.Evidence.Tree
 	if m := j.RebaseMonitoring; m != nil && validateRebaseMonitoring(j) == nil {
 		expectedHead, expectedTree = m.Proof.Head, m.Proof.Tree
@@ -387,13 +444,16 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	if inspectErr != nil || !revision.Clean || revision.Head != expectedHead || revision.Tree != expectedTree {
 		return fmt.Errorf("feedback requires the unchanged previously tested candidate")
 	}
-	if j.State == "ready" || j.State == "awaiting_feedback" || j.State == "blocked" && j.ResumeState == "publishing" {
+	if j.State == "ready" || j.State == "awaiting_feedback" || j.State == "blocked" && (j.ResumeState == "publishing" || ciHeld) {
 		resumeState := "ready"
 		if parked {
 			resumeState = "awaiting_feedback"
 		}
 		if j.State == "blocked" {
 			resumeState = "publishing"
+		}
+		if ciHeld {
+			resumeState = "ci"
 		}
 		if h == nil {
 			h = &PRFeedbackHistory{Version: 1, Cycle: 1, CandidateStart: revision.Head, Entries: []PRFeedbackEntry{}}
@@ -435,7 +495,37 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 		comments, err = p.Feedback(ctx, j.Plan, j.Publication)
 	}
 	if err != nil {
+		if ciHeld {
+			if boundary, ok := r.Publisher.(interface {
+				ValidateFeedbackBoundary(context.Context, Plan, Publication) error
+			}); ok {
+				if boundaryErr := boundary.ValidateFeedbackBoundary(ctx, j.Plan, j.Publication); boundaryErr != nil {
+					return r.stopCIHeldFeedbackBoundary(dir, j, boundaryErr)
+				}
+			}
+		}
 		return r.stop(dir, j, "blocked", err.Error())
+	}
+	if ciHeld {
+		boundary, ok := r.Publisher.(interface {
+			ValidateFeedbackBoundary(context.Context, Plan, Publication) error
+		})
+		if !ok {
+			return r.stop(dir, j, "blocked", "publisher cannot validate CI-held feedback boundary")
+		}
+		if err := boundary.ValidateFeedbackBoundary(ctx, j.Plan, j.Publication); err != nil {
+			return r.stopCIHeldFeedbackBoundary(dir, j, err)
+		}
+		current, err := r.Repository.Inspect(ctx, j.Workspace)
+		if err != nil || !current.Clean || current.Head != expectedHead || current.Tree != expectedTree {
+			return r.stopCIHeldFeedbackBoundary(dir, j, fmt.Errorf("candidate changed during CI-held feedback scan"))
+		}
+	}
+	if ciHeld {
+		if failure := activeCIHeldFeedbackFailure(j); failure != nil {
+			now := time.Now().UTC()
+			failure.RecoveredAt = &now
+		}
 	}
 	if len(comments) > maxPRFeedbackComments {
 		return r.stop(dir, j, "blocked", "too many PR comments for bounded feedback processing")
@@ -493,7 +583,7 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 		}
 	}
 	var sonarReceipt *SonarRepair
-	if j.Plan.Sonar.RepairsEnabled() && pendingFeedback(j) != nil {
+	if !ciHeld && j.Plan.Sonar.RepairsEnabled() && pendingFeedback(j) != nil {
 		checks, err := r.readPublishedCI(ctx, dir, j)
 		if err != nil {
 			return r.stop(dir, j, "blocked", err.Error())
@@ -506,7 +596,16 @@ func (r Runner) beginPRFeedback(ctx context.Context, dir string, j *Journal) err
 	}
 	h.LocalPending = nil
 	h.FetchPending = false
+	if ciHeld {
+		h.CIHeldScan = &CIHeldFeedbackScan{RunID: j.ID, Publication: j.Publication, CandidateHead: j.Evidence.Head, CandidateTree: j.Evidence.Tree, CheckKey: j.Evidence.Key, Attempt: j.Attempt, ScannedAt: time.Now().UTC()}
+	}
 	if pendingFeedback(j) == nil {
+		if ciHeld {
+			h.FetchResumeState = ""
+			h.Active = false
+			j.State = "ci"
+			return r.stop(dir, j, "blocked", j.CIHeldReview.HoldReason)
+		}
 		if h.FetchResumeState == "publishing" {
 			h.FetchResumeState = ""
 			return r.transition(dir, j, "publishing")
@@ -981,4 +1080,52 @@ func (runner Runner) correctFeedbackReceipt(directory string, j *Journal, err er
 	}
 	j.Feedback = fmt.Sprintf("Your feedback receipt was rejected: commit %s is absent from candidate %s. No assessment was accepted. Correct only the structured handoff in this same session; do not edit source or create replacement commits to satisfy this validation. Inspect Git if needed and copy full SHAs exactly from the authoritative base-to-candidate history below. Do not infer a SHA from a prefix. Preserve the existing correction work and request the configured checks again. Existing checks, review and publication gates still apply.\n%s", receipt.Claimed, receipt.Head, strings.Join(receipt.Commits, "\n"))
 	return true, runner.transition(directory, j, "repairing")
+}
+
+func activeCIHeldFeedbackFailure(j *Journal) *CIHeldFeedbackBoundaryFailure {
+	if j.PRFeedback == nil || len(j.PRFeedback.CIHeldBoundaryFailures) == 0 {
+		return nil
+	}
+	failure := &j.PRFeedback.CIHeldBoundaryFailures[len(j.PRFeedback.CIHeldBoundaryFailures)-1]
+	if failure.DiscardedAt != nil || failure.RecoveredAt != nil {
+		return nil
+	}
+	return failure
+}
+
+func (r Runner) stopCIHeldFeedbackBoundary(dir string, j *Journal, cause error) error {
+	if j.PRFeedback == nil || !j.PRFeedback.FetchPending || j.PRFeedback.FetchResumeState != "ci" {
+		return fmt.Errorf("CI-held feedback fetch checkpoint missing")
+	}
+	if activeCIHeldFeedbackFailure(j) != nil {
+		return r.stop(dir, j, "blocked", fmt.Sprintf("CI-held feedback boundary remains changed: %v", cause))
+	}
+	if len(j.PRFeedback.CIHeldBoundaryFailures) >= 20 {
+		return r.stop(dir, j, "blocked", "CI-held feedback boundary failure history reached its limit")
+	}
+	j.PRFeedback.CIHeldBoundaryFailures = append(j.PRFeedback.CIHeldBoundaryFailures, CIHeldFeedbackBoundaryFailure{Publication: j.Publication, At: time.Now().UTC()})
+	return r.stop(dir, j, "blocked", fmt.Sprintf("CI-held feedback boundary changed: %v; inspect and discard only the failed scan before reconciliation", cause))
+}
+
+// ValidateDiscardCIHeldFeedbackScan preserves review and comment history. A
+// failed fetch can be discarded only if no earlier feedback remains outstanding.
+func ValidateDiscardCIHeldFeedbackScan(j Journal) error {
+	h := j.PRFeedback
+	failure := activeCIHeldFeedbackFailure(&j)
+	status := PRFeedbackStatus(j)
+	if h == nil || failure == nil || !h.FetchPending || h.FetchResumeState != "ci" || j.State != "blocked" || j.ResumeState != "pr_feedback" || failure.Publication != j.Publication || !ciHeldFeedbackEligible(&j) || status.Pending > 0 || status.Unresolved > 0 || status.OutstandingReplies > 0 || h.LocalPending != nil || ciHeldReviewOutcomeHasWork(j.Outcome) || j.PendingInputs != nil || j.CandidatePhasePending || j.Reconciliation != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingRole != "" || j.ReviewAssessment != nil && j.ReviewAssessment.Pending {
+		return fmt.Errorf("discard requires a failed CI-held feedback scan with no unresolved work")
+	}
+	return validatePRFeedbackJournal(&j)
+}
+
+func (r Runner) discardCIHeldFeedbackScan(dir string, j *Journal) error {
+	if err := ValidateDiscardCIHeldFeedbackScan(*j); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	activeCIHeldFeedbackFailure(j).DiscardedAt = &now
+	j.PRFeedback.FetchPending, j.PRFeedback.Active, j.PRFeedback.FetchResumeState = false, false, ""
+	j.State, j.ResumeState, j.StopReason = "blocked", "ci", "Failed CI-held feedback scan was discarded; reconcile the publication before continuing"
+	return r.save(dir, j)
 }

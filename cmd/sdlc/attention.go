@@ -254,6 +254,8 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var rebase bool
 	var reviewCIHold bool
 	var discardCIHeldReview bool
+	var discardCIHeldFeedbackScan bool
+	var abandonRuntimeRecheck bool
 	var acceptRecommendations bool
 	var autoAcceptRecommendations bool
 	var override bool
@@ -262,6 +264,8 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		flags.BoolVar(&rebase, "rebase", false, "rebase saved PR commits onto its current target branch")
 		flags.BoolVar(&reviewCIHold, "review-ci-hold", false, "review the exact published PR while retaining its CI hold")
 		flags.BoolVar(&discardCIHeldReview, "discard-ci-held-review", false, "invalidate a provisional review after a PR boundary failure")
+		flags.BoolVar(&discardCIHeldFeedbackScan, "discard-ci-held-feedback-scan", false, "discard a failed CI-held feedback scan")
+		flags.BoolVar(&abandonRuntimeRecheck, "abandon-runtime-recheck", false, "stop an unchanged-PR runtime recheck without publishing")
 		flags.StringVar(&startAt, "start-at", "", "PR entry point")
 		flags.BoolVar(&humanReviewed, "human-reviewed", false, "declare captured PR reviewed by a human")
 		flags.StringVar(&ciFeedbackPath, "ci-feedback-file", "", "bounded supplemental CI context")
@@ -282,7 +286,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--review-ci-hold | --discard-ci-held-review | --rebase | --accept-recommendations | --auto-accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--discard-ci-held-feedback-scan | --abandon-runtime-recheck | --review-ci-hold | --discard-ci-held-review | --rebase | --accept-recommendations | --auto-accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -483,6 +487,12 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	}
 	if discardCIHeldReview {
 		runArgs = append(runArgs, "--discard-ci-held-review")
+	}
+	if discardCIHeldFeedbackScan {
+		runArgs = append(runArgs, "--discard-ci-held-feedback-scan")
+	}
+	if abandonRuntimeRecheck {
+		runArgs = append(runArgs, "--abandon-runtime-recheck")
 	}
 	if startAt != "" {
 		runArgs = append(runArgs, "--start-at", startAt)

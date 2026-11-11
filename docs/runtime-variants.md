@@ -123,6 +123,21 @@ Migration retains its workspace, frozen inputs, original checkpoint, prior nativ
 
 The migrated journal requires a CLI that understands runtime migrations. Older CLI versions cannot resume it; do not manually replace its checkpoint with the saved pre-migration copy after the new session has made progress. The prior checkpoint is retained as private evidence, not an automatic rollback mechanism.
 
+## Migrating a feature runtime
+
+For a saved feature whose started runs are stopped at a published CI hold, preview the whole feature migration first:
+
+```sh
+sdlc runtime migrate-feature --reference MO-667 --to local --dry-run
+sdlc runtime migrate-feature --reference MO-667 --to local
+```
+
+Replace the reference and target as needed. The preview checks the frozen feature inputs, each started run, its candidate and live PR boundary, and the target runtime. Migration preserves run and PR identities, archives the previous runtime and session, and retains each started ticket's recorded provider route as an exception. The feature's provider default continues to apply to unstarted tickets. It invalidates previous checks and CI; independent review remains required.
+
+The next ordinary resume runs `runtime_recheck`: isolated formatter preparation and checks against the unchanged candidate and PR. Neither migration nor this recheck publishes a PR. A successful recheck returns the run to its original CI hold. If recheck cannot proceed, inspect its retained evidence. To stop the unchanged-PR recheck explicitly, use `sdlc resume --run RUN_ID --abandon-runtime-recheck`; the run returns to implementation with normal checks, review and publication gates still required.
+
+The migration locks the feature and started runs and records a private pending transaction before changing checkpoints. If interrupted, ordinary feature and run access is fenced. Repeat the same migration command to finish it, or append `--rollback` to restore the original checkpoint bytes. Add `--dry-run` to preview either recovery action. Rollback applies only to a pending transaction and cannot undo a completed migration. Do not edit the journals by hand.
+
 ## Removing a runtime
 
 Runtime records remain in the installation state even if Docker tags are removed outside SDLC. Removal also clears a record whose tag is confirmed missing on its recorded Docker engine, subject to the same saved-work and container checks. If Docker is unavailable or the engine differs, removal cannot verify the tag and retains the record.

@@ -337,6 +337,11 @@ func (d *seriesDriver) Invalidate(ctx context.Context, ticket workseries.Ticket,
 }
 
 func (d *seriesDriver) validateDependencyTarget(ctx context.Context, target workseries.Target) error {
+	if target.Provisional != nil {
+		plan := d.publicationPlan()
+		plan.Base, plan.BaseSHA, plan.ProvisionalParent = target.Base, target.SHA, target.Provisional
+		return workrun.ValidateProvisionalDependency(ctx, plan, d.publisher(plan))
+	}
 	if len(target.Dependencies) == 0 {
 		return nil
 	}

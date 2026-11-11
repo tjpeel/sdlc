@@ -38,6 +38,7 @@ import (
 type seriesSettings struct {
 	RuntimeName               string `json:"runtime_name,omitempty"`
 	Headroom                  headroom.Config
+	TicketHeadroom            map[string]headroom.Config `json:"TicketHeadroom,omitempty"`
 	Version                   int
 	Provider                  string
 	Alternate                 bool
@@ -780,6 +781,18 @@ type seriesDriver struct {
 }
 
 func (d *seriesDriver) validateSettings() error {
+	for ticket, route := range d.settings.TicketHeadroom {
+		known := false
+		for _, t := range d.plan.Tickets {
+			if filepath.Base(t.File) == ticket {
+				known = true
+				break
+			}
+		}
+		if !known || route.Validate() != nil {
+			return fmt.Errorf("invalid per-ticket provider route")
+		}
+	}
 	if len(d.settings.Roles) != len(d.plan.Tickets) || (d.settings.Provider != "codex" && d.settings.Provider != "claude" && d.settings.Provider != "synthetic") {
 		return fmt.Errorf("private feature models do not match its tickets")
 	}
@@ -859,6 +872,10 @@ func (d *seriesDriver) snapshot(ctx context.Context, target workseries.Target, p
 	}
 	cleanup := func() { _ = os.RemoveAll(request) }
 	snapshot, err := d.publisher(d.publicationPlan()).Snapshot(ctx, d.publicationPlan(), target.Base, target.SHA, request)
+	if err == nil && target.Provisional != nil {
+		proof := *target.Provisional
+		snapshot.ProvisionalParent = &proof
+	}
 	if err == nil && len(target.Context) != 0 {
 		var dependency workrun.DependencyContext
 		if json.Unmarshal(target.Context, &dependency) != nil || dependency.SignedSHA != snapshot.SHA {
@@ -915,18 +932,32 @@ func (d *seriesDriver) loadRun(ticket string, result workseries.Result) (string,
 	if err != nil {
 		return "", journal, err
 	}
-	roles, exists := d.settings.Roles[ticket]
-	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Plan.DaemonMode != d.settings.DaemonMode || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.CheckSelection != d.settings.Config.CheckSelection || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.Headroom {
-		return "", journal, fmt.Errorf("saved ticket run differs from frozen feature settings")
-	}
-	if err := validateSeriesCheckInputs(journal, directory, d.settings.Config.InputFiles, d.settings.InputHashes); err != nil {
-		return "", journal, err
-	}
-	expectedInputs := d.settings.ticketInputs(d.plan.Reference, ticket)
-	if err := validateSeriesRunInputs(context.Background(), journal, expectedInputs, d.settings.InputHashes); err != nil {
+	if err := d.validateRunJournal(ticket, directory, journal); err != nil {
 		return "", journal, err
 	}
 	return directory, journal, nil
+}
+
+func (d *seriesDriver) validateRunJournal(ticket, directory string, journal workrun.Journal) error {
+	roles, exists := d.settings.Roles[ticket]
+	if !exists || journal.Plan.Root != d.plan.Root || journal.Plan.Reference != d.plan.Reference || filepath.Base(journal.Plan.Ticket) != ticket || journal.ImageID != d.settings.ImageID || journal.Plan.PublicationIdentity == nil || *journal.Plan.PublicationIdentity != *d.settings.Identity || journal.Plan.Roles != roles || journal.Plan.Repository != d.settings.Repository || journal.Plan.GitHubProfile != d.settings.GitHubProfile || journal.Plan.SigningProfile != d.settings.SigningProfile || journal.Plan.SigningImage != d.settings.SigningImage || journal.Plan.DaemonImage != d.settings.DaemonImage || journal.Plan.DaemonMode != d.settings.DaemonMode || journal.Instructions != d.settings.Instructions || !reflect.DeepEqual(journal.Plan.Checks, d.settings.Config.Checks) || journal.Plan.CheckSelection != d.settings.Config.CheckSelection || journal.Plan.DockerTests != d.settings.DockerTests || journal.Plan.Headroom != d.settings.ticketHeadroom(ticket) {
+		return fmt.Errorf("saved ticket run differs from frozen feature settings")
+	}
+	if err := validateSeriesCheckInputs(journal, directory, d.settings.Config.InputFiles, d.settings.InputHashes); err != nil {
+		return err
+	}
+	expectedInputs := d.settings.ticketInputs(d.plan.Reference, ticket)
+	if err := validateSeriesRunInputs(context.Background(), journal, expectedInputs, d.settings.InputHashes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s seriesSettings) ticketHeadroom(ticket string) headroom.Config {
+	if value, ok := s.TicketHeadroom[ticket]; ok {
+		return value
+	}
+	return s.Headroom
 }
 
 func matchSeriesCapturedInputs(plan workrun.Plan, hashes map[string]string) error {
@@ -988,7 +1019,8 @@ func (d *seriesDriver) Execute(ctx context.Context, ticket workseries.Ticket, ta
 	options.frozenRoles, options.frozenConfig = &roles, &d.settings.Config
 	options.runtimeName = d.settings.RuntimeName
 	options.frozenImage, options.frozenIdentity = d.settings.ImageID, d.settings.Identity
-	options.headroomMode, options.frozenHeadroom = seriesHeadroomMode(d.settings.Headroom), &d.settings.Headroom
+	route := d.settings.ticketHeadroom(ticket.File)
+	options.headroomMode, options.frozenHeadroom = seriesHeadroomMode(route), &route
 	options.frozenInstructions = &d.settings.Instructions
 	options.frozenInputHashes = d.settings.InputHashes
 	options.frozenSigningImage, options.frozenDaemonImage = d.settings.SigningImage, d.settings.DaemonImage
@@ -1062,6 +1094,38 @@ func (d *seriesDriver) Observe(ctx context.Context, result workseries.Result) (w
 	if err != nil {
 		return workseries.Observation{}, err
 	}
+	if result.Provisional != nil {
+		proof, proofErr := workrun.ProvisionalProofForCIHold(journal)
+		if proofErr != nil || !workrun.SameProvisionalBoundary(proof, result.Provisional.Proof) {
+			return workseries.Observation{State: "STALE"}, nil
+		}
+		publisher := d.publisher(journal.Plan)
+		observed, observeErr := publisher.Observe(ctx, journal.Plan, proof.Publication)
+		if observeErr != nil {
+			return workseries.Observation{}, observeErr
+		}
+		if observed.State != "OPEN" || observed.Base != proof.Base || observed.BaseSHA != proof.Publication.BaseSHA || observed.HeadSHA != proof.Publication.HeadSHA {
+			return workseries.Observation{State: "STALE"}, nil
+		}
+		comments, feedbackErr := publisher.Feedback(ctx, journal.Plan, journal.Publication)
+		if feedbackErr != nil {
+			observed, observeErr = publisher.Observe(ctx, journal.Plan, proof.Publication)
+			if observeErr == nil && (observed.State != "OPEN" || observed.Base != proof.Base || observed.BaseSHA != proof.Publication.BaseSHA || observed.HeadSHA != proof.Publication.HeadSHA) {
+				return workseries.Observation{State: "STALE"}, nil
+			}
+			return workseries.Observation{}, feedbackErr
+		}
+		if workrun.ValidateProvisionalFeedback(journal, comments) != nil {
+			return workseries.Observation{State: "STALE"}, nil
+		}
+		branch, branchErr := publisher.Branch(ctx, journal.Plan, proof.Branch)
+		if branchErr != nil {
+			return workseries.Observation{}, branchErr
+		}
+		if branch.SHA != proof.Publication.HeadSHA || branch.Branch != proof.Branch {
+			return workseries.Observation{State: "STALE"}, nil
+		}
+	}
 	if journal.Publication.HeadSHA != result.HeadSHA || journal.Plan.Base != result.Base || journal.Publication.Number != result.PRNumber {
 		return workseries.Observation{}, fmt.Errorf("ticket checkpoint changed outside the feature controller; restart the feature to reload it")
 	}
@@ -1115,6 +1179,7 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 		observed = remote
 	}
 	if journal.Reconciliation == nil && journal.Plan.Base == target.Base && journal.Plan.BaseSHA == target.SHA {
+		journal.Plan.ProvisionalParent = target.Provisional
 		journal.DependencyInvalid = false
 		if !held {
 			journal.State, journal.ResumeState, journal.StopReason = "ci", "", ""
@@ -1169,6 +1234,7 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 	journal.Plan.Base, journal.Plan.BaseSHA = recorded.Branch, recorded.SHA
 	journal.Plan.SourceSHA, journal.Plan.StartingSHA = recorded.SHA, recorded.SHA
 	journal.Plan.DependencyContext = recorded.DependencyContext
+	journal.Plan.ProvisionalParent = recorded.ProvisionalParent
 	journal.Evidence = workrun.CheckEvidence{}
 	journal.CI = workrun.CIResult{}
 	journal.Outcome = workrun.Outcome{}
@@ -1178,7 +1244,10 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 		journal.Feedback += " Resolve the unfinished Git rebase in this workspace, preserving only this ticket's changes. Conflicting paths: " + strings.Join(rebase.Paths, ", ") + ". Finish the rebase and commit before requesting checks; ask a human for product decisions."
 	}
 	journal.RestackNeedsChecks = true
-	if held {
+	if rebase.Conflict && recorded.ProvisionalParent != nil {
+		journal.State, journal.ResumeState, journal.StopReason = "blocked", "implementing", "Provisional parent restack has conflicts; inspect and resolve before resuming"
+	}
+	if held && !(rebase.Conflict && recorded.ProvisionalParent != nil) {
 		journal.State, journal.ResumeState, journal.StopReason, journal.Outcome = heldState, "implementing", heldReason, heldOutcome
 	}
 	journal.Reconciliation = nil
@@ -1191,6 +1260,9 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 	// its heartbeat. The saved native SessionID is deliberately retained.
 	if err := workrun.ClearDependencyInvalidation(directory); err != nil {
 		return previous, err
+	}
+	if rebase.Conflict && recorded.ProvisionalParent != nil {
+		return resultForRun(directory, journal), fmt.Errorf("provisional parent restack has conflicts; inspect and resolve before resuming")
 	}
 	if err := lock.Close(); err != nil {
 		return previous, err
@@ -1310,6 +1382,16 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 			return err
 		}
 		refreshed := resultForRun(directory, journal)
+		if previous.Provisional != nil {
+			proof, proofErr := workrun.ProvisionalProofForCIHold(journal)
+			if proofErr != nil || !workrun.SameProvisionalBoundary(proof, previous.Provisional.Proof) {
+				// Keep the observed grant for the normal observer, which records
+				// invalidation and fences descendants before changing it.
+				state.Results[ticket.File] = previous
+				continue
+			}
+			refreshed.Provisional = previous.Provisional
+		}
 		refreshed.Dependencies = previous.Dependencies
 		refreshed.DependencyInvalid = previous.DependencyInvalid || workrun.DependencyIsInvalid(directory, &journal)
 		if refreshed.DependencyInvalid && !seriesHeldState(refreshed.State) {

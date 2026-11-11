@@ -22,6 +22,8 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	DiscardCIHeldFeedbackScan         bool
+	AbandonRuntimeRecheck             bool
 	DiscardCIHeldReview               bool
 	ReviewCIHold                      bool
 	SonarPolicy                       *project.SonarPolicy
@@ -161,8 +163,32 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
 		}
 	}
+	// A migrated published run must first complete its unchanged-PR recheck.
+	// Other recovery modes can change the candidate or dispatch work before the
+	// recheck state is entered, so reject them before invoking any callbacks.
+	if journal.RuntimeRecheck != nil && journal.RuntimeRecheck.Pending {
+		if answer != "" || runner.DiscardCIHeldReview || runner.DiscardCIHeldFeedbackScan || runner.ReviewCIHold || runner.Rebase || runner.StartAt != "" || runner.HumanReviewed || runner.ProcessPRFeedback || runner.LocalPRFeedback != "" || runner.CIFeedback != "" || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 || runner.AutoAcceptRecommendationsOverride != nil {
+			return fmt.Errorf("pending runtime recheck requires ordinary resume or explicit --abandon-runtime-recheck")
+		}
+	}
+	if runner.DiscardCIHeldFeedbackScan {
+		if answer != "" || runner.AbandonRuntimeRecheck || runner.DiscardCIHeldReview || runner.ReviewCIHold || runner.Rebase || runner.StartAt != "" || runner.HumanReviewed || runner.ProcessPRFeedback || runner.LocalPRFeedback != "" || runner.CIFeedback != "" || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 || runner.AutoAcceptRecommendationsOverride != nil {
+			return fmt.Errorf("discard CI-held feedback scan cannot combine with other recovery actions")
+		}
+		if err := ValidateDiscardCIHeldFeedbackScan(*journal); err != nil {
+			return err
+		}
+	}
 	if runner.ValidateDependencies != nil {
 		if err := runner.ValidateDependencies(ctx, directory, journal.Plan); err != nil {
+			return err
+		}
+	}
+	if runner.AbandonRuntimeRecheck {
+		if answer != "" || runner.DiscardCIHeldReview || runner.ReviewCIHold || runner.StartAt != "" || runner.ProcessPRFeedback || runner.CIFeedback != "" || runner.Rebase || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 {
+			return fmt.Errorf("abandon runtime recheck cannot combine with other recovery actions")
+		}
+		if err := ValidateAbandonRuntimeRecheck(*journal); err != nil {
 			return err
 		}
 	}
@@ -368,6 +394,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	if runner.DiscardCIHeldFeedbackScan {
+		return runner.discardCIHeldFeedbackScan(directory, journal)
+	}
+	if runner.AbandonRuntimeRecheck {
+		return runner.abandonRuntimeRecheck(directory, journal)
+	}
 	if runner.DiscardCIHeldReview {
 		return runner.discardCIHeldReview(directory, journal)
 	}
@@ -636,8 +668,14 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err := runner.feedbackPrompt(directory, journal); err != nil {
 				return err
 			}
-			if len(journal.RuntimeMigrations) != 0 && journal.SessionID == "" && journal.Attempt > journal.RuntimeMigrations[len(journal.RuntimeMigrations)-1].PreviousAttempt {
-				return runner.stop(directory, journal, "blocked", "the migrated native session was interrupted before its identity was recorded; inspect the retained session rather than starting another")
+			if len(journal.RuntimeMigrations) != 0 && journal.SessionID == "" {
+				interrupted := journal.Attempt > journal.RuntimeMigrations[len(journal.RuntimeMigrations)-1].PreviousAttempt
+				if journal.RuntimeRecheck != nil {
+					interrupted = journal.RuntimeRecheck.ImplementationAttempt > 0
+				}
+				if interrupted {
+					return runner.stop(directory, journal, "blocked", "the migrated native session was interrupted before its identity was recorded; inspect the retained session rather than starting another")
+				}
 			}
 			result, err := runner.session(ctx, directory, journal, "implementation", journal.Workspace, journal.SessionID)
 			if result.SessionID != "" {
@@ -761,6 +799,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if journal.PushRepair != nil {
 				journal.PushRepair.Pending = nil
 			}
+			if c := journal.CIHeldReview; c != nil && !c.Pending && c.Publication != publication {
+				c.Invalidated = true
+			}
 			journal.Publication = publication
 			// Feedback acknowledgements persist the journal. Invalidate evidence for
 			// the previous publication before any acknowledgement can save it.
@@ -788,6 +829,10 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			} else if err := runner.transition(directory, journal, "ci"); err != nil {
 				return err
 			}
+		case "runtime_recheck":
+			if err := runner.recheckFeatureRuntime(ctx, directory, journal); err != nil {
+				return err
+			}
 		case "ci":
 			if err := runner.checkCI(ctx, directory, journal); err != nil {
 				return err
@@ -808,7 +853,7 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				if err := runner.reviewHandoffPreflight(ctx, directory, journal); err != nil {
 					return runner.stop(directory, journal, "blocked", err.Error())
 				}
-				if err := runner.grantReviewAssessment(directory, journal, journal.Outcome.Findings, true); err != nil {
+				if err := runner.grantReviewAssessmentAtCIHold(directory, journal, journal.Outcome.Findings, true, true); err != nil {
 					return err
 				}
 				continue
@@ -968,6 +1013,18 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if ciHeldReviewPending(journal) {
 				journal.CIHeldReview.Pending = false
+				if len(result.Outcome.Findings) > 0 {
+					if err := runner.save(directory, journal); err != nil {
+						return err
+					}
+					if err := runner.ciHeldReviewHandoffPreflight(ctx, directory, journal); err != nil {
+						return runner.stop(directory, journal, "blocked", err.Error())
+					}
+					if err := runner.grantReviewAssessmentAtCIHold(directory, journal, result.Outcome.Findings, true, true); err != nil {
+						return err
+					}
+					continue
+				}
 				reason := journal.CIHeldReview.HoldReason
 				journal.State = "ci"
 				return runner.stop(directory, journal, "blocked", reason)
@@ -1063,6 +1120,9 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 		}
 	}
 	journal.Attempt++
+	if role == "implementation" && journal.SessionID == "" && journal.RuntimeRecheck != nil && len(journal.RuntimeMigrations) != 0 && journal.RuntimeRecheck.ImplementationAttempt == 0 {
+		journal.RuntimeRecheck.ImplementationAttempt = journal.Attempt
+	}
 	if a := journal.ReviewAssessment; role == "implementation" && a != nil && a.Pending && a.StartedAttempt == 0 {
 		a.StartedAttempt = journal.Attempt
 	}

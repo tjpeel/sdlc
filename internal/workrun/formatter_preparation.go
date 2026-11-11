@@ -210,6 +210,9 @@ func (runner Runner) prepareCandidate(ctx context.Context, directory string, jou
 	}
 	if corrections {
 		journal.Evidence.Passed = false
+		if journal.RuntimeRecheck != nil && journal.RuntimeRecheck.Pending {
+			return false, runner.stop(directory, journal, "blocked", "formatter requires source changes; runtime recheck did not publish or change the PR")
+		}
 		if runner.configuredRepairFailed(journal) {
 			return false, runner.stop(directory, journal, "blocked", configuredCheckRepairBound)
 		}

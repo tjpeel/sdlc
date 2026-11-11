@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/workrun"
 )
 
 type Plan struct {
@@ -25,6 +27,7 @@ type Ticket struct {
 }
 
 type Target struct {
+	Provisional  *workrun.ProvisionalParentProof
 	Base, SHA    string
 	Ancestors    []string
 	Dependencies []Dependency
@@ -44,11 +47,24 @@ type CombinedDriver interface {
 }
 
 type Result struct {
-	DependencyInvalid                                                                  bool   `json:"DependencyInvalid,omitempty"`
-	HoldStage                                                                          string `json:"hold_stage,omitempty"`
+	Provisional                                                                        *ProvisionalMark `json:"provisional,omitempty"`
+	DependencyInvalid                                                                  bool             `json:"DependencyInvalid,omitempty"`
+	HoldStage                                                                          string           `json:"hold_stage,omitempty"`
 	RunID, Directory, State, Branch, Base, BaseSHA, HeadSHA, MergeSHA, URL, StopReason string
 	PRNumber                                                                           int
 	Dependencies                                                                       []Dependency `json:"Dependencies,omitempty"`
+}
+
+type ProvisionalMark struct {
+	Proof     workrun.ProvisionalParentProof `json:"proof"`
+	GrantedAt time.Time                      `json:"granted_at"`
+}
+
+type ProvisionalAudit struct {
+	PreviousHead string                         `json:"previous_head,omitempty"`
+	Proof        workrun.ProvisionalParentProof `json:"proof"`
+	At           time.Time                      `json:"at"`
+	Action       string                         `json:"action"`
 }
 
 type Observation struct{ State, Base, BaseSHA, HeadSHA, MergeSHA, CI, Details string }
@@ -61,6 +77,7 @@ type Driver interface {
 }
 
 type State struct {
+	ProvisionalAudit     []ProvisionalAudit         `json:"provisional_audit,omitempty"`
 	TicketCompletions    []TicketCompletionAudit    `json:"ticket_completions,omitempty"`
 	DependencyAmendments []DependencyAmendmentAudit `json:"dependency_amendments,omitempty"`
 	Version              int

@@ -177,7 +177,7 @@ func TestCIHeldReviewRetainsFindingsWhileCIBlocked(t *testing.T) {
 	outcome.Findings = []Finding{{Priority: "P1", Path: "a.go", Line: 1, Scenario: "Failure", Recommendation: "Fix it"}}
 	provider.outcomes = []Outcome{outcome}
 	err := runner.Run(context.Background(), dir, j, "")
-	if !errors.Is(err, ErrStopped) || j.ResumeState != "ci" || j.StopReason != "CI unavailable" || pub.ci != 0 || len(j.ReviewReports) != 1 || len(j.ReviewReports[0].Findings) != 1 {
+	if !errors.Is(err, ErrStopped) || j.ResumeState != "reviewing" || !strings.Contains(j.StopReason, "passing local checks") || pub.ci != 0 || len(j.ReviewReports) != 1 || len(j.ReviewReports[0].Findings) != 1 {
 		t.Fatalf("finding or CI hold lost: %v", err)
 	}
 	saved, err := Load(dir)

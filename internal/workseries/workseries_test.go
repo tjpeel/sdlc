@@ -755,3 +755,20 @@ func TestCIHoldMarkerRejectsInvalidStageOrState(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingRuntimeMigrationBlocksFeatureJournal(t *testing.T) {
+	dir, state := testState(t, Ticket{File: "01-one.md"})
+	if err := Save(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "runtime-migration.pending.json")
+	if err := os.WriteFile(marker, []byte("pending"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("feature load bypassed migration")
+	}
+	if err := Save(dir, state); err == nil {
+		t.Fatal("feature save bypassed migration")
+	}
+}

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/featureguard"
 )
 
 const maxJournal = 1024 * 1024
@@ -53,6 +55,9 @@ func realDir(path string) error {
 }
 
 func Load(directory string) (State, error) {
+	if _, err := os.Lstat(filepath.Join(directory, featureguard.RuntimeMigrationPending)); !os.IsNotExist(err) {
+		return State{}, errors.New("feature runtime migration is pending; repeat the feature migration command to recover")
+	}
 	if _, err := os.Lstat(filepath.Join(directory, completionPending)); !os.IsNotExist(err) {
 		return State{}, errors.New("ticket completion pending; repeat ticket complete before running tickets")
 	}
@@ -93,6 +98,9 @@ func loadState(directory string) (State, error) {
 }
 
 func Save(directory string, state *State) error {
+	if _, err := os.Lstat(filepath.Join(directory, featureguard.RuntimeMigrationPending)); !os.IsNotExist(err) {
+		return errors.New("feature runtime migration is pending; repeat the feature migration command to recover")
+	}
 	if _, err := os.Lstat(filepath.Join(directory, completionPending)); !os.IsNotExist(err) {
 		return errors.New("ticket completion pending; repeat ticket complete before running tickets")
 	}
@@ -159,6 +167,14 @@ func validateState(s *State) error {
 	if err := validateCompletionAudit(s); err != nil {
 		return err
 	}
+	if len(s.ProvisionalAudit) > 256 {
+		return errors.New("provisional audit exceeds its bound")
+	}
+	for _, event := range s.ProvisionalAudit {
+		if event.At.IsZero() || (event.Action != "grant" && event.Action != "revoke" && event.Action != "invalidate") || event.Proof.RunID == "" || event.Proof.Ticket == "" || event.PreviousHead != "" && !objectSHA(event.PreviousHead) {
+			return errors.New("invalid provisional audit")
+		}
+	}
 	known := ticketMap(s.Plan.Tickets)
 	if err := validateAmendmentAudit(s); err != nil {
 		return err
@@ -172,6 +188,12 @@ func validateState(s *State) error {
 	return nil
 }
 func validResult(p Plan, ticket Ticket, r Result) bool {
+	if mark := r.Provisional; mark != nil {
+		proof := mark.Proof
+		if mark.GrantedAt.IsZero() || r.State != "blocked" || r.HoldStage != "ci" || r.DependencyInvalid || proof.RunID != r.RunID || proof.Ticket != filepath.Base(ticket.File) || proof.Branch != r.Branch || proof.Base != r.Base || proof.Publication.Number != r.PRNumber || proof.Publication.URL != r.URL || proof.Publication.BaseSHA != r.BaseSHA || proof.Publication.HeadSHA != r.HeadSHA || proof.CIHead != proof.Publication.HeadSHA || proof.CIStatus == "" || len(proof.CIIdentities) > 32768 || !objectSHA(proof.CandidateHead) || !objectSHA(proof.CandidateTree) || proof.CheckKey == "" || proof.Attempt < 0 || proof.ScannedAt.IsZero() {
+			return false
+		}
+	}
 	if r.HoldStage != "" && (r.HoldStage != "ci" || r.State != "blocked") {
 		return false
 	}

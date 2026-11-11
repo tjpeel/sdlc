@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.148 - 2026-11-11
+
+### Added
+
+- Migrate eligible CI-held feature runs to another runtime with transaction recovery and unchanged-PR checks.
+- Process human PR feedback during a CI hold and grant a reversible, monitored provisional parent for dependent tickets.
+
 ## 0.1.0-beta.147 - 2026-11-11
 
 ### Added

@@ -527,3 +527,15 @@ func TestRunnerResumesFormatterHoldWithOriginalPersistedGrant(t *testing.T) {
 		t.Fatal("resume lost persisted grant/artifact or ran full checks before commit")
 	}
 }
+
+func TestRuntimeRecheckFormatterCorrectionCannotPublishOrRepair(t *testing.T) {
+	dir, j, runner, checker, _ := preparationFixture(t, "--- a/src/Example.cs\n+++ b/src/Example.cs\n@@ -1 +1 @@\n-before\n+after\n")
+	j.Plan.Repository = "example/project"
+	j.Publication = Publication{URL: "https://github.com/example/project/pull/1", Number: 1, BaseSHA: testBase, HeadSHA: testHead}
+	j.State = "runtime_recheck"
+	j.RuntimeRecheck = &RuntimeRecheck{Publication: j.Publication, CandidateHead: testHead, CandidateTree: testTree, HoldReason: "old CI hold", Pending: true}
+	ready, err := runner.prepareCandidate(context.Background(), dir, j, Revision{Head: testHead, Tree: testTree, Clean: true})
+	if ready || !errors.Is(err, ErrStopped) || j.State != "blocked" || j.ResumeState != "runtime_recheck" || checker.calls != 0 || !j.RuntimeRecheck.Pending {
+		t.Fatalf("formatter correction escaped recheck hold: %v", err)
+	}
+}

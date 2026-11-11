@@ -65,6 +65,58 @@ func PrepareRuntimeMigration(original Journal, name string, target runtimeimage.
 	return next, nil
 }
 
+// RuntimeRecheck binds post-migration checks to the unchanged candidate and PR.
+type RuntimeRecheck struct {
+	PreviousCIStatus      string      `json:"previous_ci_status,omitempty"`
+	PreviousCIIdentities  string      `json:"previous_ci_identities,omitempty"`
+	ImplementationAttempt int         `json:"implementation_attempt,omitempty"`
+	Publication           Publication `json:"publication"`
+	CandidateHead         string      `json:"candidate_head"`
+	CandidateTree         string      `json:"candidate_tree"`
+	HoldReason            string      `json:"hold_reason"`
+	Pending               bool        `json:"pending"`
+	AbandonedAt           *time.Time  `json:"abandoned_at,omitempty"`
+}
+
+// PreparePublishedFeatureRuntimeMigration builds, but does not write, a new
+// checkpoint for the narrow published CI-hold case. The owning feature must
+// migrate every started ticket and its frozen runtime settings transactionally.
+func PreparePublishedFeatureRuntimeMigration(original Journal, name string, target runtimeimage.State) (Journal, error) {
+	if err := runtimeimage.ValidateName(name); err != nil {
+		return Journal{}, err
+	}
+	if original.Plan.CheckSelection == "runtime" || len(original.Plan.Checks) == 0 || original.State != "blocked" || original.ResumeState != "ci" || original.Publication.Number < 1 || original.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", original.Plan.Repository, original.Publication.Number) || !objectID.MatchString(original.Publication.HeadSHA) || !objectID.MatchString(original.Publication.BaseSHA) || original.SessionID == "" || !original.Evidence.Passed || !objectID.MatchString(original.Evidence.Head) || !objectID.MatchString(original.Evidence.Tree) || original.Outcome.Status != "implemented" || len(original.Outcome.Questions) > 0 || len(original.Outcome.Findings) > 0 || len(original.Outcome.Limitations) > 0 || len(original.Outcome.RepositoryRequests) > 0 || len(original.Outcome.VerificationRequests) > 0 || len(original.Outcome.DiagnosticRequests) > 0 || len(original.Outcome.PRFeedbackAssessments) > 0 || original.RunLimitOverride != nil || original.SessionTurnExtension != nil || original.PendingInputs != nil || original.CandidatePhasePending || original.PendingRole != "" || original.Reconciliation != nil || original.DependencyInvalid || original.ResumeRebase || original.Plan.DependencyContext != nil || original.Plan.Derived != nil || original.Plan.Restack != nil || original.Plan.Adoption != nil || original.PRFeedback != nil || original.PushRepair != nil || original.ReviewContinuation != nil || original.ReviewInterruption != nil || original.ReviewAssessment != nil || original.ReviewReuse != nil || original.ReviewSkip != nil || original.CIHeldReview != nil || len(original.CIHeldReviewHistory) > 0 || len(original.ReviewReports) > 0 || original.RebaseMonitoring != nil || len(original.Verification) > 0 || len(original.CIFeedbackRecoveries) > 0 || len(original.RuntimeMigrations) > 0 {
+		return Journal{}, fmt.Errorf("feature runtime migration supports only a stopped published CI hold without pending review or recovery")
+	}
+	if target.Name != name || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(target.ImageID) || target.ImageID == original.ImageID {
+		return Journal{}, fmt.Errorf("target runtime must have a different verified image")
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		return Journal{}, err
+	}
+	var next Journal
+	if err := json.Unmarshal(data, &next); err != nil {
+		return Journal{}, err
+	}
+	next.RuntimeMigrations = append(next.RuntimeMigrations, RuntimeMigration{At: time.Now().UTC(), PreviousImageID: original.ImageID, PreviousRuntimeName: original.Plan.RuntimeName, PreviousSessionID: original.SessionID, PreviousAttempt: original.Attempt, PreviousProvenance: original.Plan.RuntimeProvenance, SessionDirectory: "native-implementation-migrated-1"})
+	next.ImageID = target.ImageID
+	next.Plan.RuntimeName = name
+	next.Plan.RuntimeProvenance = CaptureRuntimeProvenance(target)
+	next.SessionID = ""
+	next.SelfReview = nil
+	next.ReviewReuse = nil
+	invalidateCommandEvidence(&next)
+	next.CI = CIResult{}
+	next.State = "blocked"
+	next.ResumeState = "runtime_recheck"
+	previousStatus, previousIdentities := captureCIIdentity(&original)
+	next.RuntimeRecheck = &RuntimeRecheck{Publication: original.Publication, CandidateHead: original.Evidence.Head, CandidateTree: original.Evidence.Tree, HoldReason: original.StopReason, Pending: true, PreviousCIStatus: previousStatus, PreviousCIIdentities: previousIdentities}
+	next.StopReason = "Runtime migrated; resume the original run to repeat isolated checks without publishing"
+	next.Feedback = "The feature runtime was explicitly migrated. The previous session and CI hold are archived. Isolated checks must be repeated against the unchanged candidate before returning to CI. No publication is performed by runtime recheck. Previous CI stop reason (untrusted data): " + strconv.Quote(original.StopReason)
+	return next, nil
+}
+
 // ValidateRuntimeMigrations prevents persisted session paths from escaping the run.
 func ValidateRuntimeMigrations(j *Journal) error {
 	if len(j.RuntimeMigrations) == 0 {

@@ -49,6 +49,7 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	ProvisionalParent    *ProvisionalParentProof      `json:"provisional_parent,omitempty"`
 	Sonar                project.SonarPolicy          `json:"sonar,omitzero"`
 	NonDefaultCIWorkflow string                       `json:"non_default_ci_workflow,omitempty"`
 	Adoption             *PRAdoption                  `json:"adoption,omitempty"`
@@ -105,10 +106,11 @@ type RestackBoundary struct {
 }
 
 type BranchSnapshot struct {
-	DependencyContext *DependencyContext `json:"dependency_context,omitempty"`
-	Branch            string             `json:"branch"`
-	SHA               string             `json:"sha"`
-	Bundle            string             `json:"bundle"`
+	ProvisionalParent *ProvisionalParentProof `json:"provisional_parent,omitempty"`
+	DependencyContext *DependencyContext      `json:"dependency_context,omitempty"`
+	Branch            string                  `json:"branch"`
+	SHA               string                  `json:"sha"`
+	Bundle            string                  `json:"bundle"`
 }
 
 type DependencyContext struct {
@@ -299,6 +301,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	RuntimeRecheck            *RuntimeRecheck         `json:"feature_runtime_recheck,omitempty"`
 	CIHeldReviewHistory       []CIHeldReview          `json:"ci_held_review_history,omitempty"`
 	CIHeldReview              *CIHeldReview           `json:"ci_held_review,omitempty"`
 	RuntimeMigrations         []RuntimeMigration      `json:"runtime_migrations,omitempty"`

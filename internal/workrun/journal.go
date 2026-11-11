@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/tjpeel/sdlc/internal/featureguard"
 )
 
 func NewID() (string, error) {
@@ -57,6 +59,12 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validateRuntimeRecheck(journal); err != nil {
+		return err
+	}
+	if err := featureguard.Check(journal.Plan.Root, journal.Plan.Reference); err != nil {
+		return err
+	}
 	if err := validateCIHeldReview(journal); err != nil {
 		return err
 	}
@@ -160,6 +168,9 @@ func Load(directory string) (Journal, error) {
 			return Journal{}, fmt.Errorf("invalid completed check failure evidence")
 		}
 	}
+	if err := featureguard.Check(journal.Plan.Root, journal.Plan.Reference); err != nil {
+		return Journal{}, err
+	}
 	if filepath.Clean(journal.Workspace) != filepath.Join(directory, "workspace") {
 		return Journal{}, fmt.Errorf("run journal points outside its captured workspace")
 	}
@@ -184,6 +195,9 @@ func Load(directory string) (Journal, error) {
 		return Journal{}, err
 	}
 	if err := validateAdoptionPlan(journal.Plan); err != nil {
+		return Journal{}, err
+	}
+	if err := validateRuntimeRecheck(&journal); err != nil {
 		return Journal{}, err
 	}
 	if err := validateCIHeldReview(&journal); err != nil {

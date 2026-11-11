@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tjpeel/sdlc/internal/headroom"
 	"github.com/tjpeel/sdlc/internal/project"
 	"github.com/tjpeel/sdlc/internal/runstatus"
 	"github.com/tjpeel/sdlc/internal/runtimeimage"
@@ -905,5 +906,20 @@ func TestResultForRunRecordsCIHold(t *testing.T) {
 		if result.HoldStage != tc.want {
 			t.Fatalf("%s/%s: got %q", tc.state, tc.resume, result.HoldStage)
 		}
+	}
+}
+
+func TestFeaturePreservesStartedTicketProviderRoute(t *testing.T) {
+	driver, result := featureAdoptionFixture(t, "blocked")
+	driver.settings.Headroom = headroom.Config{Mode: "external", ProxyURL: "http://localhost:9090"}
+	if _, _, err := driver.loadRun("01-selected.md", result); err == nil {
+		t.Fatal("unrecorded provider-route mismatch accepted")
+	}
+	driver.settings.TicketHeadroom = map[string]headroom.Config{"01-selected.md": {}}
+	if _, _, err := driver.loadRun("01-selected.md", result); err != nil {
+		t.Fatalf("recorded direct route rejected: %v", err)
+	}
+	if driver.settings.ticketHeadroom("02-other.md") != driver.settings.Headroom {
+		t.Fatal("unstarted ticket did not retain feature default route")
 	}
 }

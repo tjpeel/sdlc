@@ -21,6 +21,7 @@ import (
 
 const ticketUsage = `Usage: sdlc ticket status --reference REFERENCE [--ticket NUMBERED_FILE] [--refresh] [--json]
        sdlc ticket complete --reference REFERENCE --ticket NUMBERED_FILE --pr PR_URL [--dry-run] [--json]
+sdlc ticket provisional --reference REFERENCE --ticket NUMBERED_FILE [--revoke] [--dry-run] [--json]
 Status is local unless --refresh is supplied. Completion verifies a merged PR and integration ancestry, updates the journal and descriptive ticket metadata, and preserves previous run history.`
 
 type ticketSavedRun struct {
@@ -127,6 +128,9 @@ func ticketCommand(ctx context.Context, args []string, output io.Writer) error {
 	if args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprintln(output, ticketUsage)
 		return err
+	}
+	if args[0] == "provisional" {
+		return ticketProvisionalCommand(ctx, args[1:], output)
 	}
 	action := args[0]
 	if action != "status" && action != "complete" {

@@ -123,6 +123,7 @@ func CaptureSnapshot(ctx context.Context, launch project.LaunchResult, snapshot 
 	// clone. Capture has already produced the worker checkout and hashes.
 	plan.Root = launch.Root
 	plan.DependencyContext = snapshot.DependencyContext
+	plan.ProvisionalParent = snapshot.ProvisionalParent
 	return plan, nil
 }
 

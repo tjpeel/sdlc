@@ -2735,3 +2735,34 @@ An existing manual workflow may lack PR-event context. Its branch validation mus
 This repository-level policy is read on resume, so it can enable dispatch for an existing CI-blocked run without modifying frozen ticket inputs or replacing its runtime. Policy is not forwarded to older signing binaries. Removing it prevents new intents; an existing intent remains tracked and is never silently discarded.
 
 Workflow event and input declarations must use expanded YAML mappings. The controller refuses aliases and unsupported shorthand in these declarations rather than guessing how to dispatch; full workflow validation remains with GitHub and actionlint.
+
+
+## CI-held review, feedback and provisional parents
+
+A stopped CI-held run can receive independent review without marking CI passed:
+
+```sh
+sdlc resume --run RUN_ID --review-ci-hold
+```
+
+If the review finds issues, SDLC assesses them against the exact reviewed PR and may repair and publish through the normal checks and signing gates. A changed publication invalidates the old review and CI evidence. Run independent review again for that new head while its CI is held. A clean review returns to the CI hold.
+
+After posting any human comments on the PR, process them and repeat review if the candidate changes:
+
+```sh
+sdlc resume --run RUN_ID --pr-feedback
+```
+
+A completed scan records the run, checked candidate, review attempt and exact PR base and head. Outstanding assessments, unresolved comments or replies still block provisional admission. If a scan encounters a changed boundary, inspect `sdlc diagnose --run RUN_ID`; once no feedback remains unresolved, preview and use `sdlc resume --run RUN_ID --discard-ci-held-feedback-scan` to discard that failed scan while retaining review and comment history. A retry can continue if the original boundary is restored.
+
+To permit dependent work while the parent remains blocked at CI, preview and grant a provisional parent:
+
+```sh
+sdlc ticket provisional --reference REF --ticket 01-parent.md --dry-run
+sdlc ticket provisional --reference REF --ticket 01-parent.md
+sdlc run --reference REF --all
+```
+
+Admission checks the saved evidence and scans the live PR for new or changed feedback. The grant retains parent CI status and available Actions identifiers for the exact parent head; historical values are labelled and do not certify current CI. The child runs its own checks, CI and independent review. The controller revalidates the parent grant, branch, PR and comments at child stage boundaries. A changed parent invalidates dependent work; a restack conflict stops for inspection. Revoke the grant with `sdlc ticket provisional --reference REF --ticket 01-parent.md --revoke` (add `--dry-run` to preview). A new parent head requires fresh parent checks and review and child restacking and checks.
+
+For a feature runtime migration, first preview and apply `sdlc runtime migrate-feature --reference REF --to local` as described in [runtime variants](runtime-variants.md), then resume the original run to complete its isolated unchanged-PR recheck before the review and feedback sequence above.

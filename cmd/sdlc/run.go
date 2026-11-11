@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--continue-independent-on-ci] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--review-ci-hold | --discard-ci-held-review | --rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--continue-independent-on-ci] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--discard-ci-held-feedback-scan | --abandon-runtime-recheck | --review-ci-hold | --discard-ci-held-review | --rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -48,8 +48,10 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	discardCIHeldFeedbackScan                                                                                                                                                         bool
 	reviewContext                                                                                                                                                                     string
 	rebase                                                                                                                                                                            bool
+	abandonRuntimeRecheck                                                                                                                                                             bool
 	discardCIHeldReview                                                                                                                                                               bool
 	reviewCIHold                                                                                                                                                                      bool
 	autoAcceptRecommendations                                                                                                                                                         bool
@@ -99,6 +101,8 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.BoolVar(&options.rebase, "rebase", false, "rebase a saved candidate onto its current target branch")
 	flags.BoolVar(&options.reviewCIHold, "review-ci-hold", false, "review an exact published PR while its CI hold remains open")
 	flags.BoolVar(&options.discardCIHeldReview, "discard-ci-held-review", false, "invalidate a provisional review after a PR boundary failure while retaining the CI hold")
+	flags.BoolVar(&options.discardCIHeldFeedbackScan, "discard-ci-held-feedback-scan", false, "discard a failed CI-held feedback scan while preserving feedback and review")
+	flags.BoolVar(&options.abandonRuntimeRecheck, "abandon-runtime-recheck", false, "stop an unchanged-PR runtime recheck without publishing")
 	flags.StringVar(&options.startAt, "start-at", "", "PR entry point: awaiting-feedback, checks, review or feedback")
 	flags.BoolVar(&options.humanReviewed, "human-reviewed", false, "declare the captured PR head reviewed by a human")
 	flags.StringVar(&options.adoptURL, "pr", "", "adopt an existing same-repository PR by URL")
@@ -179,6 +183,26 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.supplied["discard-ci-held-feedback-scan"] {
+		if !options.discardCIHeldFeedbackScan || options.resume == "" || options.all {
+			return options, fmt.Errorf("--discard-ci-held-feedback-scan requires a single saved run resume")
+		}
+		for _, name := range []string{"abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "start-at", "human-reviewed", "rebase", "auto-accept-recommendations", "pr-feedback", "pr-feedback-file", "answer-file", "ci-feedback-file", "override-run-limits", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "review-repair-limit"} {
+			if options.supplied[name] {
+				return options, fmt.Errorf("--discard-ci-held-feedback-scan cannot combine with --%s", name)
+			}
+		}
+	}
+	if options.supplied["abandon-runtime-recheck"] {
+		if !options.abandonRuntimeRecheck || options.resume == "" || options.all {
+			return options, fmt.Errorf("--abandon-runtime-recheck requires a single saved run resume")
+		}
+		for _, name := range []string{"discard-ci-held-review", "review-ci-hold", "start-at", "human-reviewed", "rebase", "auto-accept-recommendations", "pr-feedback", "pr-feedback-file", "answer-file", "ci-feedback-file", "override-run-limits", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "review-repair-limit"} {
+			if options.supplied[name] {
+				return options, fmt.Errorf("--abandon-runtime-recheck cannot combine with --%s", name)
+			}
+		}
+	}
 	if options.supplied["discard-ci-held-review"] {
 		if !options.discardCIHeldReview || options.resume == "" || options.all {
 			return options, fmt.Errorf("--discard-ci-held-review requires a single saved run resume")
@@ -358,7 +382,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "discard-ci-held-feedback-scan", "abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -809,6 +833,16 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 	}
+	if options.discardCIHeldFeedbackScan {
+		if err := workrun.ValidateDiscardCIHeldFeedbackScan(journal); err != nil {
+			return err
+		}
+	}
+	if options.abandonRuntimeRecheck {
+		if err := workrun.ValidateAbandonRuntimeRecheck(journal); err != nil {
+			return err
+		}
+	}
 	if options.discardCIHeldReview {
 		if err := workrun.ValidateDiscardCIHeldReview(journal); err != nil {
 			return err
@@ -892,6 +926,12 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		fmt.Fprintf(output, "Run %s: numerical allowances overridden at its saved ready checkpoint. No work started.\n", current.ID)
 		return nil
+	}
+	if options.dryRun && options.discardCIHeldFeedbackScan {
+		return json.NewEncoder(output).Encode(map[string]any{"action": "discard_ci_held_feedback_scan", "run": journal.ID, "publication": journal.Publication, "offline": true})
+	}
+	if options.dryRun && options.abandonRuntimeRecheck {
+		return json.NewEncoder(output).Encode(map[string]any{"action": "abandon_runtime_recheck", "run": journal.ID, "publication": journal.Publication, "offline": true, "checks_current": false})
 	}
 	if options.dryRun && options.discardCIHeldReview {
 		return json.NewEncoder(output).Encode(map[string]any{"action": "discard_ci_held_review", "run": journal.ID, "publication": journal.CIHeldReview.Publication, "ci_status": journal.CI.Status, "offline": true})
@@ -987,6 +1027,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		return err
 	}
+	if err := workrun.ValidateProvisionalDependency(ctx, journal.Plan, publisher); err != nil {
+		return err
+	}
 	var recommendationPolicy *bool
 	if options.supplied["auto-accept-recommendations"] {
 		recommendationPolicy = &options.autoAcceptRecommendations
@@ -1002,8 +1045,11 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return configErr
 		}
 	}
-	runner := workrun.Runner{DiscardCIHeldReview: options.discardCIHeldReview, ReviewCIHold: options.reviewCIHold, SonarPolicy: &currentConfig.Sonar, CheckUpstream: options.resume != "" && !options.featureOwned, Rebase: options.rebase, NonDefaultCIWorkflow: &currentConfig.NonDefaultCIWorkflow, AutoAcceptRecommendationsOverride: recommendationPolicy, ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
-		return workrun.ValidateDependencyContext(ctx, directory, plan, publisher)
+	runner := workrun.Runner{DiscardCIHeldFeedbackScan: options.discardCIHeldFeedbackScan, AbandonRuntimeRecheck: options.abandonRuntimeRecheck, DiscardCIHeldReview: options.discardCIHeldReview, ReviewCIHold: options.reviewCIHold, SonarPolicy: &currentConfig.Sonar, CheckUpstream: options.resume != "" && !options.featureOwned, Rebase: options.rebase, NonDefaultCIWorkflow: &currentConfig.NonDefaultCIWorkflow, AutoAcceptRecommendationsOverride: recommendationPolicy, ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
+		if err := workrun.ValidateDependencyContext(ctx, directory, plan, publisher); err != nil {
+			return err
+		}
+		return workrun.ValidateProvisionalDependency(ctx, plan, publisher)
 	}, StartAt: options.startAt, HumanReviewed: options.humanReviewed, CIFeedback: ciFeedback, OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, LocalPRFeedback: localPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, ReviewRepairLimit: options.reviewRepairLimit, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
