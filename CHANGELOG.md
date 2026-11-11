@@ -7,6 +7,13 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.145 - 2026-11-11
+
+### Fixed
+
+- Retain the selected Headroom route when capturing a new ticket plan.
+- Collect Actions artifacts uploaded at rounded step boundaries without false identity holds.
+
 ## 0.1.0-beta.144 - 2026-11-11
 
 ### Fixed

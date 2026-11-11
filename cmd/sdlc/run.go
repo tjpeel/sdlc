@@ -681,7 +681,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		plan.SigningProfile = pair.SigningProfile
 		plan.RuntimeName = options.runtimeName
 		plan.DockerTests = options.dockerTests
-		journal.Plan = plan
+		setCapturedPlan(&journal, plan)
 		var shared []byte
 		if options.frozenInstructions != nil {
 			shared = []byte(*options.frozenInstructions)
@@ -1237,4 +1237,10 @@ func rebaseDryRunPlan(journal *workrun.Journal) map[string]any {
 		target = "current live base branch (verified during execution)"
 	}
 	return map[string]any{"action": "rebase", "run_id": journal.ID, "recorded_base": journal.Plan.Base, "recorded_base_sha": journal.Plan.BaseSHA, "recorded_head": head, "target": target, "offline": true}
+}
+
+// Preserve the route selected before capture when replacing the provisional plan.
+func setCapturedPlan(journal *workrun.Journal, plan workrun.Plan) {
+	plan.Headroom = journal.Plan.Headroom
+	journal.Plan = plan
 }

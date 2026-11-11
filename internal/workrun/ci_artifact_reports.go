@@ -25,7 +25,7 @@ const maxCIArtifactMembers = 64
 const maxCIArtifactIDs = 4
 
 // IDs come only from official upload confirmations inside the current job's
-// successful step windows. URLs in log or report data never authorize reads.
+// completed step windows. URLs in log or report data never authorize reads.
 var ciArtifactUpload = regexp.MustCompile(`^([^ ]+) .*successfully (?:finalized|uploaded)!?\..*Artifact ID (?:is |: ?)?([1-9][0-9]*)\s*$`)
 
 type ciArtifactWindow struct{ start, end time.Time }
@@ -62,17 +62,24 @@ func ciUploadedArtifacts(log string, steps []ciActionStep) (map[int64]ciArtifact
 			return nil, false, fmt.Errorf("invalid artifact upload identity")
 		}
 		for _, step := range steps {
-			if step.Status != "completed" || step.Conclusion != "success" {
+			if step.Status != "completed" || (step.Conclusion != "success" && step.Conclusion != "failure") {
 				continue
 			}
 			start, e1 := time.Parse(time.RFC3339Nano, step.StartedAt)
 			end, e2 := time.Parse(time.RFC3339Nano, step.CompletedAt)
-			if e1 != nil || e2 != nil || end.Before(start) || timestamp.Before(start) || timestamp.After(end) {
+			if e1 != nil || e2 != nil || end.Before(start) || timestamp.Truncate(time.Second).Before(start) || timestamp.Truncate(time.Second).After(end) {
 				continue
 			}
 			window := ciArtifactWindow{start, end}
 			if previous, ok := ids[id]; ok && previous != window {
-				return nil, false, fmt.Errorf("ambiguous artifact upload identity")
+				// GitHub step timestamps have second precision; an upload at a
+				// shared boundary belongs to the earlier completed step.
+				if previous.end.Equal(window.start) {
+					continue
+				}
+				if !window.end.Equal(previous.start) {
+					return nil, false, fmt.Errorf("ambiguous artifact upload identity")
+				}
 			}
 			ids[id] = window
 			if len(ids) > maxCIArtifactIDs {

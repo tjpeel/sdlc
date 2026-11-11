@@ -115,3 +115,20 @@ func TestSavedFeatureRetainsExternalProxyAfterDefaultChanges(t *testing.T) {
 		t.Fatal("saved feature proxy changed", preview, err)
 	}
 }
+
+func TestCapturedPlanPreservesFrozenHeadroomInSavedJournal(t *testing.T) {
+	route := headroom.Config{Mode: "external", ProxyURL: "http://127.0.0.1:8787"}
+	journal := workrun.Journal{Plan: workrun.Plan{Headroom: route}}
+	setCapturedPlan(&journal, workrun.Plan{Branch: "example"})
+	data, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored workrun.Journal
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Plan.Headroom != route || restored.Plan.Branch != "example" {
+		t.Fatal("captured plan lost frozen route", restored.Plan)
+	}
+}

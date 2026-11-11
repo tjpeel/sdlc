@@ -345,3 +345,17 @@ func TestActionsArtifactWithoutSupportedReportMarksIntakeUnknown(t *testing.T) {
 		t.Fatal("unrecognized optional report looked like confirmed empty findings", entry)
 	}
 }
+
+func TestActionsArtifactAtRoundedStepBoundary(t *testing.T) {
+	f := ciArtifactFailureFixture(t)
+	job := f.responses["repos/example/project/actions/jobs/99"].(map[string]any)
+	job["steps"] = []any{map[string]any{"name": "Run", "number": 3, "status": "completed", "conclusion": "failure", "started_at": "2026-01-01T12:03:00Z", "completed_at": "2026-01-01T12:03:31Z"}, map[string]any{"name": "Post run", "number": 4, "status": "completed", "conclusion": "success", "started_at": "2026-01-01T12:03:31Z", "completed_at": "2026-01-01T12:04:00Z"}}
+	f.responses["repos/example/project/actions/jobs/99/logs"] = []byte("2026-01-01T12:03:31.186Z Artifact arbitrary-output successfully finalized. Artifact ID 123\n")
+	meta := f.responses["repos/example/project/actions/artifacts/123"].(map[string]any)
+	meta["created_at"] = "2026-01-01T12:03:30Z"
+	meta["updated_at"] = "2026-01-01T12:03:30Z"
+	result, err := (GitHubPublisher{Command: f.command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+	if err != nil || result.FailureContext == nil || !strings.Contains(result.FailureContext.Checks[0].Text, "CVE-2026-12345") {
+		t.Fatal("artifact report not collected", err)
+	}
+}
