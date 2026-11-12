@@ -26,6 +26,7 @@ type IncrementalReviewPlan struct {
 	RequiredManifest []string               `json:"required_manifest"`
 	Inherited        []ReviewFileInspection `json:"inherited"`
 	Escalated        bool                   `json:"escalated,omitempty"`
+	FullContextKey   string                 `json:"full_context_key,omitempty"`
 }
 
 type reviewTreeReader interface {
@@ -101,6 +102,14 @@ func validateIncrementalReview(j *Journal) error {
 	if p == nil {
 		return nil
 	}
+	if p.FullContextKey != "" {
+		if !p.Escalated || len(p.FullContextKey) != 64 {
+			return fmt.Errorf("invalid full review context")
+		}
+		if _, err := hex.DecodeString(p.FullContextKey); err != nil {
+			return fmt.Errorf("invalid full review context")
+		}
+	}
 	source := reviewReportAt(j, p.SourceAttempt)
 	if source == nil || source.Publication != p.Source || source.InspectionBoundary == nil || source.InspectionBoundary.Tree != p.SourceTree || source.InspectionBoundary.ScopeKey != p.ContextKey || p.Publication.Number != p.Source.Number || p.Publication.URL != p.Source.URL || p.Publication.BaseSHA != p.Source.BaseSHA {
 		return fmt.Errorf("invalid incremental review source")
@@ -150,8 +159,35 @@ func (r Runner) prepareIncrementalReview(ctx context.Context, dir string, j *Jou
 		if err := validateIncrementalReview(j); err != nil {
 			return err
 		}
+		currentContext := incrementalContextKey(j)
+		expectedContext := p.ContextKey
+		if p.FullContextKey != "" {
+			expectedContext = p.FullContextKey
+		}
+		if currentContext != expectedContext {
+			if j.ReviewContinuation != nil || j.ReviewInterruption != nil {
+				return fmt.Errorf("incremental review scope changed during unfinished reviewer work")
+			}
+			manifest, err := r.fullReviewManifest(ctx, workspace, p)
+			if err != nil {
+				return err
+			}
+			p.RequiredManifest, p.Escalated, p.FullContextKey = manifest, true, currentContext
+			fmt.Fprintln(r.Output, "Review scope changed; inherited inspection is revoked. Complete a full review of the current publication and reconcile prior concerns.")
+			return r.save(dir, j)
+		}
+		if p.FullContextKey != "" {
+			manifest, err := r.fullReviewManifest(ctx, workspace, p)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(manifest, p.RequiredManifest) {
+				return fmt.Errorf("saved full review manifest changed")
+			}
+			return nil
+		}
 		treeReader, ok := r.Repository.(reviewTreeReader)
-		if !ok || p.ContextKey != incrementalContextKey(j) {
+		if !ok {
 			return fmt.Errorf("incremental review scope changed")
 		}
 		tree, err := treeReader.ReviewTree(ctx, workspace, p.Source.HeadSHA)
@@ -264,6 +300,32 @@ func (r Runner) prepareIncrementalReview(ctx context.Context, dir string, j *Jou
 	}
 	fmt.Fprintf(r.Output, "Correction review: %d mandatory paths plus affected callers/tests/docs; %d unchanged file inspections retained from attempt %d.\n", len(plan.RequiredPaths), len(plan.Inherited), source.Attempt)
 	return nil
+}
+
+// fullReviewManifest binds escalation to the exact current published diff and
+// includes correction-only paths so prior concerns remain reviewable.
+func (r Runner) fullReviewManifest(ctx context.Context, workspace string, p *IncrementalReviewPlan) ([]string, error) {
+	inventory, ok := r.Repository.(reviewChangedPathRepository)
+	if !ok {
+		return nil, fmt.Errorf("full review recovery inventory unavailable")
+	}
+	final, err := inventory.ReviewChangedPaths(ctx, workspace, p.Publication.BaseSHA, p.Publication.HeadSHA)
+	if err != nil {
+		return nil, fmt.Errorf("full review recovery inventory unavailable: %w", err)
+	}
+	paths := map[string]bool{}
+	for _, v := range append(append([]string(nil), final...), p.RequiredPaths...) {
+		if !safeRelative(v) {
+			return nil, fmt.Errorf("invalid full review recovery path")
+		}
+		paths[v] = true
+	}
+	result := make([]string, 0, len(paths))
+	for v := range paths {
+		result = append(result, v)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 const affectedClosureGap = "Complete affected behaviour and explicitly confirm affected_closure_complete."
@@ -420,6 +482,10 @@ func incrementalReviewInstructions(j *Journal) string {
 	if p == nil || p.Publication != j.Publication {
 		return "\nNo controller-verified cross-revision cumulative plan is available. Reviews of earlier publications are evidence, not permission to inherit file inspection. Complete the current manifest; retain this session and its controller-recorded completed entries, and mark missing inspection explicitly. A delta must name remaining gaps, never claim unchanged files inherited from another publication on your own authority.\n"
 	}
+	required, inherited := p.RequiredPaths, inheritedPathNames(p)
+	if p.Escalated {
+		required, inherited = p.RequiredManifest, nil
+	}
 	packet, _ := json.Marshal(struct {
 		SourceAttempt int                  `json:"source_attempt"`
 		Source        Publication          `json:"source"`
@@ -427,7 +493,10 @@ func incrementalReviewInstructions(j *Journal) string {
 		Inherited     []string             `json:"retained_unchanged_paths"`
 		Prior         []priorReviewConcern `json:"prior_concerns"`
 		Full          bool                 `json:"full_review_required"`
-	}{p.SourceAttempt, p.Source, p.RequiredPaths, inheritedPathNames(p), priorReviewConcerns(j), p.Escalated})
+	}{p.SourceAttempt, p.Source, required, inherited, priorReviewConcerns(j), p.Escalated})
+	if p.Escalated {
+		return "\nFull independent review required. The earlier inspection is not credited: inspect every current manifest path and the full published diff, including affected behaviour, tests and documentation. Reconcile every prior concern by id; retain unresolved findings. Full review packet: " + string(packet) + "\n"
+	}
 	return "\nController-verified cumulative correction review. Preserve the original PR base and intent, but do not reread every previously inspected body. Inspect the entire correction diff from source.head_sha to publication.head_sha, every mandatory path (including deletions and reverted-out-of-final-diff files), and affected callers, consumers, tests, documentation and supporting behaviour. Scan the combined PR diff for interactions and scope drift; inspect supporting bodies where the repair changes their meaning. Return only newly inspected/reopened exact path entries; the controller retains verified unchanged baseline entries. Reopen any affected inherited path, even if its bytes did not change. Explicitly confirm affected_closure_complete only when affected behaviour is covered. Dispose of every prior_concern by id with source evidence; still_valid concerns must identify a unique zero-based current_index and current_path in returned findings/recommendations. Use superseded with an evidence-backed reason for an explicitly merged/replaced concern. Reassess current PR title/body claims against current code. If scope or interaction risk cannot be bounded, set full_review_required and finish full material inspection in this same session; inherited entries will be revoked. Full scope here means cumulative coverage from the original full inspection plus this independently owned correction/impact assessment, never a claim that you reread inherited bodies. Unfinished accessible work uses review_incomplete and named gaps. Keep one independent owner; use a helper only for a concrete unresolved question with named paths and disjoint ownership, not another whole-PR/test/docs sweep. Do not repeat inventory, verification or completed mapping without a new uncertainty. Cumulative plan: " + string(packet) + "\n"
 }
 func inheritedPathNames(p *IncrementalReviewPlan) []string {

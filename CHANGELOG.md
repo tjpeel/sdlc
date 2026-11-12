@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.154 - 2026-11-12
+
+### Fixed
+
+- Escalate a saved incremental review to full inspection when its context changes, retaining prior concerns and verification evidence.
+
 ## 0.1.0-beta.153 - 2026-11-12
 
 ### Fixed
