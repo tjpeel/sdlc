@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
 func TestTicketProvisionalHelpAndRequiredFlags(t *testing.T) {
@@ -19,5 +21,25 @@ func TestTicketProvisionalHelpAndRequiredFlags(t *testing.T) {
 		if err := ticketCommand(context.Background(), args, &out); err == nil {
 			t.Fatalf("invalid options admitted: %v", args)
 		}
+	}
+}
+
+func TestProvisionalInvalidatorUsesBindingEstablishedDuringVerification(t *testing.T) {
+	var invalidator workseries.ProvisionalInvalidator
+	bound := bindProvisionalInvalidator(&invalidator)
+	if err := bound(context.Background(), workseries.Ticket{}, workseries.Result{}); err == nil {
+		t.Fatal("missing verifier accepted")
+	}
+	calls := 0
+	// Admission receives bound before its verifier installs the actual fencer.
+	invalidator = func(_ context.Context, ticket workseries.Ticket, result workseries.Result) error {
+		calls++
+		if ticket.File != "02-child.md" || result.RunID != "child" {
+			t.Fatal("incorrect descendant forwarded")
+		}
+		return nil
+	}
+	if err := bound(context.Background(), workseries.Ticket{File: "02-child.md"}, workseries.Result{RunID: "child"}); err != nil || calls != 1 {
+		t.Fatalf("fencer was not called: %v", err)
 	}
 }

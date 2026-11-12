@@ -174,7 +174,7 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 			return check()
 		}
 	}
-	preview, err := workseries.SetProvisionalParentWithReconciliation(ctx, *root, *reference, *ticket, *revoke, *dry, *accept, *reconcile, verify, invalidate)
+	preview, err := workseries.SetProvisionalParentWithReconciliation(ctx, *root, *reference, *ticket, *revoke, *dry, *accept, *reconcile, verify, bindProvisionalInvalidator(&invalidate))
 	if err != nil {
 		return err
 	}
@@ -227,4 +227,15 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 	}
 	_, err = fmt.Fprintln(out, ". Child checks and CI are independent.")
 	return err
+}
+
+// The verifier installs the runtime-backed invalidator after admission begins.
+// Bind the variable, not its initial nil value, before passing it to admission.
+func bindProvisionalInvalidator(invalidate *workseries.ProvisionalInvalidator) workseries.ProvisionalInvalidator {
+	return func(ctx context.Context, ticket workseries.Ticket, result workseries.Result) error {
+		if invalidate == nil || *invalidate == nil {
+			return errors.New("descendant fencing is unavailable")
+		}
+		return (*invalidate)(ctx, ticket, result)
+	}
 }

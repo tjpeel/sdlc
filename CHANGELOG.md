@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.153 - 2026-11-12
+
+### Fixed
+
+- Bind descendant fencing after live verification so acknowledged provisional-parent grants can proceed.
+
 ## 0.1.0-beta.152 - 2026-11-12
 
 ### Added
