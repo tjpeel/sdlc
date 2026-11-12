@@ -226,7 +226,8 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 				}
 				continue
 			}
-			if ciNeedsAction(o.CI) {
+			baseMoves := target.Provisional != nil && (target.Base != result.Base || target.SHA != result.BaseSHA)
+			if ciNeedsAction(o.CI) && !baseMoves {
 				if !allowReconcile {
 					deferred = true
 					continue
@@ -240,7 +241,6 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 				}
 				next, e := r.Driver.Reconcile(ctx, t, target, result)
 				next.Dependencies = target.Dependencies
-				next.DependencyInvalid = false
 				if e != nil {
 					r.reconcileFailed(s, key, result, next, e)
 					if saveErr := save(); saveErr != nil {
@@ -248,6 +248,7 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 					}
 					continue
 				}
+				next.DependencyInvalid = false
 				next = completeResult(result, next)
 				if next.StopReason == "" {
 					next.StopReason = o.Details
@@ -271,7 +272,6 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 				}
 				next, e := r.Driver.Reconcile(ctx, t, target, result)
 				next.Dependencies = target.Dependencies
-				next.DependencyInvalid = false
 				if e != nil {
 					r.reconcileFailed(s, key, result, next, e)
 					if saveErr := save(); saveErr != nil {
@@ -279,6 +279,7 @@ func (r Runner) observeReady(ctx context.Context, s *State, save func() error, w
 					}
 					continue
 				}
+				next.DependencyInvalid = false
 				if next.RunID == "" {
 					next.RunID = result.RunID
 				}
@@ -522,8 +523,13 @@ func completeResult(current, returned Result) Result {
 func (r Runner) reconcileFailed(s *State, key string, current, returned Result, err error) {
 	if knownState(returned.State) && returned.State != "" {
 		returned = completeResult(current, returned)
+		if current.DependencyInvalid {
+			returned.DependencyInvalid = true
+		}
 		if returned.StopReason == "" {
 			returned.StopReason = err.Error()
+		} else if !strings.Contains(returned.StopReason, err.Error()) {
+			returned.StopReason += "; reconciliation failed: " + err.Error()
 		}
 		if !attentionState(returned.State) {
 			returned.State = "blocked"

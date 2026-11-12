@@ -1141,6 +1141,35 @@ func (d *seriesDriver) Observe(ctx context.Context, result workseries.Result) (w
 	return observation, err
 }
 
+func restoreRestackedHold(j *workrun.Journal, state, resume, reason string, outcome workrun.Outcome, provisional bool) {
+	if provisional && state == "blocked" && resume == "ci" {
+		j.State, j.ResumeState, j.StopReason, j.Outcome = "blocked", "implementing", "Child was restacked onto the provisional parent; resume implementation for fresh checks and review", outcome
+		return
+	}
+	j.State, j.ResumeState, j.StopReason, j.Outcome = state, "implementing", reason, outcome
+}
+
+// validateReconciliationPRBoundary rejects external child changes before any
+// restack. GitHub may retain the old PR base SHA after the named base moves;
+// either the saved boundary or the verified new target is acceptable.
+func validateReconciliationPRBoundary(j workrun.Journal, target workseries.Target, remote workrun.RemotePR, branch workrun.BranchSnapshot) error {
+	if remote.State != "OPEN" || remote.HeadSHA != j.Publication.HeadSHA {
+		return fmt.Errorf("child PR head changed or closed before reconciliation")
+	}
+	if branch.Branch != j.Plan.Branch || branch.SHA != j.Publication.HeadSHA {
+		return fmt.Errorf("child branch changed before reconciliation")
+	}
+	if remote.Base != j.Plan.Base && remote.Base != target.Base {
+		return fmt.Errorf("PR base was changed outside the feature")
+	}
+	allowedSaved := remote.Base == j.Plan.Base && remote.BaseSHA == j.Publication.BaseSHA
+	allowedTarget := remote.Base == target.Base && remote.BaseSHA == target.SHA
+	if !allowedSaved && !allowedTarget {
+		return fmt.Errorf("child PR base SHA differs from both saved and target boundaries")
+	}
+	return nil
+}
+
 func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, target workseries.Target, previous workseries.Result) (workseries.Result, error) {
 	if err := d.validateDependencyTarget(ctx, target); err != nil {
 		return previous, err
@@ -1162,21 +1191,32 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 	}
 	defer lock.Close()
 	held := seriesHeldState(journal.State)
-	heldState, _, heldReason, heldOutcome := journal.State, journal.ResumeState, journal.StopReason, journal.Outcome
+	heldState, heldResume, heldReason, heldOutcome := journal.State, journal.ResumeState, journal.StopReason, journal.Outcome
 	current, err := workrun.Load(directory)
 	if err != nil || current.UpdatedAt != journal.UpdatedAt {
 		return previous, fmt.Errorf("ticket checkpoint changed before reconciliation")
 	}
 	var observed workrun.RemotePR
-	if journal.Publication.Number > 0 {
-		remote, err := d.publisher(journal.Plan).Observe(ctx, journal.Plan, journal.Publication)
-		if err != nil || remote.State != "OPEN" || remote.HeadSHA != journal.Publication.HeadSHA {
-			return previous, fmt.Errorf("PR changed or closed before reconciliation")
+	checkPublishedBoundary := func() error {
+		publisher := d.publisher(journal.Plan)
+		remote, err := publisher.Observe(ctx, journal.Plan, journal.Publication)
+		if err != nil {
+			return fmt.Errorf("inspect child PR before reconciliation: %w", err)
 		}
-		if remote.Base != journal.Plan.Base && remote.Base != target.Base {
-			return previous, fmt.Errorf("PR base was changed outside the feature")
+		branch, err := publisher.Branch(ctx, journal.Plan, journal.Plan.Branch)
+		if err != nil {
+			return fmt.Errorf("inspect child branch before reconciliation: %w", err)
+		}
+		if err := validateReconciliationPRBoundary(journal, target, remote, branch); err != nil {
+			return err
 		}
 		observed = remote
+		return nil
+	}
+	if journal.Publication.Number > 0 {
+		if err := checkPublishedBoundary(); err != nil {
+			return previous, err
+		}
 	}
 	if journal.Reconciliation == nil && journal.Plan.Base == target.Base && journal.Plan.BaseSHA == target.SHA {
 		journal.Plan.ProvisionalParent = target.Provisional
@@ -1211,6 +1251,12 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 			return previous, err
 		}
 		if journal.Publication.Number > 0 {
+			if err := d.validateDependencyTarget(ctx, target); err != nil {
+				return previous, err
+			}
+			if err := checkPublishedBoundary(); err != nil {
+				return previous, err
+			}
 			journal.Plan.Restack = &workrun.RestackBoundary{Base: observed.Base, BaseSHA: observed.BaseSHA, HeadSHA: observed.HeadSHA, Number: journal.Publication.Number}
 		}
 		if err := workrun.BeginReconciliation(&journal, snapshot); err != nil {
@@ -1248,7 +1294,7 @@ func (d *seriesDriver) Reconcile(ctx context.Context, ticket workseries.Ticket, 
 		journal.State, journal.ResumeState, journal.StopReason = "blocked", "implementing", "Provisional parent restack has conflicts; inspect and resolve before resuming"
 	}
 	if held && !(rebase.Conflict && recorded.ProvisionalParent != nil) {
-		journal.State, journal.ResumeState, journal.StopReason, journal.Outcome = heldState, "implementing", heldReason, heldOutcome
+		restoreRestackedHold(&journal, heldState, heldResume, heldReason, heldOutcome, recorded.ProvisionalParent != nil)
 	}
 	journal.Reconciliation = nil
 	journal.DependencyInvalid = false

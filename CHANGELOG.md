@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.155 - 2026-11-12
+
+### Fixed
+
+- Reconcile a fenced child onto a changed provisional parent before handling stale child CI, preserving preflight errors and requiring fresh verification.
+
 ## 0.1.0-beta.154 - 2026-11-12
 
 ### Fixed
