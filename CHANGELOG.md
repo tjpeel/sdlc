@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.151 - 2026-11-12
+
+### Fixed
+
+- Retry an independent review after a corroborated expired Claude login without mistaking its synthetic error envelope for a model change or a quota skip.
+
 ## 0.1.0-beta.150 - 2026-11-11
 
 ### Fixed

@@ -317,7 +317,7 @@ func (o *Observer) consume(line []byte, provider, requested string, usage *Usage
 	if event.Message.Model != "" {
 		reported = event.Message.Model
 	}
-	if syntheticQuota && o.initializedModel == requested {
+	if (syntheticQuota || ClaudeSyntheticAuthError(provider, event.Type, errorCode, event.Message.Model)) && o.initializedModel == requested {
 		reported = ""
 	}
 	if safeModel(reported) {

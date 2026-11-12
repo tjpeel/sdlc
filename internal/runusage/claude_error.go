@@ -6,3 +6,8 @@ package runusage
 func ClaudeSyntheticQuotaError(provider, eventType, errorCode, messageModel string) bool {
 	return provider == "claude" && eventType == "assistant" && errorCode == "rate_limit" && messageModel == "<synthetic>"
 }
+
+// ClaudeSyntheticAuthError identifies a native authentication error envelope.
+func ClaudeSyntheticAuthError(provider, eventType, errorCode, messageModel string) bool {
+	return provider == "claude" && eventType == "assistant" && errorCode == "authentication_failed" && messageModel == "<synthetic>"
+}

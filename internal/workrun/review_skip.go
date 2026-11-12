@@ -127,11 +127,14 @@ func reviewUsageRejection(a runusage.Attempt) (string, runusage.RateLimit, bool)
 }
 
 func savedReviewStopCategory(j *Journal) string {
-	if j.State != "failed" || j.ResumeState != "reviewing" {
+	if j.ResumeState != "reviewing" {
 		return ""
 	}
-	if j.Plan.Roles.Review.Provider == "claude" && j.StopReason == (&providerauth.NativeExecutionError{Provider: "claude"}).Error()+"\n"+providerModelMismatchMessage {
+	if j.Plan.Roles.Review.Provider == "claude" && (j.State == "failed" && j.StopReason == (&providerauth.NativeExecutionError{Provider: "claude"}).Error()+"\n"+providerModelMismatchMessage || j.State == "blocked" && j.StopReason == "saved synthetic reviewer model hold lacks corroborated safe native quota evidence") {
 		return "claude_synthetic_quota"
+	}
+	if j.State != "failed" {
+		return ""
 	}
 	// These exact controller-owned legacy reasons preceded typed categories.
 	switch j.StopReason {
@@ -160,8 +163,12 @@ func (r Runner) reviewUsageProof(ctx context.Context, dir string, j *Journal, ca
 	}
 	m := selectedReviewModel(j)
 	if reconcileSynthetic {
-		if err := recoverSyntheticQuotaModel(dir, j, &a); err != nil {
+		auth, err := recoverSyntheticQuotaModel(dir, j, &a)
+		if err != nil {
 			return nil, err
+		}
+		if auth {
+			return nil, nil
 		}
 	}
 	if a.Outcome != "failed" || a.Provider != m.Provider || a.Model != m.Name || a.Effort != m.Effort || a.ImageID != j.ImageID || a.Resumed || !a.EndedAt.IsZero() && a.EndedAt.After(j.UpdatedAt) && legacy || a.Usage.ReportedModel != "" && a.Usage.ReportedModel != m.Name {

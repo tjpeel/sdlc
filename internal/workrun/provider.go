@@ -137,8 +137,8 @@ func (provider NativeProvider) Execute(ctx context.Context, session Session, std
 	if events.err != nil {
 		return events.result, errors.Join(err, events.err)
 	}
-	if events.syntheticQuotaError && events.initializedModel != session.Model.Name {
-		return events.result, errors.Join(err, errors.New("synthetic Claude quota failure has no matching native initialization"))
+	if (events.syntheticQuotaError || events.syntheticAuthError) && events.initializedModel != session.Model.Name {
+		return events.result, errors.Join(err, errors.New("synthetic Claude error has no matching native initialization"))
 	}
 	if events.modelChanged || events.result.ReportedModel != "" && events.result.ReportedModel != session.Model.Name {
 		return events.result, errors.Join(err, errors.New(providerModelMismatchMessage))
@@ -168,16 +168,18 @@ var errNativeIncomplete = errors.New("provider did not complete a resumable sess
 const providerModelMismatchMessage = "provider reported a different model during the session; job stopped"
 
 type eventWriter struct {
-	provider            string
-	output              io.Writer
-	buffer              []byte
-	final               json.RawMessage
-	result              SessionResult
-	completed, failed   bool
-	modelChanged        bool
-	syntheticQuotaError bool
-	initializedModel    string
-	err                 error
+	provider             string
+	output               io.Writer
+	buffer               []byte
+	final                json.RawMessage
+	result               SessionResult
+	completed, failed    bool
+	modelChanged         bool
+	syntheticQuotaError  bool
+	syntheticAuthError   bool
+	syntheticAuthExpired bool
+	initializedModel     string
+	err                  error
 }
 
 func (writer *eventWriter) Write(data []byte) (int, error) {
@@ -244,7 +246,11 @@ func (writer *eventWriter) consume(line []byte) error {
 	if len(event.ParentTool) == 0 || bytes.Equal(bytes.TrimSpace(event.ParentTool), []byte("null")) {
 		reported = event.Model
 		var message struct {
-			Model string `json:"model"`
+			Model   string `json:"model"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
 		}
 		if json.Unmarshal(event.Message, &message) == nil && message.Model != "" {
 			reported = message.Model
@@ -253,6 +259,15 @@ func (writer *eventWriter) consume(line []byte) error {
 		_ = json.Unmarshal(event.Error, &errorCode)
 		if runusage.ClaudeSyntheticQuotaError(writer.provider, event.Type, errorCode, message.Model) {
 			writer.syntheticQuotaError = true
+			reported = ""
+		} else if runusage.ClaudeSyntheticAuthError(writer.provider, event.Type, errorCode, message.Model) {
+			writer.syntheticAuthError = true
+			for _, block := range message.Content {
+				if block.Type == "text" && strings.Contains(block.Text, "this login reached its time limit and cannot be renewed") {
+					writer.syntheticAuthExpired = true
+				}
+			}
+			writer.failed = true
 			reported = ""
 		}
 		if writer.provider == "claude" && event.Type == "system" && event.Subtype == "init" {

@@ -30,7 +30,6 @@ func TestRealClaudeModelDriftSurvivesSyntheticQuotaEnvelope(t *testing.T) {
 func TestSyntheticModelOutsideQuotaEnvelopeStillFailsIdentity(t *testing.T) {
 	for _, event := range []string{
 		`{"type":"assistant","message":{"id":"message","model":"<synthetic>"}}`,
-		`{"type":"assistant","error":"authentication_failed","message":{"id":"message","model":"<synthetic>"}}`,
 		`{"type":"system","subtype":"init","model":"<synthetic>"}`,
 	} {
 		o := NewObserver("claude", "selected-model")
@@ -47,5 +46,14 @@ func TestSyntheticClaudeQuotaWithoutInitRetainsUnverifiedModel(t *testing.T) {
 	u := o.Snapshot()
 	if u.ReportedModel != "<synthetic>" || u.ModelMatches {
 		t.Fatal("unverified synthetic model was suppressed", u)
+	}
+}
+
+func TestClaudeAuthenticationErrorPreservesInitializedModel(t *testing.T) {
+	o := NewObserver("claude", "selected-model")
+	o.Consume([]byte(`{"type":"system","subtype":"init","model":"selected-model"}`))
+	o.Consume([]byte(`{"type":"assistant","error":"authentication_failed","message":{"model":"<synthetic>"}}`))
+	if u := o.Snapshot(); !u.ModelMatches || u.ReportedModel != "selected-model" {
+		t.Fatal("authentication envelope replaced initialized model", u.ReportedModel)
 	}
 }
