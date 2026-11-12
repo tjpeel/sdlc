@@ -356,7 +356,10 @@ func TestFeatureRetainsReconciliationBundleInPrivateRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	temporary := filepath.Join(t.TempDir(), "snapshot.bundle")
-	if err := os.WriteFile(temporary, []byte("disposable snapshot"), 0600); err != nil {
+	if err := os.WriteFile(temporary, []byte("disposable snapshot"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(temporary, 0644); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := retainSeriesSnapshot(directory, workrun.BranchSnapshot{Branch: "main", SHA: strings.Repeat("a", 40), Bundle: temporary})
@@ -369,6 +372,13 @@ func TestFeatureRetainsReconciliationBundleInPrivateRun(t *testing.T) {
 	if err := validateRetainedSeriesSnapshot(directory, snapshot); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(snapshot.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("retained bundle mode = %v; want 0600", info.Mode().Perm())
+	}
 	// A process may stop after retaining the bundle but before saving pending
 	// reconciliation. Repeating preparation must adopt that safe exact path.
 	fresh := filepath.Join(t.TempDir(), "snapshot.bundle")
@@ -378,6 +388,20 @@ func TestFeatureRetainsReconciliationBundleInPrivateRun(t *testing.T) {
 	recovered, err := retainSeriesSnapshot(directory, workrun.BranchSnapshot{Branch: snapshot.Branch, SHA: snapshot.SHA, Bundle: fresh})
 	if err != nil || recovered.Bundle != snapshot.Bundle {
 		t.Fatalf("prepared snapshot could not be recovered: %+v %v", recovered, err)
+	}
+	if err := os.Chmod(snapshot.Bundle, 0644); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err = retainSeriesSnapshot(directory, workrun.BranchSnapshot{Branch: snapshot.Branch, SHA: snapshot.SHA, Bundle: fresh})
+	if err != nil || recovered.Bundle != snapshot.Bundle {
+		t.Fatalf("public recovered bundle could not be secured: %+v %v", recovered, err)
+	}
+	info, err = os.Stat(snapshot.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("recovered bundle mode = %v; want 0600", info.Mode().Perm())
 	}
 	if err := validateRetainedSeriesSnapshot(t.TempDir(), snapshot); err == nil {
 		t.Fatal("outside bundle accepted")

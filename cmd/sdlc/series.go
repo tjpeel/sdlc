@@ -1341,6 +1341,9 @@ func retainSeriesSnapshot(directory string, snapshot workrun.BranchSnapshot) (wo
 		// Reuse a private prepared bundle after a crash in that small interval;
 		// the isolated rebaser verifies its exact Git revision before mutation.
 		snapshot.Bundle = path
+		if err := secureRetainedSeriesBundle(path); err != nil {
+			return snapshot, err
+		}
 		return snapshot, validateRetainedSeriesSnapshot(directory, snapshot)
 	} else if !os.IsNotExist(err) {
 		return snapshot, fmt.Errorf("cannot inspect retained reconciliation source")
@@ -1349,7 +1352,21 @@ func retainSeriesSnapshot(directory string, snapshot workrun.BranchSnapshot) (wo
 		return snapshot, err
 	}
 	snapshot.Bundle = path
+	if err := secureRetainedSeriesBundle(path); err != nil {
+		return snapshot, err
+	}
 	return snapshot, validateRetainedSeriesSnapshot(directory, snapshot)
+}
+
+func secureRetainedSeriesBundle(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("reconciliation source must be a regular bundle")
+	}
+	return os.Chmod(path, 0600)
 }
 
 func validateRetainedSeriesSnapshot(directory string, snapshot workrun.BranchSnapshot) error {
