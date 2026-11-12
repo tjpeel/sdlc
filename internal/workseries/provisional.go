@@ -13,18 +13,29 @@ import (
 // candidate, and a fresh complete feedback scan without starting work.
 type ProvisionalVerifier func(context.Context, State, workrun.Journal, *workrun.ProvisionalParentProof) error
 
+type ProvisionalInvalidator func(context.Context, Ticket, Result) error
+
 type ProvisionalPreview struct {
-	Reference string                         `json:"reference"`
-	Ticket    string                         `json:"ticket"`
-	Proof     workrun.ProvisionalParentProof `json:"proof"`
-	Revoke    bool                           `json:"revoke"`
-	DryRun    bool                           `json:"dry_run"`
+	ReconcileDescendants []string                       `json:"reconcile_descendants,omitempty"`
+	Reference            string                         `json:"reference"`
+	Ticket               string                         `json:"ticket"`
+	Proof                workrun.ProvisionalParentProof `json:"proof"`
+	Revoke               bool                           `json:"revoke"`
+	DryRun               bool                           `json:"dry_run"`
 }
 
 // SetProvisionalParent updates only the feature journal while owning its lock
 // and the parent run lock. Child controllers must independently check the
 // saved proof and live parent at each execution boundary.
 func SetProvisionalParent(ctx context.Context, root, reference, ticket string, revoke, dryRun bool, verify ProvisionalVerifier) (ProvisionalPreview, error) {
+	return SetProvisionalParentWithAcknowledgement(ctx, root, reference, ticket, revoke, dryRun, false, verify)
+}
+
+func SetProvisionalParentWithAcknowledgement(ctx context.Context, root, reference, ticket string, revoke, dryRun, acceptLimitations bool, verify ProvisionalVerifier) (ProvisionalPreview, error) {
+	return SetProvisionalParentWithReconciliation(ctx, root, reference, ticket, revoke, dryRun, acceptLimitations, false, verify, nil)
+}
+
+func SetProvisionalParentWithReconciliation(ctx context.Context, root, reference, ticket string, revoke, dryRun, acceptLimitations, reconcileDescendants bool, verify ProvisionalVerifier, invalidate ProvisionalInvalidator) (ProvisionalPreview, error) {
 	preview := ProvisionalPreview{Reference: reference, Ticket: ticket, Revoke: revoke, DryRun: dryRun}
 	if filepath.Base(ticket) != ticket {
 		return preview, fmt.Errorf("ticket must be a numbered file name")
@@ -83,7 +94,7 @@ func SetProvisionalParent(ctx context.Context, root, reference, ticket string, r
 	if j.ID != result.RunID || j.Plan.Root != root || j.Plan.Reference != reference || filepath.Base(j.Plan.Ticket) != ticket {
 		return preview, fmt.Errorf("parent run identity differs from the feature")
 	}
-	proof, err := workrun.ProvisionalProofForCIHold(j)
+	proof, err := workrun.ProvisionalProofForParent(j)
 	if err != nil {
 		return preview, err
 	}
@@ -91,7 +102,18 @@ func SetProvisionalParent(ctx context.Context, root, reference, ticket string, r
 		return preview, fmt.Errorf("parent feature result conflicts with its run")
 	}
 	if result.HeadSHA != "" && result.HeadSHA != proof.Publication.HeadSHA && startedProvisionalDescendant(state, ticket) {
-		return preview, fmt.Errorf("parent head changed while dependent work exists; resume the feature to reconcile it before provisional admission")
+		if proof.Kind != "reviewed" {
+			return preview, fmt.Errorf("parent head changed while dependent work exists; resume the feature to reconcile it before provisional admission")
+		}
+		preview.ReconcileDescendants = startedDescendants(state, ticket)
+		if !dryRun && !reconcileDescendants {
+			return preview, fmt.Errorf("parent head changed; use --reconcile-descendants after reviewing the dry run")
+		}
+		for _, name := range preview.ReconcileDescendants {
+			if state.Results[name].State == "merged" {
+				return preview, fmt.Errorf("merged descendant cannot be reconciled")
+			}
+		}
 	}
 	if verify == nil {
 		return preview, fmt.Errorf("provisional admission requires live parent and feedback verification")
@@ -100,12 +122,29 @@ func SetProvisionalParent(ctx context.Context, root, reference, ticket string, r
 	if err := verify(ctx, state, j, &proof); err != nil {
 		return preview, err
 	}
-	if !workrun.SameProvisionalBoundary(before, proof) || proof.CIHead != proof.Publication.HeadSHA || proof.CIStatus == "" || len(proof.CIIdentities) > 32768 {
+	if !workrun.SameProvisionalBoundary(before, proof) || proof.CIHead != proof.Publication.HeadSHA || proof.CIStatus == "" || proof.Kind == "reviewed" && proof.CIStatus != "passed" || len(proof.CIIdentities) > 32768 {
 		return preview, fmt.Errorf("live verifier changed the provisional publication boundary")
 	}
 	preview.Proof = proof
+	if !dryRun && proof.Kind == "reviewed" && proof.ReviewLimitations != "null" && proof.ReviewLimitations != "[]" && !acceptLimitations {
+		return preview, fmt.Errorf("review limitations require --accept-review-limitations after reviewing the dry run")
+	}
 	if dryRun {
 		return preview, nil
+	}
+	if len(preview.ReconcileDescendants) != 0 {
+		if invalidate == nil {
+			return preview, fmt.Errorf("descendant fencing is required before admission")
+		}
+		tickets := ticketMap(state.Plan.Tickets)
+		for _, name := range preview.ReconcileDescendants {
+			child := state.Results[name]
+			if err := invalidate(ctx, tickets[name], child); err != nil {
+				return preview, fmt.Errorf("fence descendant %s: %w", name, err)
+			}
+			child.DependencyInvalid = true
+			state.Results[name] = child
+		}
 	}
 	previousHead := result.HeadSHA
 	result.Directory, result.Branch, result.Base = runDir, proof.Branch, j.Plan.Base
@@ -122,6 +161,10 @@ func SetProvisionalParent(ctx context.Context, root, reference, ticket string, r
 }
 
 func startedProvisionalDescendant(state State, parent string) bool {
+	return len(startedDescendants(state, parent)) > 0
+}
+
+func startedDescendants(state State, parent string) []string {
 	tickets := ticketMap(state.Plan.Tickets)
 	var depends func(string, map[string]bool) bool
 	depends = func(name string, seen map[string]bool) bool {
@@ -136,10 +179,12 @@ func startedProvisionalDescendant(state State, parent string) bool {
 		}
 		return false
 	}
-	for name, result := range state.Results {
-		if name != parent && result.RunID != "" && depends(name, map[string]bool{}) {
-			return true
+	var result []string
+	for _, ticket := range state.Plan.Tickets {
+		name := filepath.Base(ticket.File)
+		if name != parent && state.Results[name].RunID != "" && depends(name, map[string]bool{}) {
+			result = append(result, name)
 		}
 	}
-	return false
+	return result
 }

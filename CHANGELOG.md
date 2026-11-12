@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.152 - 2026-11-12
+
+### Added
+
+- Allow an explicitly acknowledged, fully reviewed provisional parent and fence existing descendants for reconciliation when its head has changed.
+
 ## 0.1.0-beta.151 - 2026-11-12
 
 ### Fixed

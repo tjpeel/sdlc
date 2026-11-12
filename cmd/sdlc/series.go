@@ -1095,7 +1095,7 @@ func (d *seriesDriver) Observe(ctx context.Context, result workseries.Result) (w
 		return workseries.Observation{}, err
 	}
 	if result.Provisional != nil {
-		proof, proofErr := workrun.ProvisionalProofForCIHold(journal)
+		proof, proofErr := workrun.ProvisionalProofForParent(journal)
 		if proofErr != nil || !workrun.SameProvisionalBoundary(proof, result.Provisional.Proof) {
 			return workseries.Observation{State: "STALE"}, nil
 		}
@@ -1383,7 +1383,7 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 		}
 		refreshed := resultForRun(directory, journal)
 		if previous.Provisional != nil {
-			proof, proofErr := workrun.ProvisionalProofForCIHold(journal)
+			proof, proofErr := workrun.ProvisionalProofForParent(journal)
 			if proofErr != nil || !workrun.SameProvisionalBoundary(proof, previous.Provisional.Proof) {
 				// Keep the observed grant for the normal observer, which records
 				// invalidation and fences descendants before changing it.
@@ -1391,6 +1391,7 @@ func (d *seriesDriver) adoptRuns(state *workseries.State) error {
 				continue
 			}
 			refreshed.Provisional = previous.Provisional
+			refreshed.State, refreshed.HoldStage, refreshed.StopReason = previous.State, previous.HoldStage, previous.StopReason
 		}
 		refreshed.Dependencies = previous.Dependencies
 		refreshed.DependencyInvalid = previous.DependencyInvalid || workrun.DependencyIsInvalid(directory, &journal)

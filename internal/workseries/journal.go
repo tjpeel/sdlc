@@ -190,7 +190,7 @@ func validateState(s *State) error {
 func validResult(p Plan, ticket Ticket, r Result) bool {
 	if mark := r.Provisional; mark != nil {
 		proof := mark.Proof
-		if mark.GrantedAt.IsZero() || r.State != "blocked" || r.HoldStage != "ci" || r.DependencyInvalid || proof.RunID != r.RunID || proof.Ticket != filepath.Base(ticket.File) || proof.Branch != r.Branch || proof.Base != r.Base || proof.Publication.Number != r.PRNumber || proof.Publication.URL != r.URL || proof.Publication.BaseSHA != r.BaseSHA || proof.Publication.HeadSHA != r.HeadSHA || proof.CIHead != proof.Publication.HeadSHA || proof.CIStatus == "" || len(proof.CIIdentities) > 32768 || !objectSHA(proof.CandidateHead) || !objectSHA(proof.CandidateTree) || proof.CheckKey == "" || proof.Attempt < 0 || proof.ScannedAt.IsZero() {
+		if mark.GrantedAt.IsZero() || r.State != "blocked" || r.HoldStage != "ci" || r.DependencyInvalid || proof.RunID != r.RunID || proof.Ticket != filepath.Base(ticket.File) || proof.Branch != r.Branch || proof.Base != r.Base || proof.Publication.Number != r.PRNumber || proof.Publication.URL != r.URL || proof.Publication.BaseSHA != r.BaseSHA || proof.Publication.HeadSHA != r.HeadSHA || proof.CIHead != proof.Publication.HeadSHA || proof.CIStatus == "" || len(proof.CIIdentities) > 32768 || !objectSHA(proof.CandidateHead) || !objectSHA(proof.CandidateTree) || proof.CheckKey == "" || proof.Attempt < 0 || (proof.Kind == "" && proof.ScannedAt.IsZero()) || (proof.Kind != "" && proof.Kind != "reviewed") || len(proof.ReviewLimitations) > 32768 {
 			return false
 		}
 	}

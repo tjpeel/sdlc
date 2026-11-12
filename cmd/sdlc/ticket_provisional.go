@@ -18,7 +18,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const provisionalTicketUsage = "Usage: sdlc ticket provisional --reference REF --ticket NUMBERED_FILE [--revoke] [--dry-run] [--json]"
+const provisionalTicketUsage = "Usage: sdlc ticket provisional --reference REF --ticket NUMBERED_FILE [--revoke] [--dry-run] [--json] [--accept-review-limitations] [--reconcile-descendants]"
 
 func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("ticket provisional", flag.ContinueOnError)
@@ -29,6 +29,8 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 	revoke := flags.Bool("revoke", false, "revoke the provisional grant")
 	dry := flags.Bool("dry-run", false, "preview without writing")
 	structured := flags.Bool("json", false, "JSON preview")
+	accept := flags.Bool("accept-review-limitations", false, "acknowledge review limitations shown by dry run")
+	reconcile := flags.Bool("reconcile-descendants", false, "fence started descendants for reconciliation")
 	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
 		_, err = fmt.Fprintln(out, provisionalTicketUsage)
 		return err
@@ -63,6 +65,7 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 		*root = work.Root
 	}
 	var verify workseries.ProvisionalVerifier
+	var invalidate workseries.ProvisionalInvalidator
 	if !*revoke {
 		dir, err := workseries.Directory(*root, *reference, false)
 		if err != nil {
@@ -110,6 +113,7 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 				return fmt.Errorf("feature runtime changed during admission")
 			}
 			d := &seriesDriver{runtime: manager, plan: state.Plan, settings: frozen, output: io.Discard}
+			invalidate = d.Invalidate
 			if err := d.validateSettings(); err != nil {
 				return err
 			}
@@ -137,7 +141,10 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 					return err
 				}
 				branch, err := publisher.Branch(ctx, j.Plan, proof.Branch)
-				if err != nil || branch.Branch != proof.Branch || branch.SHA != proof.Publication.HeadSHA {
+				if err != nil {
+					return fmt.Errorf("parent branch inspection failed: %w", err)
+				}
+				if branch.Branch != proof.Branch || branch.SHA != proof.Publication.HeadSHA {
 					return fmt.Errorf("parent branch differs from the saved head")
 				}
 				return nil
@@ -153,6 +160,9 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 			if err != nil {
 				return err
 			}
+			if proof.Kind == "reviewed" && status != "passed" {
+				return fmt.Errorf("reviewed provisional parent requires current passed CI")
+			}
 			proof.CIStatus, proof.CIIdentities, proof.CIHistorical = status, identities, false
 			comments, err := publisher.Feedback(ctx, j.Plan, proof.Publication)
 			if err != nil {
@@ -164,12 +174,31 @@ func ticketProvisionalCommand(ctx context.Context, args []string, out io.Writer)
 			return check()
 		}
 	}
-	preview, err := workseries.SetProvisionalParent(ctx, *root, *reference, *ticket, *revoke, *dry, verify)
+	preview, err := workseries.SetProvisionalParentWithReconciliation(ctx, *root, *reference, *ticket, *revoke, *dry, *accept, *reconcile, verify, invalidate)
 	if err != nil {
 		return err
 	}
 	if *structured {
 		return json.NewEncoder(out).Encode(preview)
+	}
+	if preview.Proof.Kind == "reviewed" && preview.Proof.ReviewLimitations != "null" && preview.Proof.ReviewLimitations != "[]" {
+		var limitations []string
+		if err := json.Unmarshal([]byte(preview.Proof.ReviewLimitations), &limitations); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(out, "Review limitations:"); err != nil {
+			return err
+		}
+		for _, limitation := range limitations {
+			if _, err := fmt.Fprintf(out, "- %s\n", limitation); err != nil {
+				return err
+			}
+		}
+	}
+	if len(preview.ReconcileDescendants) > 0 {
+		if _, err := fmt.Fprintf(out, "Descendants to fence and reconcile: %s\n", strings.Join(preview.ReconcileDescendants, ", ")); err != nil {
+			return err
+		}
 	}
 	action := "Provisional parent granted"
 	if *revoke {

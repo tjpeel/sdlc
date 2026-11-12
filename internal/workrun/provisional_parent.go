@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/featureguard"
@@ -15,20 +16,22 @@ import (
 // ProvisionalParentProof is a saved-state prerequisite for starting dependent
 // work. Admission must also recheck the live PR, branch and feedback before use.
 type ProvisionalParentProof struct {
-	CIStatus      string      `json:"ci_status"`
-	CIHistorical  bool        `json:"ci_historical,omitempty"`
-	CIHead        string      `json:"ci_head"`
-	CIIdentities  string      `json:"ci_identities,omitempty"`
-	RunID         string      `json:"run_id"`
-	Ticket        string      `json:"ticket"`
-	Branch        string      `json:"branch"`
-	Base          string      `json:"base"`
-	Publication   Publication `json:"publication"`
-	CandidateHead string      `json:"candidate_head"`
-	CandidateTree string      `json:"candidate_tree"`
-	CheckKey      string      `json:"check_key"`
-	Attempt       int         `json:"attempt"`
-	ScannedAt     time.Time   `json:"scanned_at"`
+	Kind              string      `json:"kind,omitempty"`
+	ReviewLimitations string      `json:"review_limitations,omitempty"`
+	CIStatus          string      `json:"ci_status"`
+	CIHistorical      bool        `json:"ci_historical,omitempty"`
+	CIHead            string      `json:"ci_head"`
+	CIIdentities      string      `json:"ci_identities,omitempty"`
+	RunID             string      `json:"run_id"`
+	Ticket            string      `json:"ticket"`
+	Branch            string      `json:"branch"`
+	Base              string      `json:"base"`
+	Publication       Publication `json:"publication"`
+	CandidateHead     string      `json:"candidate_head"`
+	CandidateTree     string      `json:"candidate_tree"`
+	CheckKey          string      `json:"check_key"`
+	Attempt           int         `json:"attempt"`
+	ScannedAt         time.Time   `json:"scanned_at"`
 }
 
 func ProvisionalProofForCIHold(j Journal) (ProvisionalParentProof, error) {
@@ -61,6 +64,34 @@ func ProvisionalProofForCIHold(j Journal) (ProvisionalParentProof, error) {
 	return ProvisionalParentProof{RunID: j.ID, Ticket: filepath.Base(j.Plan.Ticket), Branch: j.Plan.Branch, Base: j.Plan.Base, Publication: j.Publication, CandidateHead: j.Evidence.Head, CandidateTree: j.Evidence.Tree, CheckKey: j.Evidence.Key, Attempt: j.Attempt, ScannedAt: scan.ScannedAt, CIHead: j.Publication.HeadSHA, CIStatus: status, CIHistorical: historical, CIIdentities: identities}, nil
 }
 
+// ProvisionalProofForParent admits either an existing CI hold or a fully
+// reviewed, unmerged ready parent. Limitations remain part of the proof.
+func ProvisionalProofForParent(j Journal) (ProvisionalParentProof, error) {
+	if j.State != "ready" {
+		return ProvisionalProofForCIHold(j)
+	}
+	if j.CI.Status != "passed" || j.ReviewSkip != nil || !completedReviewAwaitingCI(&j) || len(j.ReviewReports) == 0 || j.PRFeedback == nil || j.PRFeedback.Active || j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || j.PRFeedback.CompletedHead != j.Publication.HeadSHA || j.PendingInputs != nil || j.CandidatePhasePending || j.DependencyInvalid || j.RestackNeedsChecks || j.RuntimeRecheck != nil && j.RuntimeRecheck.Pending || j.CIHeldReview != nil && j.CIHeldReview.Pending || activeCIHeldFeedbackFailure(&j) != nil || j.Reconciliation != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingRole != "" || pendingCIFeedback(&j) != nil || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || j.RunLimitOverride != nil && j.RunLimitOverride.PendingVerificationReplay {
+		return ProvisionalParentProof{}, fmt.Errorf("reviewed provisional parent requires current passed CI, independent review and completed feedback")
+	}
+	report := j.ReviewReports[len(j.ReviewReports)-1]
+	if report.Publication != j.Publication || report.Attempt != j.Attempt || report.Coverage == nil || report.Coverage.Scope != "full" || len(report.Coverage.Gaps) != 0 || report.Coverage.BaseSHA != j.Publication.BaseSHA || report.Coverage.HeadSHA != j.Publication.HeadSHA || !slices.Equal(report.Limitations, j.Outcome.Limitations) || len(j.Outcome.Findings) != 0 || len(j.Outcome.Questions) != 0 || j.Outcome.Status != "reviewed" {
+		return ProvisionalParentProof{}, fmt.Errorf("reviewed provisional parent has an unfinished or stale review")
+	}
+	if !j.Evidence.Passed || !objectID.MatchString(j.Evidence.Head) || !objectID.MatchString(j.Evidence.Tree) || j.Evidence.Key != verificationKey(&j, VerificationRequest{}, j.Evidence.Head, j.Evidence.Tree) || !verificationCurrent(&j, j.Evidence.Head, j.Evidence.Tree) {
+		return ProvisionalParentProof{}, fmt.Errorf("reviewed provisional parent requires current configured checks")
+	}
+	feedback := PRFeedbackStatus(j)
+	if feedback.Pending > 0 || feedback.Unresolved > 0 || feedback.OutstandingReplies > 0 || j.ID == "" || j.Plan.Ticket == "" || j.Plan.Branch == "" {
+		return ProvisionalParentProof{}, fmt.Errorf("reviewed provisional parent has unresolved feedback or incomplete identity")
+	}
+	limitations, err := json.Marshal(j.Outcome.Limitations)
+	if err != nil || len(limitations) > 32768 {
+		return ProvisionalParentProof{}, fmt.Errorf("review limitations exceed provisional proof limits")
+	}
+	status, identities := captureCIIdentity(&j)
+	return ProvisionalParentProof{Kind: "reviewed", ReviewLimitations: string(limitations), RunID: j.ID, Ticket: filepath.Base(j.Plan.Ticket), Branch: j.Plan.Branch, Base: j.Plan.Base, Publication: j.Publication, CandidateHead: j.Evidence.Head, CandidateTree: j.Evidence.Tree, CheckKey: j.Evidence.Key, Attempt: j.Attempt, CIHead: j.Publication.HeadSHA, CIStatus: status, CIIdentities: identities}, nil
+}
+
 // SameProvisionalBoundary compares the admission evidence while allowing CI
 // status on the same head to change. Captured CI identity remains audit data.
 func SameProvisionalBoundary(a, b ProvisionalParentProof) bool {
@@ -72,7 +103,7 @@ func SameProvisionalBoundary(a, b ProvisionalParentProof) bool {
 // ValidateProvisionalFeedback rejects new, changed or removed GitHub comments.
 // It does not assess them; the operator must run the normal feedback action.
 func ValidateProvisionalFeedback(j Journal, comments []PRFeedbackComment) error {
-	if _, err := ProvisionalProofForCIHold(j); err != nil {
+	if _, err := ProvisionalProofForParent(j); err != nil {
 		return err
 	}
 	if len(comments) > maxPRFeedbackComments {
@@ -164,7 +195,7 @@ func ValidateProvisionalDependency(ctx context.Context, plan Plan, remote depend
 	if err != nil {
 		return ErrDependencyInvalid
 	}
-	current, err := ProvisionalProofForCIHold(parent)
+	current, err := ProvisionalProofForParent(parent)
 	if err != nil || !SameProvisionalBoundary(current, *proof) {
 		return ErrDependencyInvalid
 	}
@@ -187,6 +218,18 @@ func ValidateProvisionalDependency(ctx context.Context, plan Plan, remote depend
 	comments, err := feedback.Feedback(ctx, parentPlan, proof.Publication)
 	if err != nil || ValidateProvisionalFeedback(parent, comments) != nil {
 		return ErrDependencyInvalid
+	}
+	if proof.Kind == "reviewed" {
+		ci, ok := remote.(interface {
+			Checks(context.Context, Plan, Publication) (CIResult, error)
+		})
+		if !ok {
+			return ErrDependencyInvalid
+		}
+		checks, err := ci.Checks(ctx, parentPlan, proof.Publication)
+		if err != nil || validateCIResult(checks, proof.Publication) != nil || checks.Status != "passed" {
+			return ErrDependencyInvalid
+		}
 	}
 	// Close the read race with another observation after the feedback scan.
 	observed, err = remote.Observe(ctx, parentPlan, proof.Publication)
