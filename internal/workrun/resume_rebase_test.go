@@ -267,22 +267,24 @@ func TestResumeRebaseAcceptsVerifiedLocalPublicationSource(t *testing.T) {
 		t.Fatalf("verified publication source rejected: %v", err)
 	}
 }
-func TestResumeRebaseRejectsMovedTargetDuringRecovery(t *testing.T) {
+func TestResumeRebaseRejectsUnrelatedPRBaseRefreshDuringRecovery(t *testing.T) {
 	dir, j := testRun(t)
 	j.Publication = Publication{Number: 40, HeadSHA: testHead}
 	j.Plan.Base = "parent"
-	p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "parent", BaseSHA: testTree, HeadSHA: testHead}}
+	p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "parent", BaseSHA: testTree, HeadSHA: testHead}, branchSHA: testTree}
 	repo := &resumeTestRepository{fail: true}
 	runner := Runner{Publisher: p, Repository: repo, Rebase: true}
 	if _, err := runner.checkResumeUpstream(context.Background(), dir, j); err == nil {
 		t.Fatal("expected interruption")
 	}
+	// A changed PR base OID that matches neither the stored lease nor the live
+	// target cannot be used to replace the saved snapshot.
 	p.remote.BaseSHA = testBase
 	if _, err := runner.checkResumeUpstream(context.Background(), dir, j); err == nil {
-		t.Fatal("moved target accepted")
+		t.Fatal("unrelated PR base refresh accepted")
 	}
 	if repo.calls != 1 || p.snapshots != 1 {
-		t.Fatal("recovery silently replayed a new target")
+		t.Fatal("unrelated PR base refresh changed the saved rebase")
 	}
 }
 
@@ -400,6 +402,101 @@ func TestResumeRebaseCanRetryAfterStaleBasePublicationWasRefused(t *testing.T) {
 	repo = &resumeTestRepository{}
 	if _, err := (Runner{Publisher: p, Repository: repo, Rebase: true}).checkResumeUpstream(context.Background(), dir, j); err == nil || repo.calls != 0 || p.snapshots != 0 {
 		t.Fatalf("feature-owned rebase escaped its controller: %v", err)
+	}
+}
+
+func TestResumeRebaseRefreshesPendingSnapshotWhenTargetMoves(t *testing.T) {
+	dir, j := testRun(t)
+	j.State, j.ResumeState = "blocked", "ci"
+	j.Publication = Publication{Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+	j.Plan.Restack = &RestackBoundary{Base: "main", BaseSHA: testBase, HeadSHA: testHead, Number: 40}
+	j.Evidence = CheckEvidence{Passed: true, Head: testHead, Tree: testTree}
+
+	oldDir := filepath.Join(dir, "resume-rebase-source", "snapshot-old")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldBundle := filepath.Join(oldDir, "base.bundle")
+	if err := os.WriteFile(oldBundle, []byte("stale bundle fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	j.Reconciliation = &Reconciliation{
+		OldSource: testBase,
+		Snapshot:  BranchSnapshot{Branch: "main", SHA: testBase, Bundle: oldBundle},
+		State:     "pending",
+	}
+	j.ResumeRebase = true
+	p := &resumeTestPublisher{
+		remote:    RemotePR{State: "OPEN", Base: "main", BaseSHA: testBase, HeadSHA: testHead},
+		branchSHA: testTree,
+	}
+	repo := &resumeTestRepository{}
+
+	changed, err := (Runner{Publisher: p, Repository: repo}).checkResumeUpstream(context.Background(), dir, j)
+	if err != nil || !changed {
+		t.Fatalf("refresh and replay pending rebase: %v %v", changed, err)
+	}
+	if j.Plan.BaseSHA != testTree || j.Plan.SourceSHA != testTree || j.State != "implementing" ||
+		j.Reconciliation != nil || j.ResumeRebase || j.Evidence.Passed || repo.calls != 1 || p.snapshots != 1 || p.validations != 1 {
+		t.Fatalf("pending rebase did not refresh against the live target: %+v", j)
+	}
+
+	// GitHub may refresh baseRefOid to the live target before SDLC refreshes its
+	// saved snapshot. The unchanged branch/head identity still fences this case.
+	dir, j = testRun(t)
+	j.State, j.ResumeState = "blocked", "ci"
+	j.Publication = Publication{Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+	j.Plan.Restack = &RestackBoundary{Base: "main", BaseSHA: testBase, HeadSHA: testHead, Number: 40}
+	oldDir = filepath.Join(dir, "resume-rebase-source", "snapshot-old")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldBundle = filepath.Join(oldDir, "base.bundle")
+	if err := os.WriteFile(oldBundle, []byte("stale bundle fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	j.Reconciliation = &Reconciliation{
+		OldSource: testBase,
+		Snapshot:  BranchSnapshot{Branch: "main", SHA: testBase, Bundle: oldBundle},
+		State:     "pending",
+	}
+	j.ResumeRebase = true
+	p = &resumeTestPublisher{
+		remote:    RemotePR{State: "OPEN", Base: "main", BaseSHA: testTree, HeadSHA: testHead},
+		branchSHA: testTree,
+	}
+	repo = &resumeTestRepository{}
+	if changed, err := (Runner{Publisher: p, Repository: repo}).checkResumeUpstream(context.Background(), dir, j); err != nil || !changed || repo.calls != 1 || p.snapshots != 1 {
+		t.Fatalf("refresh snapshot after GitHub updates the PR base SHA: changed=%v err=%v", changed, err)
+	}
+
+	// Once replay has touched the workspace, a moved target requires inspection;
+	// refreshing its checkpoint would otherwise lose a partial rebase.
+	dir, j = testRun(t)
+	j.State, j.ResumeState = "blocked", "ci"
+	j.Publication = Publication{Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+	j.Plan.Restack = &RestackBoundary{Base: "main", BaseSHA: testBase, HeadSHA: testHead, Number: 40}
+	oldDir = filepath.Join(dir, "resume-rebase-source", "snapshot-old")
+	if err := os.MkdirAll(oldDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldBundle = filepath.Join(oldDir, "base.bundle")
+	if err := os.WriteFile(oldBundle, []byte("stale bundle fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	j.Reconciliation = &Reconciliation{
+		OldSource: testBase,
+		Snapshot:  BranchSnapshot{Branch: "main", SHA: testBase, Bundle: oldBundle},
+		State:     "rebased",
+	}
+	j.ResumeRebase = true
+	p = &resumeTestPublisher{
+		remote:    RemotePR{State: "OPEN", Base: "main", BaseSHA: testBase, HeadSHA: testHead},
+		branchSHA: testTree,
+	}
+	repo = &resumeTestRepository{}
+	if _, err := (Runner{Publisher: p, Repository: repo}).checkResumeUpstream(context.Background(), dir, j); err == nil || repo.calls != 0 || p.snapshots != 0 {
+		t.Fatalf("moved target discarded an already replayed workspace: %v", err)
 	}
 }
 

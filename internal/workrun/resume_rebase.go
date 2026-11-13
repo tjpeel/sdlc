@@ -208,7 +208,55 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		}
 	}
 	record := j.Reconciliation
-	if j.Plan.Restack == nil || remote.HeadSHA != j.Plan.Restack.HeadSHA || remote.Base != record.Snapshot.Branch || target.SHA != record.Snapshot.SHA || remote.BaseSHA != j.Plan.Restack.BaseSHA && remote.BaseSHA != record.Snapshot.SHA {
+	if j.Plan.Restack == nil || remote.HeadSHA != j.Plan.Restack.HeadSHA || remote.Base != record.Snapshot.Branch || remote.BaseSHA != j.Plan.Restack.BaseSHA && remote.BaseSHA != record.Snapshot.SHA && remote.BaseSHA != target.SHA {
+		return false, fmt.Errorf("PR or upstream moved during saved rebase; inspect the recorded reconciliation before retrying")
+	}
+	if target.SHA != record.Snapshot.SHA {
+		if record.State != "pending" {
+			return false, fmt.Errorf("upstream moved after the saved rebase changed the workspace; inspect the recorded reconciliation")
+		}
+		revision, err := r.Repository.Inspect(ctx, j.Workspace)
+		if err != nil {
+			return false, err
+		}
+		publishedSource := rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
+		if !revision.Clean || !publishedSource {
+			return false, fmt.Errorf("cannot refresh saved rebase after workspace changed from the published PR source")
+		}
+		if err := p.ValidateResumeTarget(ctx, j.Plan, remote); err != nil {
+			return false, err
+		}
+		parent := filepath.Join(directory, "resume-rebase-source")
+		if err := os.Mkdir(parent, 0700); err != nil && !os.IsExist(err) {
+			return false, err
+		}
+		if err := realDirectory(parent); err != nil {
+			return false, err
+		}
+		request, err := os.MkdirTemp(parent, "snapshot-")
+		if err != nil {
+			return false, err
+		}
+		snapshot, err := p.Snapshot(ctx, j.Plan, target.Branch, target.SHA, request)
+		if err != nil {
+			os.RemoveAll(request)
+			return false, err
+		}
+		if snapshot.Branch != target.Branch || snapshot.SHA != target.SHA {
+			os.RemoveAll(request)
+			return false, fmt.Errorf("snapshot differs from verified target branch tip")
+		}
+		if err := validateSnapshotBundle(snapshot.Bundle); err != nil {
+			os.RemoveAll(request)
+			return false, err
+		}
+		j.Reconciliation = &Reconciliation{OldSource: record.OldSource, Snapshot: snapshot, State: "pending"}
+		if err := r.save(directory, j); err != nil {
+			return false, err
+		}
+		record = j.Reconciliation
+	}
+	if target.SHA != record.Snapshot.SHA {
 		return false, fmt.Errorf("PR or upstream moved during saved rebase; inspect the recorded reconciliation before retrying")
 	}
 	parent := filepath.Join(directory, "resume-rebase-source") + string(os.PathSeparator)

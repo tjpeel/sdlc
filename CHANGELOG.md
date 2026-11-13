@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.156 - 2026-11-13
+
+### Fixed
+
+- Refresh a pending rebase snapshot when its target branch advances, provided the PR boundary and untouched source workspace still match.
+
 ## 0.1.0-beta.155 - 2026-11-12
 
 ### Fixed
