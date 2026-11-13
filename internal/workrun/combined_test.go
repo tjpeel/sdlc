@@ -259,3 +259,67 @@ func TestCombinedFixtureFetchKeepsObjectsStableUnderLowMaintenanceThresholds(t *
 	aggregateGit(t, destination, "fsck", "--strict", "--no-reflogs")
 	assertNoDetachedGitMaintenance(t, trace)
 }
+
+func TestRebaseHelperReportsConflictAfterDivergentPreviousTarget(t *testing.T) {
+	root := t.TempDir()
+	aggregateGit(t, root, "init", "-b", "main")
+	aggregateWrite(t, root, "shared.txt", "base\n")
+	old := aggregateGit(t, root, "rev-parse", "HEAD")
+	aggregateGit(t, root, "checkout", "-b", "child")
+	aggregateWrite(t, root, "shared.txt", "child\n")
+	original := aggregateGit(t, root, "rev-parse", "HEAD")
+	aggregateGit(t, root, "update-ref", "refs/sdlc/new-base", original)
+	aggregateGit(t, root, "checkout", "main")
+	aggregateWrite(t, root, "shared.txt", "upstream\n")
+	snapshot := aggregateSnapshot(t, root, "main", t.TempDir())
+	aggregateGit(t, root, "checkout", "child")
+	helper := strings.ReplaceAll(rebaseHelper, "pathlib.Path('/workspace')", "pathlib.Path("+fmt.Sprintf("%q", root)+")")
+	helper = strings.ReplaceAll(helper, "'/newbase.bundle'", fmt.Sprintf("%q", snapshot.Bundle))
+	for i := 0; i < 2; i++ {
+		output, err := exec.Command("python3", "-c", helper, old, snapshot.SHA).CombinedOutput()
+		var result RebaseResult
+		if err != nil || json.Unmarshal(output, &result) != nil || !result.Conflict || len(result.Paths) != 1 || result.Paths[0] != "shared.txt" {
+			t.Fatalf("conflict replay %d: %v %s", i, err, output)
+		}
+	}
+	if got := aggregateGit(t, root, "rev-parse", "refs/sdlc/rebase/"+old+"/"+snapshot.SHA); got != original {
+		t.Fatalf("checkpoint changed: %s", got)
+	}
+	if got := aggregateGit(t, root, "rev-parse", "refs/sdlc/new-base"); got != original {
+		t.Fatalf("previous target changed: %s", got)
+	}
+	if got := aggregateGit(t, root, "diff", "--name-only", "--diff-filter=U"); got != "shared.txt" {
+		t.Fatalf("conflict was not preserved: %s", got)
+	}
+}
+
+func TestRebaseHelperRejectsMismatchedBundleAndAllowsRetry(t *testing.T) {
+	root := t.TempDir()
+	aggregateGit(t, root, "init", "-b", "main")
+	aggregateWrite(t, root, "base.txt", "base\n")
+	old := aggregateGit(t, root, "rev-parse", "HEAD")
+	aggregateGit(t, root, "checkout", "-b", "child")
+	aggregateWrite(t, root, "child.txt", "child\n")
+	original := aggregateGit(t, root, "rev-parse", "HEAD")
+	aggregateGit(t, root, "checkout", "main")
+	wrong := aggregateSnapshot(t, root, "main", t.TempDir())
+	aggregateWrite(t, root, "upstream.txt", "upstream\n")
+	right := aggregateSnapshot(t, root, "main", t.TempDir())
+	aggregateGit(t, root, "checkout", "child")
+	helper := strings.ReplaceAll(rebaseHelper, "pathlib.Path('/workspace')", "pathlib.Path("+fmt.Sprintf("%q", root)+")")
+	run := func(bundle string) ([]byte, error) {
+		script := strings.ReplaceAll(helper, "'/newbase.bundle'", fmt.Sprintf("%q", bundle))
+		return exec.Command("python3", "-c", script, old, right.SHA).CombinedOutput()
+	}
+	if output, err := run(wrong.Bundle); err == nil || !strings.Contains(string(output), "new base bundle differs") {
+		t.Fatalf("mismatched bundle accepted: %v %s", err, output)
+	}
+	if got := aggregateGit(t, root, "rev-parse", "HEAD"); got != original {
+		t.Fatalf("mismatch changed candidate: %s", got)
+	}
+	output, err := run(right.Bundle)
+	var result RebaseResult
+	if err != nil || json.Unmarshal(output, &result) != nil || result.Conflict {
+		t.Fatalf("valid retry failed: %v %s", err, output)
+	}
+}

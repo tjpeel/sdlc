@@ -173,8 +173,11 @@ for commit in git('rev-list','--first-parent',old+'..HEAD').stdout.decode().spli
  parents=git('show','-s','--format=%P',commit).stdout.decode().split()
  if len(parents)!=1: raise ValueError('candidate history is not linear')
 git('bundle','verify','/newbase.bundle')
-git('-c','protocol.file.allow=always','fetch','--no-tags','/newbase.bundle','refs/sdlc/snapshot:refs/sdlc/new-base')
-new=git('rev-parse','--verify','refs/sdlc/new-base^{commit}').stdout.decode().strip()
+# A previous reconciliation can target a divergent base. Keep each
+# fetched target separate and verify it before starting the rebase.
+target='refs/sdlc/rebase-target/'+expected
+git('-c','protocol.file.allow=always','fetch','--no-tags','/newbase.bundle','+refs/sdlc/snapshot:'+target)
+new=git('rev-parse','--verify',target+'^{commit}').stdout.decode().strip()
 if new != expected: raise ValueError('new base bundle differs from expected revision')
 if dirty:
  # Retain unfinished tracked native work as an unsigned own-range commit,

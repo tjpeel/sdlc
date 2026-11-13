@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.157 - 2026-11-13
+
+### Fixed
+
+- Allow reconciliation onto a divergent later base and report rebase conflicts for resolution.
+
 ## 0.1.0-beta.156 - 2026-11-13
 
 ### Fixed
