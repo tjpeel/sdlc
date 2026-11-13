@@ -18,6 +18,17 @@ type resumeUpstreamPublisher interface {
 	ValidateResumeTarget(context.Context, Plan, RemotePR) error
 }
 
+func retryingUnpublishedRebase(j *Journal, requested bool) bool {
+	if !requested || j == nil || j.Plan.Restack == nil || j.Publication.Number < 1 ||
+		j.Plan.ProvisionalParent != nil || j.Plan.DependencyContext != nil ||
+		j.ResumeRebase || j.Reconciliation != nil ||
+		j.Plan.Restack.Base != j.Plan.Base || !objectID.MatchString(j.Plan.Restack.BaseSHA) ||
+		j.Plan.Restack.HeadSHA != j.Publication.HeadSHA || j.Plan.Restack.Number != j.Publication.Number {
+		return false
+	}
+	return j.State == "publishing" || (j.State == "blocked" || j.State == "failed") && j.ResumeState == "publishing"
+}
+
 // ValidateResumeTarget permits a retarget only to the default branch after the
 // former parent PR has merged there. Observe already verifies the child identity.
 func (p GitHubPublisher) ValidateResumeTarget(ctx context.Context, plan Plan, remote RemotePR) error {
@@ -132,7 +143,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, fmt.Errorf("PR upstream changed to %s at %s; resume with --rebase to replay this PR's commits onto its current target", remote.Base, target.SHA)
 	}
 	if !pending {
-		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || unfinishedRebaseFeedback(j) || j.Plan.Restack != nil {
+		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || unfinishedRebaseFeedback(j) || j.Plan.Restack != nil && !retryingUnpublishedRebase(j, r.Rebase) {
 			return false, fmt.Errorf("finish pending recovery or feature reconciliation before rebasing")
 		}
 		_, ok := r.Repository.(rebaseExecutor)

@@ -368,6 +368,41 @@ func TestResumeRebaseAcceptsStoredPRBaseRefreshingDuringRecovery(t *testing.T) {
 	}
 }
 
+func TestResumeRebaseCanRetryAfterStaleBasePublicationWasRefused(t *testing.T) {
+	dir, j := testRun(t)
+	j.State, j.ResumeState = "blocked", "publishing"
+	j.Publication = Publication{Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+	// GitHub may refresh the observed PR base independently of the publication
+	// journal while the published head remains unchanged.
+	j.Plan.Restack = &RestackBoundary{Base: "main", BaseSHA: testTree, HeadSHA: testHead, Number: 40}
+	j.Evidence = CheckEvidence{Passed: true, Head: testHead, Tree: testTree}
+	p := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "main", BaseSHA: testTree, HeadSHA: testHead}, branchSHA: testTree}
+	repo := &resumeTestRepository{}
+	runner := Runner{Publisher: p, Repository: repo, Rebase: true}
+
+	changed, err := runner.checkResumeUpstream(context.Background(), dir, j)
+	if err != nil || !changed {
+		t.Fatalf("retry stale-base publication rebase: %v %v", changed, err)
+	}
+	if j.Plan.BaseSHA != testTree || j.Plan.Restack == nil || j.Plan.Restack.HeadSHA != testHead ||
+		j.State != "implementing" || !j.RestackNeedsChecks || j.Evidence.Passed || repo.calls != 1 || p.snapshots != 1 {
+		t.Fatalf("retry did not recapture the live base and invalidate old evidence: %+v", j)
+	}
+
+	// A feature-owned dependency keeps its fence even when its prior rebase was
+	// stopped at publication; only an owning feature controller may retry it.
+	dir, j = testRun(t)
+	j.State, j.ResumeState = "blocked", "publishing"
+	j.Publication = Publication{Number: 40, BaseSHA: testBase, HeadSHA: testHead}
+	j.Plan.Restack = &RestackBoundary{Base: "main", BaseSHA: testBase, HeadSHA: testHead, Number: 40}
+	j.Plan.DependencyContext = &DependencyContext{}
+	p = &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: "main", BaseSHA: testBase, HeadSHA: testHead}, branchSHA: testTree}
+	repo = &resumeTestRepository{}
+	if _, err := (Runner{Publisher: p, Repository: repo, Rebase: true}).checkResumeUpstream(context.Background(), dir, j); err == nil || repo.calls != 0 || p.snapshots != 0 {
+		t.Fatalf("feature-owned rebase escaped its controller: %v", err)
+	}
+}
+
 func TestResumeRebaseKeepsUnfinishedFeedbackBlocked(t *testing.T) {
 	for _, kind := range []string{"pending", "reply-due", "unresolved"} {
 		t.Run(kind, func(t *testing.T) {
