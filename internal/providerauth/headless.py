@@ -150,7 +150,8 @@ def native_command(provider, model, effort, resume, readonly):
         command += [resume, "-"] if resume else ["-"]
         return command
     settings = {"disableAllHooks": True, "enabledPlugins": {},
-                "skipDangerousModePermissionPrompt": True}
+                "skipDangerousModePermissionPrompt": True,
+                "attribution": {"commit": ""}}
     if speed:
         settings["fastMode"] = speed == "fast"
     command = ["claude", "-p", "--output-format", "stream-json", "--verbose",

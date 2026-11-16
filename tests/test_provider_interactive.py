@@ -35,7 +35,7 @@ class InteractiveTests(unittest.TestCase):
         self.instructions = self.root / "instructions.md"
         self.instructions.write_text("Stop implementation for unanswered human questions.\n")
         self.settings = self.root / "session-settings.json"
-        self.settings.write_text('{"skipDangerousModePermissionPrompt":true}\n')
+        self.settings.write_text('{"attribution":{"commit":""},"skipDangerousModePermissionPrompt":true}\n')
         self.catalogues = self.root / "catalogues"
         for name in ("skills", "agents"):
             (self.catalogues / name).mkdir(parents=True, mode=0o700)
@@ -330,8 +330,8 @@ class InteractiveTests(unittest.TestCase):
                 with self.subTest(provider=provider, mode=mode):
                     if provider == "claude":
                         self.settings.write_text(
-                            '{"skipDangerousModePermissionPrompt":true}\n'
-                            if mode == "bypassPermissions" else "{}\n")
+                            '{"attribution":{"commit":""},"skipDangerousModePermissionPrompt":true}\n'
+                            if mode == "bypassPermissions" else '{"attribution":{"commit":""}}\n')
                     def client(command, env):
                         self.assertEqual(command[command.index(flag) + 1], mode)
                         return 5

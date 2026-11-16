@@ -34,6 +34,14 @@ CODEX_WORKSPACE_TRUST = '[projects."/workspace"]\ntrust_level = "trusted"\n'
 
 
 class HeadlessTests(unittest.TestCase):
+    def test_claude_commit_attribution_is_disabled_for_new_and_resumed_roles(self):
+        for resume in ("", ID):
+            for readonly in (False, True):
+                with self.subTest(resume=bool(resume), readonly=readonly):
+                    command = headless.native_command("claude", "claude-opus-5-5", "medium", resume, readonly)
+                    settings = json.loads(command[command.index("--settings") + 1])
+                    self.assertEqual(settings["attribution"], {"commit": ""})
+
     def test_recorded_speed_controls_native_commands_without_model_switch(self):
         for speed, tier in (("normal", "default"), ("fast", "priority")):
             with patch.dict(os.environ, {"SDLC_NATIVE_SPEED": speed}):
@@ -318,6 +326,7 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(command[command.index("--setting-sources") + 1], "user")
         settings = json.loads(command[command.index("--settings") + 1])
         self.assertTrue(settings["disableAllHooks"])
+        self.assertEqual(settings["attribution"], {"commit": ""})
         self.assertEqual(settings["enabledPlugins"], {})
         self.assertEqual(command[-2:], ["--resume", ID])
         self.assertNotIn("--bare", command)
