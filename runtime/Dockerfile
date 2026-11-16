@@ -75,7 +75,7 @@ RUN mkdir -p /workspace /home/node/.codex /home/node/.claude /home/node/.t3 /run
     && chown node:node /workspace /home/node/.codex /home/node/.claude /home/node/.t3 \
     && passwd -d node
 
-ARG GH_VERSION=2.103.3
+ARG GH_VERSION=2.104.0
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in amd64) arch=amd64 ;; arm64) arch=arm64 ;; *) exit 1 ;; esac; \
     archive="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
@@ -99,8 +99,8 @@ RUN set -eu; \
         npm install -g "yarn@${YARN_VERSION}"; \
     fi
 
-ARG CODEX_VERSION=0.167.1
-ARG CLAUDE_VERSION=2.1.322
+ARG CODEX_VERSION=0.169.0
+ARG CLAUDE_VERSION=2.1.325
 ARG OPENCODE_VERSION=1.19.5
 RUN set -eu; \
     set --; \
@@ -113,7 +113,7 @@ RUN set -eu; \
 
 ARG LOCAL_SKILLS=0
 ARG LOCAL_AGENTS=0
-ARG SKILLS_REVISION=10015d0e84188748ed04427123ec9e75c0fbb2ed
+ARG SKILLS_REVISION=57a9465f2a9f67759814836e18ea9908465459ae
 ARG AGENTS_REVISION=9ef35c0d0fb7ea1bab887599d3d43f748342766e
 COPY local-catalogues/ /tmp/sdlc-local-catalogues/
 
