@@ -149,7 +149,7 @@ func TestActionsSonarCandidateRequiresExactHeadAppAndDetailAuthority(t *testing.
 				for k, v := range original {
 					duplicate[k] = v
 				}
-				duplicate["id"] = 18
+				duplicate["id"] = 17
 				listing["check_runs"] = []any{original, duplicate}
 				listing["total_count"] = 2
 			case "missing name":
@@ -171,6 +171,54 @@ func TestActionsSonarCandidateRequiresExactHeadAppAndDetailAuthority(t *testing.
 		})
 	}
 }
+func TestRepeatedActionsSonarCandidatesAreVerifiedIndividually(t *testing.T) {
+	for _, scenario := range []string{"valid", "changed detail", "mixed app", "too many"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := workflowCIAnnotationFixture()
+			prefix := "repos/example/project"
+			listing := f.responses[prefix+"/commits/"+testHead+"/check-runs?per_page=100&page=1"].(map[string]any)
+			original := listing["check_runs"].([]any)[0].(map[string]any)
+			runs := []any{original}
+			count := 2
+			if scenario == "too many" {
+				count = 5
+			}
+			for id := 18; id < 17+count; id++ {
+				copy := map[string]any{}
+				for k, v := range original {
+					copy[k] = v
+				}
+				copy["id"] = id
+				runs = append(runs, copy)
+				detail := map[string]any{}
+				for k, v := range copy {
+					detail[k] = v
+				}
+				if scenario == "changed detail" {
+					detail["head_sha"] = testBase
+				}
+				if scenario == "mixed app" {
+					copy["app"] = map[string]any{"id": 44, "slug": "sonarqubecloud"}
+				}
+				f.responses[fmt.Sprintf("%s/check-runs/%d", prefix, id)] = detail
+			}
+			listing["check_runs"], listing["total_count"] = runs, len(runs)
+			_, err := (GitHubPublisher{Command: f.command}).collectCIAnnotations(context.Background(), Plan{Repository: "example/project"}, annotationPublication(), map[string]bool{f.checkName: true})
+			if (err == nil) != (scenario == "valid") {
+				t.Fatalf("unexpected result: %v", err)
+			}
+			if scenario == "valid" {
+				for _, id := range []int{17, 18} {
+					endpoint := fmt.Sprintf("%s/check-runs/%d", prefix, id)
+					if !strings.Contains(strings.Join(f.calls, "\n"), endpoint) {
+						t.Fatalf("missing verification of %s", endpoint)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestGitHubCIAnnotationsRejectChangedNativeAppID(t *testing.T) {
 	f := newCIAnnotationFixture()
 	details := 0

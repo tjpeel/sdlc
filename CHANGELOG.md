@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.158 - 2026-11-16
+
+### Fixed
+
+- Verify repeated failed Sonar-named Actions jobs by check-run ID when collecting PR feedback.
+
 ## 0.1.0-beta.157 - 2026-11-13
 
 ### Fixed

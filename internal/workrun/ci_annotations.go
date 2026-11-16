@@ -217,6 +217,7 @@ func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr
 	var runs []ciCheckRun
 	var workflows []ciCheckRun
 	matched := map[string]bool{}
+	workflowNames := map[string]bool{}
 	total := -1
 	seen := map[int64]bool{}
 	for page := 1; page <= 2; page++ {
@@ -237,11 +238,12 @@ func (p GitHubPublisher) collectCIAnnotations(ctx context.Context, plan Plan, pr
 			}
 			seen[run.ID] = true
 			if sonarNames[run.Name] && run.Status == "completed" && failedCIConclusion(run.Conclusion) {
-				if matched[run.Name] {
+				if matched[run.Name] && !(workflowNames[run.Name] && run.App.ID == 15368 && run.App.Slug == "github-actions" && !nativeSonarAnalysisName(run.Name)) {
 					return nil, fmt.Errorf("failed Sonar candidate has ambiguous check-run identity")
 				}
 				matched[run.Name] = true
 				if run.App.ID == 15368 && run.App.Slug == "github-actions" && !nativeSonarAnalysisName(run.Name) {
+					workflowNames[run.Name] = true
 					workflows = append(workflows, run)
 					continue
 				}
