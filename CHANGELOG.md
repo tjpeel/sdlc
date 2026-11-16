@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.160 - 2026-11-16
+
+### Fixed
+
+- Resume checked feedback repairs after the target branch moves while retaining feedback and verifying replayed correction commits.
+
 ## 0.1.0-beta.159 - 2026-11-16
 
 ### Fixed

@@ -117,6 +117,7 @@ type CIHeldFeedbackBoundaryFailure struct {
 }
 
 type PRFeedbackHistory struct {
+	ReplayedCommits        map[string]string               `json:"replayed_commits,omitempty"`
 	CIHeldBoundaryFailures []CIHeldFeedbackBoundaryFailure `json:"ci_held_boundary_failures,omitempty"`
 	CIHeldScan             *CIHeldFeedbackScan             `json:"ci_held_scan,omitempty"`
 	ReviewedCandidate      *ReviewedFeedbackCandidate      `json:"reviewed_candidate,omitempty"`
@@ -233,6 +234,14 @@ func validatePRFeedbackJournal(j *Journal) error {
 	h := j.PRFeedback
 	if h == nil {
 		return nil
+	}
+	if len(h.ReplayedCommits) > 1000 {
+		return fmt.Errorf("invalid feedback replay history")
+	}
+	for original, replayed := range h.ReplayedCommits {
+		if !objectID.MatchString(original) || !objectID.MatchString(replayed) {
+			return fmt.Errorf("invalid feedback replay history")
+		}
 	}
 	data, err := json.Marshal(h)
 	if err != nil || len(data) > 384*1024 || h.Version != 1 || h.Cycle < 1 || len(h.Entries) > 300 || !objectID.MatchString(h.CandidateStart) {
@@ -909,16 +918,41 @@ func (r Runner) prepareFeedbackReply(ctx context.Context, dir string, j *Journal
 		if err != nil {
 			// Missing mapping is acceptable only if every cited commit is already published.
 			for _, sha := range e.Assessment.Commits {
+				if j.PRFeedback != nil {
+					if replayed := j.PRFeedback.ReplayedCommits[sha]; replayed != "" {
+						sha = replayed
+					}
+				}
 				if !known[sha] {
 					return err
 				}
 			}
 		}
+		replayedInCandidate := map[string]bool{}
+		if j.PRFeedback != nil && len(j.PRFeedback.ReplayedCommits) > 0 {
+			commits, err := repo.FeedbackCommits(ctx, j.Workspace, j.Publication.BaseSHA, j.Evidence.Head)
+			if err != nil {
+				return fmt.Errorf("cannot verify rebased feedback candidate history: %w", err)
+			}
+			for _, commit := range commits {
+				replayedInCandidate[commit] = true
+			}
+		}
 		e.SignedCommits = map[string]string{}
 		for _, sha := range e.Assessment.Commits {
-			signed := mapping[sha]
-			if known[sha] {
-				signed = sha
+			replayed := sha
+			if j.PRFeedback != nil && j.PRFeedback.ReplayedCommits[sha] != "" {
+				replayed = j.PRFeedback.ReplayedCommits[sha]
+				if !replayedInCandidate[replayed] {
+					return fmt.Errorf("rebased feedback correction is absent from the checked candidate")
+				}
+			}
+			if !objectID.MatchString(replayed) {
+				return fmt.Errorf("invalid rebased feedback commit")
+			}
+			signed := mapping[replayed]
+			if known[replayed] {
+				signed = replayed
 			}
 			if !objectID.MatchString(signed) {
 				return fmt.Errorf("feedback commit has no retained signed mapping")

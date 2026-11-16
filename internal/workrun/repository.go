@@ -98,6 +98,39 @@ elif sys.argv[1].startswith('review_files:'):
  if git('rev-parse','HEAD').decode().strip()!=head: raise ValueError('review snapshot differs')
  paths=git('diff','--no-ext-diff','--no-textconv','--no-renames','--name-only','-z',base,head,'--').decode()
  print(json.dumps(paths.rstrip('\0').split('\0') if paths else []))
+elif sys.argv[1].startswith('feedback_replay_map:'):
+ env['GIT_NO_REPLACE_OBJECTS']='1'
+ _,old,new,requested=sys.argv[1].split(':')
+ originals=requested.split(',') if requested else []
+ source=git('rev-parse','--verify','refs/sdlc/rebase/'+old+'/'+new+'^{commit}').decode().strip()
+ head=git('rev-parse','--verify','HEAD^{commit}').decode().strip()
+ git('merge-base','--is-ancestor',old,source); git('merge-base','--is-ancestor',new,head)
+ oldcommits=git('rev-list','--reverse','--first-parent',old+'..'+source).decode().split()
+ newcommits=git('rev-list','--reverse','--first-parent',new+'..'+head).decode().split()
+ if len(oldcommits)>1000 or len(newcommits)>1000 or len(originals)>1000: raise ValueError('feedback replay history too large')
+ def patch(commit):
+  parents=git('show','-s','--format=%P',commit).decode().split()
+  if len(parents)!=1: raise ValueError('feedback replay must be linear')
+  data=git('diff','--no-ext-diff','--no-textconv','--no-renames','--no-color','--binary','--full-index','--unified=3',parents[0],commit,'--')
+  result=[]
+  for line in data.splitlines(keepends=True):
+   if line.startswith(b'index '): continue
+   if line.startswith(b'@@ '):
+    import re
+    m=re.fullmatch(rb'@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@(.*?)(\r?\n)?',line)
+    if m is None: raise ValueError('invalid patch hunk')
+    line=b'@@ -'+(m[1] or b',1')+b' +'+(m[2] or b',1')+b' @@'+m[3]+(m[4] or b'')
+   result.append(line)
+  return b''.join(result)
+ candidates={c:patch(c) for c in newcommits}
+ result={}; used=set()
+ for original in originals:
+  if original not in oldcommits: raise ValueError('feedback correction is outside original replay range')
+  originalpatch=patch(original)
+  matches=[c for c,p in candidates.items() if p==originalpatch]
+  if len(matches)!=1 or matches[0] in used: raise ValueError('feedback correction replay is missing or ambiguous')
+  used.add(matches[0]); result[original]=matches[0]
+ print(json.dumps(result))
 elif sys.argv[1].startswith('feedback_commits:'):
  _,base,head=sys.argv[1].split(':')
  git('merge-base','--is-ancestor',base,head)

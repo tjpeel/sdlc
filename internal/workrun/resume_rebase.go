@@ -143,7 +143,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, fmt.Errorf("PR upstream changed to %s at %s; resume with --rebase to replay this PR's commits onto its current target", remote.Base, target.SHA)
 	}
 	if !pending {
-		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || unfinishedRebaseFeedback(j) || j.Plan.Restack != nil && !retryingUnpublishedRebase(j, r.Rebase) {
+		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || (unfinishedRebaseFeedback(j) && !rebasePendingFeedbackPublication(j)) || j.Plan.Restack != nil && !retryingUnpublishedRebase(j, r.Rebase) {
 			return false, fmt.Errorf("finish pending recovery or feature reconciliation before rebasing")
 		}
 		_, ok := r.Repository.(rebaseExecutor)
@@ -278,6 +278,27 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, err
 	}
 	snapshot := record.Snapshot
+	preserveFeedback := rebasePendingFeedbackPublication(j)
+	var replayedCommits map[string]string
+	if preserveFeedback {
+		if result.Conflict {
+			return false, fmt.Errorf("feedback repair rebase has conflicts; preserve the checkpoint and resolve the replay before publication")
+		}
+		mapper, ok := r.Repository.(feedbackReplayMapper)
+		if !ok {
+			return false, fmt.Errorf("repository cannot verify rebased feedback commits")
+		}
+		mapping, err := mapper.FeedbackReplayMapping(ctx, j.Workspace, record.OldSource, snapshot.SHA, feedbackCorrectionCommits(j))
+		if err != nil {
+			return false, fmt.Errorf("cannot verify rebased feedback commits: %w", err)
+		}
+		for original, current := range j.PRFeedback.ReplayedCommits {
+			if next, ok := mapping[current]; ok {
+				mapping[original] = next
+			}
+		}
+		replayedCommits = mapping
+	}
 	var monitoring *RebaseMonitoring
 	if !result.Conflict {
 		if prover, ok := r.Repository.(rebaseEquivalenceReader); ok {
@@ -288,13 +309,16 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 			if proof.SourceHead != j.Publication.HeadSHA && proof.SourceHead != j.Evidence.Head && (j.RebaseMonitoring == nil || j.RebaseMonitoring.Published != j.Publication || proof.SourceHead != j.RebaseMonitoring.Proof.Head) {
 				return false, fmt.Errorf("rebase proof does not match the recorded source candidate")
 			}
-			if proof.Equivalent {
+			if proof.Equivalent && !preserveFeedback {
 				if err := validateRebaseProof(proof); err != nil {
 					return false, err
 				}
 				monitoring = &RebaseMonitoring{LocalChecks: true, Source: j.Publication, OldBase: record.OldSource, Base: snapshot.SHA, Proof: proof}
 			}
 		}
+	}
+	if preserveFeedback {
+		j.PRFeedback.ReplayedCommits = replayedCommits
 	}
 	j.Plan.Base, j.Plan.BaseSHA = snapshot.Branch, snapshot.SHA
 	j.Plan.SourceSHA, j.Plan.StartingSHA = snapshot.SHA, snapshot.SHA
@@ -304,9 +328,9 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	j.ReviewAssessment, j.ReviewContinuation, j.ReviewHumanInput, j.ReviewSkip = nil, nil, nil, nil
 	j.CandidatePhasePending = false
 	j.State, j.ResumeState, j.StopReason, j.PendingRole = "implementing", "", "", ""
-	// Settled feedback was not re-opened or re-assessed by this operation. Keep
-	// every assessment and receipt, but do not re-enter its old feedback cycle.
-	if j.PRFeedback != nil {
+	// Keep every feedback assessment and receipt. Settled cycles remain closed;
+	// a pending publication retains its outstanding acknowledgements.
+	if j.PRFeedback != nil && !preserveFeedback {
 		j.PRFeedback.Active = false
 	}
 	j.RestackNeedsChecks = true
@@ -320,6 +344,9 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		}
 	}
 	j.Feedback = "The controller performed a Git rebase onto the PR target " + snapshot.Branch + " at " + snapshot.SHA + ". Preserve the rebased commits and the original ticket scope. Do not recreate or squash the implementation. Obtain fresh checks and local review before publication. Existing independent-review and recommendation settings remain in effect."
+	if preserveFeedback {
+		j.Feedback += " Preserve the existing assessed feedback and its outstanding acknowledgements; do not reassess or discard them."
+	}
 	if result.Conflict {
 		j.Feedback += " Resolve the unfinished Git rebase, preserving the existing commits, then git rebase --continue. Conflicting paths: " + strings.Join(result.Paths, ", ") + ". Do not publish an unfinished rebase."
 	}
@@ -337,4 +364,41 @@ func unfinishedRebaseFeedback(j *Journal) bool {
 	}
 	status := PRFeedbackStatus(*j)
 	return j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || status.Pending > 0 || status.OutstandingReplies > 0 || status.Unresolved > 0
+}
+
+// Only a checked candidate awaiting publication can carry assessed replies
+// across a rebase. Other incomplete feedback still blocks reconciliation.
+func rebasePendingFeedbackPublication(j *Journal) bool {
+	if j == nil || j.PRFeedback == nil || !j.PRFeedback.Active || j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || !j.Evidence.Passed {
+		return false
+	}
+	if j.State != "publishing" && !((j.State == "blocked" || j.State == "failed") && j.ResumeState == "publishing") {
+		return false
+	}
+	status := PRFeedbackStatus(*j)
+	return status.Pending == 0 && status.Unresolved == 0 && status.OutstandingReplies > 0
+}
+
+func feedbackCorrectionCommits(j *Journal) []string {
+	seen := map[string]bool{}
+	var commits []string
+	for _, entry := range j.PRFeedback.Entries {
+		if entry.Reply != nil || entry.Assessment == nil {
+			continue
+		}
+		for _, sha := range entry.Assessment.Commits {
+			if replayed := j.PRFeedback.ReplayedCommits[sha]; replayed != "" {
+				sha = replayed
+			}
+			if !seen[sha] {
+				seen[sha] = true
+				commits = append(commits, sha)
+			}
+		}
+	}
+	return commits
+}
+
+type feedbackReplayMapper interface {
+	FeedbackReplayMapping(context.Context, string, string, string, []string) (map[string]string, error)
 }
