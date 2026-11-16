@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
 
 FROM docker:29.8.2-cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68b1457ead25c35c AS docker-tools
 
-FROM node:24.22.2-bookworm@sha256:8fa96264f302f58bbb13aa7339c541547b56975766ce956c875da149452a3e40
+FROM node:24.22.3-bookworm@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496
 
 # An installation update can override these defaults in its private build recipe.
 # Source builds use the explicit auxiliary tool versions below.
