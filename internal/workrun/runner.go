@@ -38,6 +38,7 @@ type Runner struct {
 	OverrideRunLimits                 bool
 	ProcessPRFeedback                 bool
 	LocalPRFeedback                   string
+	LocalAmendment                    bool
 	CompanionCloner                   CompanionRepositoryCloner
 	Provider                          Provider
 	Checker                           Checker
@@ -1291,12 +1292,13 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 
 func (runner Runner) prompt(journal Journal, role string) string {
 	if role == "review" && journal.ReviewContinuation != nil {
-		return reviewContinuationPrompt(journal)
+		return reviewContinuationPrompt(journal) + approvedAmendmentContext(journal)
 	}
 	if role == "review" && journal.Plan.Roles.ReviewContext == "pr-link" {
-		return prLinkReviewPrompt(journal)
+		return prLinkReviewPrompt(journal) + approvedAmendmentContext(journal)
 	}
 	contextDiscipline := "Keep context focused: delegate narrow investigations to the pinned subagents, request concise findings with file/line evidence, and read only relevant file ranges. Keep full logs and broad inventories on disk. Return decisions, changed paths, verification and next actions rather than entire transcripts. Rely on the native client's compaction while retaining this same implementation session; never restart to evade limits.\n"
+	contextDiscipline += approvedAmendmentContext(journal)
 	if role == "implementation" {
 		if journal.Publication.Number > 0 {
 			contextDiscipline += "Existing PR metadata describes the whole PR against its base, not this repair. Preserve its established title and unaffected scope from this session; incorporate feedback additively into that description and revise only superseded claims. Never replace it with a repair-only summary. Do not reload earlier transcripts or broaden inspection solely to redraft metadata.\n"

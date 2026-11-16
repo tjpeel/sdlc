@@ -15,6 +15,7 @@ import (
 // Explicit projection avoids copying authentication metadata, prompts, session
 // identifiers, raw logs, private input bytes or the captured source workspace.
 type Report struct {
+	ComparisonOf       string                      `json:"comparison_of,omitempty"`
 	ReviewReports      []workrun.ReviewReport      `json:"review_reports,omitempty"`
 	Recommendations    []workrun.Finding           `json:"recommendations,omitempty"`
 	ReviewCoverage     *workrun.ReviewCoverage     `json:"review_coverage,omitempty"`
@@ -96,7 +97,8 @@ func reportSnapshot(v View) (Report, error) {
 		Version: 1, ExportedAt: time.Now().UTC(), ID: j.ID, State: j.State,
 		StartedAt: j.StartedAt, UpdatedAt: j.UpdatedAt,
 		Repository: j.Plan.Repository, Reference: j.Plan.Reference, Ticket: j.Plan.Ticket,
-		Branch: j.Plan.Branch, Base: j.Plan.Base, StartingSHA: j.Plan.StartingSHA, SourceSHA: j.Plan.SourceSHA, BaseSHA: j.Plan.BaseSHA,
+		ComparisonOf: j.Plan.ComparisonOf,
+		Branch:       j.Plan.Branch, Base: j.Plan.Base, StartingSHA: j.Plan.StartingSHA, SourceSHA: j.Plan.SourceSHA, BaseSHA: j.Plan.BaseSHA,
 		ImageID: j.ImageID, Roles: j.Plan.Roles, ReportedModel: j.ReportedModel,
 		Inputs: j.Plan.Inputs, CheckInputs: j.Plan.CheckInputs, Checks: j.Plan.Checks,
 		Evidence:    ReportEvidence{j.Evidence.Head, j.Evidence.Tree, j.Evidence.Passed, j.Evidence.Commands},

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tjpeel/sdlc/internal/featureguard"
@@ -59,6 +60,9 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validateComparisonAndAmendments(journal.Plan); err != nil {
+		return err
+	}
 	if err := validateRuntimeRecheck(journal); err != nil {
 		return err
 	}
@@ -150,6 +154,9 @@ func Load(directory string) (Journal, error) {
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&journal) != nil || decoder.Decode(new(any)) != io.EOF || journal.Version != 1 || journal.ID != filepath.Base(directory) || !objectID.MatchString(journal.Plan.StartingSHA) || !objectID.MatchString(journal.Plan.SourceSHA) {
 		return Journal{}, fmt.Errorf("invalid run journal")
+	}
+	if err := validateComparisonAndAmendments(journal.Plan); err != nil {
+		return Journal{}, err
 	}
 	if err := validatePushRepairJournal(&journal); err != nil {
 		return Journal{}, err
@@ -289,4 +296,35 @@ func Load(directory string) (Journal, error) {
 		return Journal{}, err
 	}
 	return journal, nil
+}
+
+func validateComparisonAndAmendments(plan Plan) error {
+	if plan.ComparisonOf != "" {
+		if len(plan.ComparisonOf) != 24 {
+			return fmt.Errorf("invalid comparison source run")
+		}
+		if _, err := hex.DecodeString(plan.ComparisonOf); err != nil {
+			return fmt.Errorf("invalid comparison source run")
+		}
+	}
+	if len(plan.Amendments) > 64 {
+		return fmt.Errorf("too many selected amendments")
+	}
+	available := map[string]string{}
+	for _, in := range plan.Inputs {
+		available[in.Path] = in.SHA256
+	}
+	prefix := ".sdlc/work/" + plan.Reference + "/amendments/"
+	seen := map[string]bool{}
+	for _, in := range plan.Amendments {
+		name := strings.TrimPrefix(in.Path, prefix)
+		if name == in.Path || name == "" || strings.Contains(name, "/") || !strings.HasSuffix(name, ".md") || seen[in.Path] || len(in.SHA256) != 64 || available[in.Path] != in.SHA256 {
+			return fmt.Errorf("invalid selected amendment")
+		}
+		if _, err := hex.DecodeString(in.SHA256); err != nil {
+			return fmt.Errorf("invalid selected amendment digest")
+		}
+		seen[in.Path] = true
+	}
+	return nil
 }

@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.161 - 2026-11-16
+
+### Added
+
+- Start a comparison run from recorded requirements and apply keyed specification amendments to selected runs.
+
 ## 0.1.0-beta.160 - 2026-11-16
 
 ### Fixed

@@ -48,6 +48,11 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	comparison                                                                                                                                                                        *workrun.Plan
+	comparisonAmendments                                                                                                                                                              []workrun.Input
+	comparisonWorkspace                                                                                                                                                               string
+	comparisonID                                                                                                                                                                      string
+	localAmendment                                                                                                                                                                    bool
 	discardCIHeldFeedbackScan                                                                                                                                                         bool
 	reviewContext                                                                                                                                                                     string
 	rebase                                                                                                                                                                            bool
@@ -127,6 +132,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.StringVar(&options.checkpoint, "checkpoint", "", "internal frozen checkpoint for resume")
 	flags.StringVar(&options.resume, "resume", "", "recorded run ID or unique prefix of at least three characters")
 	flags.StringVar(&options.prFeedbackFile, "pr-feedback-file", "", "private local PR feedback file")
+	flags.BoolVar(&options.localAmendment, "specification-amendment", false, "apply an approved specification amendment")
 	flags.BoolVar(&options.autoAcceptRecommendations, "auto-accept-recommendations", false, "automatically accept completed independent-review recommendations")
 	flags.BoolVar(&options.processPRFeedback, "pr-feedback", false, "assess new or changed human comments on the saved PR")
 	flags.BoolVar(&options.overrideRunLimits, "override-run-limits", false, "persistently lift SDLC numeric run allowances on a saved run")
@@ -235,6 +241,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 				return options, fmt.Errorf("--start-at cannot combine with --%s", name)
 			}
 		}
+	}
+	if options.localAmendment && (options.prFeedbackFile == "" || options.resume == "" || options.all) {
+		return options, fmt.Errorf("--specification-amendment requires --pr-feedback-file and a single resume")
 	}
 	if options.supplied["pr-feedback-file"] {
 		if options.prFeedbackFile == "" || options.resume == "" || options.all {
@@ -382,7 +391,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "discard-ci-held-feedback-scan", "abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "discard-ci-held-feedback-scan", "abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "specification-amendment", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -569,7 +578,16 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if err != nil {
 			return err
 		}
-		if !options.featureOwned && !options.frozenInputs {
+		if options.comparison != nil {
+			if err := validateComparison(ctx, launch, *options.comparison, options.comparisonAmendments); err != nil {
+				return err
+			}
+			options.frozenInputHashes, err = comparisonHashes(*options.comparison, options.comparisonAmendments)
+			if err != nil {
+				return err
+			}
+		}
+		if !options.featureOwned && (!options.frozenInputs || options.comparison != nil) {
 			dependencyPlan, err := workseries.Discover(ctx, work.Root, options.reference, options.base)
 			if err != nil {
 				return err
@@ -583,7 +601,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		if options.frozenConfig == nil && !options.supplied["docker-tests"] {
 			options.dockerTests = launch.Config.DockerTests
 		}
-		if !options.dryRun && options.adoptURL == "" {
+		if !options.dryRun && options.adoptURL == "" && options.comparison == nil {
 			if err := workrun.ValidateSourceHistory(ctx, launch.Root); err != nil {
 				return err
 			}
@@ -633,6 +651,12 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 		journal.Plan.NugetCache = &budget
+		journal.Plan.ComparisonOf = options.comparisonID
+		if options.comparison != nil {
+			journal.Plan.SourceSHA = options.comparison.SourceSHA
+			journal.Plan.StartingSHA = options.comparison.StartingSHA
+		}
+		journal.Plan.Amendments = options.comparisonAmendments
 		journal.Plan.Headroom, err = selectRunHeadroom(runtime.Directory, options)
 		if err != nil {
 			return err
@@ -713,6 +737,8 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			journal.State = "adopting"
 			journal.CIRepairBudget = &workrun.CIRepairBudget{}
 			journal.ReviewRepairBudget = &workrun.ReviewRepairBudget{Limit: 12, DefaultLimit: true}
+		} else if options.comparison != nil {
+			plan, err = workrun.CaptureComparison(ctx, launch, *options.comparison, options.comparisonWorkspace, journal.Workspace, branch, repository, roles)
 		} else if options.snapshot == nil {
 			plan, err = workrun.Capture(ctx, launch, journal.Workspace, branch, options.base, repository, roles)
 		} else {
@@ -720,6 +746,9 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		if err != nil {
 			return err
+		}
+		if options.comparison != nil && (plan.SourceSHA != options.comparison.SourceSHA || plan.StartingSHA != options.comparison.StartingSHA) {
+			return fmt.Errorf("comparison source changed during capture")
 		}
 		if options.frozenInputHashes != nil {
 			if err := matchSeriesCapturedInputs(plan, options.frozenInputHashes); err != nil {
@@ -731,6 +760,8 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		plan.RuntimeName = options.runtimeName
 		plan.DockerTests = options.dockerTests
 		setCapturedPlan(&journal, plan)
+		journal.Plan.ComparisonOf = options.comparisonID
+		journal.Plan.Amendments = options.comparisonAmendments
 		var shared []byte
 		if options.frozenInstructions != nil {
 			shared = []byte(*options.frozenInstructions)
@@ -1050,7 +1081,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return err
 		}
 		return workrun.ValidateProvisionalDependency(ctx, plan, publisher)
-	}, StartAt: options.startAt, HumanReviewed: options.humanReviewed, CIFeedback: ciFeedback, OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, LocalPRFeedback: localPRFeedback, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, ReviewRepairLimit: options.reviewRepairLimit, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
+	}, StartAt: options.startAt, HumanReviewed: options.humanReviewed, CIFeedback: ciFeedback, OverrideRunLimits: options.overrideRunLimits, ProcessPRFeedback: options.processPRFeedback, LocalPRFeedback: localPRFeedback, LocalAmendment: options.localAmendment, ExtendSessionTurnBudget: options.extendSessionTurnBudget, InitializeReviewRepairBudget: options.initializeReviewRepairBudget, ReviewRepairLimit: options.reviewRepairLimit, InitializeCIRepairBudget: options.initializeCIRepairBudget, Provider: workrun.NativeProvider{Manager: manager, ImageID: journal.ImageID}, Checker: checker, Publisher: publisher, CompanionCloner: publisher, Repository: workrun.DockerRepository{Runtime: runtime, ImageID: journal.ImageID}, Output: io.Discard, ProgressOutput: output, Instructions: journal.Instructions, ReviewWorkspace: workrun.PrepareReview}
 	runner.OnStart = func(snapshot workrun.Journal) error {
 		var err error
 		tracker, err = registry.Begin(directory, snapshot)

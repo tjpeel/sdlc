@@ -49,6 +49,8 @@ type PublicationIdentity struct {
 }
 
 type Plan struct {
+	Amendments           []Input                      `json:"amendments,omitempty"`
+	ComparisonOf         string                       `json:"comparison_of,omitempty"`
 	ProvisionalParent    *ProvisionalParentProof      `json:"provisional_parent,omitempty"`
 	Sonar                project.SonarPolicy          `json:"sonar,omitzero"`
 	NonDefaultCIWorkflow string                       `json:"non_default_ci_workflow,omitempty"`

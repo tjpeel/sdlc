@@ -2771,3 +2771,24 @@ For a feature runtime migration, first preview and apply `sdlc runtime migrate-f
 
 
 An unpublished run that requests diagnostics with uncommitted changes returns the handoff to its existing implementation session. No diagnostic or configured check runs on those changes, and the session must preserve the edits and commit a candidate before requesting isolated diagnostics again. Other pending recovery work and dirty full-check requests remain blocked.
+
+
+### Compare a saved ticket run
+
+Start a separate run with a distinct branch and different role settings:
+
+```sh
+sdlc compare --run RUN_ID --branch comparison-branch --provider claude --model MODEL --review-model MODEL --dry-run
+sdlc compare --run RUN_ID --branch comparison-branch --provider claude --model MODEL --review-model MODEL
+```
+
+The source run and the selected checkout remain unchanged. The new worker is captured from the source run's recorded starting revision and Git history, including its recorded base. Requirements and check inputs are read from the saved run and checked against their captured hashes; the selected work paths must still exist in the project, and verification settings must match. If the history or saved inputs cannot be verified, the command stops. The new run records its source run ID, and uses the selected new role settings. Existing base and publication checks still apply, so an advanced base can require a subsequent rebase; a rebase changes the recorded source revision. Use `--amendment KEY` to select a registered amendment explicitly. The key must target a requirement captured by the source run.
+
+### Apply a keyed specification amendment
+
+```sh
+sdlc amendment --run RUN_ID --key A1 --target .sdlc/work/REF/specification.md --file /path/to/amendment.md --dry-run
+sdlc amendment --run RUN_ID --key A1 --target .sdlc/work/REF/specification.md --file /path/to/amendment.md
+```
+
+This explicitly approves the amendment for the selected ready PR run. It records immutable key, target and content under the ignored work reference, then uses the local-feedback lifecycle with normal boundary checks, implementation, verification and review. It does not rewrite the original specification or tickets and does not post a GitHub comment. Existing keys cannot be reused for different contents. To apply a registered key to another eligible run, omit `--file`; its target must be captured by that run. Only selected runs inherit it. For a comparison run, select it explicitly using `--amendment KEY`. Interrupted application resumes through the ordinary saved-run recovery path.
