@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.159 - 2026-11-16
+
+### Fixed
+
+- Select repeated failed check runs using the PR rollup link before collecting CI failure evidence.
+
 ## 0.1.0-beta.158 - 2026-11-16
 
 ### Fixed

@@ -555,3 +555,36 @@ func TestActionsLogBeyondMetadataBoundRetainsLateMaskedFailure(t *testing.T) {
 		t.Fatal("late failure missing, unmasked, or outside retained bound", entry)
 	}
 }
+
+func TestCIFailureSelectsRepeatedCheckByRollupLink(t *testing.T) {
+	for _, scenario := range []string{"selected", "shared-link", "unmatched-link"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := actionsCIFailureFixture()
+			selected := f.responses["repos/example/project/check-runs/41"].(map[string]any)
+			old := map[string]any{}
+			for k, v := range selected {
+				old[k] = v
+			}
+			old["id"] = 42
+			old["details_url"] = "https://github.com/example/project/actions/runs/87/job/98"
+			old["html_url"] = old["details_url"]
+			if scenario == "shared-link" {
+				old["details_url"], old["html_url"] = f.checks[0].Link, f.checks[0].Link
+			}
+			if scenario == "unmatched-link" {
+				f.checks[0].Link = "https://github.com/example/project/actions/runs/86/job/97"
+			}
+			f.responses["repos/example/project/commits/"+testHead+"/check-runs?per_page=100&page=1"] = map[string]any{"total_count": 2, "check_runs": []any{old, selected}}
+			result, err := (GitHubPublisher{Command: f.command}).Checks(context.Background(), Plan{Repository: "example/project"}, annotationPublication())
+			if scenario != "selected" {
+				if err == nil || result.FailureContext != nil {
+					t.Fatalf("unsafe identity accepted: %+v, %v", result, err)
+				}
+				return
+			}
+			if err != nil || result.FailureContext == nil || len(result.FailureContext.Checks) != 1 || result.FailureContext.Checks[0].JobID != 99 {
+				t.Fatalf("selected job not collected: %+v, %v", result, err)
+			}
+		})
+	}
+}

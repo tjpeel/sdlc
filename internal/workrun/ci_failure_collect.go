@@ -163,7 +163,16 @@ func (p GitHubPublisher) collectCIFailureContext(ctx context.Context, plan Plan,
 			}
 		}
 		if len(matches) > 1 {
-			return nil, fmt.Errorf("ambiguous failed CI check-run")
+			linked := matches[:0]
+			for _, match := range matches {
+				if wanted.Link != "" && (wanted.Link == match.DetailsURL || wanted.Link == match.HTMLURL) {
+					linked = append(linked, match)
+				}
+			}
+			if len(linked) != 1 {
+				return nil, fmt.Errorf("ambiguous failed CI check-run")
+			}
+			matches = linked
 		}
 		if len(matches) == 1 {
 			listed := matches[0]
