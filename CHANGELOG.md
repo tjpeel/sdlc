@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.164 - 2026-11-17
+
+### Fixed
+
+- Preserve a reviewer's final judgement while reconciling cumulative inspection of a delta review.
+
 ## 0.1.0-beta.163 - 2026-11-17
 
 ### Fixed

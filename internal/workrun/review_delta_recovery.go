@@ -12,15 +12,14 @@ import (
 
 const unnamedReviewGapError = "partial or delta review must identify uninspected areas"
 
-// A native delta is not cumulative approval. Keep its inspection as unfinished
-// evidence until the controller reconciles the exact manifest and final judgement.
+// A native delta is not cumulative approval. Add a provisional inspection gap
+// while preserving the reviewer's judgement for controller reconciliation.
 func normalizeReviewInspectionHandoff(out *Outcome, role string) bool {
 	c := out.ReviewCoverage
 	if role != "review" || (out.Status != "reviewed" && out.Status != "review_incomplete") || c == nil || (c.Scope != "delta" && c.Scope != "partial") || c.Gaps == nil || len(c.Gaps) != 0 || c.Inspection == nil {
 		return false
 	}
 	c.Gaps = []string{fileInspectionGap}
-	out.Status = "review_incomplete"
 	return true
 }
 

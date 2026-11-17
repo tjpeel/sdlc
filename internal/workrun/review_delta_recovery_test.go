@@ -36,8 +36,8 @@ func TestUnnamedDeltaHandoffRetainsInspectionWithoutApproval(t *testing.T) {
 	if err := w.finish("review"); err != nil {
 		t.Fatal(err)
 	}
-	if w.result.Outcome.Status != "review_incomplete" || len(w.result.Outcome.ReviewCoverage.Inspection) != 1 {
-		t.Fatal("delta was approved or inspection lost")
+	if w.result.Outcome.Status != "reviewed" || len(w.result.Outcome.ReviewCoverage.Inspection) != 1 || len(w.result.Outcome.ReviewCoverage.Gaps) != 1 {
+		t.Fatal("provisional delta judgement or inspection lost")
 	}
 	// Persisted reports remain strict; only native input is reconciled provisionally.
 	if err := validateOutcome(out, "review"); err == nil {
@@ -48,6 +48,22 @@ func TestUnnamedDeltaHandoffRetainsInspectionWithoutApproval(t *testing.T) {
 	_, _ = w.Write(deltaEvents(t, out, "claude-sonnet-5-5", testNative))
 	if err := w.finish("review"); err == nil {
 		t.Fatal("unsafe path bypassed validation")
+	}
+}
+
+func TestDeltaFinalJudgementUsesCompletedInspectionLedger(t *testing.T) {
+	initial := unnamedDeltaOutcome()
+	initial.Status = "review_incomplete"
+	final := unnamedDeltaOutcome()
+	final.ReviewCoverage.Inspection = []ReviewFileInspection{}
+	dir, j, r, p, workspace := continuationFixture(t, initial, final)
+	r.Repository = inspectionRepository{fakeRepository: &fakeRepository{}, paths: []string{"app.go"}}
+	result, err := r.independentReview(context.Background(), dir, j, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome.Status != "reviewed" || result.Outcome.ReviewCoverage.Scope != "full" || len(p.calls) != 2 {
+		t.Fatalf("final judgement was not reconciled with completed inspection: %+v", result.Outcome)
 	}
 }
 
