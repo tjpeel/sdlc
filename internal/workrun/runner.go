@@ -505,6 +505,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		journal.State = "checkpoint_review"
 	}
 	journal.StopReason = ""
+	if journal.Plan.Adoption == nil {
+		journal.Plan.PRBody = cleanClaudePRFooter(journal.Plan.PRBody)
+	}
 	if err := runner.save(directory, journal); err != nil {
 		return err
 	}
@@ -735,6 +738,15 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "publishing":
+			if journal.Plan.Adoption == nil {
+				clean := cleanClaudePRFooter(journal.Plan.PRBody)
+				if clean != journal.Plan.PRBody {
+					journal.Plan.PRBody = clean
+					if err := runner.save(directory, journal); err != nil {
+						return err
+					}
+				}
+			}
 			if journal.CandidatePhasePending {
 				if err := runner.transition(directory, journal, "checking"); err != nil {
 					return err
@@ -1616,7 +1628,7 @@ func (runner Runner) acceptImplementationOutcome(ctx context.Context, directory 
 		if journal.Outcome.Status == "implemented" {
 			if journal.Plan.Adoption == nil {
 				journal.Plan.PRTitle = journal.Outcome.PRTitle
-				journal.Plan.PRBody = journal.Outcome.PRBody
+				journal.Plan.PRBody = cleanClaudePRFooter(journal.Outcome.PRBody)
 			}
 		}
 		completeVerificationReplay(journal)

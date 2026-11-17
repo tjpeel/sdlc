@@ -40,7 +40,7 @@ class HeadlessTests(unittest.TestCase):
                 with self.subTest(resume=bool(resume), readonly=readonly):
                     command = headless.native_command("claude", "claude-opus-5-5", "medium", resume, readonly)
                     settings = json.loads(command[command.index("--settings") + 1])
-                    self.assertEqual(settings["attribution"], {"commit": ""})
+                    self.assertEqual(settings["attribution"], {"commit": "", "pr": ""})
 
     def test_recorded_speed_controls_native_commands_without_model_switch(self):
         for speed, tier in (("normal", "default"), ("fast", "priority")):
@@ -326,7 +326,7 @@ class HeadlessTests(unittest.TestCase):
         self.assertEqual(command[command.index("--setting-sources") + 1], "user")
         settings = json.loads(command[command.index("--settings") + 1])
         self.assertTrue(settings["disableAllHooks"])
-        self.assertEqual(settings["attribution"], {"commit": ""})
+        self.assertEqual(settings["attribution"], {"commit": "", "pr": ""})
         self.assertEqual(settings["enabledPlugins"], {})
         self.assertEqual(command[-2:], ["--resume", ID])
         self.assertNotIn("--bare", command)

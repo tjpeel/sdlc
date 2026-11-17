@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.163 - 2026-11-17
+
+### Fixed
+
+- Prevent Claude attribution footers from returning to SDLC-managed PR descriptions.
+
 ## 0.1.0-beta.162 - 2026-11-16
 
 ### Changed

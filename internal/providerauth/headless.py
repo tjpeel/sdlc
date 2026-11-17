@@ -151,7 +151,7 @@ def native_command(provider, model, effort, resume, readonly):
         return command
     settings = {"disableAllHooks": True, "enabledPlugins": {},
                 "skipDangerousModePermissionPrompt": True,
-                "attribution": {"commit": ""}}
+                "attribution": {"commit": "", "pr": ""}}
     if speed:
         settings["fastMode"] = speed == "fast"
     command = ["claude", "-p", "--output-format", "stream-json", "--verbose",

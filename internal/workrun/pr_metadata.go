@@ -176,3 +176,18 @@ func prMetadataInstructions(plan Plan) string {
 	}
 	return text
 }
+
+// cleanClaudePRFooter removes only a known standalone trailing Claude footer.
+// Other text, including mentions within the body, remains unchanged.
+func cleanClaudePRFooter(body string) string {
+	end := strings.TrimRight(body, "\r\n")
+	start := strings.LastIndexByte(end, '\n') + 1
+	line := strings.TrimSpace(end[start:])
+	switch line {
+	case "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+		"🤖 Generated with [Claude Code](https://claude.ai/code)":
+		return strings.TrimRight(end[:start], "\r\n") + "\n"
+	default:
+		return body
+	}
+}

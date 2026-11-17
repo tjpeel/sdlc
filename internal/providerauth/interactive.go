@@ -148,11 +148,11 @@ func (manager Manager) Interactive(ctx context.Context, provider, mode string) (
 	settings := ""
 	if provider == "claude" {
 		settings = filepath.Join(filepath.Dir(absolute), "settings.json")
-		content := "{\"attribution\":{\"commit\":\"\"}}\n"
+		content := "{\"attribution\":{\"commit\":\"\",\"pr\":\"\"}}\n"
 		if mode == "bypassPermissions" {
 			// The user selected full access through SDLC. Use the documented
 			// setting to avoid repeating acknowledgement in disposable sessions.
-			content = "{\"attribution\":{\"commit\":\"\"},\"skipDangerousModePermissionPrompt\":true}\n"
+			content = "{\"attribution\":{\"commit\":\"\",\"pr\":\"\"},\"skipDangerousModePermissionPrompt\":true}\n"
 		}
 		if err := os.WriteFile(settings, []byte(content), 0444); err != nil {
 			return fmt.Errorf("cannot prepare isolated provider settings")

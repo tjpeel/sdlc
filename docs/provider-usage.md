@@ -70,8 +70,8 @@ native permission mode, defaulting to `bypassPermissions` inside the isolated
 container. See [Claude permission modes](https://code.claude.com/docs/en/permission-modes).
 Ticket runs submit the account owner's selected work through native `claude -p`;
 SDLC does not override managed restrictions.
-SDLC sets Claude Code `attribution.commit` to an empty string for ticket and
-interactive sessions, leaving pull-request attribution unchanged. This uses
+SDLC sets Claude Code `attribution.commit` and `attribution.pr` to empty strings
+for ticket and interactive sessions. This uses
 Claude Code's [documented attribution setting](https://code.claude.com/docs/en/settings-reference#attribution-commit);
 managed settings and explicit user instructions can take precedence.
 SDLC does not extract token fields or use them for custom provider requests.

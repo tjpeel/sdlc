@@ -110,7 +110,7 @@ func TestInteractiveUsesOnlySelectedCacheAndPrivateInstructionSnapshot(t *testin
 						}
 						if provider == "claude" && (mount["dst"] == "/session-settings.json" || mount["dst"] == "/provider-auth/settings.json") {
 							content, err := os.ReadFile(mount["src"])
-							if err != nil || string(content) != "{\"attribution\":{\"commit\":\"\"},\"skipDangerousModePermissionPrompt\":true}\n" {
+							if err != nil || string(content) != "{\"attribution\":{\"commit\":\"\",\"pr\":\"\"},\"skipDangerousModePermissionPrompt\":true}\n" {
 								t.Fatal("Claude session settings differ from full-access configuration")
 							}
 							continue
@@ -196,9 +196,9 @@ func TestNativeModeOverridesReachOnlySelectedProvider(t *testing.T) {
 						t.Fatal("native mode override changed or reached another provider")
 					}
 					if provider == "claude" {
-						wanted := "{\"attribution\":{\"commit\":\"\"}}\n"
+						wanted := "{\"attribution\":{\"commit\":\"\",\"pr\":\"\"}}\n"
 						if mode == "bypassPermissions" {
-							wanted = "{\"attribution\":{\"commit\":\"\"},\"skipDangerousModePermissionPrompt\":true}\n"
+							wanted = "{\"attribution\":{\"commit\":\"\",\"pr\":\"\"},\"skipDangerousModePermissionPrompt\":true}\n"
 						}
 						for _, mount := range mounts(t, args) {
 							if mount["dst"] == "/session-settings.json" {

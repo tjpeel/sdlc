@@ -117,7 +117,7 @@ def native(command, env):
     assert Path('/provider-auth/CLAUDE.md').samefile(SESSION_INSTRUCTIONS)
     assert list(Path('/provider-auth/skills').glob('*/SKILL.md'))
     assert list(Path('/provider-auth/agents').glob('*.md'))
-    expected_settings = {'attribution': {'commit': ''}}
+    expected_settings = {'attribution': {'commit': '', 'pr': ''}}
     if permission == 'bypassPermissions': expected_settings['skipDangerousModePermissionPrompt'] = True
     assert json.loads(Path('/provider-auth/settings.json').read_text()) == expected_settings
     assert not Path('/provider-auth/plugins/disposable-cached-plugin').exists()
@@ -359,7 +359,7 @@ def instruction_snapshot(directory, *, bypass=False):
     instructions.write_text('Stop implementation until a human answers any question.\n')
     instructions.chmod(0o444)
     settings = directory / 'settings.json'
-    settings_data = {'attribution': {'commit': ''}}
+    settings_data = {'attribution': {'commit': '', 'pr': ''}}
     if bypass: settings_data['skipDangerousModePermissionPrompt'] = True
     settings.write_text(json.dumps(settings_data) + '\n')
     settings.chmod(0o444)
