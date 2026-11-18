@@ -2513,8 +2513,11 @@ Use `sdlc resume --run RUN_ID --merge-pr https://github.com/OWNER/REPO/pull/NUMB
 to incorporate a second PR that targets the saved run's published branch. Add
 `--dry-run` for an offline preview. The controller checks both PR identities and
 heads, saves its intent, requests a merge commit, and verifies its parents before
-importing the result. When the saved PR's target has advanced, SDLC first
-reconciles the saved PR and then reassesses the incoming PR against the new head.
+importing the result. SDLC merges the incoming PR before reconciling an advanced
+target, so it does not create conflicts by rebasing the parent first. It checks
+GitHub's signature status and, when needed, preserves the merged tree in a
+linear candidate signed by the run's configured identity. The incoming PR
+retains its original commit history; the parent branch receives the signed tree.
 It runs fresh local checks, refreshes the PR description, and monitors CI before
 review, using the run's existing repair limits. Ordinary resume reconciles an interrupted merge.
 If a rejected merge is repaired by updating the incoming branch, inspect that

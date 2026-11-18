@@ -7,6 +7,14 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.167 - 2026-11-18
+
+### Fixed
+
+- Merge the incoming PR before reconciling an advanced target, avoiding conflicts introduced by rebasing its parent first.
+- Detect unverified incoming history and publish a tree-preserving, signed replacement through the run's configured signing identity.
+- Continue with fresh review and checks when an optional rebase-equivalence proof is unavailable.
+
 ## 0.1.0-beta.166 - 2026-11-18
 
 ### Fixed

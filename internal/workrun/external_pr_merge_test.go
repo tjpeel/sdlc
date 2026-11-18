@@ -16,8 +16,25 @@ type externalTestPublisher struct {
 	observation     ExternalPRObservation
 	merges          int
 	metadataUpdates int
+	unverified      []string
 	uncertain       bool
 	snapshots       int
+}
+
+func (p *externalTestPublisher) UnverifiedPRCommits(context.Context, Plan, Publication) ([]string, error) {
+	return p.unverified, nil
+}
+func (p *externalTestPublisher) PublishedPRTree(context.Context, Plan, Publication) (string, error) {
+	return p.observation.ParentTree, nil
+}
+func (p *externalTestPublisher) Observe(_ context.Context, _ Plan, pub Publication) (RemotePR, error) {
+	return RemotePR{State: "OPEN", Base: p.observation.Boundary.ParentBase, BaseSHA: pub.BaseSHA, HeadSHA: pub.HeadSHA}, nil
+}
+func (p *externalTestPublisher) Branch(_ context.Context, _ Plan, branch string) (BranchSnapshot, error) {
+	return BranchSnapshot{Branch: branch, SHA: p.observation.Boundary.ParentBaseSHA}, nil
+}
+func (p *externalTestPublisher) ValidateResumeTarget(context.Context, Plan, RemotePR) error {
+	return nil
 }
 
 func (p *externalTestPublisher) UpdateExternalPRMetadata(context.Context, Plan, Publication, ExternalPRBoundary) error {
@@ -32,6 +49,7 @@ func (p *externalTestPublisher) MergeExternalPR(_ context.Context, _ Plan, b Ext
 	p.merges++
 	p.observation.IncomingState = "MERGED"
 	p.observation.MergeSHA = strings.Repeat("d", 40)
+	p.observation.ParentTree = strings.Repeat("e", 40)
 	p.observation.Boundary.ParentHeadSHA = p.observation.MergeSHA
 	// GitHub can retain the base SHA observed before the merge.
 	p.observation.IncomingBaseSHA = b.ParentHeadSHA
@@ -53,6 +71,11 @@ type externalTestRepository struct {
 	revision Revision
 	imports  int
 	fail     bool
+}
+
+func (r *externalTestRepository) NormalizeExternalPRHistory(_ context.Context, _ string, original Revision, _, _ string) (Revision, error) {
+	r.revision = Revision{Head: strings.Repeat("8", 40), Tree: original.Tree, Clean: true}
+	return r.revision, nil
 }
 
 type externalRebasePublisher struct {
@@ -259,41 +282,30 @@ func TestExternalMergeFailedCIEntersExistingRepairLoop(t *testing.T) {
 	}
 }
 
-func TestExternalRequestReconcilesAdvancedBaseBeforeMerge(t *testing.T) {
+func TestExternalRequestMergesBeforeReconcilingAdvancedBase(t *testing.T) {
 	dir, j, p, repo := externalMergeFixture(t)
 	b := p.observation.Boundary
 	upstream := &resumeTestPublisher{remote: RemotePR{State: "OPEN", Base: b.ParentBase, BaseSHA: b.ParentBaseSHA, HeadSHA: b.ParentHeadSHA}, branchSHA: testTree}
 	publisher := &externalRebasePublisher{externalTestPublisher: p, upstream: upstream}
 	runner := Runner{Publisher: publisher, Repository: &externalRebaseRepository{repo}, ExternalPRURL: b.IncomingURL, CheckUpstream: true, Output: io.Discard}
 	merged, err := runner.prepareExternalPR(context.Background(), dir, j)
-	if err != nil {
+	if err != nil || !merged || p.merges != 1 || !j.ExternalPR.ReconcileBase || j.Plan.BaseSHA != b.ParentBaseSHA {
+		t.Fatalf("incoming PR not merged before base reconciliation: %v", err)
+	}
+	upstream.remote.HeadSHA = j.Publication.HeadSHA
+	if err := runner.repairExternalPRSignatures(context.Background(), dir, j); err != nil {
 		t.Fatal(err)
 	}
-	if merged || p.merges != 0 || j.ExternalPRRequest != b.IncomingURL || j.Plan.BaseSHA != testTree || j.State != "implementing" {
-		t.Fatalf("request did not wait for rebase: merged=%v state=%s", merged, j.State)
+	if j.ExternalPR.SignatureRepair == nil || !j.ExternalPR.SignatureRepair.Completed {
+		t.Fatal("advanced base did not produce a linear candidate")
+	}
+	runner.Rebase = true
+	changed, err := runner.checkResumeUpstream(context.Background(), dir, j)
+	if err != nil || !changed || j.Plan.BaseSHA != testTree || j.State != "implementing" {
+		t.Fatalf("combined change was not reconciled: %v", err)
 	}
 	if _, err := Load(dir); err != nil {
 		t.Fatal(err)
-	}
-	// After rebase has been checked and published, reassess the incoming PR
-	// against the newly published parent and finish the merge on resume.
-	newHead := strings.Repeat("9", 40)
-	p.observation.Boundary.ParentBaseSHA = testTree
-	p.observation.Boundary.ParentHeadSHA = newHead
-	p.observation.IncomingBaseSHA = newHead
-	p.observation.ParentTree = repo.revision.Tree
-	upstream.remote.BaseSHA, upstream.remote.HeadSHA = testTree, newHead
-	j.Publication.BaseSHA, j.Publication.HeadSHA = testTree, newHead
-	j.Plan.Restack = nil
-	j.Evidence = CheckEvidence{Head: repo.revision.Head, Tree: repo.revision.Tree, Passed: true}
-	j.State = "ready"
-	runner.ExternalPRURL = ""
-	merged, err = runner.prepareExternalPR(context.Background(), dir, j)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !merged || p.merges != 1 || !j.ExternalPR.Completed || j.ExternalPRRequest != "" {
-		t.Fatal("request did not continue after rebase")
 	}
 }
 

@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -154,7 +155,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		if err != nil {
 			return false, err
 		}
-		publishedSource := rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
+		publishedSource := externalSignatureCandidateCurrent(j, revision) || rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
 		if !revision.Clean || !publishedSource {
 			return false, fmt.Errorf("rebase requires a clean workspace at the published PR source revision")
 		}
@@ -219,7 +220,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		if err != nil {
 			return false, err
 		}
-		publishedSource := rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
+		publishedSource := externalSignatureCandidateCurrent(j, revision) || rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
 		if !revision.Clean || !publishedSource {
 			return false, fmt.Errorf("cannot refresh saved rebase after workspace changed from the published PR source")
 		}
@@ -304,16 +305,22 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		if prover, ok := r.Repository.(rebaseEquivalenceReader); ok {
 			proof, err := prover.RebaseEquivalence(ctx, j.Workspace, record.OldSource, snapshot.SHA)
 			if err != nil {
-				return false, r.stop(directory, j, "blocked", err.Error())
-			}
-			if proof.SourceHead != j.Publication.HeadSHA && proof.SourceHead != j.Evidence.Head && (j.RebaseMonitoring == nil || j.RebaseMonitoring.Published != j.Publication || proof.SourceHead != j.RebaseMonitoring.Proof.Head) {
-				return false, fmt.Errorf("rebase proof does not match the recorded source candidate")
-			}
-			if proof.Equivalent && !preserveFeedback {
-				if err := validateRebaseProof(proof); err != nil {
-					return false, err
+				if !errors.Is(err, errRebaseProofUnavailable) || ctx.Err() != nil || preserveFeedback {
+					return false, r.stop(directory, j, "blocked", err.Error())
 				}
-				monitoring = &RebaseMonitoring{LocalChecks: true, Source: j.Publication, OldBase: record.OldSource, Base: snapshot.SHA, Proof: proof}
+				if r.Output != nil {
+					fmt.Fprintln(r.Output, "Rebase equivalence proof unavailable; continuing with fresh implementation review and checks.")
+				}
+			} else {
+				if proof.SourceHead != j.Publication.HeadSHA && proof.SourceHead != j.Evidence.Head && (j.ExternalPR == nil || j.ExternalPR.SignatureRepair == nil || !j.ExternalPR.SignatureRepair.Completed || proof.SourceHead != j.ExternalPR.SignatureRepair.CandidateHead || j.ExternalPR.SignatureRepair.PublishedHead != j.Publication.HeadSHA) && (j.RebaseMonitoring == nil || j.RebaseMonitoring.Published != j.Publication || proof.SourceHead != j.RebaseMonitoring.Proof.Head) {
+					return false, fmt.Errorf("rebase proof does not match the recorded source candidate")
+				}
+				if proof.Equivalent && !preserveFeedback && (j.ExternalPR == nil || !j.ExternalPR.ReconcileBase) {
+					if err := validateRebaseProof(proof); err != nil {
+						return false, err
+					}
+					monitoring = &RebaseMonitoring{LocalChecks: true, Source: j.Publication, OldBase: record.OldSource, Base: snapshot.SHA, Proof: proof}
+				}
 			}
 		}
 	}

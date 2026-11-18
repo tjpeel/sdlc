@@ -425,10 +425,25 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 		savedFeedbackReplay = false
 	}
+	if journal.ExternalPR != nil && journal.ExternalPR.Completed {
+		if err := runner.repairExternalPRSignatures(ctx, directory, journal); err != nil {
+			return err
+		}
+	}
 	if runner.CheckUpstream || runner.Rebase || journal.ResumeRebase {
-		changed, err := runner.checkResumeUpstream(ctx, directory, journal)
+		upstream := runner
+		if journal.ExternalPR != nil && journal.ExternalPR.Completed && journal.ExternalPR.ReconcileBase {
+			upstream.Rebase = true
+		}
+		changed, err := upstream.checkResumeUpstream(ctx, directory, journal)
 		if err != nil {
 			return err
+		}
+		if journal.ExternalPR != nil && journal.ExternalPR.ReconcileBase {
+			journal.ExternalPR.ReconcileBase = false
+			if err := runner.save(directory, journal); err != nil {
+				return err
+			}
 		}
 		if changed {
 			savedFeedbackReplay = false
@@ -912,6 +927,29 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				return err
 			}
 		case "ci":
+			if m := journal.ExternalPR; m != nil && m.Completed && journal.Publication.HeadSHA != m.VerifiedHead {
+				p, ok := runner.Publisher.(externalPRSignaturePublisher)
+				if !ok {
+					return runner.stop(directory, journal, "blocked", "publisher cannot verify repaired PR signatures")
+				}
+				unverified, err := p.UnverifiedPRCommits(ctx, journal.Plan, journal.Publication)
+				if err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				if len(unverified) != 0 {
+					if m.SignatureRepair != nil && m.SignatureRepair.Completed {
+						return runner.stop(directory, journal, "blocked", fmt.Sprintf("GitHub still reports %d unverified commits after signed publication; inspect the signing account and key", len(unverified)))
+					}
+					if err := runner.repairExternalPRSignatures(ctx, directory, journal); err != nil {
+						return runner.stop(directory, journal, "blocked", err.Error())
+					}
+					continue
+				}
+				m.VerifiedHead = journal.Publication.HeadSHA
+				if err := runner.save(directory, journal); err != nil {
+					return err
+				}
+			}
 			if err := runner.checkCI(ctx, directory, journal); err != nil {
 				return err
 			}

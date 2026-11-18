@@ -742,8 +742,11 @@ The run supplies the existing PR; the URL names the incoming PR. SDLC verifies
 the repository, target branch and both heads, records the merge intent, and
 requests a merge commit. It verifies the merge parents before importing the
 result, obtains fresh checks, updates the PR description and monitors CI before
-review, using the run's existing repair allowances. If the target of the saved PR has advanced, SDLC
-first reconciles and checks the saved PR before reassessing the incoming PR.
+review, using the run's existing repair allowances. SDLC merges the incoming PR
+before reconciling an advanced target, avoiding conflicts caused by rebasing the
+parent first. If GitHub reports unverified incoming commits, SDLC preserves the
+merged tree in a linear candidate and publishes it with the run's signing key;
+the incoming PR retains its original commit history.
 If interrupted, resume the same run to reconcile the
 saved merge. A changed boundary stops the run for inspection. The preview is
 offline and cannot establish remote mergeability or branch protection. GitHub

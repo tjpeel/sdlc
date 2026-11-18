@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,8 @@ type RebaseProof struct {
 type rebaseEquivalenceReader interface {
 	RebaseEquivalence(context.Context, string, string, string) (RebaseProof, error)
 }
+
+var errRebaseProofUnavailable = errors.New("credential-free rebase equivalence check failed")
 
 // Compare exact changes, retaining whitespace, modes and binary payloads. Only
 // blob IDs and hunk positions may differ as a consequence of the new base.
@@ -75,7 +78,7 @@ func (repository DockerRepository) RebaseEquivalence(ctx context.Context, worksp
 	data, err := repository.Runtime.Docker.Output(ctx, args...)
 	var proof RebaseProof
 	if err != nil || json.Unmarshal(data, &proof) != nil {
-		return proof, fmt.Errorf("credential-free rebase equivalence check failed")
+		return proof, errRebaseProofUnavailable
 	}
 	return proof, validateRebaseProof(proof)
 }

@@ -10,11 +10,14 @@ import (
 
 // ExternalPRMerge is saved before the remote request and remains as provenance.
 type ExternalPRMerge struct {
-	PreviousHeads []string           `json:"previous_heads,omitempty"`
-	Boundary      ExternalPRBoundary `json:"boundary"`
-	Original      Revision           `json:"original"`
-	MergeSHA      string             `json:"merge_sha,omitempty"`
-	Completed     bool               `json:"completed,omitempty"`
+	VerifiedHead    string                     `json:"verified_head,omitempty"`
+	ReconcileBase   bool                       `json:"reconcile_base,omitempty"`
+	SignatureRepair *ExternalPRSignatureRepair `json:"signature_repair,omitempty"`
+	PreviousHeads   []string                   `json:"previous_heads,omitempty"`
+	Boundary        ExternalPRBoundary         `json:"boundary"`
+	Original        Revision                   `json:"original"`
+	MergeSHA        string                     `json:"merge_sha,omitempty"`
+	Completed       bool                       `json:"completed,omitempty"`
 }
 
 func validateExternalPRMerge(j *Journal) error {
@@ -31,6 +34,9 @@ func validateExternalPRMerge(j *Journal) error {
 	if err := m.Boundary.validate(); err != nil {
 		return err
 	}
+	if m.VerifiedHead != "" && (!m.Completed || !objectID.MatchString(m.VerifiedHead)) {
+		return fmt.Errorf("invalid verified external PR head")
+	}
 	seen := map[string]bool{m.Boundary.IncomingHeadSHA: true}
 	for _, head := range m.PreviousHeads {
 		if !objectID.MatchString(head) || seen[head] {
@@ -46,6 +52,12 @@ func validateExternalPRMerge(j *Journal) error {
 	}
 	if !m.Completed && j.ExternalPRRequest != "" && j.ExternalPRRequest != m.Boundary.IncomingURL {
 		return fmt.Errorf("external PR request differs from merge checkpoint")
+	}
+	if m.SignatureRepair != nil {
+		s := m.SignatureRepair
+		if !m.Completed || !s.Original.Clean || !objectID.MatchString(s.Original.Head) || !objectID.MatchString(s.Original.Tree) || !objectID.MatchString(s.PublishedHead) || s.Completed && !objectID.MatchString(s.CandidateHead) || !s.Completed && s.CandidateHead != "" {
+			return fmt.Errorf("invalid external PR signature repair checkpoint")
+		}
 	}
 	return nil
 }
@@ -81,9 +93,9 @@ func validateExternalPRStart(j *Journal) error {
 	return nil
 }
 
-// prepareExternalPR saves the selection before an optional upstream rebase.
-// The incoming PR is checked before the parent branch is changed and checked
-// again against the new head before the merge request.
+// prepareExternalPR saves and verifies the incoming PR before changing the
+// parent branch. Merging first avoids introducing conflicts by rebasing the
+// parent while the incoming branch still descends from its previous head.
 func (r Runner) prepareExternalPR(ctx context.Context, dir string, j *Journal) (bool, error) {
 	if r.RefreshExternalPR {
 		if err := r.refreshExternalPR(ctx, dir, j); err != nil {
@@ -142,17 +154,6 @@ func (r Runner) prepareExternalPR(ctx context.Context, dir string, j *Journal) (
 	}
 	if j.ExternalPRRequest == "" || j.State != "ready" && j.State != "awaiting_feedback" {
 		return false, nil
-	}
-	if r.CheckUpstream || j.ResumeRebase {
-		upstream := r
-		upstream.Rebase = true
-		changed, err := upstream.checkResumeUpstream(ctx, dir, j)
-		if err != nil {
-			return false, err
-		}
-		if changed {
-			return false, nil
-		}
 	}
 	return true, r.mergeExternalPR(ctx, dir, j)
 }
@@ -357,6 +358,7 @@ func (r Runner) mergeExternalPR(ctx context.Context, dir string, j *Journal) err
 	j.State, j.ResumeState, j.StopReason, j.PendingRole = "implementing", "", "", ""
 	j.Feedback = "An external PR was merged into the published branch. Assess the merged change against the run requirements, preserve it, update the PR as needed, and obtain fresh full checks and self-review before publication."
 	m.Completed = true
+	m.ReconcileBase = true
 	j.ExternalPRRequest = ""
 	return r.save(dir, j)
 }

@@ -17,11 +17,30 @@ import (
 type monitoringRepository struct {
 	resumeTestRepository
 	equivalent bool
+	proofErr   error
 	bundles    int
 }
 
 func (r *monitoringRepository) RebaseEquivalence(context.Context, string, string, string) (RebaseProof, error) {
+	if r.proofErr != nil {
+		return RebaseProof{}, r.proofErr
+	}
 	return RebaseProof{SourceHead: testHead, Head: testHead, Tree: testTree, Equivalent: r.equivalent}, nil
+}
+
+func TestUnavailableRebaseProofRequiresFullReviewAndChecks(t *testing.T) {
+	dir, j, repo, _, _, r := monitoringFixture(t)
+	repo.proofErr = errRebaseProofUnavailable
+	changed, err := r.checkResumeUpstream(context.Background(), dir, j)
+	if err != nil || !changed {
+		t.Fatalf("rebase should continue without equivalence shortcut: %v", err)
+	}
+	if j.State != "implementing" || j.RebaseMonitoring != nil || j.Evidence.Passed || !j.RestackNeedsChecks || j.Reconciliation != nil {
+		t.Fatal("unavailable proof bypassed fresh work")
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
+	}
 }
 func (r *monitoringRepository) FormatterPreparation(context.Context, *Journal, Revision) ([]VerificationRequest, error) {
 	return nil, nil
