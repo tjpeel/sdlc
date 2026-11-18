@@ -2517,6 +2517,10 @@ importing the result. When the saved PR's target has advanced, SDLC first
 reconciles the saved PR and then reassesses the incoming PR against the new head.
 It runs fresh local checks, refreshes the PR description, and monitors CI before
 review, using the run's existing repair limits. Ordinary resume reconciles an interrupted merge.
+If a rejected merge is repaired by updating the incoming branch, inspect that
+repair and use `sdlc resume --run RUN_ID --refresh-merge-pr --dry-run`, then
+repeat without `--dry-run`. This explicitly records the new incoming head; the
+parent and both PR identities must still match the saved merge boundary.
 GitHub branch protection and merge settings still apply; if the target moves
 during the request, SDLC stops when the merge result fails boundary validation.
 

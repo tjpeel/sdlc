@@ -150,6 +150,45 @@ func TestExternalMergeRejectsWrongTargetBeforeRemoteMutation(t *testing.T) {
 	}
 }
 
+func TestExternalPRRefreshKeepsParentAndRetainsOldHead(t *testing.T) {
+	dir, j, p, repo := externalMergeFixture(t)
+	old := p.observation.Boundary
+	j.ExternalPR = &ExternalPRMerge{Boundary: old, Original: repo.revision}
+	if err := Save(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	p.observation.Boundary.IncomingHeadSHA = strings.Repeat("f", 40)
+	r := Runner{Publisher: p, Repository: repo, RefreshExternalPR: true}
+	if err := r.refreshExternalPR(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if j.ExternalPR.Boundary.IncomingHeadSHA != strings.Repeat("f", 40) || len(j.ExternalPR.PreviousHeads) != 1 || j.ExternalPR.PreviousHeads[0] != old.IncomingHeadSHA {
+		t.Fatal("refresh lost original head")
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.mergeExternalPR(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if p.merges != 1 || !j.ExternalPR.Completed {
+		t.Fatal("refreshed PR was not merged")
+	}
+}
+
+func TestExternalPRRefreshRejectsMovedParent(t *testing.T) {
+	dir, j, p, repo := externalMergeFixture(t)
+	j.ExternalPR = &ExternalPRMerge{Boundary: p.observation.Boundary, Original: repo.revision}
+	p.observation.Boundary.IncomingHeadSHA = strings.Repeat("f", 40)
+	p.observation.Boundary.ParentHeadSHA = strings.Repeat("e", 40)
+	if err := (Runner{Publisher: p, Repository: repo}).refreshExternalPR(context.Background(), dir, j); err == nil {
+		t.Fatal("changed parent accepted")
+	}
+	if len(j.ExternalPR.PreviousHeads) != 0 {
+		t.Fatal("failed refresh changed checkpoint")
+	}
+}
+
 func TestExternalMergeAcceptsExactPublishedHeadWithoutOldCheckEvidence(t *testing.T) {
 	dir, j, p, repo := externalMergeFixture(t)
 	j.Evidence = CheckEvidence{}

@@ -246,6 +246,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var text, path string
 	var startAt string
 	var externalPRURL string
+	var refreshExternalPR bool
 	var humanReviewed bool
 	var ciFeedbackPath string
 	var stdin bool
@@ -262,6 +263,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 	var override bool
 	var timeout time.Duration
 	if !answer {
+		flags.BoolVar(&refreshExternalPR, "refresh-merge-pr", false, "reassess an explicitly repaired incoming PR after a rejected merge")
 		flags.StringVar(&externalPRURL, "merge-pr", "", "merge a PR targeting the saved run's PR branch")
 		flags.BoolVar(&rebase, "rebase", false, "rebase saved PR commits onto its current target branch")
 		flags.BoolVar(&reviewCIHold, "review-ci-hold", false, "review the exact published PR while retaining its CI hold")
@@ -288,7 +290,7 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		if answer {
 			_, err = fmt.Fprintln(output, "Usage: sdlc answer --run RUN_ID [--text TEXT | --stdin | --answer-file FILE] [--dry-run]\nDefault input: . submits, /cancel cancels; .. and //cancel enter literal control lines.")
 		} else {
-			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--merge-pr URL | --discard-ci-held-feedback-scan | --abandon-runtime-recheck | --review-ci-hold | --discard-ci-held-review | --rebase | --accept-recommendations | --auto-accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
+			_, err = fmt.Fprintln(output, "Usage: sdlc resume --run RUN_ID [--merge-pr URL | --refresh-merge-pr | --discard-ci-held-feedback-scan | --abandon-runtime-recheck | --review-ci-hold | --discard-ci-held-review | --rebase | --accept-recommendations | --auto-accept-recommendations | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --extend-session-turn-budget 1..24 | --review-repair-limit 1..12 | --ci-feedback-file FILE] [--timeout DURATION] [--dry-run]")
 		}
 		return err
 	} else if err != nil {
@@ -320,6 +322,28 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		})
 		if invalid != "" {
 			return fmt.Errorf("--merge-pr cannot combine with --%s", invalid)
+		}
+	}
+	refreshSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "refresh-merge-pr" {
+			refreshSupplied = true
+		}
+	})
+	if refreshSupplied {
+		if !refreshExternalPR {
+			return fmt.Errorf("--refresh-merge-pr must be enabled")
+		}
+		var invalid string
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "run", "refresh-merge-pr", "dry-run", "timeout":
+			default:
+				invalid = f.Name
+			}
+		})
+		if invalid != "" {
+			return fmt.Errorf("--refresh-merge-pr cannot combine with --%s", invalid)
 		}
 	}
 	var autoAcceptancePolicy *bool
@@ -506,6 +530,9 @@ func attentionCommand(ctx context.Context, args []string, input io.Reader, outpu
 		return fmt.Errorf("run checkpoint changed; review the current questions again")
 	}
 	runArgs := runActionArguments(action, path)
+	if refreshExternalPR {
+		runArgs = append(runArgs, "--refresh-merge-pr")
+	}
 	if externalPRURL != "" {
 		runArgs = append(runArgs, "--merge-pr", externalPRURL)
 	}

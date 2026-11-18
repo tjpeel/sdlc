@@ -22,6 +22,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	RefreshExternalPR                 bool
 	ExternalPRURL                     string
 	DiscardCIHeldFeedbackScan         bool
 	AbandonRuntimeRecheck             bool
@@ -171,6 +172,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 		}
 	} else if journal.ExternalPRRequest != "" && (runner.Rebase || runner.StartAt != "" || runner.ProcessPRFeedback || runner.DiscardCIHeldReview || runner.DiscardCIHeldFeedbackScan || runner.ReviewCIHold || runner.AbandonRuntimeRecheck || runner.AutoAcceptRecommendationsOverride != nil) {
 		return fmt.Errorf("finish the pending external PR request before starting another PR operation")
+	}
+	if runner.RefreshExternalPR && (runner.ExternalPRURL != "" || journal.ExternalPR == nil || journal.ExternalPR.Completed) {
+		return fmt.Errorf("external PR refresh requires an existing pending merge")
 	}
 	// A migrated published run must first complete its unchanged-PR recheck.
 	// Other recovery modes can change the candidate or dispatch work before the

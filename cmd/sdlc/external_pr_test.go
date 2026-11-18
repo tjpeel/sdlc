@@ -33,3 +33,15 @@ func TestExternalPRResumePreviewAndOptionValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalPRRefreshRequiresSavedRunWithoutOtherActions(t *testing.T) {
+	for _, extra := range [][]string{{"--refresh-merge-pr"}, {"--resume", "abc", "--refresh-merge-pr=false"}, {"--resume", "abc", "--refresh-merge-pr", "--rebase"}, {"--resume", "abc", "--refresh-merge-pr", "--merge-pr", "https://github.com/example/project/pull/2"}} {
+		if _, err := parseRunOptions(runArgs(extra...)); err == nil {
+			t.Fatalf("accepted %v", extra)
+		}
+	}
+	o, err := parseRunOptions(runArgs("--resume", "abc", "--refresh-merge-pr", "--dry-run"))
+	if err != nil || !o.refreshExternalPR {
+		t.Fatalf("valid refresh rejected: %v", err)
+	}
+}

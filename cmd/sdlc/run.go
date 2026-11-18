@@ -34,7 +34,7 @@ import (
 	"github.com/tjpeel/sdlc/internal/workseries"
 )
 
-const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--continue-independent-on-ci] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--merge-pr URL | --discard-ci-held-feedback-scan | --abandon-runtime-recheck | --review-ci-hold | --discard-ci-held-review | --rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
+const runUsage = "Usage: sdlc run --reference REFERENCE --ticket NUMBERED_FILE [--provider codex|claude|synthetic]\n  [--github-profile NAME] [--input RELATIVE_PATH] [--base main] [--branch BRANCH] [--repo OWNER/REPO]\n  [--model MODEL] [--reasoning LEVEL] [--effort LEVEL] [--review-model MODEL] [--review-effort LEVEL]\n  [--review-context packet|pr-link] [--speed normal|fast] [--review-speed normal|fast] [--auto-accept-recommendations]\n  [--runtime NAME] [--docker-tests] [--timeout DURATION] [--dry-run] [--notify off|desktop|bell] [--sound]\nFeature: sdlc run --reference REFERENCE --all [--parallel 1] [--watch] [--alternate-providers] [--continue-independent-on-ci] [--dry-run]\nResume: sdlc run --reference REFERENCE --ticket NUMBERED_FILE --resume RUN_ID [--merge-pr URL | --refresh-merge-pr | --discard-ci-held-feedback-scan | --abandon-runtime-recheck | --review-ci-hold | --discard-ci-held-review | --rebase | --start-at awaiting-feedback|checks|review|feedback [--human-reviewed] | --override-run-limits | --pr-feedback | --pr-feedback-file FILE | --answer-file FILE | --ci-feedback-file FILE | --initialize-ci-repair-budget | --initialize-review-repair-budget 1..3 | --review-repair-limit 1..12 | --extend-session-turn-budget 1..24]\nThe selected implementation provider must be logged in. Independent review uses the opposite provider for Codex/Claude, and Codex for Synthetic.\n--docker-tests enables a privileged, disposable Docker daemon for integration checks."
 
 type selectedInputs []string
 
@@ -48,6 +48,7 @@ func (inputs *selectedInputs) Set(value string) error {
 }
 
 type runOptions struct {
+	refreshExternalPR                                                                                                                                                                 bool
 	externalPRURL                                                                                                                                                                     string
 	comparison                                                                                                                                                                        *workrun.Plan
 	comparisonAmendments                                                                                                                                                              []workrun.Input
@@ -106,6 +107,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 	flags.SetOutput(io.Discard)
 	flags.BoolVar(&options.rebase, "rebase", false, "rebase a saved candidate onto its current target branch")
 	flags.StringVar(&options.externalPRURL, "merge-pr", "", "merge a PR targeting this run's published branch")
+	flags.BoolVar(&options.refreshExternalPR, "refresh-merge-pr", false, "reassess an explicitly repaired incoming PR")
 	flags.BoolVar(&options.reviewCIHold, "review-ci-hold", false, "review an exact published PR while its CI hold remains open")
 	flags.BoolVar(&options.discardCIHeldReview, "discard-ci-held-review", false, "invalidate a provisional review after a PR boundary failure while retaining the CI hold")
 	flags.BoolVar(&options.discardCIHeldFeedbackScan, "discard-ci-held-feedback-scan", false, "discard a failed CI-held feedback scan while preserving feedback and review")
@@ -191,6 +193,16 @@ func parseRunOptions(args []string) (runOptions, error) {
 	}
 	options.supplied = map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { options.supplied[f.Name] = true })
+	if options.supplied["refresh-merge-pr"] {
+		if !options.refreshExternalPR || options.resume == "" || options.all {
+			return options, fmt.Errorf("--refresh-merge-pr requires a single saved run")
+		}
+		for _, name := range []string{"merge-pr", "discard-ci-held-feedback-scan", "abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "pr-feedback", "pr-feedback-file", "answer-file", "ci-feedback-file", "override-run-limits", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "review-repair-limit"} {
+			if options.supplied[name] {
+				return options, fmt.Errorf("--refresh-merge-pr cannot combine with --%s", name)
+			}
+		}
+	}
 	if options.supplied["merge-pr"] {
 		if options.resume == "" || options.all || options.externalPRURL == "" {
 			return options, fmt.Errorf("--merge-pr requires a single saved run and PR URL")
@@ -406,7 +418,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 		invalid := ""
 		flags.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "merge-pr", "discard-ci-held-feedback-scan", "abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "specification-amendment", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
+			case "refresh-merge-pr", "merge-pr", "discard-ci-held-feedback-scan", "abandon-runtime-recheck", "discard-ci-held-review", "review-ci-hold", "rebase", "auto-accept-recommendations", "start-at", "human-reviewed", "review-repair-limit", "run-root", "checkpoint", "reference", "ticket", "resume", "answer-file", "ci-feedback-file", "pr-feedback-file", "specification-amendment", "initialize-ci-repair-budget", "initialize-review-repair-budget", "extend-session-turn-budget", "pr-feedback", "override-run-limits", "timeout", "dry-run", "notify", "sound", "json", "terminal", "launch-id":
 			default:
 				invalid = f.Name
 			}
@@ -998,6 +1010,13 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 		}
 		return json.NewEncoder(output).Encode(map[string]any{"action": "merge_external_pr", "run": journal.ID, "publication": journal.Publication, "incoming_pr": options.externalPRURL, "offline": true, "note": "Remote PR relationship, mergeability and current heads will be verified during resume."})
 	}
+	if options.dryRun && options.refreshExternalPR {
+		m := journal.ExternalPR
+		if m == nil || m.Completed || m.MergeSHA != "" {
+			return fmt.Errorf("external PR refresh requires an unmerged saved merge checkpoint")
+		}
+		return json.NewEncoder(output).Encode(map[string]any{"action": "refresh_external_pr", "run": journal.ID, "incoming_pr": m.Boundary.IncomingURL, "saved_head": m.Boundary.IncomingHeadSHA, "offline": true, "remote_verified": false})
+	}
 	if options.dryRun && options.startAt != "" {
 		return json.NewEncoder(output).Encode(map[string]any{"action": "pr_checkpoint", "start_at": options.startAt, "human_reviewed": options.humanReviewed, "run": journal.ID, "head": journal.Publication.HeadSHA, "offline": true, "remote_verified": false})
 	}
@@ -1101,7 +1120,7 @@ func runSelectedCommand(ctx context.Context, options runOptions, output io.Write
 			return configErr
 		}
 	}
-	runner := workrun.Runner{ExternalPRURL: options.externalPRURL, DiscardCIHeldFeedbackScan: options.discardCIHeldFeedbackScan, AbandonRuntimeRecheck: options.abandonRuntimeRecheck, DiscardCIHeldReview: options.discardCIHeldReview, ReviewCIHold: options.reviewCIHold, SonarPolicy: &currentConfig.Sonar, CheckUpstream: options.resume != "" && !options.featureOwned, Rebase: options.rebase, NonDefaultCIWorkflow: &currentConfig.NonDefaultCIWorkflow, AutoAcceptRecommendationsOverride: recommendationPolicy, ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
+	runner := workrun.Runner{RefreshExternalPR: options.refreshExternalPR, ExternalPRURL: options.externalPRURL, DiscardCIHeldFeedbackScan: options.discardCIHeldFeedbackScan, AbandonRuntimeRecheck: options.abandonRuntimeRecheck, DiscardCIHeldReview: options.discardCIHeldReview, ReviewCIHold: options.reviewCIHold, SonarPolicy: &currentConfig.Sonar, CheckUpstream: options.resume != "" && !options.featureOwned, Rebase: options.rebase, NonDefaultCIWorkflow: &currentConfig.NonDefaultCIWorkflow, AutoAcceptRecommendationsOverride: recommendationPolicy, ValidateDependencies: func(ctx context.Context, directory string, plan workrun.Plan) error {
 		if err := workrun.ValidateDependencyContext(ctx, directory, plan, publisher); err != nil {
 			return err
 		}

@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.166 - 2026-11-18
+
+### Fixed
+
+- Allow a saved external PR merge to resume after its incoming branch is explicitly repaired, while retaining the original head and verifying the parent boundary.
+
 ## 0.1.0-beta.165 - 2026-11-18
 
 ### Added

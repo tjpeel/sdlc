@@ -10,10 +10,11 @@ import (
 
 // ExternalPRMerge is saved before the remote request and remains as provenance.
 type ExternalPRMerge struct {
-	Boundary  ExternalPRBoundary `json:"boundary"`
-	Original  Revision           `json:"original"`
-	MergeSHA  string             `json:"merge_sha,omitempty"`
-	Completed bool               `json:"completed,omitempty"`
+	PreviousHeads []string           `json:"previous_heads,omitempty"`
+	Boundary      ExternalPRBoundary `json:"boundary"`
+	Original      Revision           `json:"original"`
+	MergeSHA      string             `json:"merge_sha,omitempty"`
+	Completed     bool               `json:"completed,omitempty"`
 }
 
 func validateExternalPRMerge(j *Journal) error {
@@ -29,6 +30,13 @@ func validateExternalPRMerge(j *Journal) error {
 	}
 	if err := m.Boundary.validate(); err != nil {
 		return err
+	}
+	seen := map[string]bool{m.Boundary.IncomingHeadSHA: true}
+	for _, head := range m.PreviousHeads {
+		if !objectID.MatchString(head) || seen[head] {
+			return fmt.Errorf("invalid external PR head history")
+		}
+		seen[head] = true
 	}
 	if m.Boundary.Repository != j.Plan.Repository || m.Boundary.ParentNumber != j.Publication.Number || m.Boundary.ParentURL != j.Publication.URL || m.Boundary.ParentBranch != j.Plan.Branch || !m.Original.Clean || !objectID.MatchString(m.Original.Head) || !objectID.MatchString(m.Original.Tree) || (m.MergeSHA != "" && !objectID.MatchString(m.MergeSHA)) || m.Completed && m.MergeSHA == "" {
 		return fmt.Errorf("invalid external PR merge checkpoint")
@@ -77,6 +85,11 @@ func validateExternalPRStart(j *Journal) error {
 // The incoming PR is checked before the parent branch is changed and checked
 // again against the new head before the merge request.
 func (r Runner) prepareExternalPR(ctx context.Context, dir string, j *Journal) (bool, error) {
+	if r.RefreshExternalPR {
+		if err := r.refreshExternalPR(ctx, dir, j); err != nil {
+			return false, err
+		}
+	}
 	if r.ExternalPRURL != "" && j.ExternalPRRequest != "" && r.ExternalPRURL != j.ExternalPRRequest {
 		return false, fmt.Errorf("another external PR request is pending")
 	}
@@ -142,6 +155,50 @@ func (r Runner) prepareExternalPR(ctx context.Context, dir string, j *Journal) (
 		}
 	}
 	return true, r.mergeExternalPR(ctx, dir, j)
+}
+
+// Refresh permits an explicitly reviewed incoming head after a rejected merge.
+// It never changes the saved parent, repository, PR or source-branch identity.
+func (r Runner) refreshExternalPR(ctx context.Context, dir string, j *Journal) error {
+	m := j.ExternalPR
+	if m == nil || m.Completed || m.MergeSHA != "" {
+		return fmt.Errorf("external PR refresh requires an unmerged saved merge checkpoint")
+	}
+	p, ok := r.Publisher.(externalPRPublisher)
+	if !ok {
+		return fmt.Errorf("publisher cannot observe external PRs")
+	}
+	o, err := p.ObserveExternalPR(ctx, j.Plan, j.Publication, m.Boundary.IncomingNumber)
+	if err != nil {
+		return err
+	}
+	b := o.Boundary
+	old := m.Boundary
+	if b.IncomingHeadSHA == old.IncomingHeadSHA {
+		return fmt.Errorf("incoming PR head has not changed")
+	}
+	old.IncomingHeadSHA = b.IncomingHeadSHA
+	if b != old {
+		return fmt.Errorf("external PR identity or parent changed; refusing refresh")
+	}
+	if err := ValidateExternalPRBeforeMerge(b, o); err != nil {
+		return err
+	}
+	revision, err := r.Repository.Inspect(ctx, j.Workspace)
+	if err != nil {
+		return err
+	}
+	if revision != m.Original || !externalPublishedWorkspace(j, revision, o.ParentTree) {
+		return fmt.Errorf("saved workspace changed before external PR refresh")
+	}
+	for _, head := range m.PreviousHeads {
+		if head == b.IncomingHeadSHA {
+			return fmt.Errorf("incoming PR returned to a previously recorded head")
+		}
+	}
+	m.PreviousHeads = append(m.PreviousHeads, m.Boundary.IncomingHeadSHA)
+	m.Boundary = b
+	return r.save(dir, j)
 }
 
 func (r Runner) mergeExternalPR(ctx context.Context, dir string, j *Journal) error {
