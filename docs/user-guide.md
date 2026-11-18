@@ -741,8 +741,8 @@ sdlc resume --run RUN_ID --merge-pr https://github.com/OWNER/REPO/pull/NUMBER
 The run supplies the existing PR; the URL names the incoming PR. SDLC verifies
 the repository, target branch and both heads, records the merge intent, and
 requests a merge commit. It verifies the merge parents before importing the
-result, then obtains fresh checks and review and monitors CI, using the run's
-existing repair allowances. If the target of the saved PR has advanced, SDLC
+result, obtains fresh checks, updates the PR description and monitors CI before
+review, using the run's existing repair allowances. If the target of the saved PR has advanced, SDLC
 first reconciles and checks the saved PR before reassessing the incoming PR.
 If interrupted, resume the same run to reconcile the
 saved merge. A changed boundary stops the run for inspection. The preview is

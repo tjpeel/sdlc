@@ -45,6 +45,7 @@ func validateExternalPRMerge(j *Journal) error {
 type externalPRPublisher interface {
 	ObserveExternalPR(context.Context, Plan, Publication, int) (ExternalPRObservation, error)
 	MergeExternalPR(context.Context, Plan, ExternalPRBoundary) error
+	UpdateExternalPRMetadata(context.Context, Plan, Publication, ExternalPRBoundary) error
 	Snapshot(context.Context, Plan, string, string, string) (BranchSnapshot, error)
 }
 type externalPRImporter interface {

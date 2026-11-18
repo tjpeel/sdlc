@@ -13,10 +13,16 @@ import (
 
 type externalTestPublisher struct {
 	Publisher
-	observation ExternalPRObservation
-	merges      int
-	uncertain   bool
-	snapshots   int
+	observation     ExternalPRObservation
+	merges          int
+	metadataUpdates int
+	uncertain       bool
+	snapshots       int
+}
+
+func (p *externalTestPublisher) UpdateExternalPRMetadata(context.Context, Plan, Publication, ExternalPRBoundary) error {
+	p.metadataUpdates++
+	return nil
 }
 
 func (p *externalTestPublisher) ObserveExternalPR(context.Context, Plan, Publication, int) (ExternalPRObservation, error) {
@@ -192,7 +198,7 @@ func TestExternalMergeRunsFreshChecksAndCI(t *testing.T) {
 	if err := runner.Run(context.Background(), dir, j, ""); err != nil {
 		t.Fatal(err)
 	}
-	if j.State != "ready" || checker.calls == 0 || remote.ci == 0 || j.CI.Status != "passed" || j.Publication.HeadSHA != p.observation.MergeSHA {
+	if j.State != "ready" || checker.calls == 0 || remote.ci == 0 || p.metadataUpdates != 1 || j.CI.Status != "passed" || j.Publication.HeadSHA != p.observation.MergeSHA {
 		t.Fatalf("checks or CI were not run on merged head: state=%s checks=%d ci=%d", j.State, checker.calls, remote.ci)
 	}
 }

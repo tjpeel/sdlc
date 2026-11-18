@@ -2515,8 +2515,8 @@ to incorporate a second PR that targets the saved run's published branch. Add
 heads, saves its intent, requests a merge commit, and verifies its parents before
 importing the result. When the saved PR's target has advanced, SDLC first
 reconciles the saved PR and then reassesses the incoming PR against the new head.
-It starts fresh local checks, review and CI repair using
-the run's existing limits. Ordinary resume reconciles an interrupted merge.
+It runs fresh local checks, refreshes the PR description, and monitors CI before
+review, using the run's existing repair limits. Ordinary resume reconciles an interrupted merge.
 GitHub branch protection and merge settings still apply; if the target moves
 during the request, SDLC stops when the merge result fails boundary validation.
 

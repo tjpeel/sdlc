@@ -810,6 +810,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				if err := ValidateExternalPRMerge(m.Boundary, observed); err != nil {
 					return runner.stop(directory, journal, "blocked", err.Error())
 				}
+				if err := p.UpdateExternalPRMetadata(ctx, journal.Plan, journal.Publication, m.Boundary); err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
 				if err := runner.transition(directory, journal, "ci"); err != nil {
 					return err
 				}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type externalPull struct {
@@ -142,4 +143,35 @@ func (p DockerPublisher) ObserveExternalPR(ctx context.Context, plan Plan, publi
 }
 func (p DockerPublisher) MergeExternalPR(ctx context.Context, plan Plan, boundary ExternalPRBoundary) error {
 	return p.withFeedbackPublisher(ctx, plan, func(g GitHubPublisher) error { return g.MergeExternalPR(ctx, plan, boundary) })
+}
+
+// UpdateExternalPRMetadata is idempotent after an uncertain request. It
+// validates the exact merged head on both sides of the metadata update.
+func (p GitHubPublisher) UpdateExternalPRMetadata(ctx context.Context, plan Plan, publication Publication, boundary ExternalPRBoundary) error {
+	if err := ValidatePRMetadata(plan); err != nil {
+		return err
+	}
+	check := func() error {
+		o, err := p.ObserveExternalPR(ctx, plan, publication, boundary.IncomingNumber)
+		if err != nil {
+			return err
+		}
+		return ValidateExternalPRMerge(boundary, o)
+	}
+	if err := check(); err != nil {
+		return err
+	}
+	title := plan.PRTitle
+	if !strings.Contains(title, plan.Reference) {
+		title = plan.Reference + ": " + title
+	}
+	_, err := p.command(ctx, "gh", "api", "--method", "PATCH", fmt.Sprintf("repos/%s/pulls/%d", plan.Repository, publication.Number), "-f", "title="+title, "-f", "body="+plan.PRBody)
+	if err != nil {
+		return err
+	}
+	return check()
+}
+
+func (p DockerPublisher) UpdateExternalPRMetadata(ctx context.Context, plan Plan, publication Publication, boundary ExternalPRBoundary) error {
+	return p.withFeedbackPublisher(ctx, plan, func(g GitHubPublisher) error { return g.UpdateExternalPRMetadata(ctx, plan, publication, boundary) })
 }
