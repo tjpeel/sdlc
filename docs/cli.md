@@ -2507,6 +2507,19 @@ it does not repeat an already acknowledged parent response.
 SDLC reads reactions; it does not add or remove them. Unverifiable reaction data
 keeps the run held rather than silently ignoring feedback.
 
+### Merge a PR into a saved run's PR
+
+Use `sdlc resume --run RUN_ID --merge-pr https://github.com/OWNER/REPO/pull/NUMBER`
+to incorporate a second PR that targets the saved run's published branch. Add
+`--dry-run` for an offline preview. The controller checks both PR identities and
+heads, saves its intent, requests a merge commit, and verifies its parents before
+importing the result. When the saved PR's target has advanced, SDLC first
+reconciles the saved PR and then reassesses the incoming PR against the new head.
+It starts fresh local checks, review and CI repair using
+the run's existing limits. Ordinary resume reconciles an interrupted merge.
+GitHub branch protection and merge settings still apply; if the target moves
+during the request, SDLC stops when the merge result fails boundary validation.
+
 ### Address human PR feedback
 
 After adding comments to a ready or parked PR, resume its saved run:

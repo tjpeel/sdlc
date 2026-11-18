@@ -102,6 +102,9 @@ func Save(directory string, journal *Journal) error {
 	if err := validatePRCheckpoints(journal); err != nil {
 		return err
 	}
+	if err := validateExternalPRMerge(journal); err != nil {
+		return err
+	}
 	if err := validatePRFeedbackJournal(journal); err != nil {
 		return err
 	}
@@ -211,6 +214,9 @@ func Load(directory string) (Journal, error) {
 		return Journal{}, err
 	}
 	if err := validatePRCheckpoints(&journal); err != nil {
+		return Journal{}, err
+	}
+	if err := validateExternalPRMerge(&journal); err != nil {
 		return Journal{}, err
 	}
 	if err := validatePRFeedbackJournal(&journal); err != nil {

@@ -730,6 +730,26 @@ sdlc resume --run RUN_ID
 These commands recover the recorded project, reference and ticket. They work
 outside that checkout and preserve its frozen settings and metrics history.
 
+To incorporate another PR that targets the saved run's PR branch, preview and
+resume the run with the incoming PR URL:
+
+```sh
+sdlc resume --run RUN_ID --merge-pr https://github.com/OWNER/REPO/pull/NUMBER --dry-run
+sdlc resume --run RUN_ID --merge-pr https://github.com/OWNER/REPO/pull/NUMBER
+```
+
+The run supplies the existing PR; the URL names the incoming PR. SDLC verifies
+the repository, target branch and both heads, records the merge intent, and
+requests a merge commit. It verifies the merge parents before importing the
+result, then obtains fresh checks and review and monitors CI, using the run's
+existing repair allowances. If the target of the saved PR has advanced, SDLC
+first reconciles and checks the saved PR before reassessing the incoming PR.
+If interrupted, resume the same run to reconcile the
+saved merge. A changed boundary stops the run for inspection. The preview is
+offline and cannot establish remote mergeability or branch protection. GitHub
+pins the incoming head during the merge request, but the target branch can move
+concurrently; SDLC stops if the resulting merge does not match both saved heads.
+
 After human reviewers comment on a ready PR, start a feedback cycle with:
 
 ```sh

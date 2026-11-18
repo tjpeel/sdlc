@@ -76,6 +76,12 @@ func (r Runner) recoverUnnamedReviewGap(ctx context.Context, dir string, j *Jour
 		return refuse()
 	}
 	out := writer.result.Outcome
+	// A recovered failed handoff has not completed controller reconciliation.
+	// Keep its provisional inspection as unfinished work even when the native
+	// reviewer supplied a final judgement alongside the unnamed delta.
+	if out.Status == "reviewed" && out.ReviewCoverage != nil && (out.ReviewCoverage.Scope == "delta" || out.ReviewCoverage.Scope == "partial") && len(out.ReviewCoverage.Gaps) == 1 && out.ReviewCoverage.Gaps[0] == fileInspectionGap {
+		out.Status = "review_incomplete"
+	}
 	if out.Status != "review_incomplete" || out.ReviewCoverage == nil || out.ReviewCoverage.BaseSHA != j.Publication.BaseSHA || out.ReviewCoverage.HeadSHA != j.Publication.HeadSHA {
 		return refuse()
 	}

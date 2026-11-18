@@ -22,6 +22,7 @@ import (
 var ErrStopped = errors.New("run needs attention")
 
 type Runner struct {
+	ExternalPRURL                     string
 	DiscardCIHeldFeedbackScan         bool
 	AbandonRuntimeRecheck             bool
 	DiscardCIHeldReview               bool
@@ -164,10 +165,20 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			return fmt.Errorf("run checkpoint changed before controller ownership; retry resume to load its current state")
 		}
 	}
+	if runner.ExternalPRURL != "" || journal.ExternalPR != nil && !journal.ExternalPR.Completed {
+		if answer != "" || runner.Rebase || runner.StartAt != "" || runner.ProcessPRFeedback || runner.CIFeedback != "" || runner.OverrideRunLimits || runner.DiscardCIHeldReview || runner.DiscardCIHeldFeedbackScan || runner.ReviewCIHold || runner.AbandonRuntimeRecheck || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 || runner.AutoAcceptRecommendationsOverride != nil {
+			return fmt.Errorf("external PR merge cannot combine with another recovery action")
+		}
+	} else if journal.ExternalPRRequest != "" && (runner.Rebase || runner.StartAt != "" || runner.ProcessPRFeedback || runner.DiscardCIHeldReview || runner.DiscardCIHeldFeedbackScan || runner.ReviewCIHold || runner.AbandonRuntimeRecheck || runner.AutoAcceptRecommendationsOverride != nil) {
+		return fmt.Errorf("finish the pending external PR request before starting another PR operation")
+	}
 	// A migrated published run must first complete its unchanged-PR recheck.
 	// Other recovery modes can change the candidate or dispatch work before the
 	// recheck state is entered, so reject them before invoking any callbacks.
 	if journal.RuntimeRecheck != nil && journal.RuntimeRecheck.Pending {
+		if runner.ExternalPRURL != "" || journal.ExternalPRRequest != "" || journal.ExternalPR != nil && !journal.ExternalPR.Completed {
+			return fmt.Errorf("pending runtime recheck prevents external PR merge")
+		}
 		if answer != "" || runner.DiscardCIHeldReview || runner.DiscardCIHeldFeedbackScan || runner.ReviewCIHold || runner.Rebase || runner.StartAt != "" || runner.HumanReviewed || runner.ProcessPRFeedback || runner.LocalPRFeedback != "" || runner.CIFeedback != "" || runner.OverrideRunLimits || runner.InitializeCIRepairBudget || runner.InitializeReviewRepairBudget != 0 || runner.ReviewRepairLimit != 0 || runner.ExtendSessionTurnBudget != 0 || runner.AutoAcceptRecommendationsOverride != nil {
 			return fmt.Errorf("pending runtime recheck requires ordinary resume or explicit --abandon-runtime-recheck")
 		}
@@ -404,6 +415,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	if runner.DiscardCIHeldReview {
 		return runner.discardCIHeldReview(directory, journal)
 	}
+	if runner.ExternalPRURL != "" || journal.ExternalPRRequest != "" || journal.ExternalPR != nil && !journal.ExternalPR.Completed {
+		if _, err := runner.prepareExternalPR(ctx, directory, journal); err != nil {
+			return err
+		}
+		savedFeedbackReplay = false
+	}
 	if runner.CheckUpstream || runner.Rebase || journal.ResumeRebase {
 		changed, err := runner.checkResumeUpstream(ctx, directory, journal)
 		if err != nil {
@@ -546,6 +563,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			continue
 		case "awaiting_feedback":
+			if journal.ExternalPRRequest != "" {
+				if _, err := runner.prepareExternalPR(ctx, directory, journal); err != nil {
+					return err
+				}
+				continue
+			}
 			if locallyCheckedRebase(journal) && runner.Output != nil {
 				fmt.Fprintln(runner.Output, "Equivalent rebase passed local checks; remote CI and independent review were not verified for this head.")
 			}
@@ -577,6 +600,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			continue
 		case "ready":
+			if journal.ExternalPRRequest != "" {
+				if _, err := runner.prepareExternalPR(ctx, directory, journal); err != nil {
+					return err
+				}
+				continue
+			}
 			checks, err := runner.readPublishedCI(ctx, directory, journal)
 			if err == nil {
 				err = validateCIResult(checks, journal.Publication)
@@ -768,6 +797,23 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if journal.RebaseMonitoring == nil || !journal.RebaseMonitoring.LocalChecks {
 				captureSelfReview(journal, revision)
+			}
+			if m := journal.ExternalPR; m != nil && m.Completed && revision.Head == m.MergeSHA && journal.Publication.HeadSHA == m.MergeSHA {
+				p, ok := runner.Publisher.(externalPRPublisher)
+				if !ok {
+					return runner.stop(directory, journal, "blocked", "publisher cannot verify external PR merge")
+				}
+				observed, err := p.ObserveExternalPR(ctx, journal.Plan, journal.Publication, m.Boundary.IncomingNumber)
+				if err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				if err := ValidateExternalPRMerge(m.Boundary, observed); err != nil {
+					return runner.stop(directory, journal, "blocked", err.Error())
+				}
+				if err := runner.transition(directory, journal, "ci"); err != nil {
+					return err
+				}
+				continue
 			}
 			var pendingReceipt *PushProtectionRejection
 			if journal.PushRepair != nil {

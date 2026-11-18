@@ -303,6 +303,8 @@ type Publisher interface {
 }
 
 type Journal struct {
+	ExternalPRRequest         string                  `json:"external_pr_request,omitempty"`
+	ExternalPR                *ExternalPRMerge        `json:"external_pr_merge,omitempty"`
 	RuntimeRecheck            *RuntimeRecheck         `json:"feature_runtime_recheck,omitempty"`
 	CIHeldReviewHistory       []CIHeldReview          `json:"ci_held_review_history,omitempty"`
 	CIHeldReview              *CIHeldReview           `json:"ci_held_review,omitempty"`

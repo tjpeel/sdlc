@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.165 - 2026-11-18
+
+### Added
+
+- Resume a saved run by merging a second PR into its published branch, then check and review the combined change and monitor CI.
+
+### Fixed
+
+- Recover unfinished review inspection when the interrupted reviewer also supplied a provisional judgement.
+
 ## 0.1.0-beta.164 - 2026-11-17
 
 ### Fixed

@@ -384,7 +384,7 @@ func (runner Runner) checkAdditionalCandidate(ctx context.Context, directory str
 		}
 		return nil
 	}
-	if revision.Head == journal.Plan.StartingSHA && journal.Plan.Adoption == nil {
+	if revision.Head == journal.Plan.StartingSHA && journal.Plan.Adoption == nil && !(journal.ExternalPR != nil && journal.ExternalPR.Completed && revision.Head == journal.ExternalPR.MergeSHA && journal.Publication.HeadSHA == revision.Head) {
 		return runner.stop(directory, journal, "blocked", "ticket produced no implementation commit")
 	}
 	if err := ValidatePRMetadata(journal.Plan); err != nil {
