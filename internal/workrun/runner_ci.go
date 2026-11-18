@@ -2,6 +2,7 @@ package workrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -17,6 +18,28 @@ func (runner Runner) checkCI(ctx context.Context, directory string, journal *Jou
 		journal.CI = checks
 	}
 	if err != nil {
+		if runner.CheckUpstream && journal.ExternalPR != nil && journal.ExternalPR.Completed {
+			journal.ExternalPR.ReconcileBase = true
+			if saveErr := runner.save(directory, journal); saveErr != nil {
+				return saveErr
+			}
+			upstream := runner
+			upstream.Rebase = true
+			changed, reconcileErr := upstream.checkResumeUpstream(ctx, directory, journal)
+			if reconcileErr != nil {
+				if errors.Is(reconcileErr, ErrStopped) {
+					return reconcileErr
+				}
+				return runner.stop(directory, journal, "blocked", fmt.Sprintf("CI query: %v; upstream reconciliation: %v", err, reconcileErr))
+			}
+			journal.ExternalPR.ReconcileBase = false
+			if saveErr := runner.save(directory, journal); saveErr != nil {
+				return saveErr
+			}
+			if changed {
+				return nil
+			}
+		}
 		return runner.stop(directory, journal, "blocked", err.Error())
 	}
 	if checks.Status != "missing" && !journal.MissingChecksSince.IsZero() {

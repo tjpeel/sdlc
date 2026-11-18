@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.169 - 2026-11-18
+
+### Fixed
+
+- Reconcile target branch advances during CI for resumed runs that imported another PR, then repeat review and checks.
+
 ## 0.1.0-beta.168 - 2026-11-18
 
 ### Fixed

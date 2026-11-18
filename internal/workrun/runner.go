@@ -432,7 +432,11 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 	}
 	if runner.CheckUpstream || runner.Rebase || journal.ResumeRebase {
 		upstream := runner
-		if journal.ExternalPR != nil && journal.ExternalPR.Completed && journal.ExternalPR.ReconcileBase {
+		if journal.ExternalPR != nil && journal.ExternalPR.Completed && (journal.ExternalPR.ReconcileBase || runner.CheckUpstream && (journal.State == "ci" || (journal.State == "blocked" || journal.State == "failed") && journal.ResumeState == "ci")) {
+			journal.ExternalPR.ReconcileBase = true
+			if err := runner.save(directory, journal); err != nil {
+				return err
+			}
 			upstream.Rebase = true
 		}
 		changed, err := upstream.checkResumeUpstream(ctx, directory, journal)
