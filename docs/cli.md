@@ -1395,6 +1395,16 @@ never sums those live aggregate snapshots across resumes. Separate
 native totals. Read them with `sdlc usage --since 7d --json`; dashboard details and
 JSON also expose them. The pinned clients may omit fields.
 
+`sdlc usage` also totals the selected runs by provider, with attempt coverage,
+prompt and tool-result byte coverage, context observations and compaction
+coverage. JSON exposes the same figures in `provider_totals`. Native token
+fields retain provider semantics: Codex input includes cache reads, while
+Claude input excludes cache reads and cache creation. Field totals report how
+many groups supplied a value; group counts do not prove every attempt in those
+groups reported that field. Missing records and partial measurements make
+totals lower bounds. Provider time includes setup, queueing and execution;
+tool-result byte encodings differ between providers.
+
 New ticket, feature and PR-adoption runs require a saved Headroom proxy address:
 `sdlc runtime headroom set --proxy-url http://127.0.0.1:8787`.
 Inspect it with `sdlc runtime headroom status`. New runs use it automatically;

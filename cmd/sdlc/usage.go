@@ -138,11 +138,12 @@ func usageCommand(ctx context.Context, args []string, output io.Writer) error {
 	}
 	if *structured {
 		return json.NewEncoder(output).Encode(struct {
-			Version   int        `json:"version"`
-			At        time.Time  `json:"at"`
-			Selection string     `json:"selection"`
-			Runs      []usageRow `json:"runs"`
-		}{1, now, "Full recorded attempts of runs updated within --since; --run ignores age. Missing telemetry is unknown; dollar estimates do not measure subscription allowance.", rows})
+			Version   int              `json:"version"`
+			At        time.Time        `json:"at"`
+			Selection string           `json:"selection"`
+			Providers []providerTotals `json:"provider_totals"`
+			Runs      []usageRow       `json:"runs"`
+		}{1, now, "Full recorded attempts of runs updated within --since; --run ignores age. Missing telemetry is unknown; dollar estimates do not measure subscription allowance.", selectedProviderTotals(rows), rows})
 	}
 	return writeUsageRows(output, rows, *run != "")
 }
@@ -153,6 +154,7 @@ func writeUsageRows(output io.Writer, rows []usageRow, detailed ...bool) error {
 		_, err := fmt.Fprintln(output, "No registered runs in the selected period.")
 		return err
 	}
+	writeProviderTotals(output, rows)
 	for _, row := range rows {
 		fmt.Fprintf(output, "%s: %s\n", dashboard.SafeText(row.RunID), dashboard.SafeText(row.State))
 		fmt.Fprintln(output, textview.Heading("Recorded measurements"))

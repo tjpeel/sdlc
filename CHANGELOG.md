@@ -7,6 +7,16 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.170 - 2026-11-18
+
+### Added
+
+- Summarise recorded provider usage and measurement coverage across selected runs, in text and JSON.
+
+### Changed
+
+- Label compaction counts as observations when coverage is incomplete.
+
 ## 0.1.0-beta.169 - 2026-11-18
 
 ### Fixed
