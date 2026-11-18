@@ -623,6 +623,12 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			continue
 		case "ready":
+			if len(journal.Outcome.Findings) > 0 && !currentReviewAcceptance(journal) {
+				return runner.stop(directory, journal, "blocked", "review findings are not accepted for the current revision")
+			}
+			if currentReviewAcceptance(journal) {
+				fmt.Fprintln(runner.Output, "Human review finding acceptance:", journal.ReviewAcceptances[len(journal.ReviewAcceptances)-1].Reason)
+			}
 			if journal.ExternalPRRequest != "" {
 				if _, err := runner.prepareExternalPR(ctx, directory, journal); err != nil {
 					return err

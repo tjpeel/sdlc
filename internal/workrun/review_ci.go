@@ -15,6 +15,9 @@ func completedReviewAwaitingCI(j *Journal) bool {
 	if reviewReuseCurrent(j) {
 		return true
 	}
+	if j.Outcome.Status == "reviewed" && len(j.Outcome.Questions) == 0 && j.ReviewContinuation == nil && j.ReviewInterruption == nil && currentReviewAcceptance(j) {
+		return true
+	}
 	if j.Outcome.Status != "reviewed" || len(j.Outcome.Findings) != 0 || len(j.Outcome.Questions) != 0 || len(j.ReviewReports) == 0 || j.ReviewContinuation != nil || j.ReviewInterruption != nil {
 		return false
 	}
@@ -47,6 +50,12 @@ func (r Runner) readPublishedCI(ctx context.Context, dir string, j *Journal) (CI
 }
 
 func (runner Runner) finishCompletedReview(ctx context.Context, directory string, journal *Journal) (bool, error) {
+	if currentReviewAcceptance(journal) {
+		if err := runner.reviewHandoffPreflight(ctx, directory, journal); err != nil {
+			return false, runner.stop(directory, journal, "blocked", "review finding acceptance boundary: "+err.Error())
+		}
+		fmt.Fprintln(runner.Output, "Human review finding acceptance:", journal.ReviewAcceptances[len(journal.ReviewAcceptances)-1].Reason)
+	}
 	if reviewReuseCurrent(journal) {
 		revision, err := runner.Repository.Inspect(ctx, journal.Workspace)
 		if err != nil || !revision.Clean || revision.Head != journal.Evidence.Head || revision.Tree != journal.ReviewReuse.Tree {

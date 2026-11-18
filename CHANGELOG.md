@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.171 - 2026-11-18
+
+### Added
+
+- Allow an owner to accept findings on a repeated-review hold with a recorded reason, while retaining the review and requiring current revision and CI checks.
+
 ## 0.1.0-beta.170 - 2026-11-18
 
 ### Added

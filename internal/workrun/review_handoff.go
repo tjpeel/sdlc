@@ -66,6 +66,9 @@ type ReviewAssessment struct {
 }
 
 func validateReviewJournal(j *Journal) error {
+	if err := validateReviewAcceptances(j); err != nil {
+		return err
+	}
 	seenAutoHeads := map[string]bool{}
 	for _, head := range j.AutoRecommendationHeads {
 		if !objectID.MatchString(head) || seenAutoHeads[head] {

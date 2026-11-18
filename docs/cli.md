@@ -2767,6 +2767,28 @@ This repository-level policy is read on resume, so it can enable dispatch for an
 Workflow event and input declarations must use expanded YAML mappings. The controller refuses aliases and unsupported shorthand in these declarations rather than guessing how to dispatch; full workflow validation remains with GitHub and actionlint.
 
 
+## Accept repeated review findings
+
+If an independent review repeats findings on a PR revision already assessed by
+the implementer, SDLC stops rather than repeatedly handing the same findings
+back. An owner can accept the findings with a written reason:
+
+```sh
+sdlc accept-review-findings --run RUN_ID --reason-file /path/to/reason.txt --dry-run
+sdlc accept-review-findings --run RUN_ID --reason-file /path/to/reason.txt
+sdlc resume --run RUN_ID
+```
+
+The preview shows the exact PR head, review attempt, findings and reason. The
+decision is retained privately with the run; it does not post a PR comment.
+It applies only to that review, the exact publication and the verified candidate
+tree. The original findings and review limitations remain in the run history.
+Ordinary resume checks the source, publication, inputs and current CI again.
+It does not accept a different revision, unanswered questions, incomplete
+review coverage, outstanding feedback or another recovery hold.
+Once recorded, the run journal requires a CLI version that understands review
+finding acceptance; older versions cannot load that journal.
+
 ## CI-held review, feedback and provisional parents
 
 A stopped CI-held run can receive independent review without marking CI passed:

@@ -207,14 +207,14 @@ func ValidatePRFeedbackResume(j Journal) error {
 	if j.State == "ready" && rebaseFeedbackEligible(&j) {
 		return validatePRFeedbackJournal(&j)
 	}
-	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && ((j.Outcome.Status == "reviewed" || reviewReuseCurrent(&j)) || ReviewSkipNotice(j) != "" && validateReviewSkip(&j) == nil && j.Outcome.Status == "implemented" && j.Outcome.LocalReview) && len(j.Outcome.Findings) == 0 && len(j.Outcome.Questions) == 0 && (len(j.Outcome.Limitations) == 0 || (j.Outcome.Status == "reviewed" || reviewReuseCurrent(&j))) && j.CI.Status == "passed" && j.Evidence.Passed {
+	if j.State == "ready" && !j.CandidatePhasePending && j.PendingInputs == nil && ((j.Outcome.Status == "reviewed" || reviewReuseCurrent(&j)) || ReviewSkipNotice(j) != "" && validateReviewSkip(&j) == nil && j.Outcome.Status == "implemented" && j.Outcome.LocalReview) && (len(j.Outcome.Findings) == 0 || currentReviewAcceptance(&j)) && len(j.Outcome.Questions) == 0 && (len(j.Outcome.Limitations) == 0 || (j.Outcome.Status == "reviewed" || reviewReuseCurrent(&j))) && j.CI.Status == "passed" && j.Evidence.Passed {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.State == "blocked" && j.ResumeState == "publishing" && strings.HasPrefix(j.StopReason, prFeedbackReplyHold) && j.Outcome.Status == "implemented" && j.Evidence.Passed && pendingFeedback(&j) == nil {
 		return validatePRFeedbackJournal(&j)
 	}
 	if j.PRFeedback != nil && j.PRFeedback.Active && j.PRFeedback.FetchPending && (j.State == "pr_feedback" || j.State == "blocked" && j.ResumeState == "pr_feedback") {
-		if j.PRFeedback.FetchResumeState == "ready" && !rebaseFeedbackEligible(&j) && (((j.Outcome.Status != "reviewed" && !reviewReuseCurrent(&j)) && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 || (len(j.Outcome.Limitations) > 0 && (j.Outcome.Status != "reviewed" && !reviewReuseCurrent(&j))) || j.CI.Status != "passed") {
+		if j.PRFeedback.FetchResumeState == "ready" && !rebaseFeedbackEligible(&j) && (((j.Outcome.Status != "reviewed" && !reviewReuseCurrent(&j)) && ReviewSkipNotice(j) == "") || len(j.Outcome.Findings) > 0 && !currentReviewAcceptance(&j) || len(j.Outcome.Questions) > 0 || (len(j.Outcome.Limitations) > 0 && (j.Outcome.Status != "reviewed" && !reviewReuseCurrent(&j))) || j.CI.Status != "passed") {
 			return fmt.Errorf("feedback fetch lost its ready boundary")
 		}
 		if j.PRFeedback.FetchResumeState == "publishing" && (j.Outcome.Status != "implemented" || pendingFeedback(&j) != nil) {

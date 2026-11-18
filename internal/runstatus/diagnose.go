@@ -46,30 +46,31 @@ type DiagnosticFeedback struct {
 // Diagnostic is an allowlisted saved-state projection. It is not a backup and
 // contains no free-form stop text, commands, comments, account or source data.
 type Diagnostic struct {
-	Version               int                            `json:"version"`
-	RunID                 string                         `json:"run_id"`
-	CheckpointUpdatedAt   time.Time                      `json:"checkpoint_updated_at"`
-	State                 string                         `json:"state"`
-	ResumeState           string                         `json:"resume_state"`
-	Live                  bool                           `json:"controller_active"`
-	Evidence              DiagnosticEvidence             `json:"saved_evidence"`
-	Publication           DiagnosticPublication          `json:"saved_publication"`
-	CI                    string                         `json:"saved_ci"`
-	Review                string                         `json:"saved_review"`
-	CIHeldReview          *DiagnosticCIHeldReview        `json:"ci_held_review,omitempty"`
-	ReviewFindings        int                            `json:"review_findings"`
-	ReviewQuestions       int                            `json:"review_questions"`
-	ReviewLimitations     int                            `json:"review_limitations"`
-	Attempts              int                            `json:"provider_attempts"`
-	Rounds                int                            `json:"repair_rounds"`
-	CheckAttempts         int                            `json:"check_attempts"`
-	Override              *RunLimitOverrideSummary       `json:"run_limit_override,omitempty"`
-	PendingInputs         bool                           `json:"pending_inputs"`
-	Feedback              DiagnosticFeedback             `json:"feedback"`
-	Companions            int                            `json:"companion_sources"`
-	PendingCompanions     int                            `json:"pending_companion_sources"`
-	PublicationDiagnostic *workrun.PublicationDiagnostic `json:"saved_publication_diagnostic,omitempty"`
-	NextAction            NextAction                     `json:"next_action"`
+	Version                int                            `json:"version"`
+	RunID                  string                         `json:"run_id"`
+	CheckpointUpdatedAt    time.Time                      `json:"checkpoint_updated_at"`
+	State                  string                         `json:"state"`
+	ResumeState            string                         `json:"resume_state"`
+	Live                   bool                           `json:"controller_active"`
+	Evidence               DiagnosticEvidence             `json:"saved_evidence"`
+	Publication            DiagnosticPublication          `json:"saved_publication"`
+	CI                     string                         `json:"saved_ci"`
+	Review                 string                         `json:"saved_review"`
+	CIHeldReview           *DiagnosticCIHeldReview        `json:"ci_held_review,omitempty"`
+	ReviewFindings         int                            `json:"review_findings"`
+	ReviewFindingsAccepted bool                           `json:"review_findings_accepted,omitempty"`
+	ReviewQuestions        int                            `json:"review_questions"`
+	ReviewLimitations      int                            `json:"review_limitations"`
+	Attempts               int                            `json:"provider_attempts"`
+	Rounds                 int                            `json:"repair_rounds"`
+	CheckAttempts          int                            `json:"check_attempts"`
+	Override               *RunLimitOverrideSummary       `json:"run_limit_override,omitempty"`
+	PendingInputs          bool                           `json:"pending_inputs"`
+	Feedback               DiagnosticFeedback             `json:"feedback"`
+	Companions             int                            `json:"companion_sources"`
+	PendingCompanions      int                            `json:"pending_companion_sources"`
+	PublicationDiagnostic  *workrun.PublicationDiagnostic `json:"saved_publication_diagnostic,omitempty"`
+	NextAction             NextAction                     `json:"next_action"`
 }
 
 var diagnosticRunID = regexp.MustCompile(`^[0-9a-f]{24}$`)
@@ -123,6 +124,9 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	dump := "sdlc diagnose --run " + id + " --json"
 	if live {
 		return NextAction{Category: "observe", Instruction: "The controller is active; inspect its saved state without starting another controller.", Command: dump}
+	}
+	if workrun.ReviewAcceptanceAwaitingResume(j) {
+		return NextAction{Category: "ordinary_resume", Instruction: "Review findings were accepted for this revision; resume to recheck the publication and CI.", Command: "sdlc resume --run " + id}
 	}
 	if j.RuntimeRecheck != nil && j.RuntimeRecheck.Pending && j.State == "blocked" && j.ResumeState == "runtime_recheck" {
 		return NextAction{Category: "runtime_recheck", Instruction: "Resume isolated checks on the unchanged candidate, or inspect the documented abandon action if correction is required.", Command: "sdlc resume --run " + id}
@@ -207,7 +211,7 @@ func DiagnosticSnapshot(v View) (Diagnostic, error) {
 			heldReview.KnownQuestions = len(c.InterruptedOutcome.Questions)
 		}
 	}
-	result := Diagnostic{Version: 1, RunID: j.ID, CheckpointUpdatedAt: j.UpdatedAt, State: diagnosticState(j.State), ResumeState: diagnosticState(j.ResumeState), Live: v.Live, Evidence: evidence, Publication: DiagnosticPublication{Number: j.Publication.Number, Head: diagnosticHash(j.Publication.HeadSHA), Base: diagnosticHash(j.Publication.BaseSHA)}, CI: diagnosticCI(j.CI.Status), Review: diagnosticReview(j), CIHeldReview: heldReview, ReviewFindings: len(j.Outcome.Findings), ReviewQuestions: len(j.Outcome.Questions), ReviewLimitations: len(j.Outcome.Limitations), Attempts: j.Attempt, Rounds: j.Rounds, CheckAttempts: j.CheckAttempt, Override: RunLimitOverrideStatus(j.RunLimitOverride), PendingInputs: j.PendingInputs != nil, Feedback: DiagnosticFeedback{Active: j.PRFeedback != nil && j.PRFeedback.Active, Pending: feedback.Pending, Unresolved: feedback.Unresolved, OutstandingReplies: feedback.OutstandingReplies}, Companions: len(j.CompanionRepositories), NextAction: NextRunAction(j, v.Live)}
+	result := Diagnostic{Version: 1, RunID: j.ID, CheckpointUpdatedAt: j.UpdatedAt, State: diagnosticState(j.State), ResumeState: diagnosticState(j.ResumeState), Live: v.Live, Evidence: evidence, Publication: DiagnosticPublication{Number: j.Publication.Number, Head: diagnosticHash(j.Publication.HeadSHA), Base: diagnosticHash(j.Publication.BaseSHA)}, CI: diagnosticCI(j.CI.Status), Review: diagnosticReview(j), CIHeldReview: heldReview, ReviewFindings: len(j.Outcome.Findings), ReviewFindingsAccepted: workrun.HasCurrentReviewAcceptance(j), ReviewQuestions: len(j.Outcome.Questions), ReviewLimitations: len(j.Outcome.Limitations), Attempts: j.Attempt, Rounds: j.Rounds, CheckAttempts: j.CheckAttempt, Override: RunLimitOverrideStatus(j.RunLimitOverride), PendingInputs: j.PendingInputs != nil, Feedback: DiagnosticFeedback{Active: j.PRFeedback != nil && j.PRFeedback.Active, Pending: feedback.Pending, Unresolved: feedback.Unresolved, OutstandingReplies: feedback.OutstandingReplies}, Companions: len(j.CompanionRepositories), NextAction: NextRunAction(j, v.Live)}
 	for _, request := range j.Outcome.RepositoryRequests {
 		staged := false
 		for _, source := range j.CompanionRepositories {

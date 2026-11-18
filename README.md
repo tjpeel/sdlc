@@ -31,6 +31,11 @@ reads, while Claude input excludes cache reads/writes.
 A completed independent review may report coverage limitations: these are retained
 as warnings at the human-review checkpoint. Findings still enter repair, and
 required human decisions and operational failures still stop the run.
+For a repeated finding on an already assessed PR revision, an owner may record
+their reason with `sdlc accept-review-findings --run RUN_ID --reason-file FILE`
+(use `--dry-run` to preview), then run `sdlc resume --run RUN_ID`. The decision
+retains the original findings and applies only to that review and candidate tree;
+the controller rechecks the publication and CI before proceeding.
 
 Before starting another reviewer, SDLC checks whether the complete published Git
 tree, PR base and review scope match the last complete independent review without
@@ -94,7 +99,7 @@ existing CLI commands, adds slash-command help and local ticket completion, and
 uses the terminal's font and colours with a Robby Russell prompt. Read the
 [shell guide](docs/interactive-shell.md) for project scope, onboarding, plan
 review and independent terminal launches. The current beta baseline is
-`0.1.0-beta.170`; changes are recorded in the [changelog](CHANGELOG.md).
+`0.1.0-beta.171`; changes are recorded in the [changelog](CHANGELOG.md).
 
 Future work is recorded in the [feature backlog](docs/feature-backlog.md).
 
