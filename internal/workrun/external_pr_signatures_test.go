@@ -65,6 +65,20 @@ func TestExternalPRUnverifiedHistoryProducesFreshSignedPublicationWork(t *testin
 	}
 }
 
+func TestExternalPRMergeIsLinearizedBeforeTargetCanAdvance(t *testing.T) {
+	dir, j, p, repo := externalMergeFixture(t)
+	r := Runner{Publisher: p, Repository: repo, ExternalPRURL: p.observation.Boundary.IncomingURL, CheckUpstream: true}
+	if err := r.mergeExternalPR(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.repairExternalPRSignatures(context.Background(), dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if j.ExternalPR.SignatureRepair == nil || !j.ExternalPR.SignatureRepair.Completed {
+		t.Fatal("new merge remained non-linear before checking upstream")
+	}
+}
+
 func TestExternalPRSignatureRepairDoesNotAcceptUnverifiedPublication(t *testing.T) {
 	dir, j, p, repo := externalMergeFixture(t)
 	r := Runner{Publisher: p, Repository: repo, ExternalPRURL: p.observation.Boundary.IncomingURL}

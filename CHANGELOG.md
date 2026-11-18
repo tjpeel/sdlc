@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.168 - 2026-11-18
+
+### Fixed
+
+- Prepare merged PR history for signed replay before checking the target branch, including when the target advances during the check.
+
 ## 0.1.0-beta.167 - 2026-11-18
 
 ### Fixed

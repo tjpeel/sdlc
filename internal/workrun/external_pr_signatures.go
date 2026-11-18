@@ -209,17 +209,9 @@ func (r Runner) repairExternalPRSignatures(ctx context.Context, dir string, j *J
 		if err != nil {
 			return err
 		}
-		needsLinearRebase := false
-		if m.ReconcileBase && r.CheckUpstream {
-			target, err := up.Branch(ctx, j.Plan, j.Plan.Base)
-			if err != nil {
-				return err
-			}
-			if target.Branch != j.Plan.Base || !objectID.MatchString(target.SHA) {
-				return fmt.Errorf("invalid upstream branch observation")
-			}
-			needsLinearRebase = target.SHA != j.Plan.BaseSHA
-		}
+		// A target can advance after observation. Make the newly merged history
+		// linear before checking the target so a later rebase remains safe.
+		needsLinearRebase := m.ReconcileBase && r.CheckUpstream
 		if len(unverified) == 0 && !needsLinearRebase {
 			return nil
 		}
