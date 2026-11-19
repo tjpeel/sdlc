@@ -144,7 +144,8 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, fmt.Errorf("PR upstream changed to %s at %s; resume with --rebase to replay this PR's commits onto its current target", remote.Base, target.SHA)
 	}
 	if !pending {
-		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || len(j.Outcome.Questions) != 0 || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || (unfinishedRebaseFeedback(j) && !rebasePendingFeedbackPublication(j)) || j.Plan.Restack != nil && !retryingUnpublishedRebase(j, r.Rebase) {
+		answeredFeedback := rebaseAnsweredFeedback(j)
+		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || (len(j.Outcome.Questions) != 0 && !answeredFeedback) || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || (unfinishedRebaseFeedback(j) && !rebasePendingFeedbackPublication(j) && !answeredFeedback) || j.Plan.Restack != nil && !retryingUnpublishedRebase(j, r.Rebase) {
 			return false, fmt.Errorf("finish pending recovery or feature reconciliation before rebasing")
 		}
 		_, ok := r.Repository.(rebaseExecutor)
@@ -156,7 +157,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 			return false, err
 		}
 		publishedSource := externalSignatureCandidateCurrent(j, revision) || rebaseCandidateCurrent(j, revision) || revision.Head == j.Publication.HeadSHA || j.Evidence.Passed && revision.Head == j.Evidence.Head && revision.Tree == j.Evidence.Tree
-		if !revision.Clean || !publishedSource {
+		if !revision.Clean || !publishedSource || (answeredFeedback && (revision.Head != j.Evidence.Head || revision.Tree != j.Evidence.Tree)) {
 			return false, fmt.Errorf("rebase requires a clean workspace at the published PR source revision")
 		}
 		plan := j.Plan
@@ -279,7 +280,8 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, err
 	}
 	snapshot := record.Snapshot
-	preserveFeedback := rebasePendingFeedbackPublication(j)
+	preserveAnsweredFeedback := rebaseAnsweredFeedback(j)
+	preserveFeedback := rebasePendingFeedbackPublication(j) || preserveAnsweredFeedback
 	var replayedCommits map[string]string
 	if preserveFeedback {
 		if result.Conflict {
@@ -301,7 +303,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		replayedCommits = mapping
 	}
 	var monitoring *RebaseMonitoring
-	if !result.Conflict {
+	if !result.Conflict && !preserveAnsweredFeedback {
 		if prover, ok := r.Repository.(rebaseEquivalenceReader); ok {
 			proof, err := prover.RebaseEquivalence(ctx, j.Workspace, record.OldSource, snapshot.SHA)
 			if err != nil {
@@ -329,12 +331,22 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 	}
 	j.Plan.Base, j.Plan.BaseSHA = snapshot.Branch, snapshot.SHA
 	j.Plan.SourceSHA, j.Plan.StartingSHA = snapshot.SHA, snapshot.SHA
-	j.Evidence, j.CI, j.Outcome = CheckEvidence{}, CIResult{}, Outcome{}
+	j.Evidence, j.CI = CheckEvidence{}, CIResult{}
+	if !preserveAnsweredFeedback {
+		j.Outcome = Outcome{}
+	}
 	j.FormatterPreparation, j.LiveDiagnostics, j.Diagnostics, j.Verification = nil, nil, nil, nil
 	j.DiagnosticFeedbackKey, j.VerificationFeedbackKey = "", ""
-	j.ReviewAssessment, j.ReviewContinuation, j.ReviewHumanInput, j.ReviewSkip = nil, nil, nil, nil
+	if !preserveAnsweredFeedback {
+		j.ReviewAssessment, j.ReviewContinuation, j.ReviewHumanInput, j.ReviewSkip = nil, nil, nil, nil
+	} else {
+		j.SelfReview = nil
+	}
 	j.CandidatePhasePending = false
-	j.State, j.ResumeState, j.StopReason, j.PendingRole = "implementing", "", "", ""
+	j.State, j.ResumeState, j.StopReason = "implementing", "", ""
+	if !preserveAnsweredFeedback {
+		j.PendingRole = ""
+	}
 	// Keep every feedback assessment and receipt. Settled cycles remain closed;
 	// a pending publication retains its outstanding acknowledgements.
 	if j.PRFeedback != nil && !preserveFeedback {
@@ -350,7 +362,11 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 			fmt.Fprintln(r.Output, "Rebase preserved the PR changes; running local checks before publication. Remote CI and independent review remain unverified for the new head.")
 		}
 	}
+	previousFeedback := j.Feedback
 	j.Feedback = "The controller performed a Git rebase onto the PR target " + snapshot.Branch + " at " + snapshot.SHA + ". Preserve the rebased commits and the original ticket scope. Do not recreate or squash the implementation. Obtain fresh checks and local review before publication. Existing independent-review and recommendation settings remain in effect."
+	if preserveAnsweredFeedback {
+		j.Feedback = previousFeedback + "\n" + j.Feedback
+	}
 	if preserveFeedback {
 		j.Feedback += " Preserve the existing assessed feedback and its outstanding acknowledgements; do not reassess or discard them."
 	}
@@ -371,6 +387,33 @@ func unfinishedRebaseFeedback(j *Journal) bool {
 	}
 	status := PRFeedbackStatus(*j)
 	return j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || status.Pending > 0 || status.OutstandingReplies > 0 || status.Unresolved > 0
+}
+
+// A failed implementation turn can be resumed after an answered question only
+// when the checked candidate and the exact pending feedback remain intact.
+func rebaseAnsweredFeedback(j *Journal) bool {
+	if j == nil || j.PRFeedback == nil || !j.PRFeedback.Active || j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || !j.Evidence.Passed || j.CandidatePhasePending || j.SessionID == "" || j.PendingRole != "implementation" || j.Outcome.Status != "waiting_for_human" || len(j.Outcome.Questions) == 0 {
+		return false
+	}
+	prefix := "Recorded human questions:\n" + strings.Join(j.Outcome.Questions, "\n") + "\nHuman answer:\n"
+	if !strings.HasPrefix(j.Feedback, prefix) {
+		return false
+	}
+	answer := strings.TrimPrefix(j.Feedback, prefix)
+	for _, marker := range []string{"\nController-staged companion source metadata", "\nIgnored PR comment IDs"} {
+		if index := strings.Index(answer, marker); index >= 0 {
+			answer = answer[:index]
+		}
+	}
+	if strings.TrimSpace(answer) == "" {
+		return false
+	}
+	providerFailure := fmt.Sprintf("native %s headless session failed; inspect the private run log before retrying", j.Plan.Roles.Implementation.Provider)
+	if j.State != "failed" || j.ResumeState != "implementing" || j.StopReason != providerFailure {
+		return false
+	}
+	status := PRFeedbackStatus(*j)
+	return status.Pending > 0 && status.Unresolved == 0 && status.OutstandingReplies == 0
 }
 
 // Only a checked candidate awaiting publication can carry assessed replies

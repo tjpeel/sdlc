@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.172 - 2026-11-19
+
+### Fixed
+
+- Allow a checked PR candidate to rebase after an answered feedback question when the provider stopped, retaining the answer and pending feedback for the original session.
+
 ## 0.1.0-beta.171 - 2026-11-18
 
 ### Added
