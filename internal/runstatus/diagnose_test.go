@@ -87,3 +87,17 @@ func TestCIHeldReviewDiagnosisOffersSafeBoundaryRecovery(t *testing.T) {
 		t.Fatal("known findings offered discard")
 	}
 }
+
+func TestFollowupDiagnosticShowsRebaseWithoutPrivateText(t *testing.T) {
+	id := strings.Repeat("a", 24)
+	head := strings.Repeat("b", 40)
+	j := workrun.Journal{ID: id, State: "implementing", ImplementationFollowups: []workrun.ImplementationFollowup{{Text: "private follow-up text", HumanAnswer: "private answer", Rebase: &workrun.ImplementationFollowupRebase{Candidate: workrun.Revision{Head: head}}}}}
+	d, err := DiagnosticSnapshot(View{Available: true, ID: id, Directory: t.TempDir(), Journal: &j})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(d)
+	if d.ImplementationFollowup == nil || !d.ImplementationFollowup.Rebased || d.ImplementationFollowup.Candidate != head || strings.Contains(string(raw), "private follow-up text") || strings.Contains(string(raw), "private answer") {
+		t.Fatalf("unsafe or missing follow-up status: %s", raw)
+	}
+}

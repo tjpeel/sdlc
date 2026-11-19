@@ -2425,6 +2425,16 @@ reconciliation is declared complete. Preview writes nothing or starts no work.
 After an answered question and this exact handoff failure, operator-direction can
 also record an instruction without treating the old question as unanswered.
 
+If the PR target advances after this follow-up was recorded, use `sdlc resume
+--run RUN_ID --rebase`. The controller verifies the original checked candidate,
+recorded human answer and provisional local feedback, replays onto the verified
+upstream and records the rebased candidate against the accepted follow-up. It
+preserves the session, feedback and outstanding acknowledgements. Prior checks
+and CI are invalidated; the new candidate needs fresh checks and independent
+review. A conflicting or interrupted replay retains its reconciliation checkpoint
+and does not dispatch implementation or publish the PR. Inspect conflicts and
+recover the recorded replay through the existing rebase workflow.
+
 ### Direct a cancelled implementation session
 
 ```sh

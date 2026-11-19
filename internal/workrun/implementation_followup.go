@@ -15,15 +15,22 @@ import (
 
 const invalidImplementationHandoff = "implementation handoff does not satisfy local review and PR metadata"
 
+type ImplementationFollowupRebase struct {
+	Source    Revision `json:"source"`
+	Candidate Revision `json:"candidate"`
+	Target    string   `json:"target"`
+}
+
 type ImplementationFollowup struct {
-	FirstAcceptedAttempt int         `json:"first_accepted_attempt,omitempty"`
-	AfterAttempt         int         `json:"after_attempt"`
-	At                   time.Time   `json:"at"`
-	Checkpoint           time.Time   `json:"checkpoint"`
-	Candidate            Revision    `json:"candidate"`
-	Publication          Publication `json:"publication"`
-	Text                 string      `json:"text"`
-	HumanAnswer          string      `json:"human_answer"`
+	Rebase               *ImplementationFollowupRebase `json:"rebase,omitempty"`
+	FirstAcceptedAttempt int                           `json:"first_accepted_attempt,omitempty"`
+	AfterAttempt         int                           `json:"after_attempt"`
+	At                   time.Time                     `json:"at"`
+	Checkpoint           time.Time                     `json:"checkpoint"`
+	Candidate            Revision                      `json:"candidate"`
+	Publication          Publication                   `json:"publication"`
+	Text                 string                        `json:"text"`
+	HumanAnswer          string                        `json:"human_answer"`
 }
 
 // answeredImplementationQuestion identifies the saved answer, rather than treating
@@ -56,6 +63,9 @@ func validateImplementationFollowups(j *Journal) error {
 	for _, f := range j.ImplementationFollowups {
 		if f.AfterAttempt < 1 || f.AfterAttempt > j.Attempt || f.FirstAcceptedAttempt < 0 || f.FirstAcceptedAttempt > j.Attempt || (f.FirstAcceptedAttempt != 0 && f.FirstAcceptedAttempt <= f.AfterAttempt) || f.At.IsZero() || f.Checkpoint.IsZero() || f.At.Before(f.Checkpoint) || !f.Candidate.Clean || !objectID.MatchString(f.Candidate.Head) || !objectID.MatchString(f.Candidate.Tree) || f.Publication.Number < 1 || f.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, f.Publication.Number) || !objectID.MatchString(f.Publication.HeadSHA) || !objectID.MatchString(f.Publication.BaseSHA) || validateTakeoverReason(f.Text) != nil || validateTakeoverReason(f.HumanAnswer) != nil {
 			return fmt.Errorf("invalid implementation follow-up audit")
+		}
+		if f.Rebase != nil && (f.Rebase.Source != f.Candidate || !f.Rebase.Candidate.Clean || !objectID.MatchString(f.Rebase.Candidate.Head) || !objectID.MatchString(f.Rebase.Candidate.Tree) || !objectID.MatchString(f.Rebase.Target)) {
+			return fmt.Errorf("invalid implementation follow-up rebase boundary")
 		}
 	}
 	return nil
@@ -162,7 +172,11 @@ func (runner Runner) validateImplementationFollowupOutcome(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	if !revision.Clean || !j.Evidence.Passed || j.Evidence.Head != revision.Head || j.Evidence.Tree != revision.Tree || !verificationCurrent(j, revision.Head, revision.Tree) || j.Publication.Number != f.Publication.Number || j.Publication.URL != f.Publication.URL || (f.FirstAcceptedAttempt == 0 && (revision != f.Candidate || j.Publication != f.Publication)) {
+	firstCandidate := f.Candidate
+	if f.Rebase != nil {
+		firstCandidate = f.Rebase.Candidate
+	}
+	if !revision.Clean || !j.Evidence.Passed || j.Evidence.Head != revision.Head || j.Evidence.Tree != revision.Tree || !verificationCurrent(j, revision.Head, revision.Tree) || j.Publication.Number != f.Publication.Number || j.Publication.URL != f.Publication.URL || (f.FirstAcceptedAttempt == 0 && (revision != firstCandidate || j.Publication != f.Publication || f.Rebase != nil && j.Plan.BaseSHA != f.Rebase.Target)) {
 		return fmt.Errorf("accepted follow-up requires current checked candidate and the original PR")
 	}
 	if len(o.Limitations) != 1 || o.Limitations[0] != f.Text || !strings.Contains(o.PRBody, f.Text) {

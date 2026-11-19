@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.178 - 2026-11-19
+
+### Fixed
+
+- Preserve an accepted implementation follow-up and answered pending feedback when rebasing onto an advanced PR target, with fresh verification and independent review.
+
 ## 0.1.0-beta.177 - 2026-11-19
 
 ### Fixed

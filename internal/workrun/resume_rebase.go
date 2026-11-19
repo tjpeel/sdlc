@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -144,7 +145,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, fmt.Errorf("PR upstream changed to %s at %s; resume with --rebase to replay this PR's commits onto its current target", remote.Base, target.SHA)
 	}
 	if !pending {
-		answeredFeedback := rebaseAnsweredFeedback(j)
+		answeredFeedback := rebaseAnsweredFeedback(j) || rebaseAcceptedFollowupFeedback(j)
 		if j.Reconciliation != nil || j.Plan.DependencyContext != nil || j.PendingInputs != nil || j.State == "waiting_for_human" || (len(j.Outcome.Questions) != 0 && !answeredFeedback) || j.PushRepair != nil && j.PushRepair.Pending != nil || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.DeferredAnswer != "" || pendingCIFeedback(j) != nil || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || (unfinishedRebaseFeedback(j) && !rebasePendingFeedbackPublication(j) && !answeredFeedback) || j.Plan.Restack != nil && !retryingUnpublishedRebase(j, r.Rebase) {
 			return false, fmt.Errorf("finish pending recovery or feature reconciliation before rebasing")
 		}
@@ -280,7 +281,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		return false, err
 	}
 	snapshot := record.Snapshot
-	preserveAnsweredFeedback := rebaseAnsweredFeedback(j)
+	preserveAnsweredFeedback := rebaseAnsweredFeedback(j) || rebaseAcceptedFollowupFeedback(j)
 	preserveFeedback := rebasePendingFeedbackPublication(j) || preserveAnsweredFeedback
 	var replayedCommits map[string]string
 	if preserveFeedback {
@@ -301,6 +302,20 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 			}
 		}
 		replayedCommits = mapping
+	}
+	if rebaseAcceptedFollowupFeedback(j) {
+		if result.Conflict {
+			return false, fmt.Errorf("accepted follow-up rebase has conflicts; preserve checkpoint and resolve replay before publication")
+		}
+		revision, err := r.Repository.Inspect(ctx, j.Workspace)
+		if err != nil {
+			return false, err
+		}
+		if !revision.Clean || !objectID.MatchString(revision.Head) || !objectID.MatchString(revision.Tree) {
+			return false, fmt.Errorf("rebased follow-up candidate is not clean")
+		}
+		f := &j.ImplementationFollowups[len(j.ImplementationFollowups)-1]
+		f.Rebase = &ImplementationFollowupRebase{Source: f.Candidate, Candidate: revision, Target: snapshot.SHA}
 	}
 	var monitoring *RebaseMonitoring
 	if !result.Conflict && !preserveAnsweredFeedback {
@@ -368,7 +383,7 @@ func (r Runner) checkResumeUpstream(ctx context.Context, directory string, j *Jo
 		j.Feedback = previousFeedback + "\n" + j.Feedback
 	}
 	if preserveFeedback {
-		j.Feedback += " Preserve the existing assessed feedback and its outstanding acknowledgements; do not reassess or discard them."
+		j.Feedback += " Preserve existing feedback assessments and receipts; assess still-pending revisions and do not repeat completed acknowledgements."
 	}
 	if result.Conflict {
 		j.Feedback += " Resolve the unfinished Git rebase, preserving the existing commits, then git rebase --continue. Conflicting paths: " + strings.Join(result.Paths, ", ") + ". Do not publish an unfinished rebase."
@@ -414,6 +429,33 @@ func rebaseAnsweredFeedback(j *Journal) bool {
 	}
 	status := PRFeedbackStatus(*j)
 	return status.Pending > 0 && status.Unresolved == 0 && status.OutstandingReplies == 0
+}
+
+// rebaseAcceptedFollowupFeedback permits only the exact answered, checked,
+// explicitly accepted follow-up handoff; unrelated unresolved feedback is retained.
+func rebaseAcceptedFollowupFeedback(j *Journal) bool {
+	if j == nil || len(j.ImplementationFollowups) != 1 || j.State != "failed" || j.ResumeState != "implementing" || j.StopReason != invalidImplementationHandoff || j.PendingRole != "implementation" || j.SessionID == "" || j.PRFeedback == nil || !j.PRFeedback.Active || j.PRFeedback.FetchPending || j.PRFeedback.LocalPending != nil || j.CandidatePhasePending || !j.Evidence.Passed || j.PendingInputs != nil {
+		return false
+	}
+	f := j.ImplementationFollowups[0]
+	if f.FirstAcceptedAttempt != 0 || f.Rebase != nil || f.AfterAttempt != j.Attempt || f.Candidate != (Revision{Head: j.Evidence.Head, Tree: j.Evidence.Tree, Clean: true}) || f.Publication != j.Publication || answeredImplementationQuestion(*j) != f.HumanAnswer || !verificationCurrent(j, j.Evidence.Head, j.Evidence.Tree) {
+		return false
+	}
+	status := PRFeedbackStatus(*j)
+	if status.Pending < 1 || status.OutstandingReplies != 0 {
+		return false
+	}
+	for _, e := range pendingFeedbackEntries(j) {
+		if e.Comment.Kind != "local" || !e.Provisional || e.Assessment == nil || e.Assessment.Disposition != "unaddressable" {
+			continue
+		}
+		for _, a := range j.Outcome.PRFeedbackAssessments {
+			if reflect.DeepEqual(a, *e.Assessment) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Only a checked candidate awaiting publication can carry assessed replies

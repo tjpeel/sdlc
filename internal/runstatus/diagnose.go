@@ -52,6 +52,13 @@ type DiagnosticProviderTakeover struct {
 	ReviewCompleted        bool   `json:"review_completed"`
 }
 
+// DiagnosticFollowup exposes an outstanding decision without private prose.
+type DiagnosticFollowup struct {
+	Count     int    `json:"count"`
+	Rebased   bool   `json:"rebased"`
+	Candidate string `json:"candidate,omitempty"`
+}
+
 // Diagnostic is an allowlisted saved-state projection. It is not a backup and
 // contains no free-form stop text, commands, comments, account or source data.
 type Diagnostic struct {
@@ -69,6 +76,7 @@ type Diagnostic struct {
 	ReviewFindings         int                            `json:"review_findings"`
 	ReviewFindingsAccepted bool                           `json:"review_findings_accepted,omitempty"`
 	ProviderTakeover       *DiagnosticProviderTakeover    `json:"provider_takeover,omitempty"`
+	ImplementationFollowup *DiagnosticFollowup            `json:"implementation_followup,omitempty"`
 	ReviewQuestions        int                            `json:"review_questions"`
 	ReviewLimitations      int                            `json:"review_limitations"`
 	Attempts               int                            `json:"provider_attempts"`
@@ -230,6 +238,14 @@ func DiagnosticSnapshot(v View) (Diagnostic, error) {
 		}
 	}
 	result := Diagnostic{Version: 1, RunID: j.ID, CheckpointUpdatedAt: j.UpdatedAt, State: diagnosticState(j.State), ResumeState: diagnosticState(j.ResumeState), Live: v.Live, Evidence: evidence, Publication: DiagnosticPublication{Number: j.Publication.Number, Head: diagnosticHash(j.Publication.HeadSHA), Base: diagnosticHash(j.Publication.BaseSHA)}, CI: diagnosticCI(j.CI.Status), Review: diagnosticReview(j), CIHeldReview: heldReview, ReviewFindings: len(j.Outcome.Findings), ReviewFindingsAccepted: workrun.HasCurrentReviewAcceptance(j), ReviewQuestions: len(j.Outcome.Questions), ReviewLimitations: len(j.Outcome.Limitations), Attempts: j.Attempt, Rounds: j.Rounds, CheckAttempts: j.CheckAttempt, Override: RunLimitOverrideStatus(j.RunLimitOverride), PendingInputs: j.PendingInputs != nil, Feedback: DiagnosticFeedback{Active: j.PRFeedback != nil && j.PRFeedback.Active, Pending: feedback.Pending, Unresolved: feedback.Unresolved, OutstandingReplies: feedback.OutstandingReplies}, Companions: len(j.CompanionRepositories), NextAction: NextRunAction(j, v.Live)}
+	if n := len(j.ImplementationFollowups); n > 0 {
+		f := j.ImplementationFollowups[n-1]
+		candidate := f.Candidate.Head
+		if f.Rebase != nil {
+			candidate = f.Rebase.Candidate.Head
+		}
+		result.ImplementationFollowup = &DiagnosticFollowup{Count: n, Rebased: f.Rebase != nil, Candidate: diagnosticHash(candidate)}
+	}
 	if t := j.ProviderTakeover; t != nil {
 		result.ProviderTakeover = &DiagnosticProviderTakeover{PreviousProvider: t.PreviousModel.Provider, ImplementationProvider: t.NewModel.Provider, ReviewProvider: t.Reviewer.Provider, Started: t.StartedAttempt != 0, ReviewCompleted: t.ReviewAttempt != 0}
 	}
