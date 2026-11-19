@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.175 - 2026-11-19
+
+### Added
+
+- Record explicit operator direction for a cancelled implementation session and deliver it to the resumed session and independent reviewer.
+
 ## 0.1.0-beta.174 - 2026-11-19
 
 ### Added

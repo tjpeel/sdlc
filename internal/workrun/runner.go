@@ -1289,6 +1289,13 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 		}
 	}
 	journal.Attempt++
+	if role == "implementation" {
+		for i := range journal.OperatorDirections {
+			if journal.OperatorDirections[i].FirstAttempt == 0 {
+				journal.OperatorDirections[i].FirstAttempt = journal.Attempt
+			}
+		}
+	}
 	if t := journal.ProviderTakeover; role == "implementation" && t != nil && t.StartedAttempt == 0 {
 		t.StartedAttempt = journal.Attempt
 	}
@@ -1346,6 +1353,7 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 		nativeDirectory = retryDirectory
 		prompt = "Continue the interrupted task in this same session after the temporary model-capacity failure. Preserve completed work and existing instructions, checks and review scope; do not repeat completed actions. Return the required structured handoff when ready.\n" + localOnlyBoundaryInstruction
 	}
+	prompt += operatorDirectionContext(*journal, role)
 	metricRole := role
 	if role == "implementation" && resume != "" {
 		metricRole = "repair"

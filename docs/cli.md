@@ -2373,6 +2373,25 @@ fields are archived rather than replayed. No run is declared ready by this actio
 `--dry-run` is offline and saves nothing. Entry-point selection cannot be combined
 with an answer, feedback file, feedback refresh or allowance-recovery action.
 
+### Direct a cancelled implementation session
+
+```sh
+sdlc operator-direction --run RUN_ID --file /path/to/direction.txt --dry-run
+sdlc operator-direction --run RUN_ID --file /path/to/direction.txt
+sdlc resume --run RUN_ID
+```
+
+Record a bounded, explicit human instruction for a stopped implementation session.
+The command accepts only a cancellation-only stop with a retained native session,
+without pending human questions. It does not clear provider, access, policy or
+other operational holds. The direction is recorded privately under the run lock,
+with the checkpoint and first subsequent implementation attempt. The original
+session and any unfinished workspace changes are preserved. The next native
+turn receives the direction as an operator instruction, distinct from untrusted
+PR feedback; subsequent turns retain it. The independent reviewer receives it
+as context, not as approval. Existing checks, publication and review gates apply.
+The preview writes nothing and starts no work; recording also does not resume.
+
 ### Supply private feedback from pasted text or a file
 
 For a saved run whose PR is ready or awaiting feedback, submit a block of feedback without posting it
