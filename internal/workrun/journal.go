@@ -60,6 +60,9 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validateProviderTakeover(journal); err != nil {
+		return err
+	}
 	if err := validateComparisonAndAmendments(journal.Plan); err != nil {
 		return err
 	}
@@ -282,8 +285,8 @@ func Load(directory string) (Journal, error) {
 	if err := ValidateSpeeds(journal.Plan.Roles); err != nil {
 		return Journal{}, err
 	}
-	if journal.Plan.Roles.Implementation.Provider == journal.Plan.Roles.Review.Provider {
-		return Journal{}, fmt.Errorf("run providers must differ")
+	if err := validateProviderTakeover(&journal); err != nil {
+		return Journal{}, err
 	}
 	if err := journal.Plan.ValidateSidecarImages(); err != nil {
 		return Journal{}, err

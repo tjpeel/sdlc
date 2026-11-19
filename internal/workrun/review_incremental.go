@@ -151,6 +151,10 @@ func validateIncrementalReview(j *Journal) error {
 }
 
 func (r Runner) prepareIncrementalReview(ctx context.Context, dir string, j *Journal, workspace string) error {
+	if takeoverNeedsReview(j) {
+		j.ReviewPlan = nil
+		return nil
+	}
 	if activePRCheckpoint(j, "review") {
 		j.ReviewPlan = nil
 		return nil

@@ -43,6 +43,15 @@ type DiagnosticFeedback struct {
 	OutstandingReplies int  `json:"outstanding_replies"`
 }
 
+// DiagnosticProviderTakeover exposes policy state without session IDs or reasons.
+type DiagnosticProviderTakeover struct {
+	PreviousProvider       string `json:"previous_provider"`
+	ImplementationProvider string `json:"implementation_provider"`
+	ReviewProvider         string `json:"review_provider"`
+	Started                bool   `json:"started"`
+	ReviewCompleted        bool   `json:"review_completed"`
+}
+
 // Diagnostic is an allowlisted saved-state projection. It is not a backup and
 // contains no free-form stop text, commands, comments, account or source data.
 type Diagnostic struct {
@@ -59,6 +68,7 @@ type Diagnostic struct {
 	CIHeldReview           *DiagnosticCIHeldReview        `json:"ci_held_review,omitempty"`
 	ReviewFindings         int                            `json:"review_findings"`
 	ReviewFindingsAccepted bool                           `json:"review_findings_accepted,omitempty"`
+	ProviderTakeover       *DiagnosticProviderTakeover    `json:"provider_takeover,omitempty"`
 	ReviewQuestions        int                            `json:"review_questions"`
 	ReviewLimitations      int                            `json:"review_limitations"`
 	Attempts               int                            `json:"provider_attempts"`
@@ -124,6 +134,14 @@ func NextRunAction(j workrun.Journal, live bool) NextAction {
 	dump := "sdlc diagnose --run " + id + " --json"
 	if live {
 		return NextAction{Category: "observe", Instruction: "The controller is active; inspect its saved state without starting another controller.", Command: dump}
+	}
+	if t := j.ProviderTakeover; t != nil && j.State == "failed" && j.ResumeState == "implementing" {
+		if t.StartedAttempt == 0 {
+			return NextAction{Category: "ordinary_resume", Instruction: "An explicit provider takeover is recorded; resume to validate the saved boundary and start the new session.", Command: "sdlc resume --run " + id}
+		}
+		if j.SessionID == "" {
+			return NextAction{Category: "inspect", Instruction: "The takeover session stopped before its native identity was recorded; inspect it before recovery.", Command: dump}
+		}
 	}
 	if workrun.ReviewAcceptanceAwaitingResume(j) {
 		return NextAction{Category: "ordinary_resume", Instruction: "Review findings were accepted for this revision; resume to recheck the publication and CI.", Command: "sdlc resume --run " + id}
@@ -212,6 +230,9 @@ func DiagnosticSnapshot(v View) (Diagnostic, error) {
 		}
 	}
 	result := Diagnostic{Version: 1, RunID: j.ID, CheckpointUpdatedAt: j.UpdatedAt, State: diagnosticState(j.State), ResumeState: diagnosticState(j.ResumeState), Live: v.Live, Evidence: evidence, Publication: DiagnosticPublication{Number: j.Publication.Number, Head: diagnosticHash(j.Publication.HeadSHA), Base: diagnosticHash(j.Publication.BaseSHA)}, CI: diagnosticCI(j.CI.Status), Review: diagnosticReview(j), CIHeldReview: heldReview, ReviewFindings: len(j.Outcome.Findings), ReviewFindingsAccepted: workrun.HasCurrentReviewAcceptance(j), ReviewQuestions: len(j.Outcome.Questions), ReviewLimitations: len(j.Outcome.Limitations), Attempts: j.Attempt, Rounds: j.Rounds, CheckAttempts: j.CheckAttempt, Override: RunLimitOverrideStatus(j.RunLimitOverride), PendingInputs: j.PendingInputs != nil, Feedback: DiagnosticFeedback{Active: j.PRFeedback != nil && j.PRFeedback.Active, Pending: feedback.Pending, Unresolved: feedback.Unresolved, OutstandingReplies: feedback.OutstandingReplies}, Companions: len(j.CompanionRepositories), NextAction: NextRunAction(j, v.Live)}
+	if t := j.ProviderTakeover; t != nil {
+		result.ProviderTakeover = &DiagnosticProviderTakeover{PreviousProvider: t.PreviousModel.Provider, ImplementationProvider: t.NewModel.Provider, ReviewProvider: t.Reviewer.Provider, Started: t.StartedAttempt != 0, ReviewCompleted: t.ReviewAttempt != 0}
+	}
 	for _, request := range j.Outcome.RepositoryRequests {
 		staged := false
 		for _, source := range j.CompanionRepositories {

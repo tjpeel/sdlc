@@ -121,6 +121,9 @@ func (r Runner) independentReview(ctx context.Context, dir string, j *Journal, w
 			}
 			return result, err
 		}
+		if t := j.ProviderTakeover; takeoverNeedsReview(j) && (result.SessionID == "" || result.SessionID == j.SessionID || result.SessionID == t.PreviousSessionID) {
+			return result, fmt.Errorf("independent review after provider takeover lacks a separate native session")
+		}
 		if resume != "" && result.SessionID != resume {
 			return result, fmt.Errorf("independent reviewer changed its native session")
 		}

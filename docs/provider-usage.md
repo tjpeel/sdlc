@@ -465,3 +465,8 @@ Synthetic's [terms](https://synthetic.new/policies/terms-of-service), section
 API/agent use. The implementation and offline tests do not establish the terms
 applicable to a real account. Confirm that route before connecting an account;
 connected trials require separate authorisation. See [Synthetic setup](synthetic.md).
+
+
+## Explicit implementation provider selection
+
+Reviewed on 19 November 2026 against the official [Codex non-interactive guide](https://developers.openai.com/codex/noninteractive/) and [Claude Code legal and compliance guidance](https://code.claude.com/docs/en/legal-and-compliance). An operator can explicitly select a different native provider for a cancelled, checked PR implementation turn. The original native session is retained, never resumed by another client, and the new provider receives only the selected requirements, checked candidate and bounded retained evidence. The existing official clients and each user's configured authentication remain unchanged. An explicitly selected same-provider review runs in a separate new native session and isolated publication snapshot. This is not an automatic fallback or permission to evade usage, access, authentication or policy restrictions.

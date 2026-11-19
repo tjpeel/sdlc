@@ -2797,6 +2797,40 @@ review coverage, outstanding feedback or another recovery hold.
 Once recorded, the run journal requires a CLI version that understands review
 finding acceptance; older versions cannot load that journal.
 
+## Select a new implementation provider
+
+For a cancelled implementation turn on a checked, published PR, an operator can
+preview and record an explicit choice of a different implementation provider:
+
+```sh
+sdlc provider-takeover --run RUN_ID --provider codex --review-provider codex --reason-file /path/to/reason.txt --dry-run
+sdlc provider-takeover --run RUN_ID --provider codex --review-provider codex --reason-file /path/to/reason.txt
+sdlc resume --run RUN_ID
+```
+
+The selected reviewer must match the saved reviewer, and must be named even when
+it is the same provider as the new implementer. Model and effort come from the
+selected provider's configured defaults unless `--model` or `--effort` is
+explicitly supplied. The reason is private run history, not a PR comment.
+
+This operation creates a new implementation session and retains the previous
+session, accounting, review assessments, human decisions and PR feedback. It
+never resumes a native session across providers. Before the new turn, ordinary
+resume verifies the checked candidate, pinned inputs and current PR/CI boundary.
+Prior checks are then invalidated; fresh checks and a full independent review in
+a separate native session and snapshot are required. Existing review evidence
+is context, not a substitute for that review. If the new session stops before its
+identity is recorded, SDLC holds the run for inspection rather than silently
+starting another one.
+
+Only a stopped implementation run whose current hold is cancellation, with a
+clean checked candidate and passing published CI, can qualify. Pending questions,
+unfinished source or feedback recovery, dependency transactions, session budget
+grants, runtime migration and review continuation are not eligible. Authentication,
+usage, access, policy and safety holds are never cleared by this command. One
+explicit takeover is supported per saved run; provider authentication settings
+and the runtime remain unchanged.
+
 ## CI-held review, feedback and provisional parents
 
 A stopped CI-held run can receive independent review without marking CI passed:

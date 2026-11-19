@@ -50,6 +50,8 @@ func main() {
 			command = func() error { return amendmentCommand(ctx, os.Args[2:], os.Stdout) }
 		case "feedback":
 			command = func() error { return feedbackCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
+		case "provider-takeover":
+			command = func() error { return providerTakeoverCommand(ctx, os.Args[2:], os.Stdout) }
 		case "accept-review-findings":
 			command = func() error { return reviewAcceptanceCommand(ctx, os.Args[2:], os.Stdout) }
 		case "resume":
@@ -118,6 +120,7 @@ func main() {
 		fmt.Println("       sdlc references [--json] | tickets REFERENCE [--json] (local ticket metadata)")
 		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
 		fmt.Println("  sdlc feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]")
+		fmt.Println("  sdlc provider-takeover --run RUN_ID --provider PROVIDER --review-provider PROVIDER --reason-file FILE [--model MODEL] [--effort EFFORT] [--dry-run]")
 		fmt.Println("  sdlc accept-review-findings --run RUN_ID --reason-file FILE [--dry-run]")
 		fmt.Println("       sdlc compare --run RUN_ID --branch BRANCH [--provider NAME] [--model MODEL] [--review-model MODEL] [--amendment KEY] [--dry-run]")
 		fmt.Println("       sdlc amendment --run RUN_ID --key KEY --target PATH [--file FILE] [--dry-run]")

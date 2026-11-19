@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.174 - 2026-11-19
+
+### Added
+
+- Let an operator select a new implementation provider for an eligible cancelled PR run, retaining its history and requiring a separate fresh independent review.
+
 ## 0.1.0-beta.173 - 2026-11-19
 
 ### Fixed

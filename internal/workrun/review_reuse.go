@@ -39,6 +39,9 @@ func reviewScopeKey(j *Journal) string {
 }
 
 func reusableReport(j *Journal) *ReviewReport {
+	if takeoverNeedsReview(j) {
+		return nil
+	}
 	if len(j.ReviewReports) == 0 || j.ReviewContinuation != nil || j.ReviewInterruption != nil || j.PendingInputs != nil || j.CandidatePhasePending || j.ReviewAssessment != nil && j.ReviewAssessment.Pending || len(j.Outcome.Findings) > 0 || len(j.Outcome.Questions) > 0 {
 		return nil
 	}

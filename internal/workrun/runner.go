@@ -685,6 +685,23 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			return nil
 		case "prepared", "implementing", "repairing":
+			if t := journal.ProviderTakeover; t != nil && t.StartedAttempt == 0 {
+				if journal.Publication != t.Publication || journal.Evidence.Head != t.Candidate.Head || journal.Evidence.Tree != t.Candidate.Tree || !t.BoundaryVerified && !journal.Evidence.Passed {
+					return runner.stop(directory, journal, "blocked", "provider takeover candidate or publication changed")
+				}
+				copy := *journal
+				copy.Evidence.Passed = true // Revalidate the captured evidence even after an interrupted preflight.
+				if err := runner.reviewHandoffPreflight(ctx, directory, &copy); err != nil {
+					return runner.stop(directory, journal, "blocked", "provider takeover boundary: "+err.Error())
+				}
+				journal.CI = copy.CI
+				t.BoundaryVerified = true
+				journal.Evidence.Passed = false
+				journal.SelfReview = nil
+				if err := runner.save(directory, journal); err != nil {
+					return err
+				}
+			}
 			if journal.CI.WorkflowPreparation != nil {
 				return runner.stop(directory, journal, "blocked", "legacy workflow compatibility finding is operational; repository repairs for runner integration are prohibited")
 			}
@@ -730,6 +747,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			if err := runner.feedbackPrompt(directory, journal); err != nil {
 				return err
 			}
+			if t := journal.ProviderTakeover; t != nil && t.StartedAttempt != 0 && journal.SessionID == "" {
+				return runner.stop(directory, journal, "blocked", "the takeover session was interrupted before its identity was recorded; inspect the retained native session")
+			}
 			if len(journal.RuntimeMigrations) != 0 && journal.SessionID == "" {
 				interrupted := journal.Attempt > journal.RuntimeMigrations[len(journal.RuntimeMigrations)-1].PreviousAttempt
 				if journal.RuntimeRecheck != nil {
@@ -741,6 +761,15 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			result, err := runner.session(ctx, directory, journal, "implementation", journal.Workspace, journal.SessionID)
 			if result.SessionID != "" {
+				if t := journal.ProviderTakeover; t != nil && result.SessionID == t.PreviousSessionID {
+					return runner.stop(directory, journal, "failed", "takeover provider returned the previous native session identity")
+				}
+				if t := journal.ProviderTakeover; t != nil {
+					if !sessionIdentifier.MatchString(result.SessionID) || t.NewSessionID != "" && t.NewSessionID != result.SessionID {
+						return runner.stop(directory, journal, "failed", "takeover provider changed its native session identity")
+					}
+					t.NewSessionID = result.SessionID
+				}
 				if journal.SessionID != "" && result.SessionID != journal.SessionID {
 					return runner.stop(directory, journal, "failed", "provider returned a different implementation session; original session retained")
 				}
@@ -985,6 +1014,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 				continue
 			}
 			if savedReviewCategory != "" {
+				if takeoverNeedsReview(journal) {
+					return runner.stop(directory, journal, "blocked", "independent review after provider takeover remains required; inspect the prior reviewer hold")
+				}
 				proof, err := runner.reviewUsageProof(ctx, directory, journal, savedReviewCategory, true)
 				savedReviewCategory = ""
 				if err != nil {
@@ -1094,6 +1126,9 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 					}
 					return runner.stop(directory, journal, "blocked", "independent review stopped with known unresolved findings, questions, limitations or source requests; retained structured evidence requires review")
 				}
+				if takeoverNeedsReview(journal) {
+					return runner.stop(directory, journal, "failed", "independent review after provider takeover did not complete: "+err.Error())
+				}
 				proof, proofErr := runner.reviewUsageProof(ctx, directory, journal, nativeStopCategory(err), false)
 				if proofErr != nil {
 					return runner.stop(directory, journal, "blocked", proofErr.Error())
@@ -1136,6 +1171,14 @@ func (runner Runner) Run(ctx context.Context, directory string, journal *Journal
 			}
 			if err := recordReviewReport(journal); err != nil {
 				return runner.stop(directory, journal, "blocked", err.Error())
+			}
+			if t := journal.ProviderTakeover; t != nil && t.ReviewAttempt == 0 {
+				if result.SessionID == "" || result.SessionID == journal.SessionID || result.SessionID == t.PreviousSessionID {
+					return runner.stop(directory, journal, "blocked", "independent review after provider takeover lacks a separate native session")
+				}
+				t.ReviewAttempt, t.ReviewSessionID = journal.Attempt, result.SessionID
+				publication := journal.Publication
+				t.ReviewPublication = &publication
 			}
 			if ciHeldReviewPending(journal) {
 				journal.CIHeldReview.Pending = false
@@ -1246,6 +1289,9 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 		}
 	}
 	journal.Attempt++
+	if t := journal.ProviderTakeover; role == "implementation" && t != nil && t.StartedAttempt == 0 {
+		t.StartedAttempt = journal.Attempt
+	}
 	if role == "implementation" && journal.SessionID == "" && journal.RuntimeRecheck != nil && len(journal.RuntimeMigrations) != 0 && journal.RuntimeRecheck.ImplementationAttempt == 0 {
 		journal.RuntimeRecheck.ImplementationAttempt = journal.Attempt
 	}
@@ -1268,6 +1314,9 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 	defer diagnostic.Close()
 	model := journal.Plan.Roles.Implementation
 	nativeDirectory := filepath.Join(directory, "native-implementation")
+	if role == "implementation" && journal.ProviderTakeover != nil {
+		nativeDirectory = filepath.Join(directory, journal.ProviderTakeover.SessionDirectory)
+	}
 	if role == "implementation" && len(journal.RuntimeMigrations) != 0 {
 		nativeDirectory = filepath.Join(directory, journal.RuntimeMigrations[len(journal.RuntimeMigrations)-1].SessionDirectory)
 	}
@@ -1532,6 +1581,9 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	// Shared instructions are already supplied once through the native global
 	// instruction file. Do not duplicate their body in the conversation.
 	shared := "Follow the native global shared instructions.\n" + contextDiscipline + "Selected launch context:\n" + string(packet) + "\n\n"
+	if journal.ProviderTakeover != nil {
+		shared += takeoverContext(journal, role)
+	}
 	if role == "review" {
 		shared += ciPassedReviewContext(journal)
 	}
