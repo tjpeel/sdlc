@@ -1101,6 +1101,14 @@ final review must carry supported items forward or explain their withdrawal.
 
 ### Supply missing CI failure context
 
+When an implementation session has stopped solely to request a CI rerun, and
+the same published revision now passes, ordinary resume can return a settled PR
+feedback cycle to CI and independent review without another implementation turn.
+SDLC verifies the unchanged checked candidate, inputs, published tree and live PR
+boundary first. It retains the native hold, prior CI evidence, unresolved feedback
+and recorded decisions; the normal CI, Sonar and independent-review gates remain
+in force. Pending feedback, unanswered questions and unrelated holds do not qualify.
+
 Failed CI checks automatically return relevant context for the exact published
 revision to the original implementation session. The controller collects check
 output and annotations, plus failed GitHub Actions job and step details and

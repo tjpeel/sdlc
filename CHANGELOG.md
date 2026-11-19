@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.173 - 2026-11-19
+
+### Fixed
+
+- Resume a settled PR feedback cycle when a CI-only rerun hold passes on the same published revision, retaining the previous hold and requiring fresh review.
+
 ## 0.1.0-beta.172 - 2026-11-19
 
 ### Fixed

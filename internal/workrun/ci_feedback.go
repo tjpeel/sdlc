@@ -86,6 +86,9 @@ func pendingCIFeedback(j *Journal) *CIFeedbackRecovery {
 }
 
 func validateCIFeedbackJournal(j *Journal) error {
+	if err := validateCIPassedRecoveries(j); err != nil {
+		return err
+	}
 	if len(j.CIFeedbackRecoveries) > 16 {
 		return fmt.Errorf("CI feedback recovery history bound exceeded")
 	}
@@ -228,6 +231,9 @@ func validateCIFeedbackBinding(j Journal, f CIFeedbackRecovery) error {
 
 func (runner Runner) prepareCIFeedback(ctx context.Context, directory string, j *Journal) error {
 	f := pendingCIFeedback(j)
+	if runner.CIFeedback == "" && f == nil && canRecoverPassedCI(*j) {
+		return runner.recoverPassedCI(ctx, directory, j)
+	}
 	automatic := false
 	if runner.CIFeedback == "" && f == nil {
 		if j.State != "blocked" || j.Outcome.Status != "blocked" || j.StopReason != j.Outcome.Summary || j.CI.Status != "failed" || j.CIRepairBudget == nil || j.CIRepairBudget.Used < 1 || j.CIRepairBudget.LastGrantedHead != j.Publication.HeadSHA {

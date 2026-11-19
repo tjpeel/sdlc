@@ -1532,6 +1532,9 @@ func (runner Runner) prompt(journal Journal, role string) string {
 	// Shared instructions are already supplied once through the native global
 	// instruction file. Do not duplicate their body in the conversation.
 	shared := "Follow the native global shared instructions.\n" + contextDiscipline + "Selected launch context:\n" + string(packet) + "\n\n"
+	if role == "review" {
+		shared += ciPassedReviewContext(journal)
+	}
 	if role == "review" && activePRCheckpoint(&journal, "review") {
 		shared += "This is an independent-review-only entry point. Review the captured PR as it stands. Repository checks and CI may not have been run; report actual evidence only. Findings are retained for human selection and do not start automatic implementation.\n"
 	}
