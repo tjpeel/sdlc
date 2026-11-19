@@ -1290,6 +1290,11 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 	}
 	journal.Attempt++
 	if role == "implementation" {
+		for i := range journal.ResumeModelSelections {
+			if journal.ResumeModelSelections[i].FirstAttempt == 0 {
+				journal.ResumeModelSelections[i].FirstAttempt = journal.Attempt
+			}
+		}
 		for i := range journal.OperatorDirections {
 			if journal.OperatorDirections[i].FirstAttempt == 0 {
 				journal.OperatorDirections[i].FirstAttempt = journal.Attempt
@@ -1319,7 +1324,7 @@ func (runner Runner) sessionAttempt(ctx context.Context, directory string, journ
 		return SessionResult{}, err
 	}
 	defer diagnostic.Close()
-	model := journal.Plan.Roles.Implementation
+	model := EffectiveImplementationModel(*journal)
 	nativeDirectory := filepath.Join(directory, "native-implementation")
 	if role == "implementation" && journal.ProviderTakeover != nil {
 		nativeDirectory = filepath.Join(directory, journal.ProviderTakeover.SessionDirectory)

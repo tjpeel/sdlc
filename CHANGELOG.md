@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.176 - 2026-11-19
+
+### Added
+
+- Explicitly select a model and reasoning effort for an eligible stopped native implementation session while retaining its provider, session and audit history.
+
 ## 0.1.0-beta.175 - 2026-11-19
 
 ### Added

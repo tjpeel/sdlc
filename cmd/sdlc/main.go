@@ -50,6 +50,8 @@ func main() {
 			command = func() error { return amendmentCommand(ctx, os.Args[2:], os.Stdout) }
 		case "feedback":
 			command = func() error { return feedbackCommand(ctx, os.Args[2:], os.Stdin, os.Stdout) }
+		case "resume-model":
+			command = func() error { return resumeModelCommand(ctx, os.Args[2:], os.Stdout) }
 		case "operator-direction":
 			command = func() error { return operatorDirectionCommand(ctx, os.Args[2:], os.Stdout) }
 		case "provider-takeover":
@@ -122,6 +124,7 @@ func main() {
 		fmt.Println("       sdlc references [--json] | tickets REFERENCE [--json] (local ticket metadata)")
 		fmt.Println("       sdlc storage [status] [--older-than DAYS] [--json] (retained project files, sizes and ages)")
 		fmt.Println("  sdlc feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]")
+		fmt.Println("  sdlc resume-model --run RUN_ID --model MODEL --effort LEVEL [--dry-run]")
 		fmt.Println("  sdlc operator-direction --run RUN_ID --file FILE [--dry-run]")
 		fmt.Println("  sdlc provider-takeover --run RUN_ID --provider PROVIDER --review-provider PROVIDER --reason-file FILE [--model MODEL] [--effort EFFORT] [--dry-run]")
 		fmt.Println("  sdlc accept-review-findings --run RUN_ID --reason-file FILE [--dry-run]")

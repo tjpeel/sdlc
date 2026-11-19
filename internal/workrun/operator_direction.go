@@ -38,7 +38,14 @@ func ValidateOperatorDirection(j Journal, text string) error {
 	if err := validateTakeoverReason(text); err != nil {
 		return err
 	}
-	if len(j.OperatorDirections) >= 20 || j.State != "failed" || j.ResumeState != "implementing" || j.SessionID == "" || !sessionIdentifier.MatchString(j.SessionID) || j.Attempt < 1 || j.UpdatedAt.IsZero() || (j.PendingRole != "" && j.PendingRole != "implementation") || len(j.Outcome.Questions) != 0 || j.DeferredAnswer != "" || j.PendingInputs != nil {
+	if len(j.OperatorDirections) >= 20 {
+		return fmt.Errorf("too many operator directions")
+	}
+	return validateCancelledImplementation(j)
+}
+
+func validateCancelledImplementation(j Journal) error {
+	if j.State != "failed" || j.ResumeState != "implementing" || j.SessionID == "" || !sessionIdentifier.MatchString(j.SessionID) || j.Attempt < 1 || j.UpdatedAt.IsZero() || (j.PendingRole != "" && j.PendingRole != "implementation") || len(j.Outcome.Questions) != 0 || j.DeferredAnswer != "" || j.PendingInputs != nil {
 		return fmt.Errorf("operator direction requires a stopped implementation session without a pending question")
 	}
 	if j.Outcome.Status == "blocked" || j.Outcome.Status == "failed" || j.Outcome.Status == "waiting_for_human" {

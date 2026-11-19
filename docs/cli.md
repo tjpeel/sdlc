@@ -2373,6 +2373,34 @@ fields are archived rather than replayed. No run is declared ready by this actio
 `--dry-run` is offline and saves nothing. Entry-point selection cannot be combined
 with an answer, feedback file, feedback refresh or allowance-recovery action.
 
+### Select a model for an existing implementation session
+
+```sh
+sdlc resume-model --run RUN_ID --model MODEL --effort LEVEL --dry-run
+sdlc resume-model --run RUN_ID --model MODEL --effort LEVEL
+sdlc resume --run RUN_ID
+```
+
+The command records a model and reasoning effort for the next and later turns
+of the existing Codex or Claude implementation session. It accepts a cancelled
+implementation, the controller cancellation or timeout hold, or an implementation
+waiting for a human answer. For a question, use `sdlc answer --run RUN_ID` after
+recording the selection; this does not answer or clear it. Other holds, review
+sessions, missing session identities and Synthetic are not eligible. Resolve
+provider usage, authentication, policy and operational holds through their normal
+recovery rather than changing model to evade them. The selection cannot change
+provider, session, workspace, reviewer or verification gates. Runtime migration
+and provider takeover cannot replace the selected session.
+
+A preview saves nothing or starts no work. A recorded selection remains in the
+private audit with the previous requested and reported model, checkpoint, session
+and first following attempt; interrupted attempts retain the selection. The model
+and effort are requests validated for syntax, supported effort names and current
+speed compatibility. The native provider may reject an unavailable model or
+cap effort. A reported model mismatch remains a stop; an absent model report and
+the actual effort remain unknown. Ordinary resume or answer uses the original
+native client and session, with no account switch or new native session.
+
 ### Direct a cancelled implementation session
 
 ```sh

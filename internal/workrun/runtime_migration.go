@@ -32,6 +32,9 @@ type RuntimeMigration struct {
 // implementation holds. The caller must own the controller lock, verify both
 // runtime and frozen inputs, preserve the original journal, and save atomically.
 func PrepareRuntimeMigration(original Journal, name string, target runtimeimage.State) (Journal, error) {
+	if len(original.ResumeModelSelections) > 0 {
+		return Journal{}, fmt.Errorf("runtime migration cannot replace a selected native session")
+	}
 	if err := runtimeimage.ValidateName(name); err != nil {
 		return Journal{}, err
 	}
@@ -82,6 +85,9 @@ type RuntimeRecheck struct {
 // checkpoint for the narrow published CI-hold case. The owning feature must
 // migrate every started ticket and its frozen runtime settings transactionally.
 func PreparePublishedFeatureRuntimeMigration(original Journal, name string, target runtimeimage.State) (Journal, error) {
+	if len(original.ResumeModelSelections) > 0 {
+		return Journal{}, fmt.Errorf("runtime migration cannot replace a selected native session")
+	}
 	if err := runtimeimage.ValidateName(name); err != nil {
 		return Journal{}, err
 	}

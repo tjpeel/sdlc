@@ -73,7 +73,7 @@ func ValidateProviderTakeover(j Journal, model Model, reviewProvider, reason str
 	if (model.Provider != "codex" && model.Provider != "claude") || (j.Plan.Roles.Implementation.Provider != "codex" && j.Plan.Roles.Implementation.Provider != "claude") || model.Provider == j.Plan.Roles.Implementation.Provider || reviewProvider == "" || reviewProvider != j.Plan.Roles.Review.Provider {
 		return fmt.Errorf("takeover requires a different native provider and the explicitly selected saved reviewer")
 	}
-	if j.ProviderTakeover != nil || len(j.RuntimeMigrations) != 0 || j.RuntimeRecheck != nil || j.RunLimitOverride != nil || j.SessionTurnExtension != nil {
+	if j.ProviderTakeover != nil || len(j.ResumeModelSelections) != 0 || len(j.RuntimeMigrations) != 0 || j.RuntimeRecheck != nil || j.RunLimitOverride != nil || j.SessionTurnExtension != nil {
 		return fmt.Errorf("takeover cannot replace a migrated or extended session")
 	}
 	if j.State != "failed" || j.ResumeState != "implementing" || !cancellationOnly(j.StopReason) || j.UpdatedAt.IsZero() || j.Attempt < 1 || j.Rounds < 0 || j.SessionID == "" || !sessionIdentifier.MatchString(j.SessionID) || j.PendingRole != "" && j.PendingRole != "implementation" || !j.Evidence.Passed || !objectID.MatchString(j.Evidence.Head) || !objectID.MatchString(j.Evidence.Tree) || j.CI.Status != "passed" || j.Publication.Number < 1 || j.Publication.URL != fmt.Sprintf("https://github.com/%s/pull/%d", j.Plan.Repository, j.Publication.Number) || !objectID.MatchString(j.Publication.HeadSHA) || !objectID.MatchString(j.Publication.BaseSHA) {

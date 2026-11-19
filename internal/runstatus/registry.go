@@ -231,7 +231,7 @@ func currentModel(j workrun.Journal) (string, workrun.Model) {
 	if state == "checkpoint_review" || state == "review" || state == "reviewing" || state == "awaiting_reviewer" {
 		return "review", j.Plan.Roles.Review
 	}
-	return "implementation", j.Plan.Roles.Implementation
+	return "implementation", workrun.EffectiveImplementationModel(j)
 }
 
 func (r *Registry) Begin(directory string, journal workrun.Journal) (*Tracker, error) {

@@ -60,6 +60,9 @@ func saveJSON(path string, value any) error {
 }
 
 func Save(directory string, journal *Journal) error {
+	if err := validateResumeModels(journal); err != nil {
+		return err
+	}
 	if err := validateOperatorDirections(journal); err != nil {
 		return err
 	}
@@ -286,6 +289,9 @@ func Load(directory string) (Journal, error) {
 		return Journal{}, err
 	}
 	if err := ValidateSpeeds(journal.Plan.Roles); err != nil {
+		return Journal{}, err
+	}
+	if err := validateResumeModels(&journal); err != nil {
 		return Journal{}, err
 	}
 	if err := validateOperatorDirections(&journal); err != nil {

@@ -303,6 +303,7 @@ type Publisher interface {
 }
 
 type Journal struct {
+	ResumeModelSelections     []ResumeModelSelection  `json:"resume_model_selections,omitempty"`
 	OperatorDirections        []OperatorDirection     `json:"operator_directions,omitempty"`
 	ProviderTakeover          *ProviderTakeover       `json:"provider_takeover,omitempty"`
 	CIPassedRecoveries        []CIPassedRecovery      `json:"ci_passed_recoveries,omitempty"`
