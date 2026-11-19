@@ -37,6 +37,7 @@ func shellCommands() []shell.Command {
 		command("amendment", "Work", "Apply a keyed specification amendment to a saved run", "/amendment --run ID --key KEY --target PATH [--file FILE] [--dry-run]", true, "run key target file dry-run"),
 		command("feedback", "Work", "Supply private feedback to a saved PR run", "/feedback --run RUN_ID [--file FILE | --stdin] [--dry-run]", true, "run file stdin dry-run"),
 		command("resume-model", "Work", "Select a model for a stopped implementation session", "/resume-model --run ID --model MODEL --effort LEVEL [--dry-run]", true, "run model effort dry-run"),
+		command("accept-implementation-followup", "Work", "Record an accepted outstanding implementation follow-up", "/accept-implementation-followup --run ID --file FILE [--dry-run]", true, "run file dry-run"),
 		command("operator-direction", "Work", "Record operator direction for a stopped implementation", "/operator-direction --run ID --file FILE [--dry-run]", true, "run file dry-run"),
 		command("provider-takeover", "Work", "Select a new implementation provider for a cancelled run", "/provider-takeover --run ID --provider PROVIDER --review-provider PROVIDER --reason-file FILE [--model MODEL] [--effort EFFORT] [--dry-run]", true, "run provider model effort review-provider reason-file dry-run"),
 		command("accept-review-findings", "Work", "Record a reason for accepting findings on a completed review", "/accept-review-findings --run ID --reason-file FILE [--dry-run]", true, "run reason-file dry-run"),

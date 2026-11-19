@@ -407,8 +407,8 @@ func validateOutcome(outcome Outcome, role string) error {
 			return fmt.Errorf("review must use the supplied verification evidence")
 		}
 	case "implemented":
-		if role != "implementation" || !outcome.LocalReview || len(outcome.Questions) > 0 || len(outcome.Findings) > 0 || len(outcome.Limitations) > 0 || outcome.PRTitle == "" || outcome.PRBody == "" {
-			return fmt.Errorf("implementation handoff does not satisfy local review and PR metadata")
+		if role != "implementation" || !outcome.LocalReview || len(outcome.Questions) > 0 || len(outcome.Findings) > 0 || outcome.PRTitle == "" || outcome.PRBody == "" {
+			return fmt.Errorf(invalidImplementationHandoff)
 		}
 	case "review_incomplete":
 		if role != "review" || len(outcome.Questions) > 0 || outcome.ReviewCoverage == nil || outcome.ReviewCoverage.Scope == "full" {

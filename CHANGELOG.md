@@ -7,6 +7,12 @@ See the [versioning plan](docs/proposals/beta-versioning.md).
 
 ## Unreleased
 
+## 0.1.0-beta.177 - 2026-11-19
+
+### Fixed
+
+- Recover an answered implementation handoff with an explicitly accepted, still outstanding follow-up while retaining its checks and independent review.
+
 ## 0.1.0-beta.176 - 2026-11-19
 
 ### Added

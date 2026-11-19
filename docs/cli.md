@@ -2401,6 +2401,30 @@ cap effort. A reported model mismatch remains a stop; an absent model report and
 the actual effort remain unknown. Ordinary resume or answer uses the original
 native client and session, with no account switch or new native session.
 
+### Accept an outstanding implementation follow-up
+
+For a rejected implementation handoff whose human question was already answered,
+record the exact single follow-up from the retained rejected handoff:
+
+```sh
+sdlc accept-implementation-followup --run RUN_ID --file /path/to/followup.txt --dry-run
+sdlc accept-implementation-followup --run RUN_ID --file /path/to/followup.txt
+sdlc resume --run RUN_ID
+```
+
+The command verifies the last native handoff, original session, recorded human
+answer, PR identity and checked candidate before recording the decision under the
+run lock. The prior handoff remains evidence, not a completed outcome; the same
+implementation session must produce a new handoff. The follow-up remains
+outstanding and must appear verbatim both as the sole accepted implementation
+limitation and in the PR body. Additional unaccepted limitations still stop the
+run. The controller checks the candidate and PR before accepting the first new
+handoff; checks, feedback, CI and a fresh full independent review remain required.
+The reviewer receives the decision as context, not approval. No rollout or
+reconciliation is declared complete. Preview writes nothing or starts no work.
+After an answered question and this exact handoff failure, operator-direction can
+also record an instruction without treating the old question as unanswered.
+
 ### Direct a cancelled implementation session
 
 ```sh

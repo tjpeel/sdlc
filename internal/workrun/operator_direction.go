@@ -41,6 +41,9 @@ func ValidateOperatorDirection(j Journal, text string) error {
 	if len(j.OperatorDirections) >= 20 {
 		return fmt.Errorf("too many operator directions")
 	}
+	if j.State == "failed" && j.ResumeState == "implementing" && j.StopReason == invalidImplementationHandoff && j.PendingRole == "implementation" && sessionIdentifier.MatchString(j.SessionID) && answeredImplementationQuestion(j) != "" && j.PendingInputs == nil {
+		return nil
+	}
 	return validateCancelledImplementation(j)
 }
 

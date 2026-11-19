@@ -151,7 +151,7 @@ func validateIncrementalReview(j *Journal) error {
 }
 
 func (r Runner) prepareIncrementalReview(ctx context.Context, dir string, j *Journal, workspace string) error {
-	if takeoverNeedsReview(j) {
+	if takeoverNeedsReview(j) || len(j.ImplementationFollowups) > 0 {
 		j.ReviewPlan = nil
 		return nil
 	}

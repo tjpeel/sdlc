@@ -39,6 +39,9 @@ func reviewScopeKey(j *Journal) string {
 }
 
 func reusableReport(j *Journal) *ReviewReport {
+	if len(j.ImplementationFollowups) > 0 {
+		return nil
+	}
 	if takeoverNeedsReview(j) {
 		return nil
 	}
@@ -54,6 +57,9 @@ func reusableReport(j *Journal) *ReviewReport {
 }
 
 func reviewReuseCurrent(j *Journal) bool {
+	if len(j.ImplementationFollowups) > 0 {
+		return false
+	}
 	p := j.ReviewReuse
 	if p == nil || p.Publication != j.Publication || p.Tree != j.Evidence.Tree || p.ScopeKey != reviewScopeKey(j) {
 		return false
